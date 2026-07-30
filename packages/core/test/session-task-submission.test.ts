@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { DateTime, Effect } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Result } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -65,6 +65,132 @@ const setup = Effect.gen(function* () {
     ])
     .run()
     .pipe(Effect.orDie)
+})
+
+const taskSubmissionLayer = (database: Database.Interface) =>
+  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node]), [
+    [Database.node, Layer.succeed(Database.Service, database)],
+  ])
+
+const withStepTimeout = <A>(effect: Effect.Effect<A, unknown>, steps: string[], label: string) =>
+  effect.pipe(
+    Effect.timeout("5 seconds"),
+    Effect.catch((error) =>
+      Effect.die(
+        new Error(
+          `${label} timed out after steps: ${steps.join(" -> ")} (${typeof error === "object" && error && "_tag" in error ? String(error._tag) : String(error)})`,
+        ),
+      ),
+    ),
+  )
+
+const runConcurrentFirstSubmitRace = Effect.fn("TaskSubmissionTest.runConcurrentFirstSubmitRace")(function* (
+  input: readonly [TaskSubmission.Invocation, TaskSubmission.Invocation],
+) {
+  const firstEntered = yield* Deferred.make<void>()
+  const secondEntered = yield* Deferred.make<void>()
+  const releaseFirst = yield* Deferred.make<void>()
+  const releaseSecond = yield* Deferred.make<void>()
+  let invocationFindCount = 0
+  const run = Effect.gen(function* () {
+    const baseDatabase = yield* Database.Service
+    const wrapFrom = <
+      T extends {
+        where: (...args: never[]) => unknown
+        get: () => unknown
+      },
+    >(
+      builder: T,
+      taskSubmissionFind = false,
+    ) => {
+      const wrapped = Object.create(builder) as T & {
+        where: T["where"]
+        get: T["get"]
+      }
+      wrapped.where = ((...args: Parameters<T["where"]>) =>
+        wrapFrom(builder.where(...args) as T, taskSubmissionFind)) as T["where"]
+      wrapped.get = (() => {
+        if (!taskSubmissionFind) return builder.get()
+        invocationFindCount += 1
+        if (invocationFindCount === 1)
+          return Effect.gen(function* () {
+            yield* Deferred.succeed(firstEntered, undefined).pipe(Effect.ignore)
+            yield* Deferred.await(releaseFirst)
+            return undefined
+          })
+        if (invocationFindCount === 2)
+          return Effect.gen(function* () {
+            yield* Deferred.succeed(secondEntered, undefined).pipe(Effect.ignore)
+            yield* Deferred.await(releaseSecond)
+            return undefined
+          })
+        return builder.get()
+      }) as T["get"]
+      return wrapped
+    }
+    const wrapSelect = (builder: ReturnType<typeof baseDatabase.db.select>) => {
+      const wrapped = Object.create(builder) as typeof builder & {
+        from: typeof builder.from
+      }
+      wrapped.from = ((table: Parameters<typeof builder.from>[0]) =>
+        wrapFrom(builder.from(table), table === TaskSubmissionTable)) as typeof builder.from
+      return wrapped
+    }
+    const database = {
+      db: Object.assign(Object.create(baseDatabase.db), {
+        select: (...args: Parameters<typeof baseDatabase.db.select>) => wrapSelect(baseDatabase.db.select(...args)),
+      }),
+    } satisfies Database.Interface
+    yield* setup.pipe(Effect.provide(taskSubmissionLayer(database)))
+    const submit = (invocation: TaskSubmission.Invocation) =>
+      TaskSubmission.Service.pipe(
+        Effect.flatMap((submissions) => submissions.submit(invocation)),
+        Effect.provide(taskSubmissionLayer(database)),
+      )
+    const first = yield* submit(input[0]).pipe(Effect.exit, Effect.forkChild)
+    const second = yield* submit(input[1]).pipe(Effect.exit, Effect.forkChild)
+    yield* withStepTimeout(Deferred.await(firstEntered), ["await-first-entered"], "await first entered")
+    yield* withStepTimeout(
+      Deferred.await(secondEntered),
+      ["await-first-entered", "await-second-entered"],
+      "await second entered",
+    )
+    yield* Deferred.succeed(releaseFirst, undefined)
+    const winner = yield* Effect.raceFirst(
+      Fiber.await(first).pipe(Effect.as("first")),
+      Fiber.await(second).pipe(Effect.as("second")),
+    ).pipe(Effect.timeout("5 seconds"), Effect.exit)
+    if (Exit.isFailure(winner)) {
+      const firstExit = yield* Fiber.join(first).pipe(Effect.timeout("1 second"), Effect.exit)
+      const secondExit = yield* Fiber.join(second).pipe(Effect.timeout("1 second"), Effect.exit)
+      return yield* Effect.die(
+        new Error(
+          `await winner timed out; first=${JSON.stringify(firstExit)} second=${JSON.stringify(secondExit)}`,
+        ),
+      )
+    }
+    yield* Deferred.succeed(releaseSecond, undefined)
+    const firstResult = yield* withStepTimeout(
+      Fiber.join(first),
+      ["await-first-entered", "await-second-entered", "release-first", "await-winner", "release-second", "join-first"],
+      "join first",
+    )
+    const secondResult = yield* withStepTimeout(
+      Fiber.join(second),
+      [
+        "await-first-entered",
+        "await-second-entered",
+        "release-first",
+        "await-winner",
+        "release-second",
+        "join-first",
+        "join-second",
+      ],
+      "join second",
+    )
+    return { first: firstResult, second: secondResult }
+  })
+  return yield* run.pipe(Effect.provide(AppNodeBuilder.build(Database.node)))
 })
 
 describe("TaskSubmission", () => {
@@ -205,6 +331,74 @@ describe("TaskSubmission", () => {
       expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
     }),
   )
+
+  test("adopts equivalent serialized model selection during a concurrent first-submit race", async () => {
+    const equivalent = await Effect.runPromise(
+      runConcurrentFirstSubmitRace([
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_equivalent_first"),
+          toolCallID: "call_task_equivalent_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        },
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_equivalent_first"),
+          toolCallID: "call_task_equivalent_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        },
+      ]).pipe(Effect.scoped),
+    )
+
+    expect(Exit.isSuccess(equivalent.first)).toBe(true)
+    expect(Exit.isSuccess(equivalent.second)).toBe(true)
+    if (Exit.isSuccess(equivalent.first) && Exit.isSuccess(equivalent.second))
+      expect(equivalent.second.value).toMatchObject({
+        id: equivalent.first.value.id,
+        childInputID: equivalent.first.value.childInputID,
+        childSessionID: equivalent.first.value.childSessionID,
+        model: equivalent.first.value.model,
+        toolCallID: equivalent.first.value.toolCallID,
+      })
+  })
+
+  test("rejects a different model during a concurrent first-submit race after admission", async () => {
+    const conflict = await Effect.runPromise(
+      runConcurrentFirstSubmitRace([
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_conflict_first"),
+          toolCallID: "call_task_conflict_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        },
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_conflict_first"),
+          toolCallID: "call_task_conflict_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("other"), providerID: ProviderV2.ID.make("test") }),
+        },
+      ]).pipe(Effect.scoped),
+    )
+
+    expect(Exit.isFailure(conflict.second)).toBe(true)
+    if (Exit.isFailure(conflict.second)) {
+      const failure = Cause.findError(conflict.second.cause)
+      expect(Result.isSuccess(failure)).toBe(true)
+      if (Result.isSuccess(failure)) expect(failure.success).toBeInstanceOf(TaskSubmission.InvocationConflict)
+    }
+  })
 
   it.effect("claims an accepted input at most once", () =>
     Effect.gen(function* () {

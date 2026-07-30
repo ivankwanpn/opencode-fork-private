@@ -255,10 +255,24 @@ const layer = Layer.effect(
         })
 
       const row = yield* findInvocation(input)
-      if (row) return toInfo(row)
+      if (row) {
+        if (!matches(toInfo(row), input))
+          return yield* new InvocationConflict({
+            parentSessionID: input.parentSessionID,
+            assistantMessageID: input.assistantMessageID,
+            toolCallID: input.toolCallID,
+          })
+        return toInfo(row)
+      }
 
       yield* commit(admitted.admittedSeq)
       const recovered = yield* findInvocation(input)
+      if (recovered && !matches(toInfo(recovered), input))
+        return yield* new InvocationConflict({
+          parentSessionID: input.parentSessionID,
+          assistantMessageID: input.assistantMessageID,
+          toolCallID: input.toolCallID,
+        })
       if (!recovered) return yield* Effect.die("Task submission commit did not create a submission")
       return toInfo(recovered)
     })

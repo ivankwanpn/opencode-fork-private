@@ -7,7 +7,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
-import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -96,7 +96,7 @@ const missingJob = testEffect(
                 if (missingJobWaitRelease) yield* Deferred.await(missingJobWaitRelease)
                 return { outcome: "missing", timedOut: false } as const
               }),
-            waitForPromotion: () => Effect.never,
+            waitForPromotion: () => Effect.succeed(undefined),
             promote: () => Effect.succeed(undefined),
             cancel: () => Effect.succeed(undefined),
           }),

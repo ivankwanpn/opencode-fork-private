@@ -9,7 +9,7 @@ import { NonNegativeInt } from "../schema"
 import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionAttemptTable } from "./sql"
+import { SessionAttemptTable, SessionCancellationTable } from "./sql"
 
 export const Status = Schema.Union([
   Schema.Struct({ type: Schema.Literal("idle") }),
@@ -64,6 +64,26 @@ export class RecoveryConflictError extends Schema.TaggedErrorClass<RecoveryConfl
 
 type DB = Database.Interface["db"]
 type Row = typeof SessionAttemptTable.$inferSelect
+
+const isCancelled = Effect.fn("SessionAttempt.isCancelled")(function* (db: DB, sessionID: SessionSchema.ID) {
+  const rows = yield* db
+    .all<{ root_session_id: string }>(sql`
+      WITH RECURSIVE ancestors(id) AS (
+        SELECT ${sessionID}
+        UNION ALL
+        SELECT session.parent_id
+        FROM session
+        JOIN ancestors ON session.id = ancestors.id
+        WHERE session.parent_id IS NOT NULL
+      )
+      SELECT cancellation.root_session_id
+      FROM ${SessionCancellationTable} cancellation
+      JOIN ancestors ON ancestors.id = cancellation.root_session_id
+      LIMIT 1
+    `)
+    .pipe(Effect.orDie)
+  return rows.length > 0
+})
 
 const sequence = (event: SessionEvent.Event) => {
   if (event.durable === undefined) throw new Error("Durable Session attempt event is missing aggregate sequence")
@@ -159,8 +179,12 @@ export const scheduled = Effect.fn("SessionAttempt.scheduled")(function* (db: DB
     .pipe(Effect.orDie)
 })
 
-export const projectStarted = (db: DB, event: SessionEvent.ProviderAttempt.Started) =>
-  db
+export const projectStarted = Effect.fn("SessionAttempt.projectStarted")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.Started,
+) {
+  if (yield* isCancelled(db, event.data.sessionID)) return
+  yield* db
     .insert(SessionAttemptTable)
     .values({
       session_id: event.data.sessionID,
@@ -189,9 +213,14 @@ export const projectStarted = (db: DB, event: SessionEvent.ProviderAttempt.Start
     })
     .run()
     .pipe(Effect.orDie)
+})
 
-export const projectResponseStarted = (db: DB, event: SessionEvent.ProviderAttempt.ResponseStarted) =>
-  db
+export const projectResponseStarted = Effect.fn("SessionAttempt.projectResponseStarted")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.ResponseStarted,
+) {
+  if (yield* isCancelled(db, event.data.sessionID)) return
+  yield* db
     .update(SessionAttemptTable)
     .set({
       status: "responding",
@@ -206,9 +235,14 @@ export const projectResponseStarted = (db: DB, event: SessionEvent.ProviderAttem
     )
     .run()
     .pipe(Effect.orDie)
+})
 
-export const projectEnded = (db: DB, event: SessionEvent.ProviderAttempt.Ended) =>
-  db
+export const projectEnded = Effect.fn("SessionAttempt.projectEnded")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.Ended,
+) {
+  if (yield* isCancelled(db, event.data.sessionID)) return
+  yield* db
     .update(SessionAttemptTable)
     .set({
       status: event.data.continuation ? "continuation" : event.data.outcome === "abandoned" ? "abandoned" : "ended",
@@ -224,9 +258,14 @@ export const projectEnded = (db: DB, event: SessionEvent.ProviderAttempt.Ended) 
     )
     .run()
     .pipe(Effect.orDie)
+})
 
-export const projectRetried = (db: DB, event: SessionEvent.Retried) =>
-  db
+export const projectRetried = Effect.fn("SessionAttempt.projectRetried")(function* (
+  db: DB,
+  event: SessionEvent.Retried,
+) {
+  if (yield* isCancelled(db, event.data.sessionID)) return
+  yield* db
     .update(SessionAttemptTable)
     .set({
       status: "retrying",
@@ -244,9 +283,14 @@ export const projectRetried = (db: DB, event: SessionEvent.Retried) =>
     )
     .run()
     .pipe(Effect.orDie)
+})
 
-export const projectRecoveryDecided = (db: DB, event: SessionEvent.ProviderAttempt.Recovery.Decided) =>
-  db
+export const projectRecoveryDecided = Effect.fn("SessionAttempt.projectRecoveryDecided")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.Recovery.Decided,
+) {
+  if (yield* isCancelled(db, event.data.sessionID)) return
+  yield* db
     .update(SessionAttemptTable)
     .set({
       status: event.data.decision === "retry" ? "continuation" : "abandoned",
@@ -264,5 +308,6 @@ export const projectRecoveryDecided = (db: DB, event: SessionEvent.ProviderAttem
     )
     .run()
     .pipe(Effect.orDie)
+})
 
 export const row = (value: Row) => value

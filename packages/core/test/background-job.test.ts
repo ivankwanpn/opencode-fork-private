@@ -158,6 +158,26 @@ describe("BackgroundJob", () => {
     }).pipe(Effect.provide(jobsLayer)),
   )
 
+  it.live("keeps later accepted runs alive after an earlier queued run fails", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const first = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        id: "failed-queued-run",
+        type: "test",
+        run: Deferred.await(first).pipe(Effect.andThen(Effect.fail("first failed"))),
+      })
+
+      expect(yield* jobs.extend({ id: job.id, run: Effect.succeed("second") })).toBe(true)
+      yield* Deferred.succeed(first, undefined)
+
+      expect(yield* jobs.wait({ id: job.id })).toMatchObject({
+        timedOut: false,
+        info: { status: "completed", output: "second" },
+      })
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
   it.live("queues a later start for an already running job instead of dropping it", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service

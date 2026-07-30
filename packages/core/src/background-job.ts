@@ -153,9 +153,17 @@ export const make = Effect.gen(function* () {
         Exit.isSuccess(exit) && (!job.output || sequence > job.output.sequence)
           ? { sequence, text: exit.value }
           : job.output
-      if (Exit.isSuccess(exit) && pending > 0) {
-        return [{}, new Map(jobs).set(id, { ...job, pending, output })]
-      }
+      const runState = Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : { error: undefined }
+      if (pending > 0)
+        return [
+          {},
+          new Map(jobs).set(id, {
+            ...job,
+            pending,
+            output,
+            info: { ...job.info, ...runState },
+          }),
+        ]
       const status: Exclude<Status, "running"> = Exit.isSuccess(exit)
         ? "completed"
         : Cause.hasInterruptsOnly(exit.cause)
@@ -171,7 +179,7 @@ export const make = Effect.gen(function* () {
           status,
           completed_at,
           ...(output ? { output: output.text } : {}),
-          ...(Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : {}),
+          ...runState,
         },
       }
       return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
@@ -189,12 +197,14 @@ export const make = Effect.gen(function* () {
     token: object,
     sequence: number,
     run: Effect.Effect<string, unknown>,
+    tail: Deferred.Deferred<void>,
   ) {
     return yield* run.pipe(
       Effect.matchCauseEffect({
         onSuccess: (output) => settle(id, token, sequence, Exit.succeed(output)),
         onFailure: (cause) => settle(id, token, sequence, Exit.failCause(cause)),
       }),
+      Effect.ensuring(Deferred.succeed(tail, undefined)),
       Effect.asVoid,
       Effect.forkIn(scope, { startImmediately: true }),
     )
@@ -276,7 +286,8 @@ export const make = Effect.gen(function* () {
             id,
             result.token,
             0,
-            restore(input.run).pipe(Effect.ensuring(Deferred.succeed(tail, undefined))),
+            restore(input.run),
+            tail,
           )
         } else {
           yield* fork(
@@ -286,8 +297,8 @@ export const make = Effect.gen(function* () {
             result.sequence,
             Deferred.await(result.previous).pipe(
               Effect.andThen(restore(input.run)),
-              Effect.ensuring(Deferred.succeed(result.tail, undefined)),
             ),
+            result.tail,
           )
         }
         return result.info
@@ -323,8 +334,8 @@ export const make = Effect.gen(function* () {
           result.sequence,
           Deferred.await(result.previous).pipe(
             Effect.andThen(restore(input.run)),
-            Effect.ensuring(Deferred.succeed(result.tail, undefined)),
           ),
+          result.tail,
         )
         return true
       }),

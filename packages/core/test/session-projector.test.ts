@@ -20,7 +20,13 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
 import { SessionInput } from "@opencode-ai/core/session/input"
-import { SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
+import {
+  SessionAttemptTable,
+  SessionCancellationTable,
+  SessionInputTable,
+  SessionMessageTable,
+  SessionTable,
+} from "@opencode-ai/core/session/sql"
 import { SessionAttempt } from "@opencode-ai/core/session/attempt"
 import { testEffect } from "./lib/effect"
 import { Snapshot } from "@opencode-ai/core/snapshot"
@@ -619,6 +625,72 @@ describe("SessionProjector", () => {
       expect(yield* SessionAttempt.status(db, sessionID, false)).toMatchObject({
         type: "continuation-required",
         attemptID: replacementID,
+      })
+    }),
+  )
+
+  it.effect("ignores late provider attempt transitions after durable cancellation", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "test",
+          directory: "/project",
+          title: "test",
+          version: "test",
+        })
+        .run()
+        .pipe(Effect.orDie)
+
+      const events = yield* EventV2.Service
+      const attemptID = EventV2.ID.create()
+      const assistantMessageID = SessionMessage.ID.create()
+      yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+        sessionID,
+        attemptID,
+        assistantMessageID,
+        timestamp: created,
+        attempt: 1,
+      })
+      yield* db
+        .insert(SessionCancellationTable)
+        .values({ root_session_id: sessionID, time_created: 1, time_completed: 1 })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionAttemptTable)
+        .set({ status: "abandoned", retry_at: null, decision: "abandon", time_updated: 1 })
+        .where(eq(SessionAttemptTable.session_id, sessionID))
+        .run()
+        .pipe(Effect.orDie)
+
+      yield* events.publish(SessionEvent.ProviderAttempt.Ended, {
+        sessionID,
+        attemptID,
+        assistantMessageID,
+        timestamp: DateTime.makeUnsafe(2),
+        outcome: "completed",
+        continuation: true,
+      })
+      yield* events.publish(SessionEvent.Retried, {
+        sessionID,
+        attemptID,
+        timestamp: DateTime.makeUnsafe(3),
+        attempt: 2,
+        next: DateTime.makeUnsafe(4),
+        error: { message: "late retry", isRetryable: true },
+      })
+
+      expect(yield* db.select({ status: SessionAttemptTable.status }).from(SessionAttemptTable).get()).toEqual({
+        status: "abandoned",
       })
     }),
   )

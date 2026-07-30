@@ -1,0 +1,168 @@
+export * as TaskNotification from "./task-notification"
+
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm"
+import { Cause, Clock, Context, Effect, Layer, Schema } from "effect"
+import { Database } from "../database/database"
+import { makeGlobalNode } from "../effect/app-node"
+import { SessionMessage } from "./message"
+import { SessionSchema } from "./schema"
+import { TaskNotificationOutboxTable } from "./sql"
+
+const NotificationPayload = Schema.Struct({
+  state: Schema.Literals(["completed", "error", "cancelled", "recovery-required"]),
+  description: Schema.String,
+  text: Schema.String,
+})
+
+type Row = typeof TaskNotificationOutboxTable.$inferSelect
+
+export type Admission = {
+  readonly id: SessionMessage.ID
+  readonly sessionID: SessionSchema.ID
+  readonly text: string
+  readonly description: string
+  readonly delivery: "steer" | "queue"
+}
+
+export interface Interface {
+  readonly drain: (input: {
+    readonly admit: (input: Admission) => Effect.Effect<unknown, unknown>
+    readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  }) => Effect.Effect<number>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/TaskNotification") {}
+
+const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+
+    const candidates = Effect.fn("TaskNotification.candidates")(function* () {
+      return yield* db
+        .select()
+        .from(TaskNotificationOutboxTable)
+        .where(
+          or(
+            eq(TaskNotificationOutboxTable.status, "pending"),
+            eq(TaskNotificationOutboxTable.status, "error"),
+            and(eq(TaskNotificationOutboxTable.status, "delivered"), isNull(TaskNotificationOutboxTable.time_woken)),
+          ),
+        )
+        .orderBy(asc(TaskNotificationOutboxTable.time_created), asc(TaskNotificationOutboxTable.id))
+        .all()
+        .pipe(Effect.orDie)
+    })
+
+    const attempt = Effect.fn("TaskNotification.attempt")(function* (
+      row: Row,
+      input: Parameters<Interface["drain"]>[0],
+    ) {
+      const claimed = yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({
+          attempts: sql<number>`${TaskNotificationOutboxTable.attempts} + 1`,
+          error: null,
+        })
+        .where(
+          and(
+            eq(TaskNotificationOutboxTable.id, row.id),
+            or(
+              eq(TaskNotificationOutboxTable.status, "pending"),
+              eq(TaskNotificationOutboxTable.status, "error"),
+              and(eq(TaskNotificationOutboxTable.status, "delivered"), isNull(TaskNotificationOutboxTable.time_woken)),
+            ),
+          ),
+        )
+        .returning({ id: TaskNotificationOutboxTable.id })
+        .get()
+        .pipe(Effect.orDie)
+      if (!claimed) return false
+
+      const payload = Schema.decodeUnknownSync(NotificationPayload)(row.payload)
+      yield* input.admit({
+        id: SessionMessage.ID.make(row.message_id),
+        sessionID: SessionSchema.ID.make(row.parent_session_id),
+        text: renderPayload(payload),
+        description: payload.description,
+        delivery: "steer",
+      })
+
+      const timeDelivered = yield* Clock.currentTimeMillis
+      const delivered = yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({ status: "delivered", error: null, time_delivered: timeDelivered })
+        .where(
+          and(
+            eq(TaskNotificationOutboxTable.id, row.id),
+            or(eq(TaskNotificationOutboxTable.status, "pending"), eq(TaskNotificationOutboxTable.status, "error")),
+          ),
+        )
+        .returning({ id: TaskNotificationOutboxTable.id })
+        .get()
+        .pipe(Effect.orDie)
+      if (!delivered) {
+        const current = yield* db
+          .select()
+          .from(TaskNotificationOutboxTable)
+          .where(eq(TaskNotificationOutboxTable.id, row.id))
+          .get()
+          .pipe(Effect.orDie)
+        if (current?.status !== "delivered" || current.time_woken !== null) return false
+      }
+
+      yield* input.wake(SessionSchema.ID.make(row.parent_session_id))
+      const timeWoken = yield* Clock.currentTimeMillis
+      yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({ status: "woken", time_woken: timeWoken })
+        .where(
+          and(
+            eq(TaskNotificationOutboxTable.id, row.id),
+            eq(TaskNotificationOutboxTable.status, "delivered"),
+            isNull(TaskNotificationOutboxTable.time_woken),
+          ),
+        )
+        .run()
+        .pipe(Effect.orDie)
+      return true
+    })
+
+    const fail = Effect.fn("TaskNotification.fail")(function* (row: Row, cause: Cause.Cause<unknown>) {
+      yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({ status: "error", error: { message: String(Cause.squash(cause)) } })
+        .where(eq(TaskNotificationOutboxTable.id, row.id))
+        .run()
+        .pipe(Effect.orDie)
+    })
+
+    const drain: Interface["drain"] = Effect.fn("TaskNotification.drain")(function* (input) {
+      const rows = yield* candidates()
+      const results = yield* Effect.forEach(rows, (row) =>
+        attempt(row, input).pipe(Effect.catchCause((cause) => fail(row, cause).pipe(Effect.as(false)))),
+      )
+      return results.filter((result) => result).length
+    })
+
+    return Service.of({ drain })
+  }),
+)
+
+export const node = makeGlobalNode({
+  service: Service,
+  layer,
+  deps: [Database.node],
+})
+
+function renderPayload(payload: typeof NotificationPayload.Type) {
+  const tag = payload.state === "error" ? "task_error" : "task_result"
+  return [
+    `<task state="${payload.state}">`,
+    `<summary>${payload.description}</summary>`,
+    `<${tag}>`,
+    payload.text,
+    `</${tag}>`,
+    "</task>",
+  ].join("\n")
+}

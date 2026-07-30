@@ -1,0 +1,263 @@
+import { describe, expect, test } from "bun:test"
+import { DateTime, Effect } from "effect"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
+import { Project } from "@opencode-ai/core/project"
+import { ProjectTable } from "@opencode-ai/core/project/sql"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
+import { Prompt } from "@opencode-ai/core/session/prompt"
+import {
+  SessionInputTable,
+  SessionTable,
+  TaskNotificationOutboxTable,
+  TaskSubmissionTable,
+} from "@opencode-ai/core/session/sql"
+import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
+import { testEffect } from "./lib/effect"
+
+const it = testEffect(
+  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node])),
+)
+
+const invocation = {
+  parentSessionID: SessionSchema.ID.make("ses_task_parent"),
+  assistantMessageID: SessionMessage.ID.make("msg_task_assistant"),
+  toolCallID: "call_task_1",
+  prompt: Prompt.make({ text: "inspect the lifecycle" }),
+}
+
+const childSessionID = SessionSchema.ID.make("ses_task_child")
+
+const setup = Effect.gen(function* () {
+  const { db } = yield* Database.Service
+  yield* db
+    .insert(ProjectTable)
+    .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+    .run()
+    .pipe(Effect.orDie)
+  yield* db
+    .insert(SessionTable)
+    .values([
+      {
+        id: invocation.parentSessionID,
+        project_id: Project.ID.global,
+        slug: "task-parent",
+        directory: "/project",
+        title: "task parent",
+        version: "test",
+      },
+      {
+        id: childSessionID,
+        project_id: Project.ID.global,
+        parent_id: invocation.parentSessionID,
+        slug: "task-child",
+        directory: "/project",
+        title: "task child",
+        version: "test",
+      },
+    ])
+    .run()
+    .pipe(Effect.orDie)
+})
+
+describe("TaskSubmission", () => {
+  test("derives stable IDs from the invocation identity", () => {
+    expect(TaskSubmission.inputID(invocation)).toBe(TaskSubmission.inputID({ ...invocation }))
+    expect(TaskSubmission.notificationID("sub_task_1")).toBe(TaskSubmission.notificationID("sub_task_1"))
+    expect(TaskSubmission.inputID(invocation)).toMatch(/^msg_/)
+    expect(TaskSubmission.notificationID("sub_task_1")).toMatch(/^msg_/)
+  })
+
+  test("changes the child input identity when the tool call changes", () => {
+    expect(TaskSubmission.inputID(invocation)).not.toBe(
+      TaskSubmission.inputID({ ...invocation, toolCallID: "call_task_2" }),
+    )
+  })
+
+  it.effect("adopts exact retries and terminalizes the child input once", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      })
+      const retry = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      })
+
+      expect(retry).toEqual(first)
+      const terminal = yield* submissions.terminalize({
+        submissionID: first.id,
+        outcome: "completed",
+        resultMessageID: SessionMessage.ID.make("msg_task_result"),
+        resultText: "done",
+      })
+      const duplicate = yield* submissions.terminalize({
+        submissionID: first.id,
+        outcome: "error",
+        error: { message: "late failure" },
+      })
+
+      expect(terminal).toMatchObject({ status: "completed", resultText: "done" })
+      expect(duplicate).toEqual(terminal)
+      const inputRow = (yield* db.select().from(SessionInputTable).all())[0]
+      expect(inputRow).toMatchObject({
+        terminal_outcome: "completed",
+        terminal_message_id: "msg_task_result",
+        terminal_error: null,
+      })
+      expect(typeof inputRow?.terminal_seq).toBe("number")
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("coalesces concurrent first submissions for one invocation", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      }
+
+      const results = yield* Effect.all([submissions.submit(input), submissions.submit(input)], {
+        concurrency: "unbounded",
+      })
+
+      expect(results[0]).toEqual(results[1])
+      expect(yield* db.select().from(TaskSubmissionTable).all()).toHaveLength(1)
+      expect(yield* db.select().from(SessionInputTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("rejects a conflicting retry for the same invocation identity", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      }
+      yield* submissions.submit(input)
+
+      const conflict = yield* submissions
+        .submit({
+          ...input,
+          description: "Different lifecycle",
+        })
+        .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
+
+      expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
+    }),
+  )
+
+  it.effect("claims an accepted input at most once", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Claim once",
+        agent: "general",
+      })
+
+      const first = yield* submissions.claim(submitted.id)
+      const second = yield* submissions.claim(submitted.id)
+
+      expect(first.acquired).toBe(true)
+      expect(first.info.status).toBe("running")
+      expect(second.acquired).toBe(false)
+      expect(second.info).toEqual(first.info)
+    }),
+  )
+
+  it.effect("recovers a completed assistant for the exact child input after a restart", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Recover task",
+        agent: "general",
+      })
+      yield* submissions.claim(submitted.id)
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_task_recovered_result"),
+        type: "assistant",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        content: [{ type: "text", id: "text_recovered", text: "recovered result" }],
+        time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
+      })
+
+      expect(yield* submissions.recoverSession({ sessionID: childSessionID, messages: [assistant] })).toBe(0)
+      const recoveredMessages = [
+        SessionMessage.User.make({
+          id: submitted.childInputID,
+          type: "user",
+          text: invocation.prompt.text,
+          time: { created: DateTime.makeUnsafe(1) },
+        }),
+        assistant,
+      ]
+      expect(yield* submissions.recoverSession({ sessionID: childSessionID, messages: recoveredMessages })).toBe(1)
+      expect(yield* submissions.get(submitted.id)).toMatchObject({
+        outcome: "completed",
+        resultText: "recovered result",
+      })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("terminalizes an ambiguous provider attempt as recovery-required", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Recover ambiguous task",
+        agent: "general",
+      })
+      yield* submissions.claim(submitted.id)
+
+      expect(
+        yield* submissions.markRecoveryRequired({
+          sessionID: childSessionID,
+          reason: "response-interrupted",
+        }),
+      ).toBe(1)
+      expect(yield* submissions.get(submitted.id)).toMatchObject({
+        status: "recovery-required",
+        outcome: "recovery-required",
+      })
+      expect(yield* db.select().from(SessionInputTable).all()).toMatchObject([
+        { terminal_outcome: "recovery-required" },
+      ])
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+})

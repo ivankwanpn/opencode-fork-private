@@ -411,6 +411,7 @@ describe("TaskSubmission", () => {
         yield* submissions.recoverSession({
           sessionID: childSessionID,
           assistantMessageID: assistant.id,
+          childInputID: submitted.childInputID,
           messages: [assistant],
         }),
       ).toBe(0)
@@ -427,6 +428,7 @@ describe("TaskSubmission", () => {
         yield* submissions.recoverSession({
           sessionID: childSessionID,
           assistantMessageID: assistant.id,
+          childInputID: submitted.childInputID,
           messages: recoveredMessages,
         }),
       ).toBe(1)
@@ -471,6 +473,7 @@ describe("TaskSubmission", () => {
         yield* submissions.recoverSession({
           sessionID: childSessionID,
           assistantMessageID: assistant.id,
+          childInputID: second.childInputID,
           messages: [
             SessionMessage.User.make({
               id: first.childInputID,
@@ -494,6 +497,68 @@ describe("TaskSubmission", () => {
       expect(yield* submissions.get(second.id)).toMatchObject({
         outcome: "completed",
         resultText: "second result",
+      })
+    }),
+  )
+
+  it.effect("recovers the assistant bound to the provider attempt input", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_task_attempt_first",
+        childSessionID,
+        description: "First provider attempt",
+        prompt: Prompt.make({ text: "first provider attempt" }),
+        agent: "general",
+      })
+      const second = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_task_attempt_second",
+        assistantMessageID: SessionMessage.ID.make("msg_task_attempt_second_assistant"),
+        childSessionID,
+        description: "Second provider attempt",
+        prompt: Prompt.make({ text: "second provider attempt" }),
+        agent: "general",
+      })
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_task_attempt_first_result"),
+        type: "assistant",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        content: [{ type: "text", id: "text_attempt_first_result", text: "first result" }],
+        time: { created: DateTime.makeUnsafe(3), completed: DateTime.makeUnsafe(4) },
+      })
+
+      const recovery = {
+        sessionID: childSessionID,
+        assistantMessageID: assistant.id,
+        childInputID: first.childInputID,
+        messages: [
+          SessionMessage.User.make({
+            id: first.childInputID,
+            type: "user",
+            text: "first provider attempt",
+            time: { created: DateTime.makeUnsafe(1) },
+          }),
+          SessionMessage.User.make({
+            id: second.childInputID,
+            type: "user",
+            text: "second provider attempt",
+            time: { created: DateTime.makeUnsafe(2) },
+          }),
+          assistant,
+        ],
+      } as unknown as TaskSubmission.RecoveryInput
+
+      expect(yield* submissions.recoverSession(recovery)).toBe(1)
+      expect(yield* submissions.get(first.id)).toMatchObject({
+        outcome: "completed",
+        resultText: "first result",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        status: "accepted",
       })
     }),
   )

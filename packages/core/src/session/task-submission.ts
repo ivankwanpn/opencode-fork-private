@@ -76,6 +76,7 @@ export type ClaimResult = {
 export type RecoveryInput = {
   readonly sessionID: SessionSchema.ID
   readonly assistantMessageID: SessionMessage.ID
+  readonly childInputID: SessionMessage.ID
   readonly messages: ReadonlyArray<SessionMessage.Message>
 }
 
@@ -362,30 +363,29 @@ const layer = Layer.effect(
       if (assistantIndex < 0) return 0
       const assistant = input.messages[assistantIndex]
       if (!assistant || assistant.type !== "assistant" || assistant.time.completed === undefined) return 0
+      const inputIndex = input.messages.findIndex((message) => message.id === input.childInputID)
+      if (inputIndex < 0 || inputIndex >= assistantIndex) return 0
 
-      const rows = yield* db
+      const row = yield* db
         .select()
         .from(TaskSubmissionTable)
-        .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
-        .all()
+        .where(
+          and(
+            eq(TaskSubmissionTable.child_session_id, input.sessionID),
+            eq(TaskSubmissionTable.child_input_id, input.childInputID),
+            isNull(TaskSubmissionTable.outcome),
+          ),
+        )
+        .get()
         .pipe(Effect.orDie)
-      const match = rows.reduce<{ readonly row: (typeof rows)[number]; readonly inputIndex: number } | undefined>(
-        (best, row) => {
-          const inputIndex = input.messages.findIndex((message) => message.id === row.child_input_id)
-          if (inputIndex < 0 || inputIndex >= assistantIndex) return best
-          if (!best || inputIndex > best.inputIndex) return { row, inputIndex }
-          return best
-        },
-        undefined,
-      )
-      if (!match) return 0
+      if (!row) return 0
 
       const text = assistant.content
         .filter((part): part is SessionMessage.AssistantText => part.type === "text")
         .map((part) => part.text)
         .join("")
       const recovered = yield* terminalize({
-        submissionID: match.row.id,
+        submissionID: row.id,
         outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
         resultMessageID: assistant.id,
         resultText: text,

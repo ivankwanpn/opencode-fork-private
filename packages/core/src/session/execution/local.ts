@@ -93,10 +93,13 @@ const recoverCompletedAssistant = Effect.fn("SessionExecutionLocal.recoverComple
 ) {
   const attempt = yield* SessionAttempt.get(db, sessionID)
   if (!attempt) return 0
+  const childInputID = yield* unresolvedTaskInputID(db, sessionID, attempt)
+  if (!childInputID) return 0
   const messages = yield* store.context(sessionID).pipe(Effect.orDie)
   return yield* submissions.recoverSession({
     sessionID,
     assistantMessageID: attempt.assistant_message_id,
+    childInputID,
     messages,
   })
 })

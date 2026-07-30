@@ -7,6 +7,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
+import { SessionCommand } from "@opencode-ai/core/session/command"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
@@ -51,6 +52,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       Session.node,
       SessionProjector.node,
       EventV2.node,
+      SessionCommand.node,
       TaskSubmission.node,
       TaskNotification.node,
       TaskCancellation.node,
@@ -70,135 +72,126 @@ const background = testEffect(layer({ experimentalBackgroundSubagents: true }))
 let missingJobWaitStarted: Deferred.Deferred<void> | undefined
 let missingJobWaitRelease: Deferred.Deferred<void> | undefined
 const missingJob = testEffect(
-  layer(
-    {},
+  layer({}, [
     [
-      [
-        BackgroundJob.node,
-        Layer.succeed(
-          BackgroundJob.Service,
-          BackgroundJob.Service.of({
-            list: () => Effect.succeed([]),
-            get: () => Effect.succeed(undefined),
-            start: (input) =>
-              Effect.succeed({
-                id: input.id ?? "job_missing",
-                type: input.type,
-                title: input.title,
-                status: "running",
-                started_at: 0,
-                metadata: input.metadata,
-              }),
-            extend: () => Effect.succeed(false),
-            wait: () =>
-              Effect.gen(function* () {
-                if (missingJobWaitStarted) yield* Deferred.succeed(missingJobWaitStarted, undefined)
-                if (missingJobWaitRelease) yield* Deferred.await(missingJobWaitRelease)
-                return { outcome: "missing", timedOut: false } as const
-              }),
-            waitForPromotion: () => Effect.succeed(undefined),
-            promote: () => Effect.succeed(undefined),
-            cancel: () => Effect.succeed(undefined),
-          }),
-        ),
-      ],
+      BackgroundJob.node,
+      Layer.succeed(
+        BackgroundJob.Service,
+        BackgroundJob.Service.of({
+          list: () => Effect.succeed([]),
+          get: () => Effect.succeed(undefined),
+          start: (input) =>
+            Effect.succeed({
+              id: input.id ?? "job_missing",
+              type: input.type,
+              title: input.title,
+              status: "running",
+              started_at: 0,
+              metadata: input.metadata,
+            }),
+          extend: () => Effect.succeed(false),
+          wait: () =>
+            Effect.gen(function* () {
+              if (missingJobWaitStarted) yield* Deferred.succeed(missingJobWaitStarted, undefined)
+              if (missingJobWaitRelease) yield* Deferred.await(missingJobWaitRelease)
+              return { outcome: "missing", timedOut: false } as const
+            }),
+          waitForPromotion: () => Effect.succeed(undefined),
+          promote: () => Effect.succeed(undefined),
+          cancel: () => Effect.succeed(undefined),
+        }),
+      ),
     ],
-  ),
+  ]),
 )
 const fastCompletion = testEffect(
-  layer(
-    {},
+  layer({}, [
     [
-      [
-        BackgroundJob.node,
-        Layer.succeed(
-          BackgroundJob.Service,
-          BackgroundJob.Service.of({
-            list: () => Effect.succeed([]),
-            get: () => Effect.succeed(undefined),
-            start: (input) =>
-              Effect.succeed({
-                id: input.id ?? "job_fast_completion",
-                type: input.type,
-                title: input.title,
-                status: "running",
-                started_at: 0,
-                metadata: input.metadata,
-              }),
-            extend: () => Effect.succeed(false),
-            wait: (input) =>
-              Effect.yieldNow.pipe(
-                Effect.as({
-                  timedOut: false,
-                  outcome: "completed" as const,
-                  info: {
-                    id: input.id,
-                    type: "task",
-                    status: "completed" as const,
-                    started_at: 0,
-                    completed_at: 1,
-                    output: "fast result",
-                  },
-                }),
-              ),
-            waitForPromotion: () => Effect.succeed(undefined),
-            promote: () => Effect.succeed(undefined),
-            cancel: () => Effect.succeed(undefined),
-          }),
-        ),
-      ],
-    ],
-  ),
-)
-const staleObservation = testEffect(
-  layer(
-    {},
-    [
-      [
-        BackgroundJob.node,
-        Layer.succeed(
-          BackgroundJob.Service,
-          BackgroundJob.Service.of({
-            list: () => Effect.succeed([]),
-            get: (id) =>
-              Effect.succeed({
-                id,
-                type: "task",
-                status: "running",
-                started_at: 0,
-                metadata: { background: true },
-              }),
-            start: (input) =>
-              Effect.succeed({
-                id: input.id ?? "job_fresh_start",
-                type: input.type,
-                title: input.title,
-                status: "running",
-                started_at: 1,
-                metadata: input.metadata,
-              }),
-            extend: () => Effect.succeed(false),
-            wait: (input) =>
-              Effect.succeed({
+      BackgroundJob.node,
+      Layer.succeed(
+        BackgroundJob.Service,
+        BackgroundJob.Service.of({
+          list: () => Effect.succeed([]),
+          get: () => Effect.succeed(undefined),
+          start: (input) =>
+            Effect.succeed({
+              id: input.id ?? "job_fast_completion",
+              type: input.type,
+              title: input.title,
+              status: "running",
+              started_at: 0,
+              metadata: input.metadata,
+            }),
+          extend: () => Effect.succeed(false),
+          wait: (input) =>
+            Effect.yieldNow.pipe(
+              Effect.as({
                 timedOut: false,
                 outcome: "completed" as const,
                 info: {
                   id: input.id,
                   type: "task",
                   status: "completed" as const,
-                  started_at: 1,
-                  completed_at: 2,
-                  output: "fresh result",
+                  started_at: 0,
+                  completed_at: 1,
+                  output: "fast result",
                 },
               }),
-            waitForPromotion: () => Effect.succeed(undefined),
-            promote: () => Effect.succeed(undefined),
-            cancel: () => Effect.succeed(undefined),
-          }),
-        ),
-      ],
+            ),
+          waitForPromotion: () => Effect.succeed(undefined),
+          promote: () => Effect.succeed(undefined),
+          cancel: () => Effect.succeed(undefined),
+        }),
+      ),
     ],
-  ),
+  ]),
+)
+const staleObservation = testEffect(
+  layer({}, [
+    [
+      BackgroundJob.node,
+      Layer.succeed(
+        BackgroundJob.Service,
+        BackgroundJob.Service.of({
+          list: () => Effect.succeed([]),
+          get: (id) =>
+            Effect.succeed({
+              id,
+              type: "task",
+              status: "running",
+              started_at: 0,
+              metadata: { background: true },
+            }),
+          start: (input) =>
+            Effect.succeed({
+              id: input.id ?? "job_fresh_start",
+              type: input.type,
+              title: input.title,
+              status: "running",
+              started_at: 1,
+              metadata: input.metadata,
+            }),
+          extend: () => Effect.succeed(false),
+          wait: (input) =>
+            Effect.succeed({
+              timedOut: false,
+              outcome: "completed" as const,
+              info: {
+                id: input.id,
+                type: "task",
+                status: "completed" as const,
+                started_at: 1,
+                completed_at: 2,
+                output: "fresh result",
+              },
+            }),
+          waitForPromotion: () => Effect.succeed(undefined),
+          promote: () => Effect.succeed(undefined),
+          cancel: () => Effect.succeed(undefined),
+        }),
+      ),
+    ],
+  ]),
 )
 
 function defer<T>() {
@@ -367,7 +360,10 @@ describe("tool.task", () => {
       const tool = yield* TaskTool
       const def = yield* tool.init()
       let seen: SessionPrompt.PromptInput | undefined
-      const promptOps = stubOps({ text: "resumed", onPrompt: (input) => (input.sessionID === child.id ? (seen = input) : undefined) })
+      const promptOps = stubOps({
+        text: "resumed",
+        onPrompt: (input) => (input.sessionID === child.id ? (seen = input) : undefined),
+      })
 
       const result = yield* def.execute(
         {
@@ -501,7 +497,10 @@ describe("tool.task", () => {
       const tool = yield* TaskTool
       const def = yield* tool.init()
       let seen: SessionPrompt.PromptInput | undefined
-      const promptOps = stubOps({ text: "created", onPrompt: (input) => (input.sessionID === chat.id ? undefined : (seen = input)) })
+      const promptOps = stubOps({
+        text: "created",
+        onPrompt: (input) => (input.sessionID === chat.id ? undefined : (seen = input)),
+      })
 
       const result = yield* def.execute(
         {
@@ -922,8 +921,54 @@ describe("tool.task", () => {
     }),
   )
 
-  fastCompletion.instance("returns a completed foreground result when promotion observation resolves undefined after fast completion", () =>
+  background.instance("delivers a background notification while the parent is still busy", () =>
     Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const status = yield* SessionStatus.Service
+      const { chat, assistant } = yield* seed()
+      let notification: SessionPrompt.PromptInput | undefined
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      yield* status.set(chat.id, { type: "busy" })
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+          background: true,
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: {
+            promptOps: stubOps({
+              text: "background done",
+              onPrompt: (input) => {
+                if (input.sessionID === chat.id && input.noReply === true) notification = input
+              },
+            }),
+          },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      yield* jobs.wait({ id: result.metadata.sessionId })
+      expect(notification).toMatchObject({
+        sessionID: chat.id,
+        noReply: true,
+        parts: [{ type: "text", synthetic: true }],
+      })
+    }),
+  )
+
+  background.instance("durably admits the parent notification before legacy prompt rendering", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -933,21 +978,54 @@ describe("tool.task", () => {
           description: "inspect bug",
           prompt: "look into the cache key path",
           subagent_type: "general",
+          background: true,
         },
         {
           sessionID: chat.id,
           messageID: assistant.id,
           agent: "build",
           abort: new AbortController().signal,
-          extra: { promptOps: stubOps() },
+          extra: { promptOps: stubOps({ text: "background done" }) },
           messages: [],
           metadata: () => Effect.void,
           ask: () => Effect.void,
         },
       )
 
-      expect(result.output).toContain("<task_result>\nfast result\n</task_result>")
+      yield* jobs.wait({ id: result.metadata.sessionId })
+      const { db } = yield* Database.Service
+      expect(yield* db.select({ id: SessionInputTable.id }).from(SessionInputTable).all()).toHaveLength(2)
     }),
+  )
+
+  fastCompletion.instance(
+    "returns a completed foreground result when promotion observation resolves undefined after fast completion",
+    () =>
+      Effect.gen(function* () {
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.output).toContain("<task_result>\nfast result\n</task_result>")
+      }),
   )
 
   staleObservation.instance("does not report background updated from a stale pre-start background snapshot", () =>
@@ -1019,44 +1097,46 @@ describe("tool.task", () => {
     }),
   )
 
-  missingJob.instance("returns an explicit lifecycle error when the process-local task job is missing after submission", () =>
-    Effect.gen(function* () {
-      missingJobWaitStarted = yield* Deferred.make<void>()
-      missingJobWaitRelease = yield* Deferred.make<void>()
-      const { chat, assistant } = yield* seed()
-      const { db } = yield* Database.Service
-      const tool = yield* TaskTool
-      const def = yield* tool.init()
+  missingJob.instance(
+    "returns an explicit lifecycle error when the process-local task job is missing after submission",
+    () =>
+      Effect.gen(function* () {
+        missingJobWaitStarted = yield* Deferred.make<void>()
+        missingJobWaitRelease = yield* Deferred.make<void>()
+        const { chat, assistant } = yield* seed()
+        const { db } = yield* Database.Service
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
 
-      const fiber = yield* def
-        .execute(
-          {
-            description: "inspect bug",
-            prompt: "look into the cache key path",
-            subagent_type: "general",
-          },
-          {
-            sessionID: chat.id,
-            messageID: assistant.id,
-            agent: "build",
-            abort: new AbortController().signal,
-            extra: { promptOps: stubOps({ text: "background done" }) },
-            messages: [],
-            metadata: () => Effect.void,
-            ask: () => Effect.void,
-          },
-        )
-        .pipe(Effect.forkChild)
+        const fiber = yield* def
+          .execute(
+            {
+              description: "inspect bug",
+              prompt: "look into the cache key path",
+              subagent_type: "general",
+            },
+            {
+              sessionID: chat.id,
+              messageID: assistant.id,
+              agent: "build",
+              abort: new AbortController().signal,
+              extra: { promptOps: stubOps({ text: "background done" }) },
+              messages: [],
+              metadata: () => Effect.void,
+              ask: () => Effect.void,
+            },
+          )
+          .pipe(Effect.forkChild)
 
-      yield* Deferred.await(missingJobWaitStarted)
-      expect(yield* db.select({ id: TaskSubmissionTable.id }).from(TaskSubmissionTable).all()).toHaveLength(1)
-      expect(yield* db.select({ id: SessionInputTable.id }).from(SessionInputTable).all()).toHaveLength(1)
-      yield* Deferred.succeed(missingJobWaitRelease, undefined)
+        yield* Deferred.await(missingJobWaitStarted)
+        expect(yield* db.select({ id: TaskSubmissionTable.id }).from(TaskSubmissionTable).all()).toHaveLength(1)
+        expect(yield* db.select({ id: SessionInputTable.id }).from(SessionInputTable).all()).toHaveLength(1)
+        yield* Deferred.succeed(missingJobWaitRelease, undefined)
 
-      const exit = yield* Fiber.await(fiber)
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) expect(String(Cause.squash(exit.cause))).toContain("lifecycle")
-    }),
+        const exit = yield* Fiber.await(fiber)
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) expect(String(Cause.squash(exit.cause))).toContain("lifecycle")
+      }),
   )
 
   background.instance("removing the parent session cancels running background tasks", () =>

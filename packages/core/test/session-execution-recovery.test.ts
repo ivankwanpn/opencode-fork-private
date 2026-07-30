@@ -139,6 +139,141 @@ const startRecovery = (runnerCalls: { count: number }, onRun?: (sessionID: Sessi
   })
 
 describe("SessionExecution recovery", () => {
+  it.effect("settles an accepted task after restart when the child completed normally", () =>
+    Effect.gen(function* () {
+      yield* setupProject([
+        { id: parentSessionID },
+        { id: childSessionID, parentID: parentSessionID },
+      ])
+      const { db } = yield* Database.Service
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit(invocation)
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([childSessionID])
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_execution_accepted_completed_assistant"),
+        type: "assistant",
+        agent: "general",
+        model,
+        content: [{ type: "text", id: "text_execution_accepted_completed", text: "accepted result" }],
+        time: { created: DateTime.makeUnsafe(2), completed: DateTime.makeUnsafe(3) },
+      })
+      const messages = [
+        SessionMessage.User.make({
+          id: submitted.childInputID,
+          type: "user",
+          text: invocation.prompt.text,
+          time: { created: DateTime.makeUnsafe(1) },
+        }),
+        assistant,
+      ]
+      expect(yield* submissions.recoverCompleted({ sessionID: childSessionID, messages })).toBe(1)
+      expect(yield* submissions.get(submitted.id)).toMatchObject({
+        outcome: "completed",
+        resultText: "accepted result",
+      })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("does not hide an interrupted newer task behind an older completed submission", () =>
+    Effect.gen(function* () {
+      yield* setupProject([
+        { id: parentSessionID },
+        { id: childSessionID, parentID: parentSessionID },
+      ])
+      const { db } = yield* Database.Service
+      const submissions = yield* TaskSubmission.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_execution_recovery_older",
+        assistantMessageID: SessionMessage.ID.make("msg_execution_recovery_older_assistant"),
+        prompt: Prompt.make({ text: "Older completed task" }),
+        description: "Older completed task",
+      })
+      const second = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_execution_recovery_newer",
+        assistantMessageID: SessionMessage.ID.make("msg_execution_recovery_newer_assistant"),
+        prompt: Prompt.make({ text: "Newer interrupted task" }),
+        description: "Newer interrupted task",
+      })
+      yield* submissions.claim(second.id)
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_execution_recovery_older_result"),
+        type: "assistant",
+        agent: "general",
+        model,
+        content: [{ type: "text", id: "text_execution_recovery_older_result", text: "older result" }],
+        time: { created: DateTime.makeUnsafe(2), completed: DateTime.makeUnsafe(3) },
+      })
+
+      yield* db
+        .insert(SessionMessageTable)
+        .values([
+          messageRow(
+            SessionMessage.User.make({
+              id: first.childInputID,
+              type: "user",
+              text: first.prompt.text,
+              time: { created: DateTime.makeUnsafe(1) },
+            }),
+            childSessionID,
+            1,
+          ),
+          messageRow(assistant, childSessionID, 2),
+          messageRow(
+            SessionMessage.User.make({
+              id: second.childInputID,
+              type: "user",
+              text: second.prompt.text,
+              time: { created: DateTime.makeUnsafe(4) },
+            }),
+            childSessionID,
+            3,
+          ),
+        ])
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: 1 })
+        .where(eq(SessionInputTable.id, first.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: 3 })
+        .where(eq(SessionInputTable.id, second.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionAttemptTable)
+        .values({
+          session_id: childSessionID,
+          attempt_id: EventV2.ID.make("evt_execution_recovery_newer_attempt"),
+          assistant_message_id: second.assistantMessageID,
+          status: "responding",
+          attempt: 1,
+          seq: 3,
+          time_updated: 3,
+        })
+        .run()
+        .pipe(Effect.orDie)
+
+      yield* startRecovery({ count: 0 })
+
+      expect(yield* submissions.get(first.id)).toMatchObject({
+        outcome: "completed",
+        resultText: "older result",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        outcome: "recovery-required",
+      })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(2)
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+    }),
+  )
+
   it.effect("does not rediscover or promote terminal inputs that never reached the runner", () =>
     Effect.gen(function* () {
       yield* setupProject([{ id: sessionID }])

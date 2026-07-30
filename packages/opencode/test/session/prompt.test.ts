@@ -597,6 +597,33 @@ it.instance("legacy prompt emits message events without session.next events", ()
   }),
 )
 
+it.instance("replaying a no-reply prompt with the same message ID is idempotent", () =>
+  Effect.gen(function* () {
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Notification replay" })
+    const messageID = MessageID.make("msg_notification_replay")
+    const input = {
+      messageID,
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      noReply: true,
+      parts: [{ type: "text" as const, synthetic: true, text: "background finished" }],
+    }
+
+    yield* prompt.prompt(input)
+    yield* prompt.prompt(input)
+
+    const message = yield* sessions.findMessage(chat.id, (item) => item.info.id === messageID)
+    expect(message._tag).toBe("Some")
+    if (message._tag === "Some") {
+      expect(message.value.parts).toHaveLength(1)
+      expect(message.value.parts[0]).toMatchObject({ type: "text", synthetic: true, text: "background finished" })
+    }
+  }),
+)
+
 it.instance("loop surfaces content-filter finishes as session errors", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

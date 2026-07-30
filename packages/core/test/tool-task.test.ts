@@ -43,6 +43,7 @@ const interrupted: SessionSchema.ID[] = []
 const woken: SessionSchema.ID[] = []
 const taskSubmissions = new Map<string, TaskSubmission.Info>()
 const taskInputIDs = new Map<SessionSchema.ID, SessionMessage.ID>()
+const taskInputHistory = new Map<SessionSchema.ID, SessionMessage.ID[]>()
 const deliveredTaskSubmissions = new Set<string>()
 let depth = 1
 let childSequence = 0
@@ -82,12 +83,14 @@ const assistant = (text: string) =>
   })
 
 const childContext = (sessionID: SessionSchema.ID, text: string) => [
-  SessionMessage.User.make({
-    id: taskInputIDs.get(sessionID) ?? SessionMessage.ID.create(),
-    type: "user",
-    text: "task input",
-    time: { created: DateTime.makeUnsafe(1) },
-  }),
+  ...(taskInputHistory.get(sessionID) ?? [taskInputIDs.get(sessionID) ?? SessionMessage.ID.create()]).map((id) =>
+    SessionMessage.User.make({
+      id,
+      type: "user",
+      text: "task input",
+      time: { created: DateTime.makeUnsafe(1) },
+    }),
+  ),
   assistant(text),
 ]
 
@@ -119,6 +122,7 @@ const reset = () => {
   woken.length = 0
   taskSubmissions.clear()
   taskInputIDs.clear()
+  taskInputHistory.clear()
   deliveredTaskSubmissions.clear()
   depth = 1
   childSequence = 0
@@ -303,6 +307,10 @@ const taskSubmissionLayer = Layer.succeed(
         }
         taskSubmissions.set(id, info)
         taskInputIDs.set(input.childSessionID, childInputID)
+        taskInputHistory.set(input.childSessionID, [
+          ...(taskInputHistory.get(input.childSessionID) ?? []),
+          childInputID,
+        ])
         admissions.push({
           sessionID: input.childSessionID,
           prompt: { text: input.prompt.text },
@@ -338,6 +346,7 @@ const taskSubmissionLayer = Layer.succeed(
         return settled
       }),
     recoverSession: () => Effect.succeed(0),
+    recoverCompleted: () => Effect.succeed(0),
     markRecoveryRequired: () => Effect.succeed(0),
   }),
 )
@@ -687,30 +696,34 @@ describe("TaskTool", () => {
     }),
   )
 
-  foregroundFastCompletion.effect("returns a completed foreground result when promotion observation resolves undefined after fast completion", () =>
-    Effect.gen(function* () {
-      reset()
-      const registry = yield* ToolRegistry.Service
+  foregroundFastCompletion.effect(
+    "returns a completed foreground result when promotion observation resolves undefined after fast completion",
+    () =>
+      Effect.gen(function* () {
+        reset()
+        const registry = yield* ToolRegistry.Service
 
-      expect(yield* executeTool(registry, call(input, "call-fast-completion"))).toMatchObject({
-        type: "text",
-        value: expect.stringContaining("<task_result>\nfast result\n</task_result>"),
-      })
-    }),
+        expect(yield* executeTool(registry, call(input, "call-fast-completion"))).toMatchObject({
+          type: "text",
+          value: expect.stringContaining("<task_result>\nfast result\n</task_result>"),
+        })
+      }),
   )
 
-  foregroundStaleObservation.effect("does not report background updated from a stale pre-start background snapshot", () =>
-    Effect.gen(function* () {
-      reset()
-      const registry = yield* ToolRegistry.Service
+  foregroundStaleObservation.effect(
+    "does not report background updated from a stale pre-start background snapshot",
+    () =>
+      Effect.gen(function* () {
+        reset()
+        const registry = yield* ToolRegistry.Service
 
-      const result = yield* executeTool(registry, call(input, "call-stale-observation"))
-      expect(result).toMatchObject({
-        type: "text",
-        value: expect.stringContaining("<task_result>\nfresh result\n</task_result>"),
-      })
-      if (result.type === "text") expect(String(result.value)).not.toContain("Background task updated")
-    }),
+        const result = yield* executeTool(registry, call(input, "call-stale-observation"))
+        expect(result).toMatchObject({
+          type: "text",
+          value: expect.stringContaining("<task_result>\nfresh result\n</task_result>"),
+        })
+        if (result.type === "text") expect(String(result.value)).not.toContain("Background task updated")
+      }),
   )
 
   background.effect("promotes a foreground task to background execution", () =>
@@ -741,6 +754,38 @@ describe("TaskTool", () => {
       yield* Deferred.succeed(release, undefined)
       yield* Deferred.await(notificationSignal)
       expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
+    }),
+  )
+
+  background.effect("does not reuse an assistant after a later child input", () =>
+    Effect.gen(function* () {
+      reset()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "combined result"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      yield* executeTool(registry, call({ ...input, background: true }, "call-first"))
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* executeTool(registry, call({ ...input, task_id: childID, background: true }, "call-second"))
+
+      yield* Deferred.succeed(release, undefined)
+      yield* jobs.wait({ id: childID })
+
+      const submissions = Array.from(taskSubmissions.values())
+      expect(submissions.find((submission) => submission.toolCallID === "call-first")).not.toMatchObject({
+        outcome: "completed",
+        resultText: "combined result",
+      })
+      expect(submissions.find((submission) => submission.toolCallID === "call-second")).toMatchObject({
+        outcome: "completed",
+        resultText: "combined result",
+      })
     }),
   )
 

@@ -9,7 +9,7 @@ import { NonNegativeInt } from "../schema"
 import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionAttemptTable } from "./sql"
+import { SessionAttemptTable, SessionCancellationTable } from "./sql"
 
 export const Status = Schema.Union([
   Schema.Struct({ type: Schema.Literal("idle") }),
@@ -64,6 +64,26 @@ export class RecoveryConflictError extends Schema.TaggedErrorClass<RecoveryConfl
 
 type DB = Database.Interface["db"]
 type Row = typeof SessionAttemptTable.$inferSelect
+
+const isCancelled = Effect.fn("SessionAttempt.isCancelled")(function* (db: DB, sessionID: SessionSchema.ID) {
+  const rows = yield* db
+    .all<{ root_session_id: string }>(sql`
+      WITH RECURSIVE ancestors(id) AS (
+        SELECT ${sessionID}
+        UNION ALL
+        SELECT session.parent_id
+        FROM session
+        JOIN ancestors ON session.id = ancestors.id
+        WHERE session.parent_id IS NOT NULL
+      )
+      SELECT cancellation.root_session_id
+      FROM ${SessionCancellationTable} cancellation
+      JOIN ancestors ON ancestors.id = cancellation.root_session_id
+      LIMIT 1
+    `)
+    .pipe(Effect.orDie)
+  return rows.length > 0
+})
 
 const sequence = (event: SessionEvent.Event) => {
   if (event.durable === undefined) throw new Error("Durable Session attempt event is missing aggregate sequence")
@@ -159,110 +179,177 @@ export const scheduled = Effect.fn("SessionAttempt.scheduled")(function* (db: DB
     .pipe(Effect.orDie)
 })
 
-export const projectStarted = (db: DB, event: SessionEvent.ProviderAttempt.Started) =>
-  db
-    .insert(SessionAttemptTable)
-    .values({
-      session_id: event.data.sessionID,
-      attempt_id: event.data.attemptID,
-      assistant_message_id: event.data.assistantMessageID,
-      status: "started",
-      attempt: event.data.attempt,
-      retry_of: event.data.retryOf,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .onConflictDoUpdate({
-      target: SessionAttemptTable.session_id,
-      set: {
-        attempt_id: event.data.attemptID,
-        assistant_message_id: event.data.assistantMessageID,
-        status: "started",
-        attempt: event.data.attempt,
-        retry_of: event.data.retryOf ?? null,
-        retry_at: null,
-        error: null,
-        decision: null,
-        seq: sequence(event),
-        time_updated: DateTime.toEpochMillis(event.data.timestamp),
-      },
-    })
-    .run()
-    .pipe(Effect.orDie)
-
-export const projectResponseStarted = (db: DB, event: SessionEvent.ProviderAttempt.ResponseStarted) =>
-  db
-    .update(SessionAttemptTable)
-    .set({
-      status: "responding",
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+export const projectStarted = Effect.fn("SessionAttempt.projectStarted")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.Started,
+) {
+  yield* db
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .insert(SessionAttemptTable)
+            .values({
+              session_id: event.data.sessionID,
+              attempt_id: event.data.attemptID,
+              assistant_message_id: event.data.assistantMessageID,
+              status: "started",
+              attempt: event.data.attempt,
+              retry_of: event.data.retryOf,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .onConflictDoUpdate({
+              target: SessionAttemptTable.session_id,
+              set: {
+                attempt_id: event.data.attemptID,
+                assistant_message_id: event.data.assistantMessageID,
+                status: "started",
+                attempt: event.data.attempt,
+                retry_of: event.data.retryOf ?? null,
+                retry_at: null,
+                error: null,
+                decision: null,
+                seq: sequence(event),
+                time_updated: DateTime.toEpochMillis(event.data.timestamp),
+              },
+            })
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
+})
 
-export const projectEnded = (db: DB, event: SessionEvent.ProviderAttempt.Ended) =>
-  db
-    .update(SessionAttemptTable)
-    .set({
-      status: event.data.continuation ? "continuation" : event.data.outcome === "abandoned" ? "abandoned" : "ended",
-      error: event.data.error ? { message: event.data.error.message, isRetryable: false } : null,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+export const projectResponseStarted = Effect.fn("SessionAttempt.projectResponseStarted")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.ResponseStarted,
+) {
+  yield* db
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: "responding",
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
+})
 
-export const projectRetried = (db: DB, event: SessionEvent.Retried) =>
-  db
-    .update(SessionAttemptTable)
-    .set({
-      status: "retrying",
-      attempt: event.data.attempt,
-      retry_at: DateTime.toEpochMillis(event.data.next),
-      error: event.data.error,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+export const projectEnded = Effect.fn("SessionAttempt.projectEnded")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.Ended,
+) {
+  yield* db
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status:
+                event.data.continuation ? "continuation" : event.data.outcome === "abandoned" ? "abandoned" : "ended",
+              error: event.data.error ? { message: event.data.error.message, isRetryable: false } : null,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
+})
 
-export const projectRecoveryDecided = (db: DB, event: SessionEvent.ProviderAttempt.Recovery.Decided) =>
-  db
-    .update(SessionAttemptTable)
-    .set({
-      status: event.data.decision === "retry" ? "continuation" : "abandoned",
-      decision: event.data.decision,
-      retry_of: event.data.decision === "retry" ? event.data.attemptID : null,
-      attempt: event.data.decision === "retry" ? sql`${SessionAttemptTable.attempt} + 1` : SessionAttemptTable.attempt,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+export const projectRetried = Effect.fn("SessionAttempt.projectRetried")(function* (
+  db: DB,
+  event: SessionEvent.Retried,
+) {
+  yield* db
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: "retrying",
+              attempt: event.data.attempt,
+              retry_at: DateTime.toEpochMillis(event.data.next),
+              error: event.data.error,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
+})
+
+export const projectRecoveryDecided = Effect.fn("SessionAttempt.projectRecoveryDecided")(function* (
+  db: DB,
+  event: SessionEvent.ProviderAttempt.Recovery.Decided,
+) {
+  yield* db
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: event.data.decision === "retry" ? "continuation" : "abandoned",
+              decision: event.data.decision,
+              retry_of: event.data.decision === "retry" ? event.data.attemptID : null,
+              attempt:
+                event.data.decision === "retry" ? sql`${SessionAttemptTable.attempt} + 1` : SessionAttemptTable.attempt,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
+    )
+    .pipe(Effect.orDie)
+})
 
 export const row = (value: Row) => value

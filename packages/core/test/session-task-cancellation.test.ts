@@ -240,6 +240,34 @@ describe("TaskCancellation", () => {
     }),
   )
 
+  it.effect("rejects submissions targeting a cancelled child session", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const cancellation = yield* TaskCancellation.Service
+      const submissions = yield* TaskSubmission.Service
+
+      yield* cancellation.cancelTree({
+        rootSessionID: child,
+        interrupt: () => Effect.void,
+        wait: () => Effect.void,
+      })
+
+      const rejected = yield* submissions
+        .submit({
+          parentSessionID: root,
+          assistantMessageID: SessionMessage.ID.make("msg_cancel_targeted_assistant"),
+          toolCallID: "call_cancel_targeted_child",
+          childSessionID: child,
+          description: "target cancelled child",
+          prompt,
+          agent: "general",
+        })
+        .pipe(Effect.flip)
+
+      expect(rejected._tag).toBe("TaskSubmission.Cancelled")
+    }),
+  )
+
   it.effect("leaves cancellation completion unset until post-commit waits finish", () =>
     Effect.gen(function* () {
       yield* setup

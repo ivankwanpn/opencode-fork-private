@@ -219,7 +219,7 @@ export const TaskSubmissionTable = sqliteTable(
   ],
 )
 
-export type TaskNotificationOutboxStatus = "pending" | "delivered" | "woken" | "error"
+export type TaskNotificationOutboxStatus = "pending" | "delivered" | "woken" | "error" | "suppressed"
 
 export const TaskNotificationOutboxTable = sqliteTable(
   "task_notification_outbox",

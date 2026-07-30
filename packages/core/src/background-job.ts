@@ -48,7 +48,17 @@ type PromoteResult = {
   onPromote?: Effect.Effect<void>
 }
 
-type StartResult = { info: Info } | { info: Info; scope: Scope.Closeable; token: object }
+type StartResult =
+  | { kind: "started"; info: Info; scope: Scope.Closeable; token: object }
+  | {
+      kind: "extended"
+      info: Info
+      previous: Deferred.Deferred<void>
+      scope: Scope.Closeable
+      tail: Deferred.Deferred<void>
+      token: object
+      sequence: number
+    }
 
 type ExtendResult =
   | { extended: false }
@@ -143,9 +153,17 @@ export const make = Effect.gen(function* () {
         Exit.isSuccess(exit) && (!job.output || sequence > job.output.sequence)
           ? { sequence, text: exit.value }
           : job.output
-      if (Exit.isSuccess(exit) && pending > 0) {
-        return [{}, new Map(jobs).set(id, { ...job, pending, output })]
-      }
+      const runState = Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : { error: undefined }
+      if (pending > 0)
+        return [
+          {},
+          new Map(jobs).set(id, {
+            ...job,
+            pending,
+            output,
+            info: { ...job.info, ...runState },
+          }),
+        ]
       const status: Exclude<Status, "running"> = Exit.isSuccess(exit)
         ? "completed"
         : Cause.hasInterruptsOnly(exit.cause)
@@ -161,7 +179,7 @@ export const make = Effect.gen(function* () {
           status,
           completed_at,
           ...(output ? { output: output.text } : {}),
-          ...(Exit.isFailure(exit) ? { error: errorText(Cause.squash(exit.cause)) } : {}),
+          ...runState,
         },
       }
       return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
@@ -179,12 +197,14 @@ export const make = Effect.gen(function* () {
     token: object,
     sequence: number,
     run: Effect.Effect<string, unknown>,
+    tail: Deferred.Deferred<void>,
   ) {
     return yield* run.pipe(
       Effect.matchCauseEffect({
         onSuccess: (output) => settle(id, token, sequence, Exit.succeed(output)),
         onFailure: (cause) => settle(id, token, sequence, Exit.failCause(cause)),
       }),
+      Effect.ensuring(Deferred.succeed(tail, undefined)),
       Effect.asVoid,
       Effect.forkIn(scope, { startImmediately: true }),
     )
@@ -215,7 +235,24 @@ export const make = Effect.gen(function* () {
           Effect.fnUntraced(function* (jobs) {
             const existing = jobs.get(id)
             if (existing?.info.status === "running") {
-              return [{ info: snapshot(existing) }, jobs] as readonly [StartResult, Map<string, Active>]
+              const tail = yield* Deferred.make<void>()
+              return [
+                {
+                  kind: "extended",
+                  info: snapshot(existing),
+                  previous: existing.tail,
+                  scope: existing.scope,
+                  tail,
+                  token: existing.token,
+                  sequence: existing.next,
+                },
+                new Map(jobs).set(id, {
+                  ...existing,
+                  pending: existing.pending + 1,
+                  next: existing.next + 1,
+                  tail,
+                }),
+              ] as readonly [StartResult, Map<string, Active>]
             }
             const scope = yield* Scope.fork(state.scope, "parallel")
             const token = {}
@@ -237,21 +274,33 @@ export const make = Effect.gen(function* () {
               promoted,
               onPromote: input.onPromote,
             }
-            return [{ info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
+            return [{ kind: "started", info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
               StartResult,
               Map<string, Active>,
             ]
           }),
         )
-        if ("scope" in result)
+        if (result.kind === "started") {
           yield* fork(
             result.scope,
             id,
             result.token,
             0,
-            restore(input.run).pipe(Effect.ensuring(Deferred.succeed(tail, undefined))),
+            restore(input.run),
+            tail,
           )
-        else yield* extend({ id, run: input.run })
+        } else {
+          yield* fork(
+            result.scope,
+            id,
+            result.token,
+            result.sequence,
+            Deferred.await(result.previous).pipe(
+              Effect.andThen(restore(input.run)),
+            ),
+            result.tail,
+          )
+        }
         return result.info
       }),
     )
@@ -285,8 +334,8 @@ export const make = Effect.gen(function* () {
           result.sequence,
           Deferred.await(result.previous).pipe(
             Effect.andThen(restore(input.run)),
-            Effect.ensuring(Deferred.succeed(result.tail, undefined)),
           ),
+          result.tail,
         )
         return true
       }),

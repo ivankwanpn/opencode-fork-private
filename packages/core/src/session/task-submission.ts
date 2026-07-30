@@ -76,6 +76,12 @@ export type ClaimResult = {
 export type RecoveryInput = {
   readonly sessionID: SessionSchema.ID
   readonly assistantMessageID: SessionMessage.ID
+  readonly childInputID: SessionMessage.ID
+  readonly messages: ReadonlyArray<SessionMessage.Message>
+}
+
+export type SessionRecoveryInput = {
+  readonly sessionID: SessionSchema.ID
   readonly messages: ReadonlyArray<SessionMessage.Message>
 }
 
@@ -91,6 +97,7 @@ export interface Interface {
   readonly claim: (id: string) => Effect.Effect<ClaimResult, Missing>
   readonly terminalize: (input: TerminalizeInput) => Effect.Effect<Info | undefined>
   readonly recoverSession: (input: RecoveryInput) => Effect.Effect<number>
+  readonly recoverCompleted: (input: SessionRecoveryInput) => Effect.Effect<number>
   readonly markRecoveryRequired: (input: RecoveryRequiredInput) => Effect.Effect<number>
 }
 
@@ -152,6 +159,15 @@ const layer = Layer.effect(
       return rows.length > 0
     })
 
+    const isInvocationCancelled = Effect.fn("TaskSubmission.isInvocationCancelled")(function* (
+      parentSessionID: SessionSchema.ID,
+      childSessionID: SessionSchema.ID,
+    ) {
+      if (yield* isCancelled(parentSessionID)) return true
+      if (parentSessionID === childSessionID) return false
+      return yield* isCancelled(childSessionID)
+    })
+
     const findInvocation = Effect.fn("TaskSubmission.findInvocation")(function* (input: Identity) {
       return yield* db
         .select()
@@ -207,7 +223,7 @@ const layer = Layer.effect(
           })
         return toInfo(existing)
       }
-      if (yield* isCancelled(input.parentSessionID))
+      if (yield* isInvocationCancelled(input.parentSessionID, input.childSessionID))
         return yield* new Cancelled({ parentSessionID: input.parentSessionID })
 
       const childInputID = inputID(input)
@@ -215,7 +231,7 @@ const layer = Layer.effect(
       const timeCreated = yield* Clock.currentTimeMillis
       const commit = (_seq: number) =>
         Effect.gen(function* () {
-          if (yield* isCancelled(input.parentSessionID))
+          if (yield* isInvocationCancelled(input.parentSessionID, input.childSessionID))
             return yield* Effect.die(new Cancelled({ parentSessionID: input.parentSessionID }))
           yield* db
             .insert(TaskSubmissionTable)
@@ -357,35 +373,23 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
     })
 
-    const recoverSession: Interface["recoverSession"] = Effect.fn("TaskSubmission.recoverSession")(function* (input) {
-      const assistantIndex = input.messages.findIndex((message) => message.id === input.assistantMessageID)
-      if (assistantIndex < 0) return 0
-      const assistant = input.messages[assistantIndex]
-      if (!assistant || assistant.type !== "assistant" || assistant.time.completed === undefined) return 0
-
-      const rows = yield* db
+    const recoverOne = Effect.fn("TaskSubmission.recoverOne")(function* (
+      submission: typeof TaskSubmissionTable.$inferSelect,
+      assistant: SessionMessage.Assistant,
+    ) {
+      const row = yield* db
         .select()
         .from(TaskSubmissionTable)
-        .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
-        .all()
+        .where(and(eq(TaskSubmissionTable.id, submission.id), isNull(TaskSubmissionTable.outcome)))
+        .get()
         .pipe(Effect.orDie)
-      const match = rows.reduce<{ readonly row: (typeof rows)[number]; readonly inputIndex: number } | undefined>(
-        (best, row) => {
-          const inputIndex = input.messages.findIndex((message) => message.id === row.child_input_id)
-          if (inputIndex < 0 || inputIndex >= assistantIndex) return best
-          if (!best || inputIndex > best.inputIndex) return { row, inputIndex }
-          return best
-        },
-        undefined,
-      )
-      if (!match) return 0
-
+      if (!row) return false
       const text = assistant.content
         .filter((part): part is SessionMessage.AssistantText => part.type === "text")
         .map((part) => part.text)
         .join("")
       const recovered = yield* terminalize({
-        submissionID: match.row.id,
+        submissionID: row.id,
         outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
         resultMessageID: assistant.id,
         resultText: text,
@@ -404,16 +408,52 @@ const layer = Layer.effect(
           })
           .where(
             and(
-              eq(SessionAttemptTable.session_id, input.sessionID),
-              eq(SessionAttemptTable.assistant_message_id, input.assistantMessageID),
+              eq(SessionAttemptTable.session_id, row.child_session_id),
+              eq(SessionAttemptTable.assistant_message_id, assistant.id),
               or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")),
             ),
           )
           .run()
           .pipe(Effect.orDie)
       }
-      return recovered ? 1 : 0
+      return recovered !== undefined
     })
+
+    const recoverSession: Interface["recoverSession"] = Effect.fn("TaskSubmission.recoverSession")(function* (input) {
+      const assistant = findCompletedAssistant(input.messages, input.childInputID, input.assistantMessageID)
+      if (!assistant) return 0
+      const row = yield* db
+        .select()
+        .from(TaskSubmissionTable)
+        .where(
+          and(
+            eq(TaskSubmissionTable.child_session_id, input.sessionID),
+            eq(TaskSubmissionTable.child_input_id, input.childInputID),
+            isNull(TaskSubmissionTable.outcome),
+          ),
+        )
+        .get()
+        .pipe(Effect.orDie)
+      if (!row) return 0
+      return (yield* recoverOne(row, assistant)) ? 1 : 0
+    })
+
+    const recoverCompleted: Interface["recoverCompleted"] = Effect.fn("TaskSubmission.recoverCompleted")(
+      function* (input) {
+        const rows = yield* db
+          .select()
+          .from(TaskSubmissionTable)
+          .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
+          .all()
+          .pipe(Effect.orDie)
+        let recovered = 0
+        for (const row of rows) {
+          const assistant = findCompletedAssistant(input.messages, SessionMessage.ID.make(row.child_input_id))
+          if (assistant && (yield* recoverOne(row, assistant))) recovered++
+        }
+        return recovered
+      },
+    )
 
     const markRecoveryRequired: Interface["markRecoveryRequired"] = Effect.fn("TaskSubmission.markRecoveryRequired")(
       function* (input) {
@@ -462,7 +502,7 @@ const layer = Layer.effect(
       },
     )
 
-    return Service.of({ submit, get, claim, terminalize, recoverSession, markRecoveryRequired })
+    return Service.of({ submit, get, claim, terminalize, recoverSession, recoverCompleted, markRecoveryRequired })
   }),
 )
 
@@ -480,6 +520,29 @@ function matches(existing: Info, input: Invocation) {
 
 function serializedModel(model: unknown) {
   return JSON.stringify(model ?? null)
+}
+
+function findCompletedAssistant(
+  messages: ReadonlyArray<SessionMessage.Message>,
+  childInputID: SessionMessage.ID,
+  assistantMessageID?: SessionMessage.ID,
+) {
+  const inputIndex = messages.findIndex((message) => message.id === childInputID)
+  if (inputIndex < 0) return undefined
+  const afterInput = messages.slice(inputIndex + 1)
+  if (assistantMessageID !== undefined) {
+    const assistant = afterInput.find((message) => message.id === assistantMessageID)
+    if (assistant?.type === "assistant" && assistant.time.completed !== undefined) return assistant
+    return undefined
+  }
+  const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
+  return afterInput
+    .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
+    .find(
+      (message): message is SessionMessage.Assistant =>
+        message.type === "assistant" &&
+        message.time.completed !== undefined,
+    )
 }
 
 function digest(value: string) {

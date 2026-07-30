@@ -158,6 +158,26 @@ describe("BackgroundJob", () => {
     }).pipe(Effect.provide(jobsLayer)),
   )
 
+  it.live("keeps later accepted runs alive after an earlier queued run fails", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const first = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        id: "failed-queued-run",
+        type: "test",
+        run: Deferred.await(first).pipe(Effect.andThen(Effect.fail("first failed"))),
+      })
+
+      expect(yield* jobs.extend({ id: job.id, run: Effect.succeed("second") })).toBe(true)
+      yield* Deferred.succeed(first, undefined)
+
+      expect(yield* jobs.wait({ id: job.id })).toMatchObject({
+        timedOut: false,
+        info: { status: "completed", output: "second" },
+      })
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
   it.live("queues a later start for an already running job instead of dropping it", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
@@ -170,6 +190,31 @@ describe("BackgroundJob", () => {
       yield* Deferred.succeed(first, undefined)
 
       expect((yield* jobs.wait({ id: job.id })).info?.output).toBe("second")
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("does not lose a later start when the existing run settles during admission", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      yield* Effect.forEach(Array.from({ length: 1_000 }), (_, index) =>
+        Effect.gen(function* () {
+          const id = `settling-start-race-${index}`
+          const first = yield* Deferred.make<void>()
+          const job = yield* jobs.start({
+            id,
+            type: "test",
+            run: Deferred.await(first).pipe(Effect.as("first")),
+          })
+
+          const second = yield* jobs
+            .start({ id: job.id, type: "test", run: Effect.succeed("second") })
+            .pipe(Effect.forkChild)
+          yield* Deferred.succeed(first, undefined)
+          yield* Fiber.join(second)
+
+          expect((yield* jobs.wait({ id: job.id })).info?.output).toBe("second")
+        }),
+      )
     }).pipe(Effect.provide(jobsLayer)),
   )
 

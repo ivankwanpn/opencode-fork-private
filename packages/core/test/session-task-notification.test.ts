@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { eq } from "drizzle-orm"
-import { Effect, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -285,6 +285,56 @@ describe("TaskNotification", () => {
       expect(replayed.error).toMatchObject({
         message: expect.stringContaining("PromptConflictError"),
       })
+    }),
+  )
+
+  it.effect("does not rewrite a woken notification to error after a late wake failure", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const commands = yield* SessionCommand.Service
+      const { db } = yield* Database.Service
+      const firstWakeStarted = yield* Deferred.make<void>()
+      const releaseFirstWake = yield* Deferred.make<void>()
+      const secondDone = yield* Deferred.make<void>()
+      let wakeCalls = 0
+
+      const first = yield* notifications
+        .drain({
+          admit: admitAndRecord(commands),
+          wake: () =>
+            Effect.gen(function* () {
+              wakeCalls += 1
+              yield* Deferred.succeed(firstWakeStarted, undefined)
+              yield* Deferred.await(releaseFirstWake)
+              return yield* Effect.fail(new Error("late wake failure"))
+            }),
+        })
+        .pipe(Effect.forkChild)
+
+      yield* Deferred.await(firstWakeStarted)
+
+      const second = yield* notifications
+        .drain({
+          admit: admitAndRecord(commands),
+          wake: () =>
+            Effect.sync(() => {
+              wakeCalls += 1
+            }),
+        })
+        .pipe(Effect.ensuring(Deferred.succeed(secondDone, undefined)), Effect.forkChild)
+
+      yield* Deferred.await(secondDone)
+      yield* Deferred.succeed(releaseFirstWake, undefined)
+      expect(yield* Fiber.join(second)).toBe(1)
+      expect(yield* Fiber.join(first)).toBe(0)
+      expect(wakeCalls).toBe(2)
+      const outbox = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      expect(outbox.status).toBe("woken")
+      expect(outbox.time_woken).not.toBeNull()
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
+      ).toHaveLength(1)
     }),
   )
 })

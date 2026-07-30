@@ -7,7 +7,8 @@ import { Integration } from "@opencode-ai/core/integration"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
-import { OpenAIPlugin } from "@opencode-ai/core/plugin/provider/openai"
+import { applyOpenAILiveModels, OpenAIPlugin, resolveOpenAILiveModels } from "@opencode-ai/core/plugin/provider/openai"
+import type { ProviderModel } from "@opencode-ai/core/provider-models"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
@@ -41,6 +42,44 @@ function fakeSelectorSdk(calls: string[]) {
 }
 
 describe("OpenAIPlugin", () => {
+  it.effect("adds live OAuth models to the V2 catalog with their context metadata", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const liveID = ModelV2.ID.make("gpt-live")
+      yield* catalog.transform((draft) => {
+        draft.provider.update(ProviderV2.ID.openai, (provider) => {
+          provider.api = { type: "aisdk", package: "@ai-sdk/openai", url: "https://api.openai.com/v1" }
+        })
+      })
+
+      const hidden = new Set<string>()
+      const added = new Set<string>()
+      const live: ProviderModel[] = [{ id: liveID, name: "GPT Live", context: 321_000 }]
+      yield* catalog.transform((draft) => applyOpenAILiveModels(draft, live, hidden, added))
+
+      expect(yield* catalog.model.get(ProviderV2.ID.openai, liveID)).toMatchObject({
+        name: "GPT Live",
+        limit: { context: 321_000 },
+        enabled: true,
+      })
+      expect(added).toContain(`${ProviderV2.ID.openai}/${liveID}`)
+    }),
+  )
+
+  it.effect("does not reuse an OAuth snapshot after leaving OAuth", () =>
+    Effect.sync(() => {
+      const previous: ProviderModel[] = [{ id: "gpt-live", context: 321_000 }]
+      expect(resolveOpenAILiveModels(true, undefined, previous)).toEqual({
+        live: previous,
+        previous,
+      })
+      expect(resolveOpenAILiveModels(false, undefined, previous)).toEqual({
+        live: undefined,
+        previous: undefined,
+      })
+    }),
+  )
+
   it.effect("registers browser and headless ChatGPT OAuth methods", () =>
     Effect.gen(function* () {
       yield* addPlugin()

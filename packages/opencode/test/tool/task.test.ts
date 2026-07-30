@@ -105,6 +105,101 @@ const missingJob = testEffect(
     ],
   ),
 )
+const fastCompletion = testEffect(
+  layer(
+    {},
+    [
+      [
+        BackgroundJob.node,
+        Layer.succeed(
+          BackgroundJob.Service,
+          BackgroundJob.Service.of({
+            list: () => Effect.succeed([]),
+            get: () => Effect.succeed(undefined),
+            start: (input) =>
+              Effect.succeed({
+                id: input.id ?? "job_fast_completion",
+                type: input.type,
+                title: input.title,
+                status: "running",
+                started_at: 0,
+                metadata: input.metadata,
+              }),
+            extend: () => Effect.succeed(false),
+            wait: (input) =>
+              Effect.yieldNow.pipe(
+                Effect.as({
+                  timedOut: false,
+                  outcome: "completed" as const,
+                  info: {
+                    id: input.id,
+                    type: "task",
+                    status: "completed" as const,
+                    started_at: 0,
+                    completed_at: 1,
+                    output: "fast result",
+                  },
+                }),
+              ),
+            waitForPromotion: () => Effect.succeed(undefined),
+            promote: () => Effect.succeed(undefined),
+            cancel: () => Effect.succeed(undefined),
+          }),
+        ),
+      ],
+    ],
+  ),
+)
+const staleObservation = testEffect(
+  layer(
+    {},
+    [
+      [
+        BackgroundJob.node,
+        Layer.succeed(
+          BackgroundJob.Service,
+          BackgroundJob.Service.of({
+            list: () => Effect.succeed([]),
+            get: (id) =>
+              Effect.succeed({
+                id,
+                type: "task",
+                status: "running",
+                started_at: 0,
+                metadata: { background: true },
+              }),
+            start: (input) =>
+              Effect.succeed({
+                id: input.id ?? "job_fresh_start",
+                type: input.type,
+                title: input.title,
+                status: "running",
+                started_at: 1,
+                metadata: input.metadata,
+              }),
+            extend: () => Effect.succeed(false),
+            wait: (input) =>
+              Effect.succeed({
+                timedOut: false,
+                outcome: "completed" as const,
+                info: {
+                  id: input.id,
+                  type: "task",
+                  status: "completed" as const,
+                  started_at: 1,
+                  completed_at: 2,
+                  output: "fresh result",
+                },
+              }),
+            waitForPromotion: () => Effect.succeed(undefined),
+            promote: () => Effect.succeed(undefined),
+            cancel: () => Effect.succeed(undefined),
+          }),
+        ),
+      ],
+    ],
+  ),
+)
 
 function defer<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -824,6 +919,63 @@ describe("tool.task", () => {
       expect(waited.timedOut).toBe(false)
       expect(waited.info?.status).toBe("completed")
       expect(waited.info?.output).toBe("background done")
+    }),
+  )
+
+  fastCompletion.instance("returns a completed foreground result when promotion observation resolves undefined after fast completion", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps() },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.output).toContain("<task_result>\nfast result\n</task_result>")
+    }),
+  )
+
+  staleObservation.instance("does not report background updated from a stale pre-start background snapshot", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps() },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.output).toContain("<task_result>\nfresh result\n</task_result>")
+      expect(result.output).not.toContain("Background task updated")
     }),
   )
 

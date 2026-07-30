@@ -313,7 +313,6 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           background: true as const,
           jobId: child.id,
         }
-        const observedJob = yield* background.get(child.id)
 
         const info = yield* background.start({
           id: child.id,
@@ -340,7 +339,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           return result
         }
 
-        if (observedJob?.status === "running" && observedJob.metadata?.background === true) {
+        if (info.metadata?.background === true) {
           const result = runningResult("updated")
           yield* checkpoint(result.metadata, result.output)
           return result
@@ -348,11 +347,11 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
 
         return yield* Effect.raceFirst(
           background.wait({ id: child.id }),
-          background.waitForPromotion(child.id),
+          background.waitForPromotion(child.id).pipe(
+            Effect.flatMap((result) => (result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result))),
+          ),
         ).pipe(
           Effect.flatMap((result) => {
-            if (result === undefined)
-              return Effect.fail(new ToolFailure({ message: `Task lifecycle observation missing: ${child.id}` }))
             if ("timedOut" in result) {
               if (result.outcome === "missing")
                 return Effect.fail(new ToolFailure({ message: `Task lifecycle observation missing: ${child.id}` }))

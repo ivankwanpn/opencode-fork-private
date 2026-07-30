@@ -312,8 +312,6 @@ export const TaskTool = Tool.define(
         ),
       )
 
-      const existingJob = yield* background.get(nextSession.id)
-
       const info = yield* background.start({
         id: nextSession.id,
         type: id,
@@ -348,7 +346,7 @@ export const TaskTool = Tool.define(
         return backgroundResult("started")
       }
 
-      if (existingJob?.status === "running" && existingJob.metadata?.background === true) {
+      if (info.metadata?.background === true) {
         return backgroundResult("updated")
       }
 
@@ -365,9 +363,16 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
-            const result = yield* Effect.raceFirst(background.wait({ id: nextSession.id }), background.waitForPromotion(nextSession.id))
-            if (result === undefined)
-              return yield* Effect.fail(new Error(`Task lifecycle observation missing: ${nextSession.id}`))
+            const result = yield* Effect.raceFirst(
+              background.wait({ id: nextSession.id }),
+              background
+                .waitForPromotion(nextSession.id)
+                .pipe(
+                  Effect.flatMap((value) =>
+                    value === undefined ? background.wait({ id: nextSession.id }) : Effect.succeed(value),
+                  ),
+                ),
+            )
             if ("timedOut" in result) {
               if (result.outcome === "missing")
                 return yield* Effect.fail(new Error(`Task lifecycle observation missing: ${nextSession.id}`))

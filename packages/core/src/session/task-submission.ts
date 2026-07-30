@@ -459,8 +459,13 @@ function matches(existing: Info, input: Invocation) {
     existing.childSessionID === input.childSessionID &&
     existing.description === input.description &&
     existing.agent === input.agent &&
+    serializedModel(existing.model) === serializedModel(input.model) &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )
+}
+
+function serializedModel(model: unknown) {
+  return JSON.stringify(model ?? null)
 }
 
 function digest(value: string) {

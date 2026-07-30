@@ -181,17 +181,6 @@ const layer = Layer.effect(
                 .run()
                 .pipe(Effect.orDie)
 
-              yield* db
-                .update(SessionCancellationTable)
-                .set({ time_completed: now })
-                .where(
-                  and(
-                    eq(SessionCancellationTable.root_session_id, input.rootSessionID),
-                    isNull(SessionCancellationTable.time_completed),
-                  ),
-                )
-                .run()
-                .pipe(Effect.orDie)
               return { sessionIDs, submissionIDs }
             }),
             { behavior: "immediate" },
@@ -208,6 +197,17 @@ const layer = Layer.effect(
 
       yield* Effect.forEach(cancelled.sessionIDs, input.interrupt, { discard: true })
       yield* Effect.forEach(cancelled.sessionIDs, input.wait, { discard: true })
+      yield* db
+        .update(SessionCancellationTable)
+        .set({ time_completed: yield* Clock.currentTimeMillis })
+        .where(
+          and(
+            eq(SessionCancellationTable.root_session_id, input.rootSessionID),
+            isNull(SessionCancellationTable.time_completed),
+          ),
+        )
+        .run()
+        .pipe(Effect.orDie)
       return cancelled
     })
 

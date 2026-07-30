@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { eq } from "drizzle-orm"
-import { Effect } from "effect"
+import { Deferred, Effect, Fiber } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -14,6 +14,7 @@ import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import {
   SessionAttemptTable,
+  SessionCancellationTable,
   SessionInputTable,
   SessionTable,
   TaskNotificationOutboxTable,
@@ -236,6 +237,57 @@ describe("TaskCancellation", () => {
       )
       if ("_tag" in submitted && submitted._tag === "TaskSubmission.Cancelled") return
       if ("outcome" in submitted) expect(submitted.outcome).toBe("cancelled")
+    }),
+  )
+
+  it.effect("leaves cancellation completion unset until post-commit waits finish", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const cancellation = yield* TaskCancellation.Service
+      const { db } = yield* Database.Service
+      const waitStarted = yield* Deferred.make<void>()
+      const waitRelease = yield* Deferred.make<void>()
+
+      const fiber = yield* cancellation
+        .cancelTree({
+          rootSessionID: root,
+          interrupt: () => Effect.void,
+          wait: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(waitStarted, undefined)
+              yield* Deferred.await(waitRelease)
+            }),
+        })
+        .pipe(Effect.forkChild)
+
+      yield* Deferred.await(waitStarted)
+      expect(
+        yield* db
+          .select({ timeCompleted: SessionCancellationTable.time_completed })
+          .from(SessionCancellationTable)
+          .where(eq(SessionCancellationTable.root_session_id, root))
+          .get(),
+      ).toEqual({ timeCompleted: null })
+      expect(
+        yield* db.select().from(TaskSubmissionTable).where(eq(TaskSubmissionTable.outcome, "cancelled")).all(),
+      ).toHaveLength(2)
+      expect(
+        yield* db
+          .select({ id: SessionInputTable.id })
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.terminal_outcome, "cancelled"))
+          .all(),
+      ).toHaveLength(2)
+
+      yield* Deferred.succeed(waitRelease, undefined)
+      yield* Fiber.join(fiber)
+
+      const completed = yield* db
+        .select({ timeCompleted: SessionCancellationTable.time_completed })
+        .from(SessionCancellationTable)
+        .where(eq(SessionCancellationTable.root_session_id, root))
+        .get()
+      expect(completed?.timeCompleted).toEqual(expect.any(Number))
     }),
   )
 

@@ -170,6 +170,42 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("adopts equivalent serialized model selection and rejects a different model for the same invocation", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const model = ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") })
+      const first = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+        model,
+      })
+
+      const retry = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+      })
+      expect(retry).toEqual(first)
+
+      const conflict = yield* submissions
+        .submit({
+          ...invocation,
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("other"), providerID: ProviderV2.ID.make("test") }),
+        })
+        .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
+
+      expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
+    }),
+  )
+
   it.effect("claims an accepted input at most once", () =>
     Effect.gen(function* () {
       yield* setup

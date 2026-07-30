@@ -15,7 +15,12 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { Prompt } from "@opencode-ai/core/session/prompt"
-import { SessionInputTable, SessionTable, TaskNotificationOutboxTable } from "@opencode-ai/core/session/sql"
+import {
+  SessionCancellationTable,
+  SessionInputTable,
+  SessionTable,
+  TaskNotificationOutboxTable,
+} from "@opencode-ai/core/session/sql"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { testEffect } from "./lib/effect"
@@ -335,6 +340,44 @@ describe("TaskNotification", () => {
       expect(
         yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
       ).toHaveLength(1)
+    }),
+  )
+
+  it.effect("suppresses notifications after the parent session is cancelled", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const commands = yield* SessionCommand.Service
+      const execution = yield* SessionExecution.Service
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(SessionCancellationTable)
+        .values({ root_session_id: parentSessionID, time_created: 1 })
+        .run()
+        .pipe(Effect.orDie)
+
+      const rejected = yield* commands
+        .admitSynthetic({
+          id: SessionMessage.ID.make("msg_cancelled_parent_direct"),
+          sessionID: parentSessionID,
+          text: "direct synthetic input",
+          description: "direct synthetic input",
+        })
+        .pipe(Effect.flip)
+      expect(rejected._tag).toBe("Session.Cancelled")
+
+      expect(
+        yield* notifications.drain({
+          admit: admitAndRecord(commands),
+          wake: execution.wake,
+        }),
+      ).toBe(0)
+      expect(admissions).toHaveLength(0)
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
+      ).toHaveLength(0)
+      expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("suppressed")
+      expect(yield* notifications.drain({ admit: admitAndRecord(commands), wake: execution.wake })).toBe(0)
     }),
   )
 })

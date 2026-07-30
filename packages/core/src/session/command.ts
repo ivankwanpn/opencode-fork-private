@@ -4,7 +4,7 @@ import path from "path"
 import type { Part, UserMessage } from "@opencode-ai/sdk/v2/types"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Context, DateTime, Effect, Layer, Schema } from "effect"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { AgentV2 } from "../agent"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
@@ -26,7 +26,7 @@ import { SessionMessage } from "./message"
 import { Prompt, dematerialize } from "./prompt"
 import { SessionProjector } from "./projector"
 import { SessionSchema } from "./schema"
-import { SessionTable } from "./sql"
+import { SessionCancellationTable, SessionTable } from "./sql"
 import { SessionV1 } from "../v1/session"
 import { Slug } from "../util/slug"
 
@@ -37,6 +37,10 @@ export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Ses
 export class PromptConflictError extends Schema.TaggedErrorClass<PromptConflictError>()("Session.PromptConflictError", {
   sessionID: SessionSchema.ID,
   messageID: SessionMessage.ID,
+}) {}
+
+export class Cancelled extends Schema.TaggedErrorClass<Cancelled>()("Session.Cancelled", {
+  sessionID: SessionSchema.ID,
 }) {}
 
 export type CreateInput = {
@@ -62,7 +66,7 @@ export interface Interface {
     text: string
     description: string
     delivery?: SessionInput.Delivery
-  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError>
+  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | Cancelled>
   readonly switchAgent: (input: { sessionID: SessionSchema.ID; agent: string }) => Effect.Effect<void, NotFoundError>
   readonly switchModel: (input: {
     sessionID: SessionSchema.ID
@@ -100,6 +104,70 @@ const layer = Layer.effect(
       if (!session) return yield* new NotFoundError({ sessionID })
       return session
     })
+
+    const isCancelled = Effect.fn("SessionCommand.isCancelled")(function* (sessionID: SessionSchema.ID) {
+      const rows = yield* db
+        .all<{ root_session_id: string }>(
+          sql`
+          WITH RECURSIVE ancestors(id) AS (
+            SELECT ${sessionID}
+            UNION ALL
+            SELECT session.parent_id
+            FROM session
+            JOIN ancestors ON session.id = ancestors.id
+            WHERE session.parent_id IS NOT NULL
+          )
+          SELECT cancellation.root_session_id
+          FROM ${SessionCancellationTable} cancellation
+          JOIN ancestors ON ancestors.id = cancellation.root_session_id
+          LIMIT 1
+        `,
+        )
+        .pipe(Effect.orDie)
+      return rows.length > 0
+    })
+
+    const admitSynthetic: Interface["admitSynthetic"] = Effect.fn("SessionCommand.admitSynthetic")((input) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* requireSession(input.sessionID)
+          if (yield* isCancelled(input.sessionID)) return yield* new Cancelled({ sessionID: input.sessionID })
+          const messageID = input.id ?? SessionMessage.ID.create()
+          const prompt = Prompt.make({ text: input.text })
+          const delivery = input.delivery ?? "steer"
+          const synthetic = SessionInput.Synthetic.make({ description: input.description })
+          const expected = { sessionID: input.sessionID, prompt, synthetic, delivery }
+          const existing = yield* SessionInput.find(db, messageID)
+          if (existing) {
+            if (!SessionInput.equivalent(existing, expected))
+              return yield* new PromptConflictError({ sessionID: input.sessionID, messageID })
+            return existing
+          }
+          const commit: () => Effect.Effect<void> = () =>
+            isCancelled(input.sessionID).pipe(
+              Effect.flatMap((cancelled) =>
+                cancelled ? Effect.die(new Cancelled({ sessionID: input.sessionID })) : Effect.void,
+              ),
+            )
+          const recoverAdmissionDefect = (
+            defect: unknown,
+          ): Effect.Effect<never, Cancelled | PromptConflictError> => {
+            if (defect instanceof Cancelled) return Effect.fail(defect)
+            if (defect instanceof SessionInput.LifecycleConflict)
+              return Effect.fail(new PromptConflictError({ sessionID: input.sessionID, messageID }))
+            return Effect.die(defect)
+          }
+          const admitted = yield* SessionInput.admit(db, events, {
+            id: messageID,
+            ...expected,
+            commit,
+          }).pipe(Effect.catchDefect(recoverAdmissionDefect))
+          if (!SessionInput.equivalent(admitted, expected))
+            return yield* new PromptConflictError({ sessionID: input.sessionID, messageID })
+          return admitted
+        }),
+      ),
+    )
 
     return Service.of({
       create: Effect.fn("SessionCommand.create")(function* (input) {
@@ -175,37 +243,7 @@ const layer = Layer.effect(
           kind: input.kind,
         })
       }),
-      admitSynthetic: Effect.fn("SessionCommand.admitSynthetic")((input) =>
-        Effect.uninterruptible(
-          Effect.gen(function* () {
-            yield* requireSession(input.sessionID)
-            const messageID = input.id ?? SessionMessage.ID.create()
-            const prompt = Prompt.make({ text: input.text })
-            const delivery = input.delivery ?? "steer"
-            const synthetic = SessionInput.Synthetic.make({ description: input.description })
-            const expected = { sessionID: input.sessionID, prompt, synthetic, delivery }
-            const existing = yield* SessionInput.find(db, messageID)
-            if (existing) {
-              if (!SessionInput.equivalent(existing, expected))
-                return yield* new PromptConflictError({ sessionID: input.sessionID, messageID })
-              return existing
-            }
-            const admitted = yield* SessionInput.admit(db, events, {
-              id: messageID,
-              ...expected,
-            }).pipe(
-              Effect.catchDefect((defect) =>
-                defect instanceof SessionInput.LifecycleConflict
-                  ? new PromptConflictError({ sessionID: input.sessionID, messageID })
-                  : Effect.die(defect),
-              ),
-            )
-            if (!SessionInput.equivalent(admitted, expected))
-              return yield* new PromptConflictError({ sessionID: input.sessionID, messageID })
-            return admitted
-          }),
-        ),
-      ),
+      admitSynthetic,
       switchAgent: Effect.fn("SessionCommand.switchAgent")(function* (input) {
         yield* requireSession(input.sessionID)
         yield* events.publish(SessionEvent.AgentSwitched, {

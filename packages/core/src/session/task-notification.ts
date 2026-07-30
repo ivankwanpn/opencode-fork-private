@@ -38,6 +38,48 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
 
+    const isCancelled = Effect.fn("TaskNotification.isCancelled")(function* (sessionID: SessionSchema.ID) {
+      const rows = yield* db
+        .all<{ root_session_id: string }>(sql`
+          WITH RECURSIVE ancestors(id) AS (
+            SELECT ${sessionID}
+            UNION ALL
+            SELECT session.parent_id
+            FROM session
+            JOIN ancestors ON session.id = ancestors.id
+            WHERE session.parent_id IS NOT NULL
+          )
+          SELECT cancellation.root_session_id
+          FROM session_cancellation cancellation
+          JOIN ancestors ON ancestors.id = cancellation.root_session_id
+          LIMIT 1
+        `)
+        .pipe(Effect.orDie)
+      return rows.length > 0
+    })
+
+    const suppress = Effect.fn("TaskNotification.suppress")(function* (row: Row) {
+      yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({
+          status: "suppressed",
+          error: { message: "Parent session was cancelled before notification delivery" },
+          time_woken: yield* Clock.currentTimeMillis,
+        })
+        .where(
+          and(
+            eq(TaskNotificationOutboxTable.id, row.id),
+            or(
+              eq(TaskNotificationOutboxTable.status, "pending"),
+              eq(TaskNotificationOutboxTable.status, "error"),
+              and(eq(TaskNotificationOutboxTable.status, "delivered"), isNull(TaskNotificationOutboxTable.time_woken)),
+            ),
+          ),
+        )
+        .run()
+        .pipe(Effect.orDie)
+    })
+
     const candidates = Effect.fn("TaskNotification.candidates")(function* () {
       return yield* db
         .select()
@@ -58,6 +100,10 @@ const layer = Layer.effect(
       row: Row,
       input: Parameters<Interface["drain"]>[0],
     ) {
+      if (yield* isCancelled(SessionSchema.ID.make(row.parent_session_id))) {
+        yield* suppress(row)
+        return false
+      }
       const claimed = yield* db
         .update(TaskNotificationOutboxTable)
         .set({
@@ -129,6 +175,10 @@ const layer = Layer.effect(
     })
 
     const fail = Effect.fn("TaskNotification.fail")(function* (row: Row, cause: Cause.Cause<unknown>) {
+      if (yield* isCancelled(SessionSchema.ID.make(row.parent_session_id))) {
+        yield* suppress(row)
+        return
+      }
       yield* db
         .update(TaskNotificationOutboxTable)
         .set({ status: "error", error: { message: String(Cause.squash(cause)) } })

@@ -153,6 +153,15 @@ const layer = Layer.effect(
       return rows.length > 0
     })
 
+    const isInvocationCancelled = Effect.fn("TaskSubmission.isInvocationCancelled")(function* (
+      parentSessionID: SessionSchema.ID,
+      childSessionID: SessionSchema.ID,
+    ) {
+      if (yield* isCancelled(parentSessionID)) return true
+      if (parentSessionID === childSessionID) return false
+      return yield* isCancelled(childSessionID)
+    })
+
     const findInvocation = Effect.fn("TaskSubmission.findInvocation")(function* (input: Identity) {
       return yield* db
         .select()
@@ -208,7 +217,7 @@ const layer = Layer.effect(
           })
         return toInfo(existing)
       }
-      if (yield* isCancelled(input.parentSessionID))
+      if (yield* isInvocationCancelled(input.parentSessionID, input.childSessionID))
         return yield* new Cancelled({ parentSessionID: input.parentSessionID })
 
       const childInputID = inputID(input)
@@ -216,7 +225,7 @@ const layer = Layer.effect(
       const timeCreated = yield* Clock.currentTimeMillis
       const commit = (_seq: number) =>
         Effect.gen(function* () {
-          if (yield* isCancelled(input.parentSessionID))
+          if (yield* isInvocationCancelled(input.parentSessionID, input.childSessionID))
             return yield* Effect.die(new Cancelled({ parentSessionID: input.parentSessionID }))
           yield* db
             .insert(TaskSubmissionTable)

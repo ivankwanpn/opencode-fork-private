@@ -100,7 +100,10 @@ function messageRow(message: SessionMessage.Message, targetSessionID: SessionSch
   }
 }
 
-const makeLocationLayer = (runnerCalls: { count: number }) =>
+const makeLocationLayer = (
+  runnerCalls: { count: number },
+  onRun?: (sessionID: SessionSchema.ID) => Effect.Effect<void>,
+) =>
   Layer.effect(
     LocationServiceMap.Service,
     LayerMap.make(
@@ -108,17 +111,17 @@ const makeLocationLayer = (runnerCalls: { count: number }) =>
         Layer.succeed(
           SessionRunner.Service,
           SessionRunner.Service.of({
-            run: () =>
+            run: ({ sessionID }) =>
               Effect.sync(() => {
                 runnerCalls.count++
-              }),
+              }).pipe(Effect.andThen(onRun ? onRun(sessionID) : Effect.void)),
           }),
         ) as unknown as Layer.Layer<LocationServices>,
       { idleTimeToLive: "1 minute" },
     ),
   )
 
-const startRecovery = (runnerCalls: { count: number }) =>
+const startRecovery = (runnerCalls: { count: number }, onRun?: (sessionID: SessionSchema.ID) => Effect.Effect<void>) =>
   Effect.gen(function* () {
     const database = yield* Database.Service
     const events = yield* EventV2.Service
@@ -127,7 +130,7 @@ const startRecovery = (runnerCalls: { count: number }) =>
         LayerNode.compile(SessionExecutionLocal.node, [
           [Database.node, Layer.succeed(Database.Service, database)],
           [EventV2.node, Layer.succeed(EventV2.Service, events)],
-          [LocationServiceMap.node, makeLocationLayer(runnerCalls)],
+          [LocationServiceMap.node, makeLocationLayer(runnerCalls, onRun)],
           [SessionCommand.node, commandLayer],
         ]),
       ),
@@ -222,6 +225,12 @@ describe("SessionExecution recovery", () => {
         .run()
         .pipe(Effect.orDie)
       yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: 1 })
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
         .insert(SessionAttemptTable)
         .values({
           session_id: childSessionID,
@@ -247,7 +256,7 @@ describe("SessionExecution recovery", () => {
     }),
   )
 
-  it.effect("marks a responding task as recovery-required when no completed assistant exists", () =>
+  it.effect("marks a responding task as recovery-required and leaves later safe durable input restartable", () =>
     Effect.gen(function* () {
       yield* setupProject([
         { id: parentSessionID },
@@ -301,9 +310,7 @@ describe("SessionExecution recovery", () => {
         .run()
         .pipe(Effect.orDie)
 
-      const runnerCalls = { count: 0 }
-      yield* startRecovery(runnerCalls)
-      yield* startRecovery(runnerCalls)
+      yield* startRecovery({ count: 0 })
 
       expect(yield* submissions.get(first.id)).toMatchObject({
         outcome: "recovery-required",
@@ -311,7 +318,6 @@ describe("SessionExecution recovery", () => {
       expect(yield* submissions.get(second.id)).toMatchObject({
         status: "accepted",
       })
-      expect(runnerCalls.count).toBe(0)
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
       expect(yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, first.childInputID)).get()).toMatchObject({
         terminal_outcome: "recovery-required",
@@ -321,6 +327,24 @@ describe("SessionExecution recovery", () => {
       ).toMatchObject({
         terminal_outcome: null,
       })
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([childSessionID])
+
+      yield* db
+        .update(SessionInputTable)
+        .set({
+          terminal_outcome: "completed",
+          terminal_time: 2,
+          terminal_seq: 2,
+        })
+        .where(eq(SessionInputTable.id, second.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* startRecovery({ count: 0 })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
     }),
   )
 })

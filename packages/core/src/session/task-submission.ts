@@ -1,6 +1,6 @@
 export * as TaskSubmission from "./task-submission"
 
-import { and, eq, isNull, sql } from "drizzle-orm"
+import { and, eq, isNull, or, sql } from "drizzle-orm"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -10,7 +10,7 @@ import { Prompt } from "./prompt"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
+import { SessionAttemptTable, SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
 
 export type Identity = {
   readonly parentSessionID: SessionSchema.ID
@@ -377,6 +377,27 @@ const layer = Layer.effect(
         resultText: text,
         error: assistant.error,
       })
+      if (recovered) {
+        const timeUpdated = yield* Clock.currentTimeMillis
+        yield* db
+          .update(SessionAttemptTable)
+          .set({
+            status: "ended",
+            retry_at: null,
+            error: null,
+            decision: null,
+            time_updated: timeUpdated,
+          })
+          .where(
+            and(
+              eq(SessionAttemptTable.session_id, input.sessionID),
+              eq(SessionAttemptTable.assistant_message_id, input.assistantMessageID),
+              or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")),
+            ),
+          )
+          .run()
+          .pipe(Effect.orDie)
+      }
       return recovered ? 1 : 0
     })
 
@@ -403,6 +424,26 @@ const layer = Layer.effect(
             reason: input.reason,
           },
         })
+        if (settled) {
+          const timeUpdated = yield* Clock.currentTimeMillis
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: "abandoned",
+              retry_at: null,
+              error: null,
+              decision: "abandon",
+              time_updated: timeUpdated,
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, input.sessionID),
+                or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }
         return settled ? 1 : 0
       },
     )

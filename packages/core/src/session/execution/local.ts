@@ -1,4 +1,5 @@
 import { Cause, Clock, Effect, Layer } from "effect"
+import { and, eq, isNull, or } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { LocationServiceMap } from "../../location-service-map"
 import { makeGlobalNode } from "../../effect/app-node"
@@ -12,11 +13,36 @@ import { SessionInput } from "../input"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
+import { SessionAttemptTable, TaskSubmissionTable } from "../sql"
 import { EventV2 } from "../../event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import { SessionV1 } from "@opencode-ai/schema/v1/session"
 
 type DB = Database.Interface["db"]
+
+const interruptedTaskInputID = Effect.fn("SessionExecutionLocal.interruptedTaskInputID")(function* (
+  db: DB,
+  sessionID: SessionSchema.ID,
+  attempt?: { readonly seq: number; readonly status: string },
+) {
+  const current = attempt ?? (yield* SessionAttempt.get(db, sessionID))
+  if (!current || (current.status !== "started" && current.status !== "responding")) return undefined
+  const input = yield* SessionInput.latestPromotedAtOrBefore(db, sessionID, current.seq)
+  if (!input) return undefined
+  const submission = yield* db
+    .select({ childInputID: TaskSubmissionTable.child_input_id })
+    .from(TaskSubmissionTable)
+    .where(
+      and(
+        eq(TaskSubmissionTable.child_session_id, sessionID),
+        eq(TaskSubmissionTable.child_input_id, input.id),
+        isNull(TaskSubmissionTable.outcome),
+      ),
+    )
+    .get()
+    .pipe(Effect.orDie)
+  return submission ? input.id : undefined
+})
 
 export const startupCandidates = Effect.fn("SessionExecutionLocal.startupCandidates")(function* (db: DB, now: number) {
   const [scheduled, input] = yield* Effect.all([SessionAttempt.scheduled(db, now), SessionInput.startupCandidates(db)])
@@ -26,8 +52,7 @@ export const startupCandidates = Effect.fn("SessionExecutionLocal.startupCandida
   ])
   const safe: SessionSchema.ID[] = []
   for (const sessionID of candidates) {
-    const attempt = yield* SessionAttempt.get(db, sessionID)
-    if (attempt?.status === "started" || attempt?.status === "responding") continue
+    if (yield* interruptedTaskInputID(db, sessionID)) continue
     safe.push(sessionID)
   }
   return safe
@@ -35,25 +60,28 @@ export const startupCandidates = Effect.fn("SessionExecutionLocal.startupCandida
 
 export const startupRecoveryCandidates = Effect.fn("SessionExecutionLocal.startupRecoveryCandidates")(function* (
   db: DB,
-  now: number,
+  _now: number,
 ) {
-  const [scheduled, input] = yield* Effect.all([SessionAttempt.scheduled(db, now), SessionInput.startupCandidates(db)])
-  const candidates = new Set<SessionSchema.ID>([
-    ...scheduled.map((row: { sessionID: SessionSchema.ID }) => row.sessionID),
-    ...input.map((row: { sessionID: SessionSchema.ID }) => row.sessionID),
-  ])
+  const attempts = yield* db
+    .select({
+      sessionID: SessionAttemptTable.session_id,
+      status: SessionAttemptTable.status,
+      seq: SessionAttemptTable.seq,
+    })
+    .from(SessionAttemptTable)
+    .where(or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")))
+    .all()
+    .pipe(Effect.orDie)
   const recovery: Array<{
     readonly sessionID: SessionSchema.ID
     readonly reason: "dispatch-unknown" | "response-interrupted"
   }> = []
-  for (const sessionID of candidates) {
-    const attempt = yield* SessionAttempt.get(db, sessionID)
-    if (attempt?.status === "started" || attempt?.status === "responding")
+  for (const attempt of attempts)
+    if (yield* interruptedTaskInputID(db, attempt.sessionID, attempt))
       recovery.push({
-        sessionID,
+        sessionID: attempt.sessionID,
         reason: attempt.status === "responding" ? "response-interrupted" : "dispatch-unknown",
       })
-  }
   return recovery
 })
 
@@ -77,9 +105,7 @@ const interruptedChildInputID = Effect.fn("SessionExecutionLocal.interruptedChil
   sessionID: SessionSchema.ID,
   db: DB,
 ) {
-  const attempt = yield* SessionAttempt.get(db, sessionID)
-  if (!attempt) return undefined
-  return (yield* SessionInput.latestPromotedAtOrBefore(db, sessionID, attempt.seq))?.id
+  return yield* interruptedTaskInputID(db, sessionID)
 })
 
 /** Current-process routing for implicit-local Locations. Future remote placement belongs here. */

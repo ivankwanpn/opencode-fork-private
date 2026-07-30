@@ -90,9 +90,9 @@ const setupProject = (sessions: Array<{ id: SessionSchema.ID; parentID?: Session
   })
 
 function messageRow(message: SessionMessage.Message, targetSessionID: SessionSchema.ID, seq: number) {
-  const { id, type, ...data } = encodeMessage(message)
+  const { type, ...data } = encodeMessage(message)
   return {
-    id,
+    id: message.id,
     session_id: targetSessionID,
     type,
     seq,

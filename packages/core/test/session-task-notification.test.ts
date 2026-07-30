@@ -200,7 +200,7 @@ describe("TaskNotification", () => {
       expect(
         yield* notifications.drain({
           admit: admitAndRecord(commands),
-          wake: () => Effect.fail(new Error("wake crashed")),
+          wake: () => Effect.die(new Error("wake crashed")),
         }),
       ).toBe(0)
       const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
@@ -251,7 +251,7 @@ describe("TaskNotification", () => {
 
       yield* notifications.drain({
         admit: admitAndRecord(commands),
-        wake: () => Effect.fail(new Error("wake crashed")),
+        wake: () => Effect.die(new Error("wake crashed")),
       })
       const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
       yield* db
@@ -307,7 +307,7 @@ describe("TaskNotification", () => {
               wakeCalls += 1
               yield* Deferred.succeed(firstWakeStarted, undefined)
               yield* Deferred.await(releaseFirstWake)
-              return yield* Effect.fail(new Error("late wake failure"))
+              return yield* Effect.die(new Error("late wake failure"))
             }),
         })
         .pipe(Effect.forkChild)

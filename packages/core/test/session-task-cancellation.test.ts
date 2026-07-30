@@ -133,7 +133,7 @@ describe("TaskCancellation", () => {
         .values([
           {
             session_id: root,
-            attempt_id: "evt_cancel_root",
+            attempt_id: EventV2.ID.make("evt_cancel_root"),
             assistant_message_id: SessionMessage.ID.make("msg_cancel_root_attempt"),
             status: "started",
             attempt: 1,
@@ -142,7 +142,7 @@ describe("TaskCancellation", () => {
           },
           {
             session_id: child,
-            attempt_id: "evt_cancel_child",
+            attempt_id: EventV2.ID.make("evt_cancel_child"),
             assistant_message_id: SessionMessage.ID.make("msg_cancel_child_attempt"),
             status: "responding",
             attempt: 1,
@@ -151,7 +151,7 @@ describe("TaskCancellation", () => {
           },
           {
             session_id: grandchild,
-            attempt_id: "evt_cancel_grandchild",
+            attempt_id: EventV2.ID.make("evt_cancel_grandchild"),
             assistant_message_id: SessionMessage.ID.make("msg_cancel_grandchild_attempt"),
             status: "responding",
             attempt: 1,
@@ -249,7 +249,7 @@ describe("TaskCancellation", () => {
         .values([
           {
             session_id: child,
-            attempt_id: "evt_cancel_repeat_child",
+            attempt_id: EventV2.ID.make("evt_cancel_repeat_child"),
             assistant_message_id: SessionMessage.ID.make("msg_cancel_repeat_child_attempt"),
             status: "retrying",
             attempt: 1,
@@ -260,7 +260,7 @@ describe("TaskCancellation", () => {
           },
           {
             session_id: grandchild,
-            attempt_id: "evt_cancel_repeat_grandchild",
+            attempt_id: EventV2.ID.make("evt_cancel_repeat_grandchild"),
             assistant_message_id: SessionMessage.ID.make("msg_cancel_repeat_grandchild_attempt"),
             status: "continuation",
             attempt: 1,

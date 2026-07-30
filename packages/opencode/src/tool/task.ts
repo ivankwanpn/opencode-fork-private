@@ -363,16 +363,17 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
-            const result = yield* Effect.raceFirst(
+            const waitForCompletion: Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> = Effect.raceFirst(
               background.wait({ id: nextSession.id }),
               background
                 .waitForPromotion(nextSession.id)
                 .pipe(
-                  Effect.flatMap((value) =>
+                  Effect.flatMap((value): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
                     value === undefined ? background.wait({ id: nextSession.id }) : Effect.succeed(value),
                   ),
                 ),
             )
+            const result = yield* waitForCompletion
             if ("timedOut" in result) {
               if (result.outcome === "missing")
                 return yield* Effect.fail(new Error(`Task lifecycle observation missing: ${nextSession.id}`))

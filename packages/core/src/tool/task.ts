@@ -345,12 +345,16 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           return result
         }
 
-        return yield* Effect.raceFirst(
+        const waitForCompletion: Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> = Effect.raceFirst(
           background.wait({ id: child.id }),
           background.waitForPromotion(child.id).pipe(
-            Effect.flatMap((result) => (result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result))),
+            Effect.flatMap((result): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
+              result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result),
+            ),
           ),
-        ).pipe(
+        )
+
+        return yield* waitForCompletion.pipe(
           Effect.flatMap((result) => {
             if ("timedOut" in result) {
               if (result.outcome === "missing")

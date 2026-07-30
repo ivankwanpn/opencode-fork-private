@@ -1,7 +1,7 @@
 export * as TaskCancellation from "./task-cancellation"
 
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm"
-import { Clock, Context, Effect, Layer, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Layer, Result, Schema } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
 import { EventV2 } from "../event"
@@ -194,7 +194,16 @@ const layer = Layer.effect(
                 .pipe(Effect.orDie)
               return { sessionIDs, submissionIDs }
             }),
-          { behavior: "immediate" },
+            { behavior: "immediate" },
+          )
+        .pipe(
+          Effect.catchCause((cause) => {
+            const failure = Cause.findError(cause)
+            if (Result.isFailure(failure) || !(failure.success instanceof Missing)) {
+              return Effect.die(Cause.squash(cause))
+            }
+            return Effect.fail(failure.success)
+          }),
         )
 
       yield* Effect.forEach(cancelled.sessionIDs, input.interrupt, { discard: true })

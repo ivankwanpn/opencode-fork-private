@@ -77,13 +77,19 @@ export function buildModelURLCandidates(baseURL: string, modelsURL?: string) {
   const trimmed = baseURL.trim().replace(/\/+$/, "")
   if (!trimmed) return []
 
-  const candidates = /\/v\d+$/.test(trimmed)
+  const versioned = /\/v\d+(?:[a-z]+)?$/i.test(trimmed)
+  const candidates = versioned
     ? [`${trimmed}/models`, ...(trimmed.endsWith("/v1") ? [] : [`${trimmed}/v1/models`])]
     : [`${trimmed}/v1/models`]
-  const suffix = KNOWN_COMPAT_SUFFIXES.find((value) => trimmed.endsWith(value))
-  if (!suffix) return [...new Set(candidates)]
+  if (!/\/v\d+[a-z]+$/i.test(trimmed)) {
+    const suffix = KNOWN_COMPAT_SUFFIXES.find((value) => trimmed.endsWith(value))
+    if (!suffix) return [...new Set(candidates)]
 
-  const root = trimmed.slice(0, -suffix.length).replace(/\/+$/, "")
+    const root = trimmed.slice(0, -suffix.length).replace(/\/+$/, "")
+    if (!root || !root.includes("://")) return [...new Set(candidates)]
+    return [...new Set([...candidates, `${root}/v1/models`, `${root}/models`])]
+  }
+  const root = trimmed.replace(/\/v\d+[a-z]+$/i, "").replace(/\/+$/, "")
   if (!root || !root.includes("://")) return [...new Set(candidates)]
   return [...new Set([...candidates, `${root}/v1/models`, `${root}/models`])]
 }

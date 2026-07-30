@@ -7,6 +7,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
+import { SessionCommand } from "@opencode-ai/core/session/command"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
@@ -51,6 +52,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       Session.node,
       SessionProjector.node,
       EventV2.node,
+      SessionCommand.node,
       TaskSubmission.node,
       TaskNotification.node,
       TaskCancellation.node,
@@ -961,6 +963,38 @@ describe("tool.task", () => {
         noReply: true,
         parts: [{ type: "text", synthetic: true }],
       })
+    }),
+  )
+
+  background.instance("durably admits the parent notification before legacy prompt rendering", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+          background: true,
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps({ text: "background done" }) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      yield* jobs.wait({ id: result.metadata.sessionId })
+      const { db } = yield* Database.Service
+      expect(yield* db.select({ id: SessionInputTable.id }).from(SessionInputTable).all()).toHaveLength(2)
     }),
   )
 

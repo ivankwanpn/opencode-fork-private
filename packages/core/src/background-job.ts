@@ -48,7 +48,17 @@ type PromoteResult = {
   onPromote?: Effect.Effect<void>
 }
 
-type StartResult = { info: Info } | { info: Info; scope: Scope.Closeable; token: object }
+type StartResult =
+  | { kind: "started"; info: Info; scope: Scope.Closeable; token: object }
+  | {
+      kind: "extended"
+      info: Info
+      previous: Deferred.Deferred<void>
+      scope: Scope.Closeable
+      tail: Deferred.Deferred<void>
+      token: object
+      sequence: number
+    }
 
 type ExtendResult =
   | { extended: false }
@@ -215,7 +225,24 @@ export const make = Effect.gen(function* () {
           Effect.fnUntraced(function* (jobs) {
             const existing = jobs.get(id)
             if (existing?.info.status === "running") {
-              return [{ info: snapshot(existing) }, jobs] as readonly [StartResult, Map<string, Active>]
+              const tail = yield* Deferred.make<void>()
+              return [
+                {
+                  kind: "extended",
+                  info: snapshot(existing),
+                  previous: existing.tail,
+                  scope: existing.scope,
+                  tail,
+                  token: existing.token,
+                  sequence: existing.next,
+                },
+                new Map(jobs).set(id, {
+                  ...existing,
+                  pending: existing.pending + 1,
+                  next: existing.next + 1,
+                  tail,
+                }),
+              ] as readonly [StartResult, Map<string, Active>]
             }
             const scope = yield* Scope.fork(state.scope, "parallel")
             const token = {}
@@ -237,13 +264,13 @@ export const make = Effect.gen(function* () {
               promoted,
               onPromote: input.onPromote,
             }
-            return [{ info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
+            return [{ kind: "started", info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
               StartResult,
               Map<string, Active>,
             ]
           }),
         )
-        if ("scope" in result)
+        if (result.kind === "started") {
           yield* fork(
             result.scope,
             id,
@@ -251,7 +278,18 @@ export const make = Effect.gen(function* () {
             0,
             restore(input.run).pipe(Effect.ensuring(Deferred.succeed(tail, undefined))),
           )
-        else yield* extend({ id, run: input.run })
+        } else {
+          yield* fork(
+            result.scope,
+            id,
+            result.token,
+            result.sequence,
+            Deferred.await(result.previous).pipe(
+              Effect.andThen(restore(input.run)),
+              Effect.ensuring(Deferred.succeed(result.tail, undefined)),
+            ),
+          )
+        }
         return result.info
       }),
     )

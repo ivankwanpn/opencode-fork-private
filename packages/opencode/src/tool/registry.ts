@@ -45,6 +45,7 @@ import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
+import { SessionCommand } from "@opencode-ai/core/session/command"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { SessionStatus } from "@/session/status"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -338,6 +339,7 @@ export const node = LayerNode.make({
     RuntimeFlags.node,
     TaskCancellation.node,
     TaskNotification.node,
+    SessionCommand.node,
     TaskSubmission.node,
     SessionStatus.node,
     MCP.node,

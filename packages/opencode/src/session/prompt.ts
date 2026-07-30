@@ -1063,6 +1063,23 @@ const layer = Layer.effect(
       "SessionPrompt.prompt",
     )(function* (input: PromptInput) {
       const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+      const existing =
+        input.noReply && input.messageID
+          ? yield* sessions.findMessage(input.sessionID, (message) => message.info.id === input.messageID).pipe(
+              Effect.orDie,
+            )
+          : Option.none<SessionV1.WithParts>()
+      if (
+        Option.isSome(existing) &&
+        existing.value.info.role === "user" &&
+        input.parts.length === 1 &&
+        input.parts[0]?.type === "text" &&
+        existing.value.parts.length === 1 &&
+        existing.value.parts[0]?.type === "text" &&
+        existing.value.parts[0].text === input.parts[0].text &&
+        existing.value.parts[0].synthetic === input.parts[0].synthetic
+      )
+        return existing.value
       yield* revert.cleanup(session)
       const message = yield* createUserMessage(input)
       yield* sessions.touch(input.sessionID)

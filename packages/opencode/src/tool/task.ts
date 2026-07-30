@@ -22,6 +22,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
+import { SessionCommand } from "@opencode-ai/core/session/command"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -108,6 +109,7 @@ export const TaskTool = Tool.define(
     const notifications = yield* TaskNotification.Service
     const cancellation = yield* TaskCancellation.Service
     const submissions = yield* TaskSubmission.Service
+    const commands = yield* SessionCommand.Service
 
     const run = Effect.fn("TaskTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -231,6 +233,7 @@ export const TaskTool = Tool.define(
 
       const admitNotification = (input: TaskNotification.Admission) =>
         Effect.gen(function* () {
+          yield* commands.admitSynthetic(input)
           const currentParent = yield* sessions.get(ctx.sessionID)
           const model =
             promptModel(ctx.extra?.model) ??

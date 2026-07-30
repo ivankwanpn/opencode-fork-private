@@ -222,4 +222,81 @@ describe("TaskCancellation", () => {
       if ("outcome" in submitted) expect(submitted.outcome).toBe("cancelled")
     }),
   )
+
+  it.effect("is idempotent across repeated cancellation attempts", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const cancellation = yield* TaskCancellation.Service
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(SessionAttemptTable)
+        .values([
+          {
+            session_id: child,
+            attempt_id: "evt_cancel_repeat_child",
+            assistant_message_id: SessionMessage.ID.make("msg_cancel_repeat_child_attempt"),
+            status: "retrying",
+            attempt: 1,
+            retry_at: 100,
+            error: { message: "retry me", isRetryable: true },
+            seq: 1,
+            time_updated: 1,
+          },
+          {
+            session_id: grandchild,
+            attempt_id: "evt_cancel_repeat_grandchild",
+            assistant_message_id: SessionMessage.ID.make("msg_cancel_repeat_grandchild_attempt"),
+            status: "continuation",
+            attempt: 1,
+            seq: 1,
+            time_updated: 1,
+          },
+        ])
+        .run()
+        .pipe(Effect.orDie)
+
+      const first = yield* cancellation.cancelTree({
+        rootSessionID: root,
+        interrupt: () => Effect.void,
+        wait: () => Effect.void,
+      })
+      const second = yield* cancellation.cancelTree({
+        rootSessionID: root,
+        interrupt: () => Effect.void,
+        wait: () => Effect.void,
+      })
+
+      expect(first.submissionIDs).toHaveLength(2)
+      expect(second.submissionIDs).toHaveLength(0)
+      expect(
+        yield* db
+          .select({ id: TaskSubmissionTable.id, outcome: TaskSubmissionTable.outcome })
+          .from(TaskSubmissionTable)
+          .all(),
+      ).toEqual(
+        expect.arrayContaining(
+          first.submissionIDs.map((id) => ({
+            id,
+            outcome: "cancelled",
+          })),
+        ),
+      )
+      expect(
+        yield* db
+          .select({ id: SessionInputTable.id, outcome: SessionInputTable.terminal_outcome })
+          .from(SessionInputTable)
+          .all(),
+      ).toHaveLength(2)
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(2)
+      expect(
+        yield* db
+          .select({ sessionID: SessionAttemptTable.session_id, status: SessionAttemptTable.status })
+          .from(SessionAttemptTable)
+          .all(),
+      ).toEqual([
+        { sessionID: child, status: "abandoned" },
+        { sessionID: grandchild, status: "abandoned" },
+      ])
+    }),
+  )
 })

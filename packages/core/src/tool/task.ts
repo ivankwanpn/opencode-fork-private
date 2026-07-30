@@ -314,17 +314,6 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           jobId: child.id,
         }
 
-        if (yield* background.extend({ id: child.id, run: runTask })) {
-          const output = renderOutput({
-            sessionID: child.id,
-            state: "running",
-            summary: "Background task updated",
-            text: BACKGROUND_UPDATED,
-          })
-          yield* checkpoint(backgroundMetadata, output)
-          return { title: input.description, metadata: backgroundMetadata, output }
-        }
-
         const info = yield* background.start({
           id: child.id,
           type: name,
@@ -334,36 +323,70 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           run: runTask,
         })
 
-        const runningResult = () => {
+        const runningResult = (mode: "started" | "updated") => {
           const output = renderOutput({
             sessionID: child.id,
             state: "running" as const,
-            summary: "Background task started",
-            text: BACKGROUND_STARTED,
+            summary: mode === "updated" ? "Background task updated" : "Background task started",
+            text: mode === "updated" ? BACKGROUND_UPDATED : BACKGROUND_STARTED,
           })
           return { title: input.description, metadata: { ...backgroundMetadata, jobId: info.id }, output }
         }
 
         if (runInBackground) {
-          const result = runningResult()
+          const result = runningResult("started")
           yield* checkpoint(result.metadata, result.output)
           return result
         }
 
-        return yield* Effect.raceFirst(
-          background.wait({ id: child.id }).pipe(Effect.map((result) => result.info)),
-          background.waitForPromotion(child.id),
-        ).pipe(
+        if (info.metadata?.background === true) {
+          const result = runningResult("updated")
+          yield* checkpoint(result.metadata, result.output)
+          return result
+        }
+
+        const waitForCompletion: Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> = Effect.raceFirst(
+          background.wait({ id: child.id }),
+          background.waitForPromotion(child.id).pipe(
+            Effect.flatMap((result): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
+              result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result),
+            ),
+          ),
+        )
+
+        return yield* waitForCompletion.pipe(
           Effect.flatMap((result) => {
-            if (result?.metadata?.background === true) {
-              const running = runningResult()
+            if ("timedOut" in result) {
+              if (result.outcome === "missing")
+                return Effect.fail(new ToolFailure({ message: `Task lifecycle observation missing: ${child.id}` }))
+              if (result.timedOut || result.outcome === "timed-out")
+                return Effect.fail(new ToolFailure({ message: `Task lifecycle observation timed out: ${child.id}` }))
+              if (!result.info)
+                return Effect.fail(new ToolFailure({ message: `Task lifecycle observation missing result: ${child.id}` }))
+              if (result.info.status === "error")
+                return Effect.fail(new ToolFailure({ message: result.info.error ?? "Task failed" }))
+              if (result.info.status === "cancelled")
+                return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
+              if (result.info.status !== "completed")
+                return Effect.fail(new ToolFailure({ message: "Task did not complete" }))
+              return Effect.succeed({
+                title: input.description,
+                metadata: baseMetadata,
+                output: renderOutput({
+                  sessionID: child.id,
+                  state: "completed",
+                  text: result.info.output ?? "",
+                }),
+              })
+            }
+            if (result.metadata?.background === true) {
+              const running = runningResult("started")
               return checkpoint(running.metadata, running.output).pipe(Effect.as(running))
             }
-            if (result?.status === "error")
+            if (result.status === "error")
               return Effect.fail(new ToolFailure({ message: result.error ?? "Task failed" }))
-            if (result?.status === "cancelled") return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
-            if (result?.status !== "completed")
-              return Effect.fail(new ToolFailure({ message: "Task did not complete" }))
+            if (result.status === "cancelled") return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
+            if (result.status !== "completed") return Effect.fail(new ToolFailure({ message: "Task did not complete" }))
             return Effect.succeed({
               title: input.description,
               metadata: baseMetadata,

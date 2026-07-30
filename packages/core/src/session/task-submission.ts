@@ -1,6 +1,6 @@
 export * as TaskSubmission from "./task-submission"
 
-import { and, eq, isNull, sql } from "drizzle-orm"
+import { and, eq, isNull, or, sql } from "drizzle-orm"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -10,7 +10,7 @@ import { Prompt } from "./prompt"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
+import { SessionAttemptTable, SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
 
 export type Identity = {
   readonly parentSessionID: SessionSchema.ID
@@ -75,11 +75,13 @@ export type ClaimResult = {
 
 export type RecoveryInput = {
   readonly sessionID: SessionSchema.ID
+  readonly assistantMessageID: SessionMessage.ID
   readonly messages: ReadonlyArray<SessionMessage.Message>
 }
 
 export type RecoveryRequiredInput = {
   readonly sessionID: SessionSchema.ID
+  readonly childInputID: SessionMessage.ID
   readonly reason: "dispatch-unknown" | "response-interrupted"
 }
 
@@ -253,10 +255,24 @@ const layer = Layer.effect(
         })
 
       const row = yield* findInvocation(input)
-      if (row) return toInfo(row)
+      if (row) {
+        if (!matches(toInfo(row), input))
+          return yield* new InvocationConflict({
+            parentSessionID: input.parentSessionID,
+            assistantMessageID: input.assistantMessageID,
+            toolCallID: input.toolCallID,
+          })
+        return toInfo(row)
+      }
 
       yield* commit(admitted.admittedSeq)
       const recovered = yield* findInvocation(input)
+      if (recovered && !matches(toInfo(recovered), input))
+        return yield* new InvocationConflict({
+          parentSessionID: input.parentSessionID,
+          assistantMessageID: input.assistantMessageID,
+          toolCallID: input.toolCallID,
+        })
       if (!recovered) return yield* Effect.die("Task submission commit did not create a submission")
       return toInfo(recovered)
     })
@@ -342,53 +358,107 @@ const layer = Layer.effect(
     })
 
     const recoverSession: Interface["recoverSession"] = Effect.fn("TaskSubmission.recoverSession")(function* (input) {
+      const assistantIndex = input.messages.findIndex((message) => message.id === input.assistantMessageID)
+      if (assistantIndex < 0) return 0
+      const assistant = input.messages[assistantIndex]
+      if (!assistant || assistant.type !== "assistant" || assistant.time.completed === undefined) return 0
+
       const rows = yield* db
         .select()
         .from(TaskSubmissionTable)
         .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
         .all()
         .pipe(Effect.orDie)
-      const results = yield* Effect.forEach(rows, (row) => {
-        const inputIndex = input.messages.findIndex((message) => message.id === row.child_input_id)
-        if (inputIndex < 0) return Effect.succeed(false)
-        const assistant = input.messages.slice(inputIndex + 1).find((message) => {
-          return message.type === "assistant" && message.time.completed !== undefined
-        })
-        if (!assistant || assistant.type !== "assistant") return Effect.succeed(false)
-        const text = assistant.content
-          .filter((part): part is SessionMessage.AssistantText => part.type === "text")
-          .map((part) => part.text)
-          .join("")
-        return terminalize({
-          submissionID: row.id,
-          outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
-          resultMessageID: assistant.id,
-          resultText: text,
-          error: assistant.error,
-        }).pipe(Effect.as(true))
+      const match = rows.reduce<{ readonly row: (typeof rows)[number]; readonly inputIndex: number } | undefined>(
+        (best, row) => {
+          const inputIndex = input.messages.findIndex((message) => message.id === row.child_input_id)
+          if (inputIndex < 0 || inputIndex >= assistantIndex) return best
+          if (!best || inputIndex > best.inputIndex) return { row, inputIndex }
+          return best
+        },
+        undefined,
+      )
+      if (!match) return 0
+
+      const text = assistant.content
+        .filter((part): part is SessionMessage.AssistantText => part.type === "text")
+        .map((part) => part.text)
+        .join("")
+      const recovered = yield* terminalize({
+        submissionID: match.row.id,
+        outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
+        resultMessageID: assistant.id,
+        resultText: text,
+        error: assistant.error,
       })
-      return results.filter((result) => result).length
+      if (recovered) {
+        const timeUpdated = yield* Clock.currentTimeMillis
+        yield* db
+          .update(SessionAttemptTable)
+          .set({
+            status: "ended",
+            retry_at: null,
+            error: null,
+            decision: null,
+            time_updated: timeUpdated,
+          })
+          .where(
+            and(
+              eq(SessionAttemptTable.session_id, input.sessionID),
+              eq(SessionAttemptTable.assistant_message_id, input.assistantMessageID),
+              or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")),
+            ),
+          )
+          .run()
+          .pipe(Effect.orDie)
+      }
+      return recovered ? 1 : 0
     })
 
     const markRecoveryRequired: Interface["markRecoveryRequired"] = Effect.fn("TaskSubmission.markRecoveryRequired")(
       function* (input) {
-        const rows = yield* db
+        const row = yield* db
           .select()
           .from(TaskSubmissionTable)
-          .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
-          .all()
+          .where(
+            and(
+              eq(TaskSubmissionTable.child_session_id, input.sessionID),
+              eq(TaskSubmissionTable.child_input_id, input.childInputID),
+              isNull(TaskSubmissionTable.outcome),
+            ),
+          )
+          .get()
           .pipe(Effect.orDie)
-        const results = yield* Effect.forEach(rows, (row) =>
-          terminalize({
-            submissionID: row.id,
-            outcome: "recovery-required",
-            error: {
-              message: "Provider attempt requires an explicit recovery decision",
-              reason: input.reason,
-            },
-          }).pipe(Effect.as(true)),
-        )
-        return results.filter((result) => result).length
+        if (!row) return 0
+        const settled = yield* terminalize({
+          submissionID: row.id,
+          outcome: "recovery-required",
+          error: {
+            message: "Provider attempt requires an explicit recovery decision",
+            reason: input.reason,
+          },
+        })
+        if (settled) {
+          const timeUpdated = yield* Clock.currentTimeMillis
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: "abandoned",
+              retry_at: null,
+              error: null,
+              decision: "abandon",
+              time_updated: timeUpdated,
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, input.sessionID),
+                or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }
+        return settled ? 1 : 0
       },
     )
 
@@ -403,8 +473,13 @@ function matches(existing: Info, input: Invocation) {
     existing.childSessionID === input.childSessionID &&
     existing.description === input.description &&
     existing.agent === input.agent &&
+    serializedModel(existing.model) === serializedModel(input.model) &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )
+}
+
+function serializedModel(model: unknown) {
+  return JSON.stringify(model ?? null)
 }
 
 function digest(value: string) {

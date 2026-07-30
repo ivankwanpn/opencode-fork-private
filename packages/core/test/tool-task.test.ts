@@ -394,7 +394,7 @@ const progressLayer = Layer.succeed(
   }),
 )
 
-const makeLayer = (background: boolean) => {
+const makeLayer = (background: boolean, replacements: LayerNode.Replacements = []) => {
   const taskNode = TaskTool.nodeWithOptions({ background })
   return AppNodeBuilder.build(
     LayerNode.group([BackgroundJob.node, ToolRegistry.node, ToolRegistry.toolsNode, taskNode]),
@@ -410,12 +410,102 @@ const makeLayer = (background: boolean) => {
       [TaskSubmission.node, taskSubmissionLayer],
       [ToolProgress.node, progressLayer],
       [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
+      ...replacements,
     ],
   )
 }
 
 const foreground = testEffect(makeLayer(false))
 const background = testEffect(makeLayer(true))
+const foregroundFastCompletion = testEffect(
+  makeLayer(false, [
+    [
+      BackgroundJob.node,
+      Layer.succeed(
+        BackgroundJob.Service,
+        BackgroundJob.Service.of({
+          list: () => Effect.succeed([]),
+          get: () => Effect.succeed(undefined),
+          start: (input) =>
+            Effect.succeed({
+              id: input.id ?? "job_fast_completion",
+              type: input.type,
+              title: input.title,
+              status: "running",
+              started_at: 0,
+              metadata: input.metadata,
+            }),
+          extend: () => Effect.succeed(false),
+          wait: (input) =>
+            Effect.yieldNow.pipe(
+              Effect.as({
+                timedOut: false,
+                outcome: "completed" as const,
+                info: {
+                  id: input.id,
+                  type: TaskTool.name,
+                  status: "completed" as const,
+                  started_at: 0,
+                  completed_at: 1,
+                  output: "fast result",
+                },
+              }),
+            ),
+          waitForPromotion: () => Effect.succeed(undefined),
+          promote: () => Effect.succeed(undefined),
+          cancel: () => Effect.succeed(undefined),
+        }),
+      ),
+    ],
+  ]),
+)
+const foregroundStaleObservation = testEffect(
+  makeLayer(false, [
+    [
+      BackgroundJob.node,
+      Layer.succeed(
+        BackgroundJob.Service,
+        BackgroundJob.Service.of({
+          list: () => Effect.succeed([]),
+          get: (id) =>
+            Effect.succeed({
+              id,
+              type: TaskTool.name,
+              status: "running",
+              started_at: 0,
+              metadata: { background: true },
+            }),
+          start: (input) =>
+            Effect.succeed({
+              id: input.id ?? "job_fresh_start",
+              type: input.type,
+              title: input.title,
+              status: "running",
+              started_at: 1,
+              metadata: input.metadata,
+            }),
+          extend: () => Effect.succeed(false),
+          wait: (input) =>
+            Effect.succeed({
+              timedOut: false,
+              outcome: "completed" as const,
+              info: {
+                id: input.id,
+                type: TaskTool.name,
+                status: "completed" as const,
+                started_at: 1,
+                completed_at: 2,
+                output: "fresh result",
+              },
+            }),
+          waitForPromotion: () => Effect.succeed(undefined),
+          promote: () => Effect.succeed(undefined),
+          cancel: () => Effect.succeed(undefined),
+        }),
+      ),
+    ],
+  ]),
+)
 
 const call = (input: typeof TaskTool.Input.Type, id = "call-task", agent = toolIdentity.agent) => ({
   sessionID: parentID,
@@ -594,6 +684,32 @@ describe("TaskTool", () => {
       ])
       expect(admissions.some((item) => item.sessionID === parentID)).toBe(false)
       expect(woken).toContain(parentID)
+    }),
+  )
+
+  foregroundFastCompletion.effect("returns a completed foreground result when promotion observation resolves undefined after fast completion", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+
+      expect(yield* executeTool(registry, call(input, "call-fast-completion"))).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("<task_result>\nfast result\n</task_result>"),
+      })
+    }),
+  )
+
+  foregroundStaleObservation.effect("does not report background updated from a stale pre-start background snapshot", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+
+      const result = yield* executeTool(registry, call(input, "call-stale-observation"))
+      expect(result).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("<task_result>\nfresh result\n</task_result>"),
+      })
+      if (result.type === "text") expect(String(result.value)).not.toContain("Background task updated")
     }),
   )
 

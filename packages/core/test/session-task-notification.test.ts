@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { eq } from "drizzle-orm"
-import { DateTime, Effect, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -33,33 +33,8 @@ const invocation = {
   prompt: Prompt.make({ text: "inspect notifications" }),
 }
 
-const admissions: Array<Parameters<SessionCommand.Interface["admitSynthetic"]>[0]> = []
+const admissions: TaskNotification.Admission[] = []
 const wakes: SessionSchema.ID[] = []
-
-const commandLayer = Layer.succeed(
-  SessionCommand.Service,
-  SessionCommand.Service.of({
-    create: () => Effect.die("unused"),
-    plan: () => Effect.die("unused"),
-    synthetic: () => Effect.die("unused"),
-    switchAgent: () => Effect.die("unused"),
-    switchModel: () => Effect.die("unused"),
-    admit: () => Effect.die("unused"),
-    admitSynthetic: (input) =>
-      Effect.gen(function* () {
-        admissions.push(input)
-        return SessionInput.Admitted.make({
-          admittedSeq: admissions.length,
-          id: input.id ?? SessionMessage.ID.create(),
-          sessionID: input.sessionID,
-          prompt: Prompt.make({ text: input.text }),
-          synthetic: SessionInput.Synthetic.make({ description: input.description }),
-          delivery: input.delivery ?? "steer",
-          timeCreated: yield* DateTime.now,
-        })
-      }),
-  }),
-)
 
 const executionLayer = Layer.succeed(
   SessionExecution.Service,
@@ -84,10 +59,7 @@ const it = testEffect(
       TaskSubmission.node,
       TaskNotification.node,
     ]),
-    [
-      [SessionCommand.node, commandLayer],
-      [SessionExecution.node, executionLayer],
-    ],
+    [[SessionExecution.node, executionLayer]],
   ),
 )
 
@@ -128,6 +100,11 @@ const setup = Effect.gen(function* () {
   yield* submissions.terminalize({ submissionID: submission.id, outcome: "completed", resultText: "child complete" })
 })
 
+const admitAndRecord =
+  (commands: SessionCommand.Interface) =>
+  (admission: TaskNotification.Admission) =>
+    Effect.sync(() => admissions.push(admission)).pipe(Effect.andThen(commands.admitSynthetic(admission)), Effect.asVoid)
+
 describe("TaskNotification", () => {
   it.effect("delivers a terminal notification once and wakes the parent after durable ack", () =>
     Effect.gen(function* () {
@@ -137,7 +114,10 @@ describe("TaskNotification", () => {
       const execution = yield* SessionExecution.Service
       const { db } = yield* Database.Service
 
-      const input = { admit: (admission: TaskNotification.Admission) => commands.admitSynthetic(admission).pipe(Effect.asVoid), wake: execution.wake }
+      const input = {
+        admit: admitAndRecord(commands),
+        wake: execution.wake,
+      }
       expect(yield* notifications.drain(input)).toBe(1)
       expect(admissions).toHaveLength(1)
       const outbox = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]
@@ -149,7 +129,9 @@ describe("TaskNotification", () => {
       expect(wakes).toEqual([parentSessionID])
       expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
       expect(typeof (yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.time_delivered).toBe("number")
-      expect(yield* db.select().from(SessionInputTable).all()).toHaveLength(1)
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
+      ).toHaveLength(1)
       expect(yield* notifications.drain(input)).toBe(0)
     }),
   )
@@ -171,7 +153,7 @@ describe("TaskNotification", () => {
 
       expect(
         yield* notifications.drain({
-          admit: (admission: TaskNotification.Admission) => commands.admitSynthetic(admission).pipe(Effect.asVoid),
+          admit: admitAndRecord(commands),
           wake: execution.wake,
         }),
       ).toBe(1)
@@ -199,12 +181,160 @@ describe("TaskNotification", () => {
 
       expect(
         yield* notifications.drain({
-          admit: (admission: TaskNotification.Admission) => commands.admitSynthetic(admission).pipe(Effect.asVoid),
+          admit: admitAndRecord(commands),
           wake: execution.wake,
         }),
       ).toBe(1)
       expect(admissions).toHaveLength(1)
       expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
+    }),
+  )
+
+  it.effect("keeps a wake-failed notification replayable and reuses the deterministic parent input id on replay", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const { db } = yield* Database.Service
+      const commands = yield* SessionCommand.Service
+
+      expect(
+        yield* notifications.drain({
+          admit: admitAndRecord(commands),
+          wake: () => Effect.die(new Error("wake crashed")),
+        }),
+      ).toBe(0)
+      const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      const parentInputs = yield* db
+        .select()
+        .from(SessionInputTable)
+        .where(eq(SessionInputTable.session_id, parentSessionID))
+        .all()
+      expect(parentInputs).toHaveLength(1)
+      expect(parentInputs[0]?.id).toBe(TaskSubmission.notificationID(failed.submission_id))
+      expect(failed.status).toBe("error")
+      expect(failed.error).toMatchObject({ message: expect.stringContaining("wake crashed") })
+
+      expect(
+        yield* notifications.drain({
+          admit: admitAndRecord(commands),
+          wake: () => Effect.void,
+        }),
+      ).toBe(1)
+      expect(
+        yield* db
+          .select()
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.session_id, parentSessionID))
+          .all(),
+      ).toHaveLength(1)
+      expect(
+        (
+          yield* db
+            .select()
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.session_id, parentSessionID))
+            .all()
+        )[0]?.id,
+      ).toBe(
+        TaskSubmission.notificationID(failed.submission_id),
+      )
+      expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
+    }),
+  )
+
+  it.effect("reports an explicit delivery error when deterministic replay conflicts with the existing parent input", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const { db } = yield* Database.Service
+      const commands = yield* SessionCommand.Service
+
+      yield* notifications.drain({
+        admit: admitAndRecord(commands),
+        wake: () => Effect.die(new Error("wake crashed")),
+      })
+      const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({
+          payload: {
+            state: "completed",
+            description: "Inspect notifications",
+            text: "conflicting replay payload",
+          },
+        })
+        .where(eq(TaskNotificationOutboxTable.id, failed.id))
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(
+        yield* notifications.drain({
+          admit: admitAndRecord(commands),
+          wake: () => Effect.void,
+        }),
+      ).toBe(0)
+      expect(
+        yield* db
+          .select()
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.session_id, parentSessionID))
+          .all(),
+      ).toHaveLength(1)
+      const replayed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      expect(replayed.status).toBe("error")
+      expect(replayed.error).toMatchObject({
+        message: expect.stringContaining("PromptConflictError"),
+      })
+    }),
+  )
+
+  it.effect("does not rewrite a woken notification to error after a late wake failure", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const commands = yield* SessionCommand.Service
+      const { db } = yield* Database.Service
+      const firstWakeStarted = yield* Deferred.make<void>()
+      const releaseFirstWake = yield* Deferred.make<void>()
+      const secondDone = yield* Deferred.make<void>()
+      let wakeCalls = 0
+
+      const first = yield* notifications
+        .drain({
+          admit: admitAndRecord(commands),
+          wake: () =>
+            Effect.gen(function* () {
+              wakeCalls += 1
+              yield* Deferred.succeed(firstWakeStarted, undefined)
+              yield* Deferred.await(releaseFirstWake)
+              return yield* Effect.die(new Error("late wake failure"))
+            }),
+        })
+        .pipe(Effect.forkChild)
+
+      yield* Deferred.await(firstWakeStarted)
+
+      const second = yield* notifications
+        .drain({
+          admit: admitAndRecord(commands),
+          wake: () =>
+            Effect.sync(() => {
+              wakeCalls += 1
+            }),
+        })
+        .pipe(Effect.ensuring(Deferred.succeed(secondDone, undefined)), Effect.forkChild)
+
+      yield* Deferred.await(secondDone)
+      yield* Deferred.succeed(releaseFirstWake, undefined)
+      expect(yield* Fiber.join(second)).toBe(1)
+      expect(yield* Fiber.join(first)).toBe(0)
+      expect(wakeCalls).toBe(2)
+      const outbox = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      expect(outbox.status).toBe("woken")
+      expect(outbox.time_woken).not.toBeNull()
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
+      ).toHaveLength(1)
     }),
   )
 })

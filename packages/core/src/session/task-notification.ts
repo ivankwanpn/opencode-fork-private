@@ -132,7 +132,16 @@ const layer = Layer.effect(
       yield* db
         .update(TaskNotificationOutboxTable)
         .set({ status: "error", error: { message: String(Cause.squash(cause)) } })
-        .where(eq(TaskNotificationOutboxTable.id, row.id))
+        .where(
+          and(
+            eq(TaskNotificationOutboxTable.id, row.id),
+            or(
+              eq(TaskNotificationOutboxTable.status, "pending"),
+              eq(TaskNotificationOutboxTable.status, "error"),
+              and(eq(TaskNotificationOutboxTable.status, "delivered"), isNull(TaskNotificationOutboxTable.time_woken)),
+            ),
+          ),
+        )
         .run()
         .pipe(Effect.orDie)
     })

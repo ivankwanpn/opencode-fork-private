@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Exit, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, Scope } from "effect"
 import { it } from "./lib/effect"
 
 const jobsLayer = LayerNode.compile(BackgroundJob.node)
@@ -11,6 +11,71 @@ describe("BackgroundJob", () => {
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       expect(yield* jobs.wait({ id: "missing-job" })).toEqual({ outcome: "missing", timedOut: false })
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("returns a missing outcome for an unknown promotion wait instead of hanging forever", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      expect(yield* jobs.waitForPromotion("missing-job")).toBeUndefined()
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("returns undefined for completed jobs instead of hanging on promotion", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const job = yield* jobs.start({
+        type: "test",
+        run: Effect.succeed("done"),
+      })
+
+      yield* jobs.wait({ id: job.id })
+      expect(yield* jobs.waitForPromotion(job.id)).toBeUndefined()
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("returns the running snapshot immediately for background jobs", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const job = yield* jobs.start({
+        type: "test",
+        metadata: { background: true },
+        run: Effect.never,
+      })
+
+      expect(yield* jobs.waitForPromotion(job.id)).toMatchObject({
+        id: job.id,
+        status: "running",
+        metadata: { background: true },
+      })
+      yield* jobs.cancel(job.id)
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("waits for foreground jobs to promote before resolving", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const ready = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        type: "test",
+        run: Deferred.await(ready).pipe(Effect.as("done")),
+      })
+      const waiting = yield* jobs.waitForPromotion(job.id).pipe(Effect.forkChild)
+
+      yield* Effect.yieldNow
+      expect(yield* jobs.promote(job.id)).toMatchObject({
+        id: job.id,
+        status: "running",
+        metadata: { background: true },
+      })
+      expect(yield* Fiber.join(waiting)).toMatchObject({
+        id: job.id,
+        status: "running",
+        metadata: { background: true },
+      })
+
+      yield* Deferred.succeed(ready, undefined)
+      yield* jobs.wait({ id: job.id })
     }).pipe(Effect.provide(jobsLayer)),
   )
 

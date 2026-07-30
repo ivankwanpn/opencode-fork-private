@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { DateTime, Effect } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -65,6 +65,95 @@ const setup = Effect.gen(function* () {
     ])
     .run()
     .pipe(Effect.orDie)
+})
+
+const runConcurrentPostAdmissionRace = Effect.fn("TaskSubmissionTest.runConcurrentPostAdmissionRace")(function* (
+  input: readonly [TaskSubmission.Invocation, TaskSubmission.Invocation],
+) {
+  const { db } = yield* Database.Service
+  const initialFirstReached = yield* Deferred.make<void>()
+  const initialSecondReached = yield* Deferred.make<void>()
+  const releaseInitial = yield* Deferred.make<void>()
+  const thirdLookupReached = yield* Deferred.make<void>()
+  const releaseThirdLookup = yield* Deferred.make<void>()
+  let invocationFindCount = 0
+
+  const wrapPostFrom = <
+    TWhere extends (...args: never[]) => unknown,
+    TGet extends Effect.Effect<unknown, unknown, never>,
+    T extends { where: TWhere; get: () => TGet },
+  >(
+    builder: T,
+    taskSubmissionFind = false,
+  ): T => {
+    const wrapped = Object.create(builder) as T & {
+      where: TWhere
+      get: () => TGet
+    }
+    wrapped.where = ((...args: Parameters<TWhere>) =>
+      wrapPostFrom(builder.where(...args) as T, taskSubmissionFind)) as TWhere
+    wrapped.get = (() => {
+      if (!taskSubmissionFind) return builder.get()
+      invocationFindCount += 1
+      if (invocationFindCount === 1)
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(initialFirstReached, undefined).pipe(Effect.ignore)
+          yield* Deferred.await(releaseInitial)
+          return undefined
+        })
+      if (invocationFindCount === 2)
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(initialSecondReached, undefined).pipe(Effect.ignore)
+          yield* Deferred.await(releaseInitial)
+          return undefined
+        })
+      if (invocationFindCount === 3)
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(thirdLookupReached, undefined).pipe(Effect.ignore)
+          yield* Deferred.await(releaseThirdLookup)
+          return yield* builder.get()
+        })
+      return builder.get()
+    }) as () => TGet
+    return wrapped
+    }
+
+  const wrapSelect = <T extends ReturnType<typeof db.select>>(builder: T): T => {
+      const wrapped = Object.create(builder) as typeof builder & {
+        from: typeof builder.from
+      }
+      const wrappedFrom = ((table: Parameters<typeof builder.from>[0]) =>
+        wrapPostFrom(builder.from(table), table === TaskSubmissionTable)) as typeof builder.from
+      wrapped.from = wrappedFrom
+      return wrapped
+    }
+
+  const originalSelect = db.select.bind(db)
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      db.select = originalSelect
+    }),
+  )
+  db.select = ((...args: Parameters<typeof db.select>) => wrapSelect(originalSelect(...args))) as typeof db.select
+
+  const submissions = yield* TaskSubmission.Service
+  const first = yield* submissions.submit(input[0]).pipe(Effect.exit, Effect.forkChild)
+  const second = yield* submissions.submit(input[1]).pipe(Effect.exit, Effect.forkChild)
+  yield* Deferred.await(initialSecondReached).pipe(
+    Effect.timeout("5 seconds"),
+    Effect.catch(() => Effect.die(new Error("concurrent submit initial lookup timed out"))),
+  )
+  yield* Deferred.succeed(releaseInitial, undefined)
+  yield* Deferred.await(thirdLookupReached).pipe(
+    Effect.timeout("5 seconds"),
+    Effect.catch(() => Effect.die(new Error("concurrent submit post-admission lookup timed out"))),
+  )
+  yield* Deferred.succeed(releaseThirdLookup, undefined)
+
+  return {
+    first: yield* Fiber.join(first).pipe(Effect.timeout("5 seconds")),
+    second: yield* Fiber.join(second).pipe(Effect.timeout("5 seconds")),
+  }
 })
 
 describe("TaskSubmission", () => {
@@ -170,6 +259,112 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("adopts equivalent serialized model selection and rejects a different model for the same invocation", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const model = ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") })
+      const first = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+        model,
+      })
+
+      const retry = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+      })
+      expect(retry).toEqual(first)
+
+      const conflict = yield* submissions
+        .submit({
+          ...invocation,
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("other"), providerID: ProviderV2.ID.make("test") }),
+        })
+        .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
+
+      expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
+    }),
+  )
+
+  it.live("adopts equivalent serialized model selection during a concurrent first-submit race", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const equivalent = yield* runConcurrentPostAdmissionRace([
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_equivalent_first"),
+          toolCallID: "call_task_equivalent_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        },
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_equivalent_first"),
+          toolCallID: "call_task_equivalent_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        },
+      ])
+
+      expect(Exit.isSuccess(equivalent.first)).toBe(true)
+      expect(Exit.isSuccess(equivalent.second)).toBe(true)
+      if (Exit.isSuccess(equivalent.first) && Exit.isSuccess(equivalent.second))
+        expect(equivalent.second.value).toMatchObject({
+          id: equivalent.first.value.id,
+          childInputID: equivalent.first.value.childInputID,
+          childSessionID: equivalent.first.value.childSessionID,
+          model: equivalent.first.value.model,
+          toolCallID: equivalent.first.value.toolCallID,
+        })
+    }),
+  )
+
+  it.live("rejects a different model during a concurrent first-submit race after admission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const conflict = yield* runConcurrentPostAdmissionRace([
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_conflict_first"),
+          toolCallID: "call_task_conflict_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        },
+        {
+          ...invocation,
+          assistantMessageID: SessionMessage.ID.make("msg_task_conflict_first"),
+          toolCallID: "call_task_conflict_first",
+          childSessionID,
+          description: "Inspect lifecycle",
+          agent: "general",
+          model: ModelV2.Ref.make({ id: ModelV2.ID.make("other"), providerID: ProviderV2.ID.make("test") }),
+        },
+      ])
+
+      expect(Exit.isFailure(conflict.second)).toBe(true)
+      if (Exit.isFailure(conflict.second)) {
+        const failure = Cause.findError(conflict.second.cause)
+        expect(Result.isSuccess(failure)).toBe(true)
+        if (Result.isSuccess(failure)) expect(failure.success).toBeInstanceOf(TaskSubmission.InvocationConflict)
+      }
+    }),
+  )
+
   it.effect("claims an accepted input at most once", () =>
     Effect.gen(function* () {
       yield* setup
@@ -212,7 +407,13 @@ describe("TaskSubmission", () => {
         time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
       })
 
-      expect(yield* submissions.recoverSession({ sessionID: childSessionID, messages: [assistant] })).toBe(0)
+      expect(
+        yield* submissions.recoverSession({
+          sessionID: childSessionID,
+          assistantMessageID: assistant.id,
+          messages: [assistant],
+        }),
+      ).toBe(0)
       const recoveredMessages = [
         SessionMessage.User.make({
           id: submitted.childInputID,
@@ -222,12 +423,78 @@ describe("TaskSubmission", () => {
         }),
         assistant,
       ]
-      expect(yield* submissions.recoverSession({ sessionID: childSessionID, messages: recoveredMessages })).toBe(1)
+      expect(
+        yield* submissions.recoverSession({
+          sessionID: childSessionID,
+          assistantMessageID: assistant.id,
+          messages: recoveredMessages,
+        }),
+      ).toBe(1)
       expect(yield* submissions.get(submitted.id)).toMatchObject({
         outcome: "completed",
         resultText: "recovered result",
       })
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("binds recovery results to the exact child input instead of the latest completed assistant", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_task_first",
+        childSessionID,
+        description: "Inspect first lifecycle",
+        prompt: Prompt.make({ text: "first prompt" }),
+        agent: "general",
+      })
+      const second = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_task_second",
+        childSessionID,
+        description: "Inspect second lifecycle",
+        prompt: Prompt.make({ text: "second prompt" }),
+        agent: "general",
+      })
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_task_second_result"),
+        type: "assistant",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        content: [{ type: "text", id: "text_second_result", text: "second result" }],
+        time: { created: DateTime.makeUnsafe(3), completed: DateTime.makeUnsafe(4) },
+      })
+
+      expect(
+        yield* submissions.recoverSession({
+          sessionID: childSessionID,
+          assistantMessageID: assistant.id,
+          messages: [
+            SessionMessage.User.make({
+              id: first.childInputID,
+              type: "user",
+              text: "first prompt",
+              time: { created: DateTime.makeUnsafe(1) },
+            }),
+            SessionMessage.User.make({
+              id: second.childInputID,
+              type: "user",
+              text: "second prompt",
+              time: { created: DateTime.makeUnsafe(2) },
+            }),
+            assistant,
+          ],
+        }),
+      ).toBe(1)
+      expect(yield* submissions.get(first.id)).toMatchObject({
+        status: "accepted",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        outcome: "completed",
+        resultText: "second result",
+      })
     }),
   )
 
@@ -247,6 +514,7 @@ describe("TaskSubmission", () => {
       expect(
         yield* submissions.markRecoveryRequired({
           sessionID: childSessionID,
+          childInputID: submitted.childInputID,
           reason: "response-interrupted",
         }),
       ).toBe(1)
@@ -258,6 +526,42 @@ describe("TaskSubmission", () => {
         { terminal_outcome: "recovery-required" },
       ])
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("marks only the matching child input as recovery-required", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Recover interrupted task",
+        agent: "general",
+      })
+      const second = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        toolCallID: "call_task_followup",
+        assistantMessageID: SessionMessage.ID.make("msg_task_followup_assistant"),
+        prompt: Prompt.make({ text: "follow up prompt" }),
+        description: "Follow up task",
+        agent: "general",
+      })
+
+      expect(
+        yield* submissions.markRecoveryRequired({
+          sessionID: childSessionID,
+          childInputID: first.childInputID,
+          reason: "response-interrupted",
+        }),
+      ).toBe(1)
+      expect(yield* submissions.get(first.id)).toMatchObject({
+        outcome: "recovery-required",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        status: "accepted",
+      })
     }),
   )
 })

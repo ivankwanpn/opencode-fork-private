@@ -312,26 +312,6 @@ export const TaskTool = Tool.define(
         ),
       )
 
-      const existingJob = yield* background.get(nextSession.id)
-      const extended =
-        existingJob?.status === "running" && (yield* background.extend({ id: nextSession.id, run: runTask }))
-      if (extended) {
-        return {
-          title: params.description,
-          metadata: {
-            ...metadata,
-            background: true,
-            jobId: nextSession.id,
-          },
-          output: renderOutput({
-            sessionID: nextSession.id,
-            state: "running",
-            summary: "Background task updated",
-            text: BACKGROUND_UPDATED,
-          }),
-        }
-      }
-
       const info = yield* background.start({
         id: nextSession.id,
         type: id,
@@ -345,7 +325,7 @@ export const TaskTool = Tool.define(
         ]),
         run: runTask,
       })
-      function backgroundResult() {
+      function backgroundResult(mode: "started" | "updated") {
         return {
           title: params.description,
           metadata: {
@@ -356,14 +336,18 @@ export const TaskTool = Tool.define(
           output: renderOutput({
             sessionID: nextSession.id,
             state: "running",
-            summary: "Background task started",
-            text: BACKGROUND_STARTED,
+            summary: mode === "updated" ? "Background task updated" : "Background task started",
+            text: mode === "updated" ? BACKGROUND_UPDATED : BACKGROUND_STARTED,
           }),
         }
       }
 
       if (runInBackground) {
-        return backgroundResult()
+        return backgroundResult("started")
+      }
+
+      if (info.metadata?.background === true) {
+        return backgroundResult("updated")
       }
 
       const runCancel = yield* EffectBridge.make()
@@ -379,17 +363,41 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
-            const result = yield* Effect.raceFirst(
-              background.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
-              background.waitForPromotion(nextSession.id),
+            const waitForCompletion: Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> = Effect.raceFirst(
+              background.wait({ id: nextSession.id }),
+              background
+                .waitForPromotion(nextSession.id)
+                .pipe(
+                  Effect.flatMap((value): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
+                    value === undefined ? background.wait({ id: nextSession.id }) : Effect.succeed(value),
+                  ),
+                ),
             )
-            if (result?.metadata?.background === true) return backgroundResult()
-            if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
-            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+            const result = yield* waitForCompletion
+            if ("timedOut" in result) {
+              if (result.outcome === "missing")
+                return yield* Effect.fail(new Error(`Task lifecycle observation missing: ${nextSession.id}`))
+              if (result.timedOut || result.outcome === "timed-out")
+                return yield* Effect.fail(new Error(`Task lifecycle observation timed out: ${nextSession.id}`))
+              if (!result.info)
+                return yield* Effect.fail(new Error(`Task lifecycle observation missing result: ${nextSession.id}`))
+              if (result.info.status === "error")
+                return yield* Effect.fail(new Error(result.info.error ?? "Task failed"))
+              if (result.info.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+              if (result.info.status !== "completed") return yield* Effect.fail(new Error("Task did not complete"))
+              return {
+                title: params.description,
+                metadata,
+                output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result.info.output ?? "" }),
+              }
+            }
+            if (result.metadata?.background === true) return backgroundResult("started")
+            if (result.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
+            if (result.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
             return {
               title: params.description,
               metadata,
-              output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result?.output ?? "" }),
+              output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result.output ?? "" }),
             }
           }),
         (_, exit) =>

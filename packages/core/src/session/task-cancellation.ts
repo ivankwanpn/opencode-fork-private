@@ -1,13 +1,19 @@
 export * as TaskCancellation from "./task-cancellation"
 
-import { and, eq, inArray, isNull, sql } from "drizzle-orm"
-import { Clock, Context, Effect, Layer, Schema } from "effect"
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm"
+import { Cause, Clock, Context, Effect, Layer, Result, Schema } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
 import { EventV2 } from "../event"
 import { Identifier } from "../id/id"
 import { SessionSchema } from "./schema"
-import { SessionCancellationTable, SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
+import {
+  SessionAttemptTable,
+  SessionCancellationTable,
+  SessionInputTable,
+  TaskNotificationOutboxTable,
+  TaskSubmissionTable,
+} from "./sql"
 import { TaskSubmission } from "./task-submission"
 
 export type CancelHooks = {
@@ -37,113 +43,172 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
 
-    const ownership = Effect.fn("TaskCancellation.ownership")(function* (rootSessionID: SessionSchema.ID) {
-      return yield* db
-        .all<{ id: string }>(
-          sql`
-          WITH RECURSIVE ownership(id) AS (
-            SELECT id FROM session WHERE id = ${rootSessionID}
-            UNION ALL
-            SELECT child.id
-            FROM session child
-            JOIN ownership parent ON child.parent_id = parent.id
-          )
-          SELECT id FROM ownership ORDER BY id
-        `,
-        )
-        .pipe(Effect.orDie)
-    })
-
     const cancelTree: Interface["cancelTree"] = Effect.fn("TaskCancellation.cancelTree")(function* (input) {
-      const rows = yield* ownership(input.rootSessionID)
-      if (rows.length === 0) return yield* new Missing({ rootSessionID: input.rootSessionID })
-      const sessionIDs = rows.map((row) => SessionSchema.ID.make(row.id))
       const now = yield* Clock.currentTimeMillis
-      const submissionIDs = yield* db
-        .transaction(() =>
-          Effect.gen(function* () {
-            yield* db
-              .insert(SessionCancellationTable)
-              .values({ root_session_id: input.rootSessionID, time_created: now })
-              .onConflictDoNothing()
-              .run()
-              .pipe(Effect.orDie)
-
-            const submissions = yield* db
-              .select()
-              .from(TaskSubmissionTable)
-              .where(
-                and(inArray(TaskSubmissionTable.child_session_id, sessionIDs), isNull(TaskSubmissionTable.outcome)),
-              )
-              .all()
-              .pipe(Effect.orDie)
-            for (const submission of submissions) {
-              const updated = yield* db
-                .update(TaskSubmissionTable)
-                .set({
-                  status: "cancelled",
-                  outcome: "cancelled",
-                  error: { message: "Task cancelled by ownership root" },
-                  time_completed: now,
-                })
-                .where(and(eq(TaskSubmissionTable.id, submission.id), isNull(TaskSubmissionTable.outcome)))
-                .returning()
-                .get()
-                .pipe(Effect.orDie)
-              if (!updated) continue
-
-              const terminalSeq = yield* EventV2.latestSequence(db, updated.child_session_id)
-
-              const projected = yield* db
-                .update(SessionInputTable)
-                .set({
-                  terminal_outcome: "cancelled",
-                  terminal_error: { message: "Task cancelled by ownership root" },
-                  terminal_time: now,
-                  terminal_seq: terminalSeq,
-                })
-                .where(
-                  and(eq(SessionInputTable.id, updated.child_input_id), isNull(SessionInputTable.terminal_outcome)),
+      const cancelled = yield* db
+        .transaction(
+          () =>
+            Effect.gen(function* () {
+              const rows = yield* db
+                .all<{ id: string }>(
+                  sql`
+                  WITH RECURSIVE ownership(id) AS (
+                    SELECT id FROM session WHERE id = ${input.rootSessionID}
+                    UNION ALL
+                    SELECT child.id
+                    FROM session child
+                    JOIN ownership parent ON child.parent_id = parent.id
+                  )
+                  SELECT id FROM ownership ORDER BY id
+                `,
                 )
-                .returning({ id: SessionInputTable.id })
-                .get()
                 .pipe(Effect.orDie)
-              if (!projected) return yield* Effect.die(`Task input was not pending: ${updated.child_input_id}`)
+              if (rows.length === 0) return yield* new Missing({ rootSessionID: input.rootSessionID })
 
               yield* db
-                .insert(TaskNotificationOutboxTable)
-                .values({
-                  id: Identifier.create("outbox", "ascending"),
-                  submission_id: updated.id,
-                  parent_session_id: updated.parent_session_id,
-                  message_id: TaskSubmission.notificationID(updated.id),
-                  payload: {
-                    state: "cancelled",
-                    description: updated.description,
-                    text: "Task cancelled by ownership root",
-                  },
-                  status: "pending",
-                  time_created: now,
-                })
+                .insert(SessionCancellationTable)
+                .values({ root_session_id: input.rootSessionID, time_created: now })
                 .onConflictDoNothing()
                 .run()
                 .pipe(Effect.orDie)
-            }
 
-            yield* db
-              .update(SessionCancellationTable)
-              .set({ time_completed: now })
-              .where(eq(SessionCancellationTable.root_session_id, input.rootSessionID))
-              .run()
-              .pipe(Effect.orDie)
-            return submissions.filter((submission) => submission.outcome === null).map((submission) => submission.id)
+              const sessionIDs = rows.map((row) => SessionSchema.ID.make(row.id))
+              const submissionIDs = new Array<string>()
+              const submissions = yield* db
+                .select()
+                .from(TaskSubmissionTable)
+                .where(
+                  and(inArray(TaskSubmissionTable.child_session_id, sessionIDs), isNull(TaskSubmissionTable.outcome)),
+                )
+                .all()
+                .pipe(Effect.orDie)
+              for (const submission of submissions) {
+                const updated = yield* db
+                  .update(TaskSubmissionTable)
+                  .set({
+                    status: "cancelled",
+                    outcome: "cancelled",
+                    error: { message: "Task cancelled by ownership root" },
+                    time_completed: now,
+                  })
+                  .where(and(eq(TaskSubmissionTable.id, submission.id), isNull(TaskSubmissionTable.outcome)))
+                  .returning()
+                  .get()
+                  .pipe(Effect.orDie)
+                if (!updated) continue
+                submissionIDs.push(updated.id)
+
+                const terminalSeq = yield* EventV2.latestSequence(db, updated.child_session_id)
+                yield* db
+                  .update(SessionInputTable)
+                  .set({
+                    terminal_outcome: "cancelled",
+                    terminal_message_id: null,
+                    terminal_error: { message: "Task cancelled by ownership root" },
+                    terminal_time: now,
+                    terminal_seq: terminalSeq,
+                  })
+                  .where(
+                    and(eq(SessionInputTable.id, updated.child_input_id), isNull(SessionInputTable.terminal_outcome)),
+                  )
+                  .run()
+                  .pipe(Effect.orDie)
+
+                yield* db
+                  .insert(TaskNotificationOutboxTable)
+                  .values({
+                    id: Identifier.create("outbox", "ascending"),
+                    submission_id: updated.id,
+                    parent_session_id: updated.parent_session_id,
+                    message_id: TaskSubmission.notificationID(updated.id),
+                    payload: {
+                      state: "cancelled",
+                      description: updated.description,
+                      text: "Task cancelled by ownership root",
+                    },
+                    status: "pending",
+                    time_created: now,
+                  })
+                  .onConflictDoNothing()
+                  .run()
+                  .pipe(Effect.orDie)
+              }
+
+              const pendingInputs = yield* db
+                .select({ id: SessionInputTable.id, sessionID: SessionInputTable.session_id })
+                .from(SessionInputTable)
+                .where(
+                  and(inArray(SessionInputTable.session_id, sessionIDs), isNull(SessionInputTable.terminal_outcome)),
+                )
+                .all()
+                .pipe(Effect.orDie)
+              for (const pendingInput of pendingInputs) {
+                const terminalSeq = yield* EventV2.latestSequence(db, pendingInput.sessionID)
+                yield* db
+                  .update(SessionInputTable)
+                  .set({
+                    terminal_outcome: "cancelled",
+                    terminal_message_id: null,
+                    terminal_error: { message: "Task cancelled by ownership root" },
+                    terminal_time: now,
+                    terminal_seq: terminalSeq,
+                  })
+                  .where(and(eq(SessionInputTable.id, pendingInput.id), isNull(SessionInputTable.terminal_outcome)))
+                  .run()
+                  .pipe(Effect.orDie)
+              }
+
+              yield* db
+                .update(SessionAttemptTable)
+                .set({
+                  status: "abandoned",
+                  retry_at: null,
+                  error: null,
+                  decision: "abandon",
+                  time_updated: now,
+                })
+                .where(
+                  and(
+                    inArray(SessionAttemptTable.session_id, sessionIDs),
+                    or(
+                      eq(SessionAttemptTable.status, "started"),
+                      eq(SessionAttemptTable.status, "responding"),
+                      eq(SessionAttemptTable.status, "retrying"),
+                      eq(SessionAttemptTable.status, "continuation"),
+                    ),
+                  ),
+                )
+                .run()
+                .pipe(Effect.orDie)
+
+              return { sessionIDs, submissionIDs }
+            }),
+            { behavior: "immediate" },
+          )
+        .pipe(
+          Effect.catchCause((cause) => {
+            const failure = Cause.findError(cause)
+            if (Result.isFailure(failure) || !(failure.success instanceof Missing)) {
+              return Effect.die(Cause.squash(cause))
+            }
+            return Effect.fail(failure.success)
           }),
         )
-        .pipe(Effect.orDie)
 
-      yield* Effect.forEach(sessionIDs, input.interrupt, { discard: true })
-      yield* Effect.forEach(sessionIDs, input.wait, { discard: true })
-      return { sessionIDs, submissionIDs }
+      yield* Effect.forEach(cancelled.sessionIDs, input.interrupt, { discard: true })
+      yield* Effect.forEach(cancelled.sessionIDs, input.wait, { discard: true })
+      yield* db
+        .update(SessionCancellationTable)
+        .set({ time_completed: yield* Clock.currentTimeMillis })
+        .where(
+          and(
+            eq(SessionCancellationTable.root_session_id, input.rootSessionID),
+            isNull(SessionCancellationTable.time_completed),
+          ),
+        )
+        .run()
+        .pipe(Effect.orDie)
+      return cancelled
     })
 
     return Service.of({ cancelTree })

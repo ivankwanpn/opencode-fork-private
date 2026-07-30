@@ -104,6 +104,22 @@ const setup = Effect.gen(function* () {
 })
 
 describe("TaskCancellation", () => {
+  it.effect("fails with a typed missing-root error for an unknown session", () =>
+    Effect.gen(function* () {
+      const cancellation = yield* TaskCancellation.Service
+      const missingRoot = SessionSchema.ID.make("ses_cancel_missing")
+      const missing = yield* cancellation
+        .cancelTree({
+          rootSessionID: missingRoot,
+          interrupt: () => Effect.void,
+          wait: () => Effect.void,
+        })
+        .pipe(Effect.flip)
+      expect(missing._tag).toBe("TaskCancellation.Missing")
+      expect(missing.rootSessionID).toBe(missingRoot)
+    }),
+  )
+
   it.effect("terminalizes the ownership tree before interrupting and blocks descendant submits", () =>
     Effect.gen(function* () {
       yield* setup

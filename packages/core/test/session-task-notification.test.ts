@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { eq } from "drizzle-orm"
-import { DateTime, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -33,33 +33,8 @@ const invocation = {
   prompt: Prompt.make({ text: "inspect notifications" }),
 }
 
-const admissions: Array<Parameters<SessionCommand.Interface["admitSynthetic"]>[0]> = []
+const admissions: TaskNotification.Admission[] = []
 const wakes: SessionSchema.ID[] = []
-
-const commandLayer = Layer.succeed(
-  SessionCommand.Service,
-  SessionCommand.Service.of({
-    create: () => Effect.die("unused"),
-    plan: () => Effect.die("unused"),
-    synthetic: () => Effect.die("unused"),
-    switchAgent: () => Effect.die("unused"),
-    switchModel: () => Effect.die("unused"),
-    admit: () => Effect.die("unused"),
-    admitSynthetic: (input) =>
-      Effect.gen(function* () {
-        admissions.push(input)
-        return SessionInput.Admitted.make({
-          admittedSeq: admissions.length,
-          id: input.id ?? SessionMessage.ID.create(),
-          sessionID: input.sessionID,
-          prompt: Prompt.make({ text: input.text }),
-          synthetic: SessionInput.Synthetic.make({ description: input.description }),
-          delivery: input.delivery ?? "steer",
-          timeCreated: yield* DateTime.now,
-        })
-      }),
-  }),
-)
 
 const executionLayer = Layer.succeed(
   SessionExecution.Service,
@@ -84,10 +59,7 @@ const it = testEffect(
       TaskSubmission.node,
       TaskNotification.node,
     ]),
-    [
-      [SessionCommand.node, commandLayer],
-      [SessionExecution.node, executionLayer],
-    ],
+    [[SessionExecution.node, executionLayer]],
   ),
 )
 
@@ -128,32 +100,10 @@ const setup = Effect.gen(function* () {
   yield* submissions.terminalize({ submissionID: submission.id, outcome: "completed", resultText: "child complete" })
 })
 
-const admitDurably = (admission: TaskNotification.Admission) =>
-  Effect.gen(function* () {
-    const { db } = yield* Database.Service
-    const events = yield* EventV2.Service
-    const prompt = Prompt.make({ text: admission.text })
-    const synthetic = SessionInput.Synthetic.make({ description: admission.description })
-    const expected = {
-      sessionID: admission.sessionID,
-      prompt,
-      synthetic,
-      delivery: admission.delivery,
-    } as const
-    const existing = yield* SessionInput.find(db, admission.id)
-    if (existing) {
-      if (!SessionInput.equivalent(existing, expected))
-        return yield* Effect.fail(new Error(`Synthetic delivery conflict for ${admission.id}`))
-      return existing
-    }
-    return yield* SessionInput.admit(db, events, {
-      id: admission.id,
-      sessionID: admission.sessionID,
-      prompt,
-      synthetic,
-      delivery: admission.delivery,
-    })
-  })
+const admitAndRecord =
+  (commands: SessionCommand.Interface) =>
+  (admission: TaskNotification.Admission) =>
+    Effect.sync(() => admissions.push(admission)).pipe(Effect.andThen(commands.admitSynthetic(admission)), Effect.asVoid)
 
 describe("TaskNotification", () => {
   it.effect("delivers a terminal notification once and wakes the parent after durable ack", () =>
@@ -164,7 +114,10 @@ describe("TaskNotification", () => {
       const execution = yield* SessionExecution.Service
       const { db } = yield* Database.Service
 
-      const input = { admit: (admission: TaskNotification.Admission) => commands.admitSynthetic(admission).pipe(Effect.asVoid), wake: execution.wake }
+      const input = {
+        admit: admitAndRecord(commands),
+        wake: execution.wake,
+      }
       expect(yield* notifications.drain(input)).toBe(1)
       expect(admissions).toHaveLength(1)
       const outbox = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]
@@ -176,7 +129,9 @@ describe("TaskNotification", () => {
       expect(wakes).toEqual([parentSessionID])
       expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
       expect(typeof (yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.time_delivered).toBe("number")
-      expect(yield* db.select().from(SessionInputTable).all()).toHaveLength(1)
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
+      ).toHaveLength(1)
       expect(yield* notifications.drain(input)).toBe(0)
     }),
   )
@@ -198,7 +153,7 @@ describe("TaskNotification", () => {
 
       expect(
         yield* notifications.drain({
-          admit: (admission: TaskNotification.Admission) => commands.admitSynthetic(admission).pipe(Effect.asVoid),
+          admit: admitAndRecord(commands),
           wake: execution.wake,
         }),
       ).toBe(1)
@@ -226,7 +181,7 @@ describe("TaskNotification", () => {
 
       expect(
         yield* notifications.drain({
-          admit: (admission: TaskNotification.Admission) => commands.admitSynthetic(admission).pipe(Effect.asVoid),
+          admit: admitAndRecord(commands),
           wake: execution.wake,
         }),
       ).toBe(1)
@@ -240,10 +195,11 @@ describe("TaskNotification", () => {
       yield* setup
       const notifications = yield* TaskNotification.Service
       const { db } = yield* Database.Service
+      const commands = yield* SessionCommand.Service
 
       expect(
         yield* notifications.drain({
-          admit: admitDurably,
+          admit: admitAndRecord(commands),
           wake: () => Effect.fail(new Error("wake crashed")),
         }),
       ).toBe(0)
@@ -260,7 +216,7 @@ describe("TaskNotification", () => {
 
       expect(
         yield* notifications.drain({
-          admit: admitDurably,
+          admit: admitAndRecord(commands),
           wake: () => Effect.void,
         }),
       ).toBe(1)
@@ -291,9 +247,10 @@ describe("TaskNotification", () => {
       yield* setup
       const notifications = yield* TaskNotification.Service
       const { db } = yield* Database.Service
+      const commands = yield* SessionCommand.Service
 
       yield* notifications.drain({
-        admit: admitDurably,
+        admit: admitAndRecord(commands),
         wake: () => Effect.fail(new Error("wake crashed")),
       })
       const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
@@ -312,7 +269,7 @@ describe("TaskNotification", () => {
 
       expect(
         yield* notifications.drain({
-          admit: admitDurably,
+          admit: admitAndRecord(commands),
           wake: () => Effect.void,
         }),
       ).toBe(0)
@@ -326,7 +283,7 @@ describe("TaskNotification", () => {
       const replayed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
       expect(replayed.status).toBe("error")
       expect(replayed.error).toMatchObject({
-        message: expect.stringContaining("Synthetic delivery conflict"),
+        message: expect.stringContaining("PromptConflictError"),
       })
     }),
   )

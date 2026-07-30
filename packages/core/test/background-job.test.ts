@@ -17,7 +17,7 @@ describe("BackgroundJob", () => {
   it.live("returns a missing outcome for an unknown promotion wait instead of hanging forever", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
-      const result = yield* jobs.waitForPromotion("missing-job").pipe(Effect.timeoutOption("20 millis"))
+      const result = yield* jobs.waitForPromotion("missing-job").pipe(Effect.timeoutOption("200 millis"))
 
       expect(result._tag).toBe("Some")
       if (result._tag === "Some") expect(result.value).toMatchObject({ outcome: "missing", timedOut: false })

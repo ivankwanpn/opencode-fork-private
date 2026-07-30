@@ -29,6 +29,7 @@ import { testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionInputTable, TaskSubmissionTable } from "@opencode-ai/core/session/sql"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -66,6 +67,8 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
 
 const it = testEffect(layer())
 const background = testEffect(layer({ experimentalBackgroundSubagents: true }))
+let missingJobWaitStarted: Deferred.Deferred<void> | undefined
+let missingJobWaitRelease: Deferred.Deferred<void> | undefined
 const missingJob = testEffect(
   layer(
     {},
@@ -87,7 +90,12 @@ const missingJob = testEffect(
                 metadata: input.metadata,
               }),
             extend: () => Effect.succeed(false),
-            wait: () => Effect.succeed({ outcome: "missing", timedOut: false }),
+            wait: () =>
+              Effect.gen(function* () {
+                if (missingJobWaitStarted) yield* Deferred.succeed(missingJobWaitStarted, undefined)
+                if (missingJobWaitRelease) yield* Deferred.await(missingJobWaitRelease)
+                return { outcome: "missing", timedOut: false } as const
+              }),
             waitForPromotion: () => Effect.never,
             promote: () => Effect.succeed(undefined),
             cancel: () => Effect.succeed(undefined),
@@ -861,11 +869,14 @@ describe("tool.task", () => {
 
   missingJob.instance("returns an explicit lifecycle error when the process-local task job is missing after submission", () =>
     Effect.gen(function* () {
+      missingJobWaitStarted = yield* Deferred.make<void>()
+      missingJobWaitRelease = yield* Deferred.make<void>()
       const { chat, assistant } = yield* seed()
+      const { db } = yield* Database.Service
       const tool = yield* TaskTool
       const def = yield* tool.init()
 
-      const exit = yield* def
+      const fiber = yield* def
         .execute(
           {
             description: "inspect bug",
@@ -883,8 +894,14 @@ describe("tool.task", () => {
             ask: () => Effect.void,
           },
         )
-        .pipe(Effect.exit)
+        .pipe(Effect.forkChild)
 
+      yield* Deferred.await(missingJobWaitStarted)
+      expect(yield* db.select({ id: TaskSubmissionTable.id }).from(TaskSubmissionTable).all()).toHaveLength(1)
+      expect(yield* db.select({ id: SessionInputTable.id }).from(SessionInputTable).all()).toHaveLength(1)
+      yield* Deferred.succeed(missingJobWaitRelease, undefined)
+
+      const exit = yield* Fiber.await(fiber)
       expect(Exit.isFailure(exit)).toBe(true)
       if (Exit.isFailure(exit)) expect(String(Cause.squash(exit.cause))).toContain("lifecycle")
     }),

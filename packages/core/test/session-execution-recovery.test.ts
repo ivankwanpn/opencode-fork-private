@@ -37,6 +37,7 @@ const it = testEffect(
 
 const encodeMessage = Schema.encodeSync(SessionMessage.Message)
 const sessionID = SessionSchema.ID.make("ses_terminal_recovery")
+const nonTaskSessionID = SessionSchema.ID.make("ses_non_task_recovery")
 const parentSessionID = SessionSchema.ID.make("ses_execution_parent")
 const childSessionID = SessionSchema.ID.make("ses_execution_child")
 const model = ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") })
@@ -188,6 +189,55 @@ describe("SessionExecution recovery", () => {
     }),
   )
 
+  it.effect("keeps a non-task responding attempt in recovery candidates and out of safe startup dispatch", () =>
+    Effect.gen(function* () {
+      yield* setupProject([{ id: nonTaskSessionID }])
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const inputID = SessionMessage.ID.make("msg_non_task_prompt")
+
+      yield* SessionInput.admit(db, events, {
+        id: inputID,
+        sessionID: nonTaskSessionID,
+        prompt: Prompt.make({ text: "non task prompt" }),
+        delivery: "steer",
+      })
+      yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: 1 })
+        .where(eq(SessionInputTable.id, inputID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionAttemptTable)
+        .values({
+          session_id: nonTaskSessionID,
+          attempt_id: EventV2.ID.make("evt_non_task_attempt"),
+          assistant_message_id: SessionMessage.ID.make("msg_non_task_assistant"),
+          status: "responding",
+          attempt: 1,
+          seq: 1,
+          time_updated: 1,
+        })
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([
+        { sessionID: nonTaskSessionID, reason: "response-interrupted" },
+      ])
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+
+      const runnerCalls = { count: 0 }
+      yield* startRecovery(runnerCalls)
+
+      expect(runnerCalls.count).toBe(0)
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([
+        { sessionID: nonTaskSessionID, reason: "response-interrupted" },
+      ])
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+    }),
+  )
+
   it.effect("settles a responding task from an already completed assistant during restart recovery", () =>
     Effect.gen(function* () {
       yield* setupProject([
@@ -253,6 +303,60 @@ describe("SessionExecution recovery", () => {
       })
       expect(runnerCalls.count).toBe(0)
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("clears a stale responding task attempt after the task is already terminal", () =>
+    Effect.gen(function* () {
+      yield* setupProject([
+        { id: parentSessionID },
+        { id: childSessionID, parentID: parentSessionID },
+      ])
+      const { db } = yield* Database.Service
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit(invocation)
+      yield* submissions.claim(submitted.id)
+      yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: 1 })
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionAttemptTable)
+        .values({
+          session_id: childSessionID,
+          attempt_id: EventV2.ID.make("evt_execution_attempt_stale"),
+          assistant_message_id: SessionMessage.ID.make("msg_execution_stale_assistant"),
+          status: "responding",
+          attempt: 1,
+          seq: 1,
+          time_updated: 1,
+        })
+        .run()
+        .pipe(Effect.orDie)
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultMessageID: SessionMessage.ID.make("msg_execution_terminal_result"),
+        resultText: "terminal result",
+      })
+
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([
+        { sessionID: childSessionID, reason: "response-interrupted" },
+      ])
+
+      const runnerCalls = { count: 0 }
+      yield* startRecovery(runnerCalls)
+
+      expect(runnerCalls.count).toBe(0)
+      expect(
+        yield* db.select().from(SessionAttemptTable).where(eq(SessionAttemptTable.session_id, childSessionID)).get(),
+      ).toMatchObject({
+        status: "ended",
+      })
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
     }),
   )
 

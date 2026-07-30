@@ -1,5 +1,5 @@
 import { Cause, Clock, Effect, Layer } from "effect"
-import { and, eq, isNull, or } from "drizzle-orm"
+import { and, desc, eq, isNotNull, isNull, lte, or } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { LocationServiceMap } from "../../location-service-map"
 import { makeGlobalNode } from "../../effect/app-node"
@@ -13,14 +13,14 @@ import { SessionInput } from "../input"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
-import { SessionAttemptTable, TaskSubmissionTable } from "../sql"
+import { SessionAttemptTable, SessionInputTable, TaskSubmissionTable } from "../sql"
 import { EventV2 } from "../../event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import { SessionV1 } from "@opencode-ai/schema/v1/session"
 
 type DB = Database.Interface["db"]
 
-const interruptedTaskInputID = Effect.fn("SessionExecutionLocal.interruptedTaskInputID")(function* (
+const unresolvedTaskInputID = Effect.fn("SessionExecutionLocal.unresolvedTaskInputID")(function* (
   db: DB,
   sessionID: SessionSchema.ID,
   attempt?: { readonly seq: number; readonly status: string },
@@ -52,7 +52,8 @@ export const startupCandidates = Effect.fn("SessionExecutionLocal.startupCandida
   ])
   const safe: SessionSchema.ID[] = []
   for (const sessionID of candidates) {
-    if (yield* interruptedTaskInputID(db, sessionID)) continue
+    const attempt = yield* SessionAttempt.get(db, sessionID)
+    if (attempt?.status === "started" || attempt?.status === "responding") continue
     safe.push(sessionID)
   }
   return safe
@@ -77,11 +78,10 @@ export const startupRecoveryCandidates = Effect.fn("SessionExecutionLocal.startu
     readonly reason: "dispatch-unknown" | "response-interrupted"
   }> = []
   for (const attempt of attempts)
-    if (yield* interruptedTaskInputID(db, attempt.sessionID, attempt))
-      recovery.push({
-        sessionID: attempt.sessionID,
-        reason: attempt.status === "responding" ? "response-interrupted" : "dispatch-unknown",
-      })
+    recovery.push({
+      sessionID: attempt.sessionID,
+      reason: attempt.status === "responding" ? "response-interrupted" : "dispatch-unknown",
+    })
   return recovery
 })
 
@@ -105,7 +105,67 @@ const interruptedChildInputID = Effect.fn("SessionExecutionLocal.interruptedChil
   sessionID: SessionSchema.ID,
   db: DB,
 ) {
-  return yield* interruptedTaskInputID(db, sessionID)
+  return yield* unresolvedTaskInputID(db, sessionID)
+})
+
+const clearTerminalTaskAttempt = Effect.fn("SessionExecutionLocal.clearTerminalTaskAttempt")(function* (
+  sessionID: SessionSchema.ID,
+  db: DB,
+) {
+  const attempt = yield* SessionAttempt.get(db, sessionID)
+  if (!attempt || (attempt.status !== "started" && attempt.status !== "responding")) return false
+  const input = yield* db
+    .select({
+      id: SessionInputTable.id,
+    })
+    .from(SessionInputTable)
+    .where(
+      and(
+        eq(SessionInputTable.session_id, sessionID),
+        isNotNull(SessionInputTable.promoted_seq),
+        lte(SessionInputTable.promoted_seq, attempt.seq),
+      ),
+    )
+    .orderBy(desc(SessionInputTable.promoted_seq))
+    .limit(1)
+    .get()
+    .pipe(Effect.orDie)
+  if (!input) return false
+  const submission = yield* db
+    .select({
+      outcome: TaskSubmissionTable.outcome,
+    })
+    .from(TaskSubmissionTable)
+    .where(
+      and(
+        eq(TaskSubmissionTable.child_session_id, sessionID),
+        eq(TaskSubmissionTable.child_input_id, input.id),
+      ),
+    )
+    .get()
+    .pipe(Effect.orDie)
+  if (!submission?.outcome) return false
+  const timeUpdated = yield* Clock.currentTimeMillis
+  const updated = yield* db
+    .update(SessionAttemptTable)
+    .set({
+      status: submission.outcome === "recovery-required" ? "abandoned" : "ended",
+      retry_at: null,
+      error: null,
+      decision: submission.outcome === "recovery-required" ? "abandon" : null,
+      time_updated: timeUpdated,
+    })
+    .where(
+      and(
+        eq(SessionAttemptTable.session_id, sessionID),
+        eq(SessionAttemptTable.attempt_id, attempt.attempt_id),
+        or(eq(SessionAttemptTable.status, "started"), eq(SessionAttemptTable.status, "responding")),
+      ),
+    )
+    .returning({ sessionID: SessionAttemptTable.session_id })
+    .get()
+    .pipe(Effect.orDie)
+  return updated !== undefined
 })
 
 /** Current-process routing for implicit-local Locations. Future remote placement belongs here. */
@@ -192,6 +252,7 @@ const layer = Layer.effect(
     const now = yield* Clock.currentTimeMillis
     for (const recovery of yield* startupRecoveryCandidates(db, now))
       if ((yield* recoverCompletedAssistant(recovery.sessionID, store, submissions, db)) < 1) {
+        if (yield* clearTerminalTaskAttempt(recovery.sessionID, db)) continue
         const childInputID = yield* interruptedChildInputID(recovery.sessionID, db)
         if (childInputID)
           yield* submissions

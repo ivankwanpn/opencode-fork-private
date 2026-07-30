@@ -11,7 +11,9 @@ import { ModelV2 } from "../../model"
 import { ModelsDev } from "../../models-dev"
 import { OauthCallbackPage } from "../../oauth/page"
 import { ProviderV2 } from "../../provider"
+import type { ProviderModel } from "../../provider-models"
 import { fetchCodexModels } from "./codex-models"
+import { applyLiveModels } from "./live-models"
 import type { PluginInternal } from "../internal"
 
 const clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -159,7 +161,8 @@ export const OpenAIPlugin = define({
   effect: Effect.fn(function* (ctx) {
     const events = yield* EventV2.Service
     const hiddenByLive = new Set<string>()
-    let lastLiveModels: Awaited<ReturnType<typeof fetchCodexModels>> | undefined
+    const addedByLive = new Set<string>()
+    let lastLiveModels: readonly ProviderModel[] | undefined
 
     yield* ctx.integration.transform((draft) => {
       draft.method.update(browser)
@@ -198,7 +201,7 @@ export const OpenAIPlugin = define({
       const credential = connection
         ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.catch(() => Effect.succeed(undefined)))
         : undefined
-      const liveModels =
+      const fetchedLiveModels =
         credential?.type === "oauth"
           ? yield* Effect.tryPromise(() =>
               fetchCodexModels({
@@ -208,26 +211,12 @@ export const OpenAIPlugin = define({
             ).pipe(Effect.catch(() => Effect.succeed(undefined)))
           : undefined
 
-      if (liveModels) lastLiveModels = liveModels
-      const live = liveModels ?? lastLiveModels
-      const liveIDs = live ? new Set(live.map((model) => model.id)) : undefined
+      const resolved = resolveOpenAILiveModels(credential?.type === "oauth", fetchedLiveModels, lastLiveModels)
+      lastLiveModels = resolved.previous
 
-      yield* ctx.catalog.transform((catalog) => {
-        const provider = catalog.provider.get(ProviderV2.ID.openai)
-        if (!provider) return
-        for (const [modelID, model] of provider.models) {
-          if (!liveIDs) {
-            if (hiddenByLive.delete(modelID)) model.enabled = true
-            continue
-          }
-          if (liveIDs.has(model.api.id)) {
-            if (hiddenByLive.delete(modelID)) model.enabled = true
-            continue
-          }
-          if (model.enabled) hiddenByLive.add(modelID)
-          model.enabled = false
-        }
-      })
+      yield* ctx.catalog.transform((catalog) =>
+        applyOpenAILiveModels(catalog, resolved.live, hiddenByLive, addedByLive),
+      )
     })
 
     yield* refreshLiveModels()
@@ -242,6 +231,25 @@ export const OpenAIPlugin = define({
     )
   }),
 } satisfies PluginInternal.Plugin<PluginInternal.Requirements | Scope.Scope>)
+
+export function applyOpenAILiveModels(
+  catalog: Parameters<typeof applyLiveModels>[0],
+  live: readonly ProviderModel[] | undefined,
+  hiddenByLive: Set<string>,
+  addedByLive: Set<string>,
+) {
+  applyLiveModels(catalog, ProviderV2.ID.openai, live, hiddenByLive, addedByLive)
+}
+
+export function resolveOpenAILiveModels(
+  isOAuth: boolean,
+  fetched: readonly ProviderModel[] | undefined,
+  previous: readonly ProviderModel[] | undefined,
+) {
+  if (!isOAuth) return { live: undefined, previous: undefined }
+  const next = fetched ?? previous
+  return { live: next, previous: next }
+}
 
 function accountID(metadata: Record<string, unknown> | undefined) {
   const value = metadata?.accountID ?? metadata?.accountId

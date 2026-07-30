@@ -74,6 +74,29 @@ export const latestPromoted = Effect.fn("SessionInput.latestPromoted")(function*
   return row === undefined ? undefined : fromRow(row)
 })
 
+export const latestPromotedAtOrBefore = Effect.fn("SessionInput.latestPromotedAtOrBefore")(function* (
+  db: DatabaseService,
+  sessionID: SessionSchema.ID,
+  seq: number,
+) {
+  const row = yield* db
+    .select()
+    .from(SessionInputTable)
+    .where(
+      and(
+        eq(SessionInputTable.session_id, sessionID),
+        isNotNull(SessionInputTable.promoted_seq),
+        lte(SessionInputTable.promoted_seq, seq),
+        isNull(SessionInputTable.terminal_outcome),
+      ),
+    )
+    .orderBy(desc(SessionInputTable.promoted_seq))
+    .limit(1)
+    .get()
+    .pipe(Effect.orDie)
+  return row === undefined ? undefined : fromRow(row)
+})
+
 export class LifecycleConflict extends Schema.TaggedErrorClass<LifecycleConflict>()("SessionInput.LifecycleConflict", {
   id: SessionMessage.ID,
 }) {}

@@ -255,15 +255,22 @@ describe("SessionExecution recovery", () => {
       ])
       const { db } = yield* Database.Service
       const submissions = yield* TaskSubmission.Service
-      const submitted = yield* submissions.submit(invocation)
-      yield* submissions.claim(submitted.id)
+      const first = yield* submissions.submit(invocation)
+      yield* submissions.claim(first.id)
+      const second = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_execution_followup",
+        assistantMessageID: SessionMessage.ID.make("msg_execution_parent_assistant_followup"),
+        prompt: Prompt.make({ text: "Later follow-up task" }),
+        description: "Later follow-up task",
+      })
 
       yield* db
         .insert(SessionMessageTable)
         .values([
           messageRow(
             SessionMessage.User.make({
-              id: submitted.childInputID,
+              id: first.childInputID,
               type: "user",
               text: invocation.prompt.text,
               time: { created: DateTime.makeUnsafe(1) },
@@ -272,6 +279,12 @@ describe("SessionExecution recovery", () => {
             1,
           ),
         ])
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: 1 })
+        .where(eq(SessionInputTable.id, first.childInputID))
         .run()
         .pipe(Effect.orDie)
       yield* db
@@ -292,11 +305,22 @@ describe("SessionExecution recovery", () => {
       yield* startRecovery(runnerCalls)
       yield* startRecovery(runnerCalls)
 
-      expect(yield* submissions.get(submitted.id)).toMatchObject({
+      expect(yield* submissions.get(first.id)).toMatchObject({
         outcome: "recovery-required",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        status: "accepted",
       })
       expect(runnerCalls.count).toBe(0)
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      expect(yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, first.childInputID)).get()).toMatchObject({
+        terminal_outcome: "recovery-required",
+      })
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, second.childInputID)).get(),
+      ).toMatchObject({
+        terminal_outcome: null,
+      })
     }),
   )
 })

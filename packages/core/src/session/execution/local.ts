@@ -73,6 +73,15 @@ const recoverCompletedAssistant = Effect.fn("SessionExecutionLocal.recoverComple
   })
 })
 
+const interruptedChildInputID = Effect.fn("SessionExecutionLocal.interruptedChildInputID")(function* (
+  sessionID: SessionSchema.ID,
+  db: DB,
+) {
+  const attempt = yield* SessionAttempt.get(db, sessionID)
+  if (!attempt) return undefined
+  return (yield* SessionInput.latestPromotedAtOrBefore(db, sessionID, attempt.seq))?.id
+})
+
 /** Current-process routing for implicit-local Locations. Future remote placement belongs here. */
 const layer = Layer.effect(
   SessionExecution.Service,
@@ -156,8 +165,13 @@ const layer = Layer.effect(
 
     const now = yield* Clock.currentTimeMillis
     for (const recovery of yield* startupRecoveryCandidates(db, now))
-      if ((yield* recoverCompletedAssistant(recovery.sessionID, store, submissions, db)) < 1)
-        yield* submissions.markRecoveryRequired(recovery).pipe(Effect.catch(() => Effect.succeed(0)))
+      if ((yield* recoverCompletedAssistant(recovery.sessionID, store, submissions, db)) < 1) {
+        const childInputID = yield* interruptedChildInputID(recovery.sessionID, db)
+        if (childInputID)
+          yield* submissions
+            .markRecoveryRequired({ ...recovery, childInputID })
+            .pipe(Effect.catch(() => Effect.succeed(0)))
+      }
     for (const sessionID of yield* startupCandidates(db, now))
       yield* coordinator.run(sessionID).pipe(
         Effect.catch(() => Effect.void),

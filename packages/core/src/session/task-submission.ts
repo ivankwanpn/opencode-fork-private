@@ -81,6 +81,7 @@ export type RecoveryInput = {
 
 export type RecoveryRequiredInput = {
   readonly sessionID: SessionSchema.ID
+  readonly childInputID: SessionMessage.ID
   readonly reason: "dispatch-unknown" | "response-interrupted"
 }
 
@@ -381,23 +382,28 @@ const layer = Layer.effect(
 
     const markRecoveryRequired: Interface["markRecoveryRequired"] = Effect.fn("TaskSubmission.markRecoveryRequired")(
       function* (input) {
-        const rows = yield* db
+        const row = yield* db
           .select()
           .from(TaskSubmissionTable)
-          .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
-          .all()
+          .where(
+            and(
+              eq(TaskSubmissionTable.child_session_id, input.sessionID),
+              eq(TaskSubmissionTable.child_input_id, input.childInputID),
+              isNull(TaskSubmissionTable.outcome),
+            ),
+          )
+          .get()
           .pipe(Effect.orDie)
-        const results = yield* Effect.forEach(rows, (row) =>
-          terminalize({
-            submissionID: row.id,
-            outcome: "recovery-required",
-            error: {
-              message: "Provider attempt requires an explicit recovery decision",
-              reason: input.reason,
-            },
-          }).pipe(Effect.as(true)),
-        )
-        return results.filter((result) => result).length
+        if (!row) return 0
+        const settled = yield* terminalize({
+          submissionID: row.id,
+          outcome: "recovery-required",
+          error: {
+            message: "Provider attempt requires an explicit recovery decision",
+            reason: input.reason,
+          },
+        })
+        return settled ? 1 : 0
       },
     )
 

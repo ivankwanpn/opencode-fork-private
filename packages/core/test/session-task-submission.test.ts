@@ -319,6 +319,7 @@ describe("TaskSubmission", () => {
       expect(
         yield* submissions.markRecoveryRequired({
           sessionID: childSessionID,
+          childInputID: submitted.childInputID,
           reason: "response-interrupted",
         }),
       ).toBe(1)
@@ -330,6 +331,42 @@ describe("TaskSubmission", () => {
         { terminal_outcome: "recovery-required" },
       ])
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("marks only the matching child input as recovery-required", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Recover interrupted task",
+        agent: "general",
+      })
+      const second = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        toolCallID: "call_task_followup",
+        assistantMessageID: SessionMessage.ID.make("msg_task_followup_assistant"),
+        prompt: Prompt.make({ text: "follow up prompt" }),
+        description: "Follow up task",
+        agent: "general",
+      })
+
+      expect(
+        yield* submissions.markRecoveryRequired({
+          sessionID: childSessionID,
+          childInputID: first.childInputID,
+          reason: "response-interrupted",
+        }),
+      ).toBe(1)
+      expect(yield* submissions.get(first.id)).toMatchObject({
+        outcome: "recovery-required",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        status: "accepted",
+      })
     }),
   )
 })

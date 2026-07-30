@@ -253,17 +253,23 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           yield* execution.wait(child.id)
           const messages = yield* sessions.context(child.id)
           const inputIndex = messages.findIndex((message) => message.id === submission.childInputID)
-          if (inputIndex < 0) return yield* Effect.fail(new Error(`Child input not visible: ${submission.childInputID}`))
-          const assistant = messages.slice(inputIndex + 1).find((message) => {
-            return message.type === "assistant" && message.time.completed !== undefined
-          })
+          if (inputIndex < 0)
+            return yield* Effect.fail(new Error(`Child input not visible: ${submission.childInputID}`))
+          const afterInput = messages.slice(inputIndex + 1)
+          const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
+          const assistant = afterInput
+            .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
+            .find((message) => message.type === "assistant" && message.time.completed !== undefined)
           if (!assistant || assistant.type !== "assistant")
-            return yield* Effect.fail(new Error(`Child input has no completed assistant result: ${submission.childInputID}`))
+            return yield* Effect.fail(
+              new Error(`Child input has no completed assistant result: ${submission.childInputID}`),
+            )
           const text = assistant.content
             .filter((part): part is SessionMessage.AssistantText => part.type === "text")
             .map((part) => part.text)
             .join("")
-          const outcome: TaskSubmission.Outcome = assistant.error || assistant.finish === "error" ? "error" : "completed"
+          const outcome: TaskSubmission.Outcome =
+            assistant.error || assistant.finish === "error" ? "error" : "completed"
           const settled = yield* submissions.terminalize({
             submissionID: submission.id,
             outcome,
@@ -272,7 +278,10 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             error: assistant.error,
           })
           if (!settled) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
-          yield* notifications.drain({ admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid), wake: execution.wake })
+          yield* notifications.drain({
+            admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+            wake: execution.wake,
+          })
           if (outcome === "error") return yield* new ToolFailure({ message: text || "Task failed" })
           return text
         }).pipe(
@@ -300,11 +309,13 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             ).pipe(Effect.andThen(Effect.failCause(cause))),
           ),
           Effect.onInterrupt(() =>
-            cancellation.cancelTree({
-              rootSessionID: child.id,
-              interrupt: execution.interrupt,
-              wait: execution.wait,
-            }).pipe(Effect.asVoid),
+            cancellation
+              .cancelTree({
+                rootSessionID: child.id,
+                interrupt: execution.interrupt,
+                wait: execution.wait,
+              })
+              .pipe(Effect.asVoid),
           ),
         )
 
@@ -347,11 +358,14 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
 
         const waitForCompletion: Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> = Effect.raceFirst(
           background.wait({ id: child.id }),
-          background.waitForPromotion(child.id).pipe(
-            Effect.flatMap((result): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
-              result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result),
+          background
+            .waitForPromotion(child.id)
+            .pipe(
+              Effect.flatMap(
+                (result): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
+                  result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result),
+              ),
             ),
-          ),
         )
 
         return yield* waitForCompletion.pipe(
@@ -362,11 +376,12 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               if (result.timedOut || result.outcome === "timed-out")
                 return Effect.fail(new ToolFailure({ message: `Task lifecycle observation timed out: ${child.id}` }))
               if (!result.info)
-                return Effect.fail(new ToolFailure({ message: `Task lifecycle observation missing result: ${child.id}` }))
+                return Effect.fail(
+                  new ToolFailure({ message: `Task lifecycle observation missing result: ${child.id}` }),
+                )
               if (result.info.status === "error")
                 return Effect.fail(new ToolFailure({ message: result.info.error ?? "Task failed" }))
-              if (result.info.status === "cancelled")
-                return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
+              if (result.info.status === "cancelled") return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
               if (result.info.status !== "completed")
                 return Effect.fail(new ToolFailure({ message: "Task did not complete" }))
               return Effect.succeed({

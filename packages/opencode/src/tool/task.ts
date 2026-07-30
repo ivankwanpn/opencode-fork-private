@@ -19,7 +19,6 @@ import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { SessionStatus } from "@/session/status"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
@@ -105,7 +104,6 @@ export const TaskTool = Tool.define(
     const config = yield* Config.Service
     const sessions = yield* Session.Service
     const flags = yield* RuntimeFlags.Service
-    const status = yield* SessionStatus.Service
     const database = yield* Database.Service
     const notifications = yield* TaskNotification.Service
     const cancellation = yield* TaskCancellation.Service
@@ -251,7 +249,6 @@ export const TaskTool = Tool.define(
         })
 
       const drainNotifications = Effect.fn("TaskTool.drainNotifications")(function* () {
-        if ((yield* status.get(ctx.sessionID)).type !== "idle") return
         yield* notifications.drain({ admit: admitNotification, wake: () => Effect.void })
       })
 
@@ -368,8 +365,9 @@ export const TaskTool = Tool.define(
               background
                 .waitForPromotion(nextSession.id)
                 .pipe(
-                  Effect.flatMap((value): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
-                    value === undefined ? background.wait({ id: nextSession.id }) : Effect.succeed(value),
+                  Effect.flatMap(
+                    (value): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
+                      value === undefined ? background.wait({ id: nextSession.id }) : Effect.succeed(value),
                   ),
                 ),
             )

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Result } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -67,130 +67,93 @@ const setup = Effect.gen(function* () {
     .pipe(Effect.orDie)
 })
 
-const taskSubmissionLayer = (database: Database.Interface) =>
-  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node]), [
-    [Database.node, Layer.succeed(Database.Service, database)],
-  ])
-
-const withStepTimeout = <A>(effect: Effect.Effect<A, unknown>, steps: string[], label: string) =>
-  effect.pipe(
-    Effect.timeout("5 seconds"),
-    Effect.catch((error) =>
-      Effect.die(
-        new Error(
-          `${label} timed out after steps: ${steps.join(" -> ")} (${typeof error === "object" && error && "_tag" in error ? String(error._tag) : String(error)})`,
-        ),
-      ),
-    ),
-  )
-
-const runConcurrentFirstSubmitRace = Effect.fn("TaskSubmissionTest.runConcurrentFirstSubmitRace")(function* (
+const runConcurrentPostAdmissionRace = Effect.fn("TaskSubmissionTest.runConcurrentPostAdmissionRace")(function* (
   input: readonly [TaskSubmission.Invocation, TaskSubmission.Invocation],
 ) {
-  const firstEntered = yield* Deferred.make<void>()
-  const secondEntered = yield* Deferred.make<void>()
-  const releaseFirst = yield* Deferred.make<void>()
-  const releaseSecond = yield* Deferred.make<void>()
+  const { db } = yield* Database.Service
+  const initialFirstReached = yield* Deferred.make<void>()
+  const initialSecondReached = yield* Deferred.make<void>()
+  const releaseInitial = yield* Deferred.make<void>()
+  const thirdLookupReached = yield* Deferred.make<void>()
+  const releaseThirdLookup = yield* Deferred.make<void>()
   let invocationFindCount = 0
-  const run = Effect.gen(function* () {
-    const baseDatabase = yield* Database.Service
-    const wrapFrom = <
-      T extends {
-        where: (...args: never[]) => unknown
-        get: () => unknown
-      },
-    >(
-      builder: T,
-      taskSubmissionFind = false,
-    ) => {
-      const wrapped = Object.create(builder) as T & {
-        where: T["where"]
-        get: T["get"]
-      }
-      wrapped.where = ((...args: Parameters<T["where"]>) =>
-        wrapFrom(builder.where(...args) as T, taskSubmissionFind)) as T["where"]
-      wrapped.get = (() => {
-        if (!taskSubmissionFind) return builder.get()
-        invocationFindCount += 1
-        if (invocationFindCount === 1)
-          return Effect.gen(function* () {
-            yield* Deferred.succeed(firstEntered, undefined).pipe(Effect.ignore)
-            yield* Deferred.await(releaseFirst)
-            return undefined
-          })
-        if (invocationFindCount === 2)
-          return Effect.gen(function* () {
-            yield* Deferred.succeed(secondEntered, undefined).pipe(Effect.ignore)
-            yield* Deferred.await(releaseSecond)
-            return undefined
-          })
-        return builder.get()
-      }) as T["get"]
-      return wrapped
+
+  const wrapPostFrom = <
+    TWhere extends (...args: never[]) => unknown,
+    TGet extends Effect.Effect<unknown, unknown, never>,
+    T extends { where: TWhere; get: () => TGet },
+  >(
+    builder: T,
+    taskSubmissionFind = false,
+  ): T => {
+    const wrapped = Object.create(builder) as T & {
+      where: TWhere
+      get: () => TGet
     }
-    const wrapSelect = (builder: ReturnType<typeof baseDatabase.db.select>) => {
+    wrapped.where = ((...args: Parameters<TWhere>) =>
+      wrapPostFrom(builder.where(...args) as T, taskSubmissionFind)) as TWhere
+    wrapped.get = (() => {
+      if (!taskSubmissionFind) return builder.get()
+      invocationFindCount += 1
+      if (invocationFindCount === 1)
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(initialFirstReached, undefined).pipe(Effect.ignore)
+          yield* Deferred.await(releaseInitial)
+          return undefined
+        })
+      if (invocationFindCount === 2)
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(initialSecondReached, undefined).pipe(Effect.ignore)
+          yield* Deferred.await(releaseInitial)
+          return undefined
+        })
+      if (invocationFindCount === 3)
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(thirdLookupReached, undefined).pipe(Effect.ignore)
+          yield* Deferred.await(releaseThirdLookup)
+          return yield* builder.get()
+        })
+      return builder.get()
+    }) as () => TGet
+    return wrapped
+    }
+
+  const wrapSelect = <T extends ReturnType<typeof db.select>>(builder: T): T => {
       const wrapped = Object.create(builder) as typeof builder & {
         from: typeof builder.from
       }
-      wrapped.from = ((table: Parameters<typeof builder.from>[0]) =>
-        wrapFrom(builder.from(table), table === TaskSubmissionTable)) as typeof builder.from
+      const wrappedFrom = ((table: Parameters<typeof builder.from>[0]) =>
+        wrapPostFrom(builder.from(table), table === TaskSubmissionTable)) as typeof builder.from
+      wrapped.from = wrappedFrom
       return wrapped
     }
-    const database = {
-      db: Object.assign(Object.create(baseDatabase.db), {
-        select: (...args: Parameters<typeof baseDatabase.db.select>) => wrapSelect(baseDatabase.db.select(...args)),
-      }),
-    } satisfies Database.Interface
-    yield* setup.pipe(Effect.provide(taskSubmissionLayer(database)))
-    const submit = (invocation: TaskSubmission.Invocation) =>
-      TaskSubmission.Service.pipe(
-        Effect.flatMap((submissions) => submissions.submit(invocation)),
-        Effect.provide(taskSubmissionLayer(database)),
-      )
-    const first = yield* submit(input[0]).pipe(Effect.exit, Effect.forkChild)
-    const second = yield* submit(input[1]).pipe(Effect.exit, Effect.forkChild)
-    yield* withStepTimeout(Deferred.await(firstEntered), ["await-first-entered"], "await first entered")
-    yield* withStepTimeout(
-      Deferred.await(secondEntered),
-      ["await-first-entered", "await-second-entered"],
-      "await second entered",
-    )
-    yield* Deferred.succeed(releaseFirst, undefined)
-    const winner = yield* Effect.raceFirst(
-      Fiber.await(first).pipe(Effect.as("first")),
-      Fiber.await(second).pipe(Effect.as("second")),
-    ).pipe(Effect.timeout("5 seconds"), Effect.exit)
-    if (Exit.isFailure(winner)) {
-      const firstExit = yield* Fiber.join(first).pipe(Effect.timeout("1 second"), Effect.exit)
-      const secondExit = yield* Fiber.join(second).pipe(Effect.timeout("1 second"), Effect.exit)
-      return yield* Effect.die(
-        new Error(
-          `await winner timed out; first=${JSON.stringify(firstExit)} second=${JSON.stringify(secondExit)}`,
-        ),
-      )
-    }
-    yield* Deferred.succeed(releaseSecond, undefined)
-    const firstResult = yield* withStepTimeout(
-      Fiber.join(first),
-      ["await-first-entered", "await-second-entered", "release-first", "await-winner", "release-second", "join-first"],
-      "join first",
-    )
-    const secondResult = yield* withStepTimeout(
-      Fiber.join(second),
-      [
-        "await-first-entered",
-        "await-second-entered",
-        "release-first",
-        "await-winner",
-        "release-second",
-        "join-first",
-        "join-second",
-      ],
-      "join second",
-    )
-    return { first: firstResult, second: secondResult }
-  })
-  return yield* run.pipe(Effect.provide(AppNodeBuilder.build(Database.node)))
+
+  const originalSelect = db.select.bind(db)
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      db.select = originalSelect
+    }),
+  )
+  db.select = ((...args: Parameters<typeof db.select>) => wrapSelect(originalSelect(...args))) as typeof db.select
+
+  const submissions = yield* TaskSubmission.Service
+  const first = yield* submissions.submit(input[0]).pipe(Effect.exit, Effect.forkChild)
+  const second = yield* submissions.submit(input[1]).pipe(Effect.exit, Effect.forkChild)
+  yield* Deferred.await(initialSecondReached).pipe(
+    Effect.timeout("5 seconds"),
+    Effect.catch(() => Effect.die(new Error("concurrent submit initial lookup timed out"))),
+  )
+  yield* Deferred.succeed(releaseInitial, undefined)
+  yield* Deferred.await(thirdLookupReached).pipe(
+    Effect.timeout("5 seconds"),
+    Effect.catch(() => Effect.die(new Error("concurrent submit post-admission lookup timed out"))),
+  )
+  yield* Deferred.succeed(releaseThirdLookup, undefined)
+
+  return {
+    first: yield* Fiber.join(first).pipe(Effect.timeout("5 seconds")),
+    second: yield* Fiber.join(second).pipe(Effect.timeout("5 seconds")),
+  }
 })
 
 describe("TaskSubmission", () => {
@@ -332,9 +295,10 @@ describe("TaskSubmission", () => {
     }),
   )
 
-  test("adopts equivalent serialized model selection during a concurrent first-submit race", async () => {
-    const equivalent = await Effect.runPromise(
-      runConcurrentFirstSubmitRace([
+  it.live("adopts equivalent serialized model selection during a concurrent first-submit race", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const equivalent = yield* runConcurrentPostAdmissionRace([
         {
           ...invocation,
           assistantMessageID: SessionMessage.ID.make("msg_task_equivalent_first"),
@@ -353,24 +317,25 @@ describe("TaskSubmission", () => {
           agent: "general",
           model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
         },
-      ]).pipe(Effect.scoped),
-    )
+      ])
 
-    expect(Exit.isSuccess(equivalent.first)).toBe(true)
-    expect(Exit.isSuccess(equivalent.second)).toBe(true)
-    if (Exit.isSuccess(equivalent.first) && Exit.isSuccess(equivalent.second))
-      expect(equivalent.second.value).toMatchObject({
-        id: equivalent.first.value.id,
-        childInputID: equivalent.first.value.childInputID,
-        childSessionID: equivalent.first.value.childSessionID,
-        model: equivalent.first.value.model,
-        toolCallID: equivalent.first.value.toolCallID,
-      })
-  })
+      expect(Exit.isSuccess(equivalent.first)).toBe(true)
+      expect(Exit.isSuccess(equivalent.second)).toBe(true)
+      if (Exit.isSuccess(equivalent.first) && Exit.isSuccess(equivalent.second))
+        expect(equivalent.second.value).toMatchObject({
+          id: equivalent.first.value.id,
+          childInputID: equivalent.first.value.childInputID,
+          childSessionID: equivalent.first.value.childSessionID,
+          model: equivalent.first.value.model,
+          toolCallID: equivalent.first.value.toolCallID,
+        })
+    }),
+  )
 
-  test("rejects a different model during a concurrent first-submit race after admission", async () => {
-    const conflict = await Effect.runPromise(
-      runConcurrentFirstSubmitRace([
+  it.live("rejects a different model during a concurrent first-submit race after admission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const conflict = yield* runConcurrentPostAdmissionRace([
         {
           ...invocation,
           assistantMessageID: SessionMessage.ID.make("msg_task_conflict_first"),
@@ -389,16 +354,16 @@ describe("TaskSubmission", () => {
           agent: "general",
           model: ModelV2.Ref.make({ id: ModelV2.ID.make("other"), providerID: ProviderV2.ID.make("test") }),
         },
-      ]).pipe(Effect.scoped),
-    )
+      ])
 
-    expect(Exit.isFailure(conflict.second)).toBe(true)
-    if (Exit.isFailure(conflict.second)) {
-      const failure = Cause.findError(conflict.second.cause)
-      expect(Result.isSuccess(failure)).toBe(true)
-      if (Result.isSuccess(failure)) expect(failure.success).toBeInstanceOf(TaskSubmission.InvocationConflict)
-    }
-  })
+      expect(Exit.isFailure(conflict.second)).toBe(true)
+      if (Exit.isFailure(conflict.second)) {
+        const failure = Cause.findError(conflict.second.cause)
+        expect(Result.isSuccess(failure)).toBe(true)
+        if (Result.isSuccess(failure)) expect(failure.success).toBeInstanceOf(TaskSubmission.InvocationConflict)
+      }
+    }),
+  )
 
   it.effect("claims an accepted input at most once", () =>
     Effect.gen(function* () {

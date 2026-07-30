@@ -227,6 +227,7 @@ export const hasPending = Effect.fn("SessionInput.hasPending")(function* (
       and(
         eq(SessionInputTable.session_id, sessionID),
         isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
         eq(SessionInputTable.delivery, delivery),
       ),
     )
@@ -243,9 +244,13 @@ export const startupCandidates = Effect.fn("SessionInput.startupCandidates")(fun
     .leftJoin(SessionAttemptTable, eq(SessionAttemptTable.session_id, SessionInputTable.session_id))
     .where(
       or(
-        isNull(SessionInputTable.promoted_seq),
+        and(
+          isNull(SessionInputTable.promoted_seq),
+          isNull(SessionInputTable.terminal_outcome),
+        ),
         and(
           isNotNull(SessionInputTable.promoted_seq),
+          isNull(SessionInputTable.terminal_outcome),
           or(isNull(SessionAttemptTable.seq), gt(SessionInputTable.promoted_seq, SessionAttemptTable.seq)),
         ),
       ),
@@ -334,6 +339,7 @@ export const promote = Effect.fn("SessionInput.promote")(function* (
         eq(SessionInputTable.id, id),
         eq(SessionInputTable.session_id, sessionID),
         isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
       ),
     )
     .get()
@@ -354,6 +360,7 @@ export const promoteSteers = Effect.fn("SessionInput.promoteSteers")(function* (
       and(
         eq(SessionInputTable.session_id, sessionID),
         isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
         eq(SessionInputTable.delivery, "steer"),
         lte(SessionInputTable.admitted_seq, cutoff),
       ),
@@ -376,6 +383,7 @@ export const promoteNextQueued = Effect.fn("SessionInput.promoteNextQueued")(fun
       and(
         eq(SessionInputTable.session_id, sessionID),
         isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
         eq(SessionInputTable.delivery, "queue"),
       ),
     )

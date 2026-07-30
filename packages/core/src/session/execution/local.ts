@@ -57,6 +57,22 @@ export const startupRecoveryCandidates = Effect.fn("SessionExecutionLocal.startu
   return recovery
 })
 
+const recoverCompletedAssistant = Effect.fn("SessionExecutionLocal.recoverCompletedAssistant")(function* (
+  sessionID: SessionSchema.ID,
+  store: SessionStore.Interface,
+  submissions: TaskSubmission.Interface,
+  db: DB,
+) {
+  const attempt = yield* SessionAttempt.get(db, sessionID)
+  if (!attempt) return 0
+  const messages = yield* store.context(sessionID).pipe(Effect.orDie)
+  return yield* submissions.recoverSession({
+    sessionID,
+    assistantMessageID: attempt.assistant_message_id,
+    messages,
+  })
+})
+
 /** Current-process routing for implicit-local Locations. Future remote placement belongs here. */
 const layer = Layer.effect(
   SessionExecution.Service,
@@ -106,8 +122,7 @@ const layer = Layer.effect(
           ),
           Effect.ensuring(idle),
         )
-        const messages = yield* store.context(sessionID).pipe(Effect.orDie)
-        yield* submissions.recoverSession({ sessionID, messages })
+        yield* recoverCompletedAssistant(sessionID, store, submissions, db)
         yield* notifications.drain({
           admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
           wake: (sessionID) => current.service?.wake(sessionID) ?? Effect.void,
@@ -141,7 +156,8 @@ const layer = Layer.effect(
 
     const now = yield* Clock.currentTimeMillis
     for (const recovery of yield* startupRecoveryCandidates(db, now))
-      yield* submissions.markRecoveryRequired(recovery).pipe(Effect.catch(() => Effect.succeed(0)))
+      if ((yield* recoverCompletedAssistant(recovery.sessionID, store, submissions, db)) < 1)
+        yield* submissions.markRecoveryRequired(recovery).pipe(Effect.catch(() => Effect.succeed(0)))
     for (const sessionID of yield* startupCandidates(db, now))
       yield* coordinator.run(sessionID).pipe(
         Effect.catch(() => Effect.void),

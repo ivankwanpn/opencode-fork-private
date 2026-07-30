@@ -290,6 +290,7 @@ describe("SessionExecution recovery", () => {
 
       const runnerCalls = { count: 0 }
       yield* startRecovery(runnerCalls)
+      yield* startRecovery(runnerCalls)
 
       expect(yield* submissions.get(submitted.id)).toMatchObject({
         outcome: "recovery-required",

@@ -75,6 +75,7 @@ export type ClaimResult = {
 
 export type RecoveryInput = {
   readonly sessionID: SessionSchema.ID
+  readonly assistantMessageID: SessionMessage.ID
   readonly messages: ReadonlyArray<SessionMessage.Message>
 }
 
@@ -342,32 +343,40 @@ const layer = Layer.effect(
     })
 
     const recoverSession: Interface["recoverSession"] = Effect.fn("TaskSubmission.recoverSession")(function* (input) {
+      const assistantIndex = input.messages.findIndex((message) => message.id === input.assistantMessageID)
+      if (assistantIndex < 0) return 0
+      const assistant = input.messages[assistantIndex]
+      if (!assistant || assistant.type !== "assistant" || assistant.time.completed === undefined) return 0
+
       const rows = yield* db
         .select()
         .from(TaskSubmissionTable)
         .where(and(eq(TaskSubmissionTable.child_session_id, input.sessionID), isNull(TaskSubmissionTable.outcome)))
         .all()
         .pipe(Effect.orDie)
-      const results = yield* Effect.forEach(rows, (row) => {
-        const inputIndex = input.messages.findIndex((message) => message.id === row.child_input_id)
-        if (inputIndex < 0) return Effect.succeed(false)
-        const assistant = input.messages.slice(inputIndex + 1).find((message) => {
-          return message.type === "assistant" && message.time.completed !== undefined
-        })
-        if (!assistant || assistant.type !== "assistant") return Effect.succeed(false)
-        const text = assistant.content
-          .filter((part): part is SessionMessage.AssistantText => part.type === "text")
-          .map((part) => part.text)
-          .join("")
-        return terminalize({
-          submissionID: row.id,
-          outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
-          resultMessageID: assistant.id,
-          resultText: text,
-          error: assistant.error,
-        }).pipe(Effect.as(true))
+      const match = rows.reduce<{ readonly row: (typeof rows)[number]; readonly inputIndex: number } | undefined>(
+        (best, row) => {
+          const inputIndex = input.messages.findIndex((message) => message.id === row.child_input_id)
+          if (inputIndex < 0 || inputIndex >= assistantIndex) return best
+          if (!best || inputIndex > best.inputIndex) return { row, inputIndex }
+          return best
+        },
+        undefined,
+      )
+      if (!match) return 0
+
+      const text = assistant.content
+        .filter((part): part is SessionMessage.AssistantText => part.type === "text")
+        .map((part) => part.text)
+        .join("")
+      const recovered = yield* terminalize({
+        submissionID: match.row.id,
+        outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
+        resultMessageID: assistant.id,
+        resultText: text,
+        error: assistant.error,
       })
-      return results.filter((result) => result).length
+      return recovered ? 1 : 0
     })
 
     const markRecoveryRequired: Interface["markRecoveryRequired"] = Effect.fn("TaskSubmission.markRecoveryRequired")(

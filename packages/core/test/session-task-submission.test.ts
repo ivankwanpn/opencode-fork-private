@@ -212,7 +212,13 @@ describe("TaskSubmission", () => {
         time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
       })
 
-      expect(yield* submissions.recoverSession({ sessionID: childSessionID, messages: [assistant] })).toBe(0)
+      expect(
+        yield* submissions.recoverSession({
+          sessionID: childSessionID,
+          assistantMessageID: assistant.id,
+          messages: [assistant],
+        }),
+      ).toBe(0)
       const recoveredMessages = [
         SessionMessage.User.make({
           id: submitted.childInputID,
@@ -222,7 +228,13 @@ describe("TaskSubmission", () => {
         }),
         assistant,
       ]
-      expect(yield* submissions.recoverSession({ sessionID: childSessionID, messages: recoveredMessages })).toBe(1)
+      expect(
+        yield* submissions.recoverSession({
+          sessionID: childSessionID,
+          assistantMessageID: assistant.id,
+          messages: recoveredMessages,
+        }),
+      ).toBe(1)
       expect(yield* submissions.get(submitted.id)).toMatchObject({
         outcome: "completed",
         resultText: "recovered result",
@@ -263,6 +275,7 @@ describe("TaskSubmission", () => {
       expect(
         yield* submissions.recoverSession({
           sessionID: childSessionID,
+          assistantMessageID: assistant.id,
           messages: [
             SessionMessage.User.make({
               id: first.childInputID,

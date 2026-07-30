@@ -39,7 +39,7 @@ const ref = {
   modelID: ModelV2.ID.make("test-model"),
 }
 
-const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
+const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.Replacements = []) =>
   LayerNode.compile(
     LayerNode.group([
       Agent.node,
@@ -61,11 +61,42 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
       RuntimeFlags.node,
       Ripgrep.node,
     ]),
-    [[RuntimeFlags.node, RuntimeFlags.layer(flags)], locationServiceMapReplacement],
+    [[RuntimeFlags.node, RuntimeFlags.layer(flags)], locationServiceMapReplacement, ...replacements],
   )
 
 const it = testEffect(layer())
 const background = testEffect(layer({ experimentalBackgroundSubagents: true }))
+const missingJob = testEffect(
+  layer(
+    {},
+    [
+      [
+        BackgroundJob.node,
+        Layer.succeed(
+          BackgroundJob.Service,
+          BackgroundJob.Service.of({
+            list: () => Effect.succeed([]),
+            get: () => Effect.succeed(undefined),
+            start: (input) =>
+              Effect.succeed({
+                id: input.id ?? "job_missing",
+                type: input.type,
+                title: input.title,
+                status: "running",
+                started_at: 0,
+                metadata: input.metadata,
+              }),
+            extend: () => Effect.succeed(false),
+            wait: () => Effect.succeed({ outcome: "missing", timedOut: false }),
+            waitForPromotion: () => Effect.never,
+            promote: () => Effect.succeed(undefined),
+            cancel: () => Effect.succeed(undefined),
+          }),
+        ),
+      ],
+    ],
+  ),
+)
 
 function defer<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -825,6 +856,37 @@ describe("tool.task", () => {
       const waited = yield* jobs.wait({ id: result.metadata.sessionId, timeout: 1_000 })
       expect(waited.timedOut).toBe(false)
       expect(waited.info?.status).toBe("completed")
+    }),
+  )
+
+  missingJob.instance("returns an explicit lifecycle error when the process-local task job is missing after submission", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const exit = yield* def
+        .execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps({ text: "background done" }) },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(String(Cause.squash(exit.cause))).toContain("lifecycle")
     }),
   )
 

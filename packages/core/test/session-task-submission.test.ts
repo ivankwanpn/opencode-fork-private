@@ -231,6 +231,65 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("binds recovery results to the exact child input instead of the latest completed assistant", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const first = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_task_first",
+        childSessionID,
+        description: "Inspect first lifecycle",
+        prompt: Prompt.make({ text: "first prompt" }),
+        agent: "general",
+      })
+      const second = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_task_second",
+        childSessionID,
+        description: "Inspect second lifecycle",
+        prompt: Prompt.make({ text: "second prompt" }),
+        agent: "general",
+      })
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_task_second_result"),
+        type: "assistant",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        content: [{ type: "text", id: "text_second_result", text: "second result" }],
+        time: { created: DateTime.makeUnsafe(3), completed: DateTime.makeUnsafe(4) },
+      })
+
+      expect(
+        yield* submissions.recoverSession({
+          sessionID: childSessionID,
+          messages: [
+            SessionMessage.User.make({
+              id: first.childInputID,
+              type: "user",
+              text: "first prompt",
+              time: { created: DateTime.makeUnsafe(1) },
+            }),
+            SessionMessage.User.make({
+              id: second.childInputID,
+              type: "user",
+              text: "second prompt",
+              time: { created: DateTime.makeUnsafe(2) },
+            }),
+            assistant,
+          ],
+        }),
+      ).toBe(1)
+      expect(yield* submissions.get(first.id)).toMatchObject({
+        status: "accepted",
+      })
+      expect(yield* submissions.get(second.id)).toMatchObject({
+        outcome: "completed",
+        resultText: "second result",
+      })
+    }),
+  )
+
   it.effect("terminalizes an ambiguous provider attempt as recovery-required", () =>
     Effect.gen(function* () {
       yield* setup

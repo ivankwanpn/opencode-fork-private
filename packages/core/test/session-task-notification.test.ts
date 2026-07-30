@@ -128,6 +128,33 @@ const setup = Effect.gen(function* () {
   yield* submissions.terminalize({ submissionID: submission.id, outcome: "completed", resultText: "child complete" })
 })
 
+const admitDurably = (admission: TaskNotification.Admission) =>
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    const events = yield* EventV2.Service
+    const prompt = Prompt.make({ text: admission.text })
+    const synthetic = SessionInput.Synthetic.make({ description: admission.description })
+    const expected = {
+      sessionID: admission.sessionID,
+      prompt,
+      synthetic,
+      delivery: admission.delivery,
+    } as const
+    const existing = yield* SessionInput.find(db, admission.id)
+    if (existing) {
+      if (!SessionInput.equivalent(existing, expected))
+        return yield* Effect.fail(new Error(`Synthetic delivery conflict for ${admission.id}`))
+      return existing
+    }
+    return yield* SessionInput.admit(db, events, {
+      id: admission.id,
+      sessionID: admission.sessionID,
+      prompt,
+      synthetic,
+      delivery: admission.delivery,
+    })
+  })
+
 describe("TaskNotification", () => {
   it.effect("delivers a terminal notification once and wakes the parent after durable ack", () =>
     Effect.gen(function* () {
@@ -205,6 +232,102 @@ describe("TaskNotification", () => {
       ).toBe(1)
       expect(admissions).toHaveLength(1)
       expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
+    }),
+  )
+
+  it.effect("keeps a wake-failed notification replayable and reuses the deterministic parent input id on replay", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const { db } = yield* Database.Service
+
+      expect(
+        yield* notifications.drain({
+          admit: admitDurably,
+          wake: () => Effect.fail(new Error("wake crashed")),
+        }),
+      ).toBe(0)
+      const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      const parentInputs = yield* db
+        .select()
+        .from(SessionInputTable)
+        .where(eq(SessionInputTable.session_id, parentSessionID))
+        .all()
+      expect(parentInputs).toHaveLength(1)
+      expect(parentInputs[0]?.id).toBe(TaskSubmission.notificationID(failed.submission_id))
+      expect(failed.status).toBe("error")
+      expect(failed.error).toMatchObject({ message: expect.stringContaining("wake crashed") })
+
+      expect(
+        yield* notifications.drain({
+          admit: admitDurably,
+          wake: () => Effect.void,
+        }),
+      ).toBe(1)
+      expect(
+        yield* db
+          .select()
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.session_id, parentSessionID))
+          .all(),
+      ).toHaveLength(1)
+      expect(
+        (
+          yield* db
+            .select()
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.session_id, parentSessionID))
+            .all()
+        )[0]?.id,
+      ).toBe(
+        TaskSubmission.notificationID(failed.submission_id),
+      )
+      expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
+    }),
+  )
+
+  it.effect("reports an explicit delivery error when deterministic replay conflicts with the existing parent input", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const { db } = yield* Database.Service
+
+      yield* notifications.drain({
+        admit: admitDurably,
+        wake: () => Effect.fail(new Error("wake crashed")),
+      })
+      const failed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      yield* db
+        .update(TaskNotificationOutboxTable)
+        .set({
+          payload: {
+            state: "completed",
+            description: "Inspect notifications",
+            text: "conflicting replay payload",
+          },
+        })
+        .where(eq(TaskNotificationOutboxTable.id, failed.id))
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(
+        yield* notifications.drain({
+          admit: admitDurably,
+          wake: () => Effect.void,
+        }),
+      ).toBe(0)
+      expect(
+        yield* db
+          .select()
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.session_id, parentSessionID))
+          .all(),
+      ).toHaveLength(1)
+      const replayed = (yield* db.select().from(TaskNotificationOutboxTable).all())[0]!
+      expect(replayed.status).toBe("error")
+      expect(replayed.error).toMatchObject({
+        message: expect.stringContaining("Synthetic delivery conflict"),
+      })
     }),
   )
 })

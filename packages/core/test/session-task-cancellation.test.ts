@@ -13,6 +13,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import {
+  SessionAttemptTable,
   SessionInputTable,
   SessionTable,
   TaskNotificationOutboxTable,
@@ -111,6 +112,39 @@ describe("TaskCancellation", () => {
       const { db } = yield* Database.Service
       const interrupted: SessionSchema.ID[] = []
       const waited: SessionSchema.ID[] = []
+      yield* db
+        .insert(SessionAttemptTable)
+        .values([
+          {
+            session_id: root,
+            attempt_id: "evt_cancel_root",
+            assistant_message_id: SessionMessage.ID.make("msg_cancel_root_attempt"),
+            status: "started",
+            attempt: 1,
+            seq: 1,
+            time_updated: 1,
+          },
+          {
+            session_id: child,
+            attempt_id: "evt_cancel_child",
+            assistant_message_id: SessionMessage.ID.make("msg_cancel_child_attempt"),
+            status: "responding",
+            attempt: 1,
+            seq: 1,
+            time_updated: 1,
+          },
+          {
+            session_id: grandchild,
+            attempt_id: "evt_cancel_grandchild",
+            assistant_message_id: SessionMessage.ID.make("msg_cancel_grandchild_attempt"),
+            status: "responding",
+            attempt: 1,
+            seq: 1,
+            time_updated: 1,
+          },
+        ])
+        .run()
+        .pipe(Effect.orDie)
 
       const result = yield* cancellation.cancelTree({
         rootSessionID: root,
@@ -119,8 +153,8 @@ describe("TaskCancellation", () => {
       })
 
       expect(result.sessionIDs).toEqual(expect.arrayContaining([root, child, grandchild]))
-      expect(interrupted).toEqual(expect.arrayContaining([root, child, grandchild]))
-      expect(waited).toEqual(expect.arrayContaining([root, child, grandchild]))
+      expect(interrupted.toSorted()).toEqual([root, child, grandchild].toSorted())
+      expect(waited.toSorted()).toEqual([root, child, grandchild].toSorted())
       expect(
         yield* db.select().from(TaskSubmissionTable).where(eq(TaskSubmissionTable.outcome, "cancelled")).all(),
       ).toHaveLength(2)
@@ -130,6 +164,16 @@ describe("TaskCancellation", () => {
         .where(eq(SessionInputTable.terminal_outcome, "cancelled"))
         .all()
       expect(terminalInputs).toHaveLength(2)
+      expect(
+        yield* db
+          .select({ sessionID: SessionAttemptTable.session_id, status: SessionAttemptTable.status })
+          .from(SessionAttemptTable)
+          .all(),
+      ).toEqual([
+        { sessionID: root, status: "abandoned" },
+        { sessionID: child, status: "abandoned" },
+        { sessionID: grandchild, status: "abandoned" },
+      ])
       const expectedTerminalSeqs = yield* Effect.forEach([child, grandchild], (sessionID) =>
         EventV2.latestSequence(db, sessionID),
       )

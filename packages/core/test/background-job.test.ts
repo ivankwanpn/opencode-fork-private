@@ -14,6 +14,16 @@ describe("BackgroundJob", () => {
     }).pipe(Effect.provide(jobsLayer)),
   )
 
+  it.live("returns a missing outcome for an unknown promotion wait instead of hanging forever", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const result = yield* jobs.waitForPromotion("missing-job").pipe(Effect.timeoutOption("20 millis"))
+
+      expect(result._tag).toBe("Some")
+      if (result._tag === "Some") expect(result.value).toMatchObject({ outcome: "missing", timedOut: false })
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
   it.live("tracks process-local work through explicit observation", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service

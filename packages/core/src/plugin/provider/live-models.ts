@@ -2,6 +2,7 @@ import type { CatalogDraft } from "@opencode-ai/plugin/v2/effect"
 import { define } from "@opencode-ai/plugin/v2/effect/plugin"
 import { Effect, Stream } from "effect"
 import { Catalog } from "../../catalog"
+import { KeyedMutex } from "../../effect/keyed-mutex"
 import { EventV2 } from "../../event"
 import { Integration } from "../../integration"
 import { ModelsDev } from "../../models-dev"
@@ -13,27 +14,42 @@ export const LiveModelsPlugin = define({
   effect: Effect.fn(function* (ctx) {
     const events = yield* EventV2.Service
     const catalog = yield* Catalog.Service
-    const snapshots = new Map<string, ProviderModel[]>()
+    const refreshLocks = KeyedMutex.makeUnsafe<string>()
+    const snapshots = new Map<string, LiveModelsSnapshot>()
     const hiddenByLive = new Set<string>()
     const addedByLive = new Set<string>()
 
     yield* ctx.catalog.transform((draft) => {
       for (const record of draft.provider.list()) {
-        applyLiveModels(draft, record.provider.id, snapshots.get(record.provider.id), hiddenByLive, addedByLive)
+        applyLiveModels(draft, record.provider.id, snapshots.get(record.provider.id)?.models, hiddenByLive, addedByLive)
       }
     })
 
     const refresh = Effect.fn("LiveModelsPlugin.refresh")(function* () {
       const providers = yield* catalog.provider.all()
-      yield* Effect.forEach(providers, (provider) => refreshProvider(provider).pipe(Effect.catch(() => Effect.void)))
+      const providerIDs = new Set<string>(providers.map((provider) => provider.id))
+      for (const providerID of snapshots.keys()) {
+        if (!providerIDs.has(providerID)) snapshots.delete(providerID)
+      }
+      yield* Effect.forEach(providers, (provider) =>
+        refreshLocks
+          .withLock(provider.id)(refreshProvider(provider))
+          .pipe(Effect.catch(() => Effect.void)),
+      )
       yield* ctx.catalog.reload()
     })
 
     function refreshProvider(provider: ProviderV2.Info) {
       return Effect.gen(function* () {
-        if (!supportsLiveModels(provider)) return
+        if (!supportsLiveModels(provider)) {
+          snapshots.delete(provider.id)
+          return
+        }
         const api = provider.api
-        if (api.type !== "aisdk" || !api.url) return
+        if (api.type !== "aisdk" || !api.url) {
+          snapshots.delete(provider.id)
+          return
+        }
         const baseURL = api.url
 
         const connection = yield* ctx.integration.connection.active(
@@ -65,7 +81,9 @@ export const LiveModelsPlugin = define({
         const modelsURL = ["modelsURL", "modelsUrl", "modelListURL"]
           .map((key) => provider.request.body[key])
           .find((value): value is string => typeof value === "string" && value.trim().length > 0)
-        const result = yield* Effect.tryPromise(() =>
+        const source = liveModelSourceKey({ baseURL, packageName: api.package, modelsURL })
+        const previous = snapshots.get(provider.id)
+        const fetched = yield* Effect.tryPromise(() =>
           fetchProviderModels({
             baseURL,
             packageName: api.package,
@@ -73,8 +91,13 @@ export const LiveModelsPlugin = define({
             headers,
             modelsURL,
           }),
+        ).pipe(
+          Effect.map((result) => result.models),
+          Effect.catch(() => Effect.succeed(undefined)),
         )
-        snapshots.set(provider.id, result.models)
+        const resolved = resolveLiveSnapshot({ source, fetched, previous })
+        if (resolved.snapshot) snapshots.set(provider.id, resolved.snapshot)
+        else snapshots.delete(provider.id)
       })
     }
 
@@ -89,6 +112,29 @@ export const LiveModelsPlugin = define({
     )
   }),
 })
+
+export type LiveModelsSnapshot = {
+  readonly source: string
+  readonly models: readonly ProviderModel[]
+}
+
+export function resolveLiveSnapshot(input: {
+  source: string
+  fetched?: readonly ProviderModel[]
+  previous?: LiveModelsSnapshot
+}) {
+  if (input.fetched?.length) {
+    const snapshot = { source: input.source, models: input.fetched }
+    return { live: snapshot.models, snapshot }
+  }
+  if (input.previous?.source !== input.source) return { live: undefined, snapshot: undefined }
+  if (!input.previous) return { live: undefined, snapshot: undefined }
+  return { live: input.previous.models, snapshot: input.previous }
+}
+
+function liveModelSourceKey(input: { baseURL: string; packageName: string; modelsURL?: string }) {
+  return JSON.stringify([input.baseURL.trim().replace(/\/+$/, ""), input.packageName, input.modelsURL?.trim() ?? ""])
+}
 
 export function supportsLiveModels(provider: ProviderV2.Info) {
   if (provider.api.type !== "aisdk") return false

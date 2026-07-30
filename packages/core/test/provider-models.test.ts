@@ -42,6 +42,12 @@ describe("provider model discovery", () => {
       "https://api.example.com/v1/models",
       "https://api.example.com/models",
     ])
+    expect(buildModelURLCandidates("https://generativelanguage.googleapis.com/v1beta")).toEqual([
+      "https://generativelanguage.googleapis.com/v1beta/models",
+      "https://generativelanguage.googleapis.com/v1beta/v1/models",
+      "https://generativelanguage.googleapis.com/v1/models",
+      "https://generativelanguage.googleapis.com/models",
+    ])
   })
 
   test("parses common provider catalog envelopes and normalizes model names", () => {

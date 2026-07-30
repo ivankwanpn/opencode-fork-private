@@ -1,9 +1,26 @@
 import { describe, expect, test } from "bun:test"
 import { ModelV2 } from "../../src/model"
 import { ProviderV2 } from "../../src/provider"
-import { applyLiveModels } from "../../src/plugin/provider/live-models"
+import { applyLiveModels, resolveLiveSnapshot } from "../../src/plugin/provider/live-models"
 
 describe("live provider model projection", () => {
+  test("keeps a snapshot only when the provider source is unchanged", () => {
+    const previous = { source: "https://old.example.com/v1", models: [{ id: "old" }] }
+
+    expect(resolveLiveSnapshot({ source: previous.source, previous })).toEqual({
+      live: previous.models,
+      snapshot: previous,
+    })
+    expect(resolveLiveSnapshot({ source: "https://new.example.com/v1", previous })).toEqual({
+      live: undefined,
+      snapshot: undefined,
+    })
+    expect(resolveLiveSnapshot({ source: previous.source, previous, fetched: [] })).toEqual({
+      live: previous.models,
+      snapshot: previous,
+    })
+  })
+
   test("hides stale models, keeps live models, and adds new IDs", () => {
     const providerID = ProviderV2.ID.make("test")
     const staleID = ModelV2.ID.make("stale")

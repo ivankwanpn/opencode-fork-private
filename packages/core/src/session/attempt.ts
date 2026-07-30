@@ -183,35 +183,43 @@ export const projectStarted = Effect.fn("SessionAttempt.projectStarted")(functio
   db: DB,
   event: SessionEvent.ProviderAttempt.Started,
 ) {
-  if (yield* isCancelled(db, event.data.sessionID)) return
   yield* db
-    .insert(SessionAttemptTable)
-    .values({
-      session_id: event.data.sessionID,
-      attempt_id: event.data.attemptID,
-      assistant_message_id: event.data.assistantMessageID,
-      status: "started",
-      attempt: event.data.attempt,
-      retry_of: event.data.retryOf,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .onConflictDoUpdate({
-      target: SessionAttemptTable.session_id,
-      set: {
-        attempt_id: event.data.attemptID,
-        assistant_message_id: event.data.assistantMessageID,
-        status: "started",
-        attempt: event.data.attempt,
-        retry_of: event.data.retryOf ?? null,
-        retry_at: null,
-        error: null,
-        decision: null,
-        seq: sequence(event),
-        time_updated: DateTime.toEpochMillis(event.data.timestamp),
-      },
-    })
-    .run()
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .insert(SessionAttemptTable)
+            .values({
+              session_id: event.data.sessionID,
+              attempt_id: event.data.attemptID,
+              assistant_message_id: event.data.assistantMessageID,
+              status: "started",
+              attempt: event.data.attempt,
+              retry_of: event.data.retryOf,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .onConflictDoUpdate({
+              target: SessionAttemptTable.session_id,
+              set: {
+                attempt_id: event.data.attemptID,
+                assistant_message_id: event.data.assistantMessageID,
+                status: "started",
+                attempt: event.data.attempt,
+                retry_of: event.data.retryOf ?? null,
+                retry_at: null,
+                error: null,
+                decision: null,
+                seq: sequence(event),
+                time_updated: DateTime.toEpochMillis(event.data.timestamp),
+              },
+            })
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
+    )
     .pipe(Effect.orDie)
 })
 
@@ -219,21 +227,29 @@ export const projectResponseStarted = Effect.fn("SessionAttempt.projectResponseS
   db: DB,
   event: SessionEvent.ProviderAttempt.ResponseStarted,
 ) {
-  if (yield* isCancelled(db, event.data.sessionID)) return
   yield* db
-    .update(SessionAttemptTable)
-    .set({
-      status: "responding",
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: "responding",
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
 })
 
@@ -241,22 +257,31 @@ export const projectEnded = Effect.fn("SessionAttempt.projectEnded")(function* (
   db: DB,
   event: SessionEvent.ProviderAttempt.Ended,
 ) {
-  if (yield* isCancelled(db, event.data.sessionID)) return
   yield* db
-    .update(SessionAttemptTable)
-    .set({
-      status: event.data.continuation ? "continuation" : event.data.outcome === "abandoned" ? "abandoned" : "ended",
-      error: event.data.error ? { message: event.data.error.message, isRetryable: false } : null,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status:
+                event.data.continuation ? "continuation" : event.data.outcome === "abandoned" ? "abandoned" : "ended",
+              error: event.data.error ? { message: event.data.error.message, isRetryable: false } : null,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
 })
 
@@ -264,24 +289,32 @@ export const projectRetried = Effect.fn("SessionAttempt.projectRetried")(functio
   db: DB,
   event: SessionEvent.Retried,
 ) {
-  if (yield* isCancelled(db, event.data.sessionID)) return
   yield* db
-    .update(SessionAttemptTable)
-    .set({
-      status: "retrying",
-      attempt: event.data.attempt,
-      retry_at: DateTime.toEpochMillis(event.data.next),
-      error: event.data.error,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: "retrying",
+              attempt: event.data.attempt,
+              retry_at: DateTime.toEpochMillis(event.data.next),
+              error: event.data.error,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
 })
 
@@ -289,24 +322,33 @@ export const projectRecoveryDecided = Effect.fn("SessionAttempt.projectRecoveryD
   db: DB,
   event: SessionEvent.ProviderAttempt.Recovery.Decided,
 ) {
-  if (yield* isCancelled(db, event.data.sessionID)) return
   yield* db
-    .update(SessionAttemptTable)
-    .set({
-      status: event.data.decision === "retry" ? "continuation" : "abandoned",
-      decision: event.data.decision,
-      retry_of: event.data.decision === "retry" ? event.data.attemptID : null,
-      attempt: event.data.decision === "retry" ? sql`${SessionAttemptTable.attempt} + 1` : SessionAttemptTable.attempt,
-      seq: sequence(event),
-      time_updated: DateTime.toEpochMillis(event.data.timestamp),
-    })
-    .where(
-      and(
-        eq(SessionAttemptTable.session_id, event.data.sessionID),
-        eq(SessionAttemptTable.attempt_id, event.data.attemptID),
-      ),
+    .transaction(
+      () =>
+        Effect.gen(function* () {
+          if (yield* isCancelled(db, event.data.sessionID)) return
+          yield* db
+            .update(SessionAttemptTable)
+            .set({
+              status: event.data.decision === "retry" ? "continuation" : "abandoned",
+              decision: event.data.decision,
+              retry_of: event.data.decision === "retry" ? event.data.attemptID : null,
+              attempt:
+                event.data.decision === "retry" ? sql`${SessionAttemptTable.attempt} + 1` : SessionAttemptTable.attempt,
+              seq: sequence(event),
+              time_updated: DateTime.toEpochMillis(event.data.timestamp),
+            })
+            .where(
+              and(
+                eq(SessionAttemptTable.session_id, event.data.sessionID),
+                eq(SessionAttemptTable.attempt_id, event.data.attemptID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }),
+      { behavior: "immediate" },
     )
-    .run()
     .pipe(Effect.orDie)
 })
 

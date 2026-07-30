@@ -346,6 +346,7 @@ const taskSubmissionLayer = Layer.succeed(
         return settled
       }),
     recoverSession: () => Effect.succeed(0),
+    recoverCompleted: () => Effect.succeed(0),
     markRecoveryRequired: () => Effect.succeed(0),
   }),
 )

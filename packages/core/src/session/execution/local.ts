@@ -85,23 +85,13 @@ export const startupRecoveryCandidates = Effect.fn("SessionExecutionLocal.startu
   return recovery
 })
 
-const recoverCompletedAssistant = Effect.fn("SessionExecutionLocal.recoverCompletedAssistant")(function* (
+const recoverCompletedSubmissions = Effect.fn("SessionExecutionLocal.recoverCompletedSubmissions")(function* (
   sessionID: SessionSchema.ID,
   store: SessionStore.Interface,
   submissions: TaskSubmission.Interface,
-  db: DB,
 ) {
-  const attempt = yield* SessionAttempt.get(db, sessionID)
-  if (!attempt) return 0
-  const childInputID = yield* unresolvedTaskInputID(db, sessionID, attempt)
-  if (!childInputID) return 0
   const messages = yield* store.context(sessionID).pipe(Effect.orDie)
-  return yield* submissions.recoverSession({
-    sessionID,
-    assistantMessageID: attempt.assistant_message_id,
-    childInputID,
-    messages,
-  })
+  return yield* submissions.recoverCompleted({ sessionID, messages })
 })
 
 const interruptedChildInputID = Effect.fn("SessionExecutionLocal.interruptedChildInputID")(function* (
@@ -220,7 +210,7 @@ const layer = Layer.effect(
           ),
           Effect.ensuring(idle),
         )
-        yield* recoverCompletedAssistant(sessionID, store, submissions, db)
+        yield* recoverCompletedSubmissions(sessionID, store, submissions)
         yield* notifications.drain({
           admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
           wake: (sessionID) => current.service?.wake(sessionID) ?? Effect.void,
@@ -253,15 +243,15 @@ const layer = Layer.effect(
       .pipe(Effect.forkScoped)
 
     const now = yield* Clock.currentTimeMillis
-    for (const recovery of yield* startupRecoveryCandidates(db, now))
-      if ((yield* recoverCompletedAssistant(recovery.sessionID, store, submissions, db)) < 1) {
-        if (yield* clearTerminalTaskAttempt(recovery.sessionID, db)) continue
-        const childInputID = yield* interruptedChildInputID(recovery.sessionID, db)
-        if (childInputID)
-          yield* submissions
-            .markRecoveryRequired({ ...recovery, childInputID })
-            .pipe(Effect.catch(() => Effect.succeed(0)))
-      }
+    for (const recovery of yield* startupRecoveryCandidates(db, now)) {
+      yield* recoverCompletedSubmissions(recovery.sessionID, store, submissions)
+      if (yield* clearTerminalTaskAttempt(recovery.sessionID, db)) continue
+      const childInputID = yield* interruptedChildInputID(recovery.sessionID, db)
+      if (childInputID)
+        yield* submissions
+          .markRecoveryRequired({ ...recovery, childInputID })
+          .pipe(Effect.catch(() => Effect.succeed(0)))
+    }
     for (const sessionID of yield* startupCandidates(db, now))
       yield* coordinator.run(sessionID).pipe(
         Effect.catch(() => Effect.void),

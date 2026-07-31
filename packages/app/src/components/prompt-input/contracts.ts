@@ -53,4 +53,5 @@ export interface PromptInputProps {
   defaultDelivery?: () => "queue" | "steer"
   onAbort?: () => void
   onSubmit?: () => void
+  onSubmitted?: (messageID: string, delivery: "queue" | "steer") => void
 }

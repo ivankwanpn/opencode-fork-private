@@ -282,6 +282,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     defaultDelivery: props.defaultDelivery,
     onAbort: props.onAbort,
     onSubmit: props.onSubmit,
+    onSubmitted: props.onSubmitted,
     model: props.controls.model.selection,
   })
 

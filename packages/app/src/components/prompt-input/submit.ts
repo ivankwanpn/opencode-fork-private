@@ -52,6 +52,7 @@ type FollowupSendInput = {
   messageID?: string
   optimisticBusy?: boolean
   before?: () => Promise<boolean> | boolean
+  onSubmitted?: (messageID: string, delivery: "queue" | "steer") => void
 }
 
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
@@ -104,6 +105,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       }
 
       const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
+      const delivery = input.delivery ?? input.draft.delivery ?? "steer"
       await input.api.command({
         sessionID: input.draft.sessionID,
         id: messageID,
@@ -120,8 +122,9 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
           uri: attachment.dataUrl,
           name: attachment.filename,
         })),
-        delivery: input.delivery ?? input.draft.delivery ?? "steer",
+        delivery,
       })
+      input.onSubmitted?.(messageID, delivery)
       return true
     } catch (err) {
       setIdle()
@@ -183,13 +186,14 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       return false
     }
 
+    const delivery = input.delivery ?? input.draft.delivery ?? "steer"
     await input.api.prompt({
       sessionID: input.draft.sessionID,
       id: messageID,
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,
-      delivery: input.delivery ?? input.draft.delivery ?? "steer",
+      delivery,
       legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
@@ -216,6 +220,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
           : [],
       ),
     })
+    input.onSubmitted?.(messageID, delivery)
     return true
   } catch (err) {
     batch(() => {
@@ -246,6 +251,7 @@ type PromptSubmitInput = {
   defaultDelivery?: Accessor<"queue" | "steer">
   onAbort?: () => void
   onSubmit?: () => void
+  onSubmitted?: (messageID: string, delivery: "queue" | "steer") => void
   model?: ModelSelection
 }
 
@@ -631,6 +637,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       messageID,
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
+      onSubmitted: input.onSubmitted,
     }).catch((err) => {
       pending.delete(pendingKey(session.id))
       if (sessionDirectory === projectDirectory) {

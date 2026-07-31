@@ -85,7 +85,7 @@ export function SessionFollowupDock(props: {
                   size="small"
                   variant="secondary"
                   class="shrink-0"
-                  disabled={!!props.sending}
+                  disabled={props.sending === item.id}
                   onClick={() => props.onSend(item.id)}
                 >
                   {language.t("session.followupDock.sendNow")}
@@ -94,7 +94,7 @@ export function SessionFollowupDock(props: {
                   size="small"
                   variant="ghost"
                   class="shrink-0"
-                  disabled={!!props.sending}
+                  disabled={props.sending === item.id}
                   onClick={() => props.onEdit(item.id)}
                 >
                   {language.t("session.followupDock.edit")}

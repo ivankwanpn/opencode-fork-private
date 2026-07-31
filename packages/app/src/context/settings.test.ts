@@ -1,15 +1,54 @@
-import { describe, expect, test } from "bun:test"
-import {
-  hasExistingWebState,
-  isAppUpgrade,
-  layoutTransitionState,
-  maximumSunsetTimeout,
-  newLayoutDesignsDefault,
-  nextSunsetCheckDelay,
-  resolveNewLayoutDesigns,
-  shouldDisplayTabsToast,
-  shouldEnableNewLayout,
-} from "./settings"
+import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { createRoot } from "solid-js"
+
+let settingsModule: typeof import("./settings")
+let hasExistingWebState: typeof import("./settings")["hasExistingWebState"]
+let isAppUpgrade: typeof import("./settings")["isAppUpgrade"]
+let layoutTransitionState: typeof import("./settings")["layoutTransitionState"]
+let maximumSunsetTimeout: typeof import("./settings")["maximumSunsetTimeout"]
+let newLayoutDesignsDefault: typeof import("./settings")["newLayoutDesignsDefault"]
+let nextSunsetCheckDelay: typeof import("./settings")["nextSunsetCheckDelay"]
+let resolveNewLayoutDesigns: typeof import("./settings")["resolveNewLayoutDesigns"]
+let SettingsProvider: typeof import("./settings")["SettingsProvider"]
+let shouldDisplayTabsToast: typeof import("./settings")["shouldDisplayTabsToast"]
+let shouldEnableNewLayout: typeof import("./settings")["shouldEnableNewLayout"]
+let useSettings: typeof import("./settings")["useSettings"]
+
+beforeAll(async () => {
+  let current: unknown
+  mock.module("@opencode-ai/ui/context", () => ({
+    createSimpleContext: (input: { init: (props?: unknown) => unknown }) => ({
+      use: () => current,
+      provider: (props: { children?: () => unknown }) => {
+        current = input.init(props)
+        return props.children?.()
+      },
+    }),
+  }))
+  mock.module("@/context/platform", () => ({
+    usePlatform: () => ({ platform: "web", version: "test" }),
+  }))
+  mock.module("@/utils/persist", () => ({
+    persisted: (_key: string, input: [unknown, unknown]) => [
+      input[0],
+      input[1],
+      null,
+      Object.assign(() => true, { promise: Promise.resolve(true) }),
+    ],
+  }))
+  settingsModule = await import("./settings")
+  hasExistingWebState = settingsModule.hasExistingWebState
+  isAppUpgrade = settingsModule.isAppUpgrade
+  layoutTransitionState = settingsModule.layoutTransitionState
+  maximumSunsetTimeout = settingsModule.maximumSunsetTimeout
+  newLayoutDesignsDefault = settingsModule.newLayoutDesignsDefault
+  nextSunsetCheckDelay = settingsModule.nextSunsetCheckDelay
+  resolveNewLayoutDesigns = settingsModule.resolveNewLayoutDesigns
+  SettingsProvider = settingsModule.SettingsProvider
+  shouldDisplayTabsToast = settingsModule.shouldDisplayTabsToast
+  shouldEnableNewLayout = settingsModule.shouldEnableNewLayout
+  useSettings = settingsModule.useSettings
+})
 
 describe("layout transition", () => {
   test("blank profiles default to the new layout", () => {
@@ -75,5 +114,28 @@ describe("layout transition", () => {
     expect(shouldEnableNewLayout("1.17.20", "1.17.21")).toBe(false)
     expect(shouldEnableNewLayout(undefined, "1.17.19")).toBe(false)
     expect(shouldEnableNewLayout("dev", "1.17.20")).toBe(false)
+  })
+
+  test("preserves queue as the persisted follow-up setting", async () => {
+    let settings: ReturnType<typeof useSettings> | undefined
+    let dispose: VoidFunction | undefined
+    createRoot((disposeRoot) => {
+      dispose = disposeRoot
+      SettingsProvider({
+        get children() {
+          settings = useSettings()
+          return undefined
+        },
+      })
+    })
+
+    if (!settings) throw new Error("settings provider did not initialize")
+    await settings.ready.promise
+    settings.general.setFollowup("queue")
+    await Promise.resolve()
+
+    expect(settings.current.general?.followup).toBe("queue")
+    expect(settings.general.followup()).toBe("queue")
+    dispose?.()
   })
 })

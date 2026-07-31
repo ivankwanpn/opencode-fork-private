@@ -1224,8 +1224,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       },
       newSessionWorktree: () => props.newSessionWorktree,
       onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
-      shouldQueue: props.shouldQueue,
-      onQueue: props.onQueue,
+      defaultDelivery: props.defaultDelivery,
       onAbort: props.onAbort,
       onSubmit: props.onSubmit,
       model: props.controls.model.selection,
@@ -1392,7 +1391,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       ) {
         return
       }
-      void handleSubmit(event)
+      const steer = (event.ctrlKey || event.metaKey) && !event.altKey
+      void handleSubmit(event, steer ? "steer" : undefined)
     }
   }
 

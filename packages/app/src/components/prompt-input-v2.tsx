@@ -279,8 +279,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
     newSessionWorktree: () => props.newSessionWorktree,
     onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
-    shouldQueue: props.shouldQueue,
-    onQueue: props.onQueue,
+    defaultDelivery: props.defaultDelivery,
     onAbort: props.onAbort,
     onSubmit: props.onSubmit,
     model: props.controls.model.selection,
@@ -482,6 +481,18 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         current: () => props.controls.model.selection.variant.current() ?? "default",
         onSelect: (value) => props.controls.model.selection.variant.set(value === "default" ? undefined : value),
         keybind: () => command.keybindParts("model.variant.cycle"),
+      },
+      onKeyDown: (event) => {
+        if (
+          event.key.toLowerCase() !== "enter" ||
+          (!event.ctrlKey && !event.metaKey) ||
+          event.altKey ||
+          event.shiftKey
+        ) {
+          return
+        }
+        event.preventDefault()
+        void submission.handleSubmit(event, "steer")
       },
       submit: {
         stopping,

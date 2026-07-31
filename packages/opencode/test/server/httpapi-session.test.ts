@@ -1643,12 +1643,52 @@ describe("session HttpApi", () => {
           method: "POST",
           headers,
         })
-        expect(missingPromote.status).toBe(409)
+        expect(missingPromote.status).toBe(404)
         const missingCancel = yield* request(`/api/session/${session.id}/input/msg_http_unknown`, {
           method: "DELETE",
           headers,
         })
-        expect(missingCancel.status).toBe(409)
+        expect(missingCancel.status).toBe(404)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    30_000,
+  )
+
+  it.instance(
+    "serializes v2 input promotion and cancellation races",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "v2 input race" })
+        const inputID = "msg_http_race_input"
+
+        const admitted = yield* request(`/api/session/${session.id}/prompt`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ id: inputID, prompt: { text: "race" }, resume: false }),
+        })
+        expect(admitted.status).toBe(200)
+
+        expectWake(session.id, inputID, "promote")
+        const [promote, cancel] = yield* Effect.all(
+          [
+            request(`/api/session/${session.id}/input/${inputID}/promote`, { method: "POST", headers }),
+            request(`/api/session/${session.id}/input/${inputID}`, { method: "DELETE", headers }),
+          ],
+          { concurrency: "unbounded" },
+        )
+        expect(new Set([promote.status, cancel.status])).toEqual(new Set([200, 409]))
+
+        const row = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(inputID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(Number(row?.promoted !== null) + Number(row?.terminal !== null)).toBe(1)
       }),
     { git: true, config: { formatter: false, lsp: false } },
     30_000,

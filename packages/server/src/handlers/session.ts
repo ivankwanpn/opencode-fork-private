@@ -407,6 +407,23 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.input.promote",
         Effect.fn(function* (ctx) {
+          const found = yield* session.findInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID }).pipe(
+            Effect.catchTag("Session.NotFoundError", (error) =>
+              Effect.fail(
+                new SessionNotFoundError({
+                  sessionID: error.sessionID,
+                  message: `Session not found: ${error.sessionID}`,
+                }),
+              ),
+            ),
+          )
+          if (found === undefined)
+            return yield* new SessionInputNotFoundError({
+              sessionID: ctx.params.sessionID,
+              inputID: ctx.params.inputID,
+              message: `Session input not found: ${ctx.params.inputID}`,
+            })
+
           const execution = yield* SessionExecution.Service
           const input = yield* session
             .promoteInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })
@@ -443,6 +460,23 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.input.cancel",
         Effect.fn(function* (ctx) {
+          const found = yield* session.findInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID }).pipe(
+            Effect.catchTag("Session.NotFoundError", (error) =>
+              Effect.fail(
+                new SessionNotFoundError({
+                  sessionID: error.sessionID,
+                  message: `Session not found: ${error.sessionID}`,
+                }),
+              ),
+            ),
+          )
+          if (found === undefined)
+            return yield* new SessionInputNotFoundError({
+              sessionID: ctx.params.sessionID,
+              inputID: ctx.params.inputID,
+              message: `Session input not found: ${ctx.params.inputID}`,
+            })
+
           const execution = yield* SessionExecution.Service
           yield* session
             .cancelInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })

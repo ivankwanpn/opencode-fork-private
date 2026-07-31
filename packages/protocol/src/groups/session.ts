@@ -396,7 +396,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
       HttpApiEndpoint.post("session.input.promote", "/api/session/:sessionID/input/:inputID/promote", {
         params: { sessionID: Session.ID, inputID: SessionMessage.ID },
         success: Schema.Struct({ data: SessionInput.Admitted }),
-        error: [SessionInputConflictError, SessionNotFoundError],
+        error: [SessionInputConflictError, SessionInputNotFoundError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(
@@ -411,7 +411,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
       HttpApiEndpoint.delete("session.input.cancel", "/api/session/:sessionID/input/:inputID", {
         params: { sessionID: Session.ID, inputID: SessionMessage.ID },
         success: HttpApiSchema.NoContent,
-        error: [SessionInputConflictError, SessionNotFoundError],
+        error: [SessionInputConflictError, SessionInputNotFoundError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(

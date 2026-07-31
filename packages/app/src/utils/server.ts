@@ -64,6 +64,7 @@ export function createApiForServer(input: {
   const custom = createCustomProviderApi(clientOptions)
   const prompt = async (
     value: Parameters<OpenCodeClient["session"]["prompt"]>[0] & {
+      context?: Parameters<CurrentClient["sessions"]["prompt"]>[0]["prompt"]["context"]
       model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
       variant?: string
     },
@@ -75,6 +76,7 @@ export function createApiForServer(input: {
         id: value.id,
         prompt: {
           text: value.text,
+          context: value.context,
           files: value.files?.map((file) => ({
             uri: file.uri,
             name: file.name,

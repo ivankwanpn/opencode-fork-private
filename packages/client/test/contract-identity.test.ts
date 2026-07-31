@@ -20,6 +20,7 @@ import { Workspace } from "@opencode-ai/schema/workspace"
 import { Api } from "@opencode-ai/server/api"
 import { compile, emitPromise } from "@opencode-ai/httpapi-codegen"
 import { ClientApi, endpointNames, groupNames, omitEndpoints } from "../src/contract"
+import { OpenCode } from "../src"
 
 test("Core and Server reuse the authoritative Schema and Protocol values", () => {
   expect(AgentV2.ID).toBe(Agent.ID)
@@ -55,4 +56,41 @@ test("shared DTO schemas construct and decode plain objects", () => {
   expect(Prompt.ast.annotations?.identifier).toBe("Prompt")
   expect(SessionMessage.AssistantText.ast.annotations?.identifier).toBe("Session.Message.Assistant.Text")
   expect(CoreSessionMessage.AssistantText).toBe(SessionMessage.AssistantText)
+})
+
+test("generated promise client exposes the durable session input endpoints", async () => {
+  const requests: Request[] = []
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:4096",
+    fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      const path = new URL(request.url).pathname
+      if (request.method === "GET" && path === "/api/session/ses_1/input")
+        return Response.json({ data: [{ id: "msg_1", sessionID: "ses_1", delivery: "queue", type: "user" }] })
+      if (request.method === "GET" && path === "/api/session/ses_1/input/msg_1")
+        return Response.json({ data: { id: "msg_1", sessionID: "ses_1", delivery: "queue", type: "user" } })
+      if (request.method === "POST" && path === "/api/session/ses_1/input/msg_1/promote")
+        return Response.json({ data: { id: "msg_1", sessionID: "ses_1", delivery: "queue", type: "user" } })
+      return new Response(undefined, { status: 204 })
+    },
+  })
+
+  await client.sessions.inputList({ sessionID: "ses_1", delivery: "queue" })
+  await client.sessions.inputGet({ sessionID: "ses_1", inputID: "msg_1" })
+  await client.sessions.inputPromote({ sessionID: "ses_1", inputID: "msg_1" })
+  await client.sessions.inputCancel({ sessionID: "ses_1", inputID: "msg_1" })
+
+  expect(
+    requests.map((request) => ({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      delivery: new URL(request.url).searchParams.get("delivery"),
+    })),
+  ).toEqual([
+    { method: "GET", path: "/api/session/ses_1/input", delivery: "queue" },
+    { method: "GET", path: "/api/session/ses_1/input/msg_1", delivery: null },
+    { method: "POST", path: "/api/session/ses_1/input/msg_1/promote", delivery: null },
+    { method: "DELETE", path: "/api/session/ses_1/input/msg_1", delivery: null },
+  ])
 })

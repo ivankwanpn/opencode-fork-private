@@ -32,6 +32,7 @@ type PendingPrompt = {
 const pending = new Map<string, PendingPrompt>()
 
 export type FollowupDraft = {
+  id?: string
   sessionID: string
   sessionDirectory: string
   prompt: Prompt
@@ -56,6 +57,22 @@ type FollowupSendInput = {
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
 
 const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
+
+export function followupDelivery(
+  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey" | "repeat" | "isComposing">,
+) {
+  if (
+    event.key.toLowerCase() !== "enter" ||
+    (!event.ctrlKey && !event.metaKey) ||
+    event.altKey ||
+    event.shiftKey ||
+    event.repeat ||
+    event.isComposing
+  ) {
+    return undefined
+  }
+  return "steer" as const
+}
 
 export async function sendFollowupDraft(input: FollowupSendInput) {
   const text = draftText(input.draft.prompt)
@@ -86,7 +103,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
         return false
       }
 
-      const messageID = input.messageID ?? Identifier.ascending("message")
+      const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
       await input.api.command({
         sessionID: input.draft.sessionID,
         id: messageID,
@@ -112,7 +129,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     }
   }
 
-  const messageID = input.messageID ?? Identifier.ascending("message")
+  const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
   const { requestParts, optimisticParts } = buildRequestParts({
     prompt: input.draft.prompt,
     context: input.draft.context,

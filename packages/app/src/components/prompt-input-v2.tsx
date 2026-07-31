@@ -13,7 +13,7 @@ import type { PromptInputProps } from "@/components/prompt-input/contracts"
 import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } from "@/components/prompt-input/history"
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
 import { promptDesignPlaceholder, promptPlaceholder } from "@/components/prompt-input/placeholder"
-import { createPromptSubmit } from "@/components/prompt-input/submit"
+import { createPromptSubmit, followupDelivery } from "@/components/prompt-input/submit"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import { useComments } from "@/context/comments"
 import { useCommand } from "@/context/command"
@@ -483,15 +483,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         keybind: () => command.keybindParts("model.variant.cycle"),
       },
       onKeyDown: (event) => {
-        if (
-          event.key.toLowerCase() !== "enter" ||
-          (!event.ctrlKey && !event.metaKey) ||
-          event.altKey ||
-          event.shiftKey ||
-          event.isComposing
-        ) {
-          return
-        }
+        if (followupDelivery(event) !== "steer") return
         event.preventDefault()
         void submission.handleSubmit(event, "steer")
       },

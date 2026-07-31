@@ -2,8 +2,11 @@ import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
 import type { ModelSelection } from "@/context/local"
+import type { FollowupDraft } from "./submit"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
+let sendFollowupDraft: typeof import("./submit").sendFollowupDraft
+let followupDelivery: typeof import("./submit").followupDelivery
 
 const createdClients: string[] = []
 const createdSessions: string[] = []
@@ -287,6 +290,8 @@ beforeAll(async () => {
 
   const mod = await import("./submit")
   createPromptSubmit = mod.createPromptSubmit
+  sendFollowupDraft = mod.sendFollowupDraft
+  followupDelivery = mod.followupDelivery
 })
 
 beforeEach(() => {
@@ -572,6 +577,47 @@ describe("prompt submit worktree selection", () => {
         delivery: "queue",
       }),
     ])
+  })
+
+  test("reuses the persisted follow-up message id when sending a retry", async () => {
+    commands.push({ name: "review" })
+    const draft: FollowupDraft = {
+      id: "msg_retry",
+      sessionID: "session-1",
+      sessionDirectory: "/repo/main",
+      prompt: [{ type: "text", content: "/review staged changes", start: 0, end: 22 }],
+      context: [],
+      agent: "agent",
+      model: { providerID: "provider", modelID: "model" },
+    }
+
+    await sendFollowupDraft({
+      api: clientFor("/repo/main").api.session as never,
+      sync: { data: { command: commands } } as never,
+      serverSync: { session: { set: () => undefined } } as never,
+      draft,
+      delivery: "queue",
+    })
+
+    expect(sentCommands).toEqual([
+      expect.objectContaining({ id: "msg_retry", delivery: "queue" }),
+    ])
+  })
+
+  test("does not turn repeated or composing mod-enter into a steer submission", () => {
+    const base = {
+      key: "Enter",
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      repeat: false,
+      isComposing: false,
+    }
+
+    expect(followupDelivery(base)).toBe("steer")
+    expect(followupDelivery({ ...base, repeat: true })).toBeUndefined()
+    expect(followupDelivery({ ...base, isComposing: true })).toBeUndefined()
   })
 
   test("interrupts a blank working submit without sending a prompt or command", async () => {

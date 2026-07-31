@@ -72,7 +72,7 @@ import {
   type PromptInputState,
   type PromptInputSubmission,
 } from "./prompt-input/contracts"
-import { createPromptSubmit } from "./prompt-input/submit"
+import { createPromptSubmit, followupDelivery } from "./prompt-input/submit"
 import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/slash-popover"
 import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
@@ -1391,8 +1391,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       ) {
         return
       }
-      const steer = (event.ctrlKey || event.metaKey) && !event.altKey
-      void handleSubmit(event, steer ? "steer" : undefined)
+      void handleSubmit(event, followupDelivery(event))
     }
   }
 

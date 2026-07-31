@@ -1725,6 +1725,7 @@ export default function Page() {
         sync: sync(),
         serverSync: serverSync(),
         draft: item,
+        messageID: input.id,
         optimisticBusy: item.sessionDirectory === sdk().directory,
       }).catch((err) => {
         setFollowup("failed", input.sessionID, input.id)

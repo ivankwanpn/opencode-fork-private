@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import type { SessionHookSpec } from "@opencode-ai/plugin/v2/effect"
-import { DateTime, Effect, Fiber, Layer, Stream } from "effect"
+import { DateTime, Deferred, Effect, Fiber, Layer, Stream } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
@@ -102,6 +102,39 @@ const guidanceLocation = pluginLocationMap(undefined, undefined, (prompt, active
 )
 const itWithAgentGuidance = testEffect(
   AppNodeBuilder.build(sessionNodes, [guidanceLocation.replacement, [SessionExecution.node, execution]]),
+)
+let blockingWakeStarted: Deferred.Deferred<void> | undefined
+let releaseBlockingWake: Deferred.Deferred<void> | undefined
+const blockingWakeObservations: string[] = []
+const blockingWakeExecution = Layer.effect(
+  SessionExecution.Service,
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    return SessionExecution.Service.of({
+      active: Effect.sync(() => new Set(activeSessions)),
+      resume: (sessionID) =>
+        Effect.sync(() => {
+          executionCalls.push(sessionID)
+        }),
+      exclusive: (_sessionID, work) => work,
+      interrupt: (sessionID) =>
+        Effect.sync(() => {
+          interruptCalls.push(sessionID)
+        }),
+      wake: (sessionID) =>
+        Effect.gen(function* () {
+          const pending = yield* SessionInput.pending(db, sessionID)
+          blockingWakeObservations.push(pending.length > 0 ? "committed" : "missing")
+          if (blockingWakeStarted) yield* Deferred.succeed(blockingWakeStarted, undefined)
+          if (releaseBlockingWake) yield* Deferred.await(releaseBlockingWake)
+          return yield* Effect.die(new Error("late wake failure"))
+        }),
+      wait: () => Effect.void,
+    })
+  }),
+)
+const itWithBlockingWake = testEffect(
+  AppNodeBuilder.build(sessionNodes, [pluginLocation.replacement, [SessionExecution.node, blockingWakeExecution]]),
 )
 const sessionID = SessionV2.ID.make("ses_prompt_test")
 const messageID = SessionMessage.ID.create()
@@ -653,6 +686,7 @@ describe("SessionV2.prompt", () => {
       const retried = yield* session.prompt({ ...input, resume: true })
 
       expect(retried).toEqual(first)
+      while (wakeCalls.length < 1) yield* Effect.yieldNow
       expect(wakeCalls).toEqual([sessionID])
     }),
   )
@@ -1026,6 +1060,7 @@ describe("SessionV2.prompt", () => {
       yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Run by default" }) })
 
       expect(executionCalls).toEqual([])
+      while (wakeCalls.length < 1) yield* Effect.yieldNow
       expect(wakeCalls).toEqual([sessionID])
     }),
   )
@@ -1044,6 +1079,7 @@ describe("SessionV2.prompt", () => {
       })
 
       expect(executionCalls).toEqual([])
+      while (wakeCalls.length < 1) yield* Effect.yieldNow
       expect(wakeCalls).toEqual([sessionID])
     }),
   )
@@ -1081,6 +1117,43 @@ describe("SessionV2.prompt", () => {
 
       expect(executionCalls).toEqual([])
       expect(wakeCalls).toEqual([])
+    }),
+  )
+
+  itWithBlockingWake.effect("returns the durable admission before an advisory wake completes or fails", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const session = yield* SessionV2.Service
+      const returned = yield* Deferred.make<SessionInput.Admitted>()
+      blockingWakeObservations.length = 0
+      blockingWakeStarted = yield* Deferred.make<void>()
+      releaseBlockingWake = yield* Deferred.make<void>()
+
+      const run = yield* session
+        .prompt({
+          sessionID,
+          prompt: Prompt.make({ text: "Recover queued wake later" }),
+          delivery: "queue",
+        })
+        .pipe(
+          Effect.tap((input) => Deferred.succeed(returned, input)),
+          Effect.forkChild,
+        )
+
+      yield* Deferred.await(blockingWakeStarted)
+      expect(blockingWakeObservations).toEqual(["committed"])
+      while (!(yield* Deferred.isDone(returned))) yield* Effect.yieldNow
+
+      const admitted = yield* Deferred.await(returned)
+      expect(yield* SessionInput.find(db, admitted.id)).toEqual(admitted)
+
+      yield* Deferred.succeed(releaseBlockingWake, undefined)
+      expect(yield* Fiber.join(run)).toEqual(admitted)
+      expect(yield* SessionInput.pending(db, sessionID, "queue")).toEqual([admitted])
+
+      blockingWakeStarted = undefined
+      releaseBlockingWake = undefined
     }),
   )
 })

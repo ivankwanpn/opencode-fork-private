@@ -1,7 +1,7 @@
 export * as SessionV2 from "./session"
 export * from "./session/schema"
 
-import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Stream } from "effect"
+import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
 import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
@@ -286,6 +286,14 @@ const layer = Layer.effect(
     const execution = yield* SessionExecution.Service
     const store = yield* SessionStore.Service
     const locations = yield* LocationServiceMap.Service
+    const scope = yield* Scope.Scope
+    const wakeAdvisory = Effect.fn("V2Session.wakeAdvisory")((sessionID: SessionSchema.ID) =>
+      execution.wake(sessionID).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.forkIn(scope, { startImmediately: true }),
+        Effect.asVoid,
+      ),
+    )
     const decodeMessage = Schema.decodeUnknownEffect(SessionMessage.Message)
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
     const decode = (row: typeof SessionMessageTable.$inferSelect) =>
@@ -570,9 +578,14 @@ const layer = Layer.effect(
                   .pipe(Effect.flatMap(prepared.attachment.materialize)),
             })
             if (input.commit === true) yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)
-            else if (input.resume !== false) yield* execution.wake(admitted.sessionID)
-            return admitted
+            return {
+              admitted,
+              wakeSessionID: input.commit === true || input.resume === false ? undefined : admitted.sessionID,
+            }
           }),
+        ).pipe(
+          Effect.tap((output) => (output.wakeSessionID ? wakeAdvisory(output.wakeSessionID) : Effect.void)),
+          Effect.map((output) => output.admitted),
         ),
       ),
       command: Effect.fn("V2Session.command")((input) =>
@@ -624,9 +637,14 @@ const layer = Layer.effect(
               messageID: SessionV1.MessageID.make(admitted.id),
             })
             if (input.commit === true) yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)
-            else if (input.resume !== false) yield* execution.wake(admitted.sessionID)
-            return admitted
+            return {
+              admitted,
+              wakeSessionID: input.commit === true || input.resume === false ? undefined : admitted.sessionID,
+            }
           }),
+        ).pipe(
+          Effect.tap((output) => (output.wakeSessionID ? wakeAdvisory(output.wakeSessionID) : Effect.void)),
+          Effect.map((output) => output.admitted),
         ),
       ),
       pending: Effect.fn("V2Session.pending")(function* (input) {

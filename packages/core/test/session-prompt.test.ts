@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import type { SessionHookSpec } from "@opencode-ai/plugin/v2/effect"
-import { DateTime, Deferred, Effect, Fiber, Layer, Scope, Stream } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
@@ -137,7 +137,9 @@ const itWithBlockingWake = testEffect(
   AppNodeBuilder.build(sessionNodes, [pluginLocation.replacement, [SessionExecution.node, blockingWakeExecution]]),
 )
 let interruptingWakeStarted: Deferred.Deferred<void> | undefined
+let interruptingWakeRequested: Deferred.Deferred<void> | undefined
 const interruptingWakeCalls: SessionV2.ID[] = []
+const interruptingWakeObservations: string[] = []
 const interruptingWakeExecution = Layer.succeed(
   SessionExecution.Service,
   SessionExecution.Service.of({
@@ -154,6 +156,12 @@ const interruptingWakeExecution = Layer.succeed(
     wake: (sessionID) =>
       Effect.gen(function* () {
         interruptingWakeCalls.push(sessionID)
+        if (interruptingWakeRequested) {
+          const requested = yield* Deferred.poll(interruptingWakeRequested).pipe(
+            Effect.map((result) => result._tag === "Some"),
+          )
+          interruptingWakeObservations.push(requested ? "interrupt-requested" : "interrupt-missing")
+        }
         if (interruptingWakeStarted) yield* Deferred.succeed(interruptingWakeStarted, undefined)
       }),
     wait: () => Effect.void,
@@ -1198,16 +1206,15 @@ describe("SessionV2.prompt", () => {
           Effect.tap((input) => Deferred.succeed(returned, input)),
           Effect.forkChild,
         )
-      yield* Effect.addFinalizer(() => Fiber.interrupt(run).pipe(Effect.asVoid))
-      yield* Effect.addFinalizer(() =>
-        releaseBlockingWake ? Deferred.succeed(releaseBlockingWake, undefined).pipe(Effect.asVoid) : Effect.void,
-      )
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           blockingWakeStarted = undefined
           releaseBlockingWake = undefined
         }),
       )
+      yield* Effect.addFinalizer(() => Fiber.interrupt(run).pipe(Effect.asVoid))
+      const release = releaseBlockingWake
+      yield* Effect.addFinalizer(() => (release ? Deferred.succeed(release, undefined).pipe(Effect.asVoid) : Effect.void))
 
       yield* awaitDeferred("blocking wake start", blockingWakeStarted)
       expect(blockingWakeObservations).toEqual(["committed"])
@@ -1228,16 +1235,28 @@ describe("SessionV2.prompt", () => {
       const session = yield* SessionV2.Service
       const scope = yield* Scope.Scope
       interruptingWakeCalls.length = 0
+      interruptingWakeObservations.length = 0
       interruptingWakeStarted = yield* Deferred.make<void>()
-      const interruptingWakeScheduled = yield* Deferred.make<void>()
+      interruptingWakeRequested = yield* Deferred.make<void>()
+      const promptAdmitted = yield* Deferred.make<void>()
       const runningReady = yield* Deferred.make<Fiber.Fiber<SessionInput.Admitted, unknown>>()
+
+      const interrupter = yield* awaitDeferred("prompt admitted event", promptAdmitted).pipe(
+        Effect.andThen(awaitDeferred("running prompt fiber", runningReady)),
+        Effect.flatMap((running) =>
+          Fiber.interrupt(running).pipe(
+            Effect.forkIn(scope, { startImmediately: true }),
+            Effect.andThen(Deferred.succeed(interruptingWakeRequested!, undefined)),
+          ),
+        ),
+        Effect.forkChild,
+      )
+      yield* Effect.addFinalizer(() => Fiber.interrupt(interrupter).pipe(Effect.asVoid))
 
       const unsubscribe = yield* events.listen((event) =>
         event.type === SessionEvent.PromptAdmitted.type
-          ? awaitDeferred("running prompt fiber", runningReady).pipe(
-              Effect.andThen((running) => Fiber.interrupt(running)),
-              Effect.ensuring(Deferred.succeed(interruptingWakeScheduled, undefined)),
-              Effect.forkIn(scope),
+          ? Deferred.succeed(promptAdmitted, undefined).pipe(
+              Effect.andThen(awaitDeferred("caller interruption request", interruptingWakeRequested!).pipe(Effect.orDie)),
               Effect.asVoid,
             )
           : Effect.void,
@@ -1246,6 +1265,7 @@ describe("SessionV2.prompt", () => {
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           interruptingWakeStarted = undefined
+          interruptingWakeRequested = undefined
         }),
       )
 
@@ -1259,10 +1279,13 @@ describe("SessionV2.prompt", () => {
       yield* Effect.addFinalizer(() => Fiber.interrupt(running).pipe(Effect.asVoid))
       yield* Deferred.succeed(runningReady, running)
 
+      yield* awaitDeferred("caller interruption request", interruptingWakeRequested)
       yield* awaitDeferred("advisory wake registration", interruptingWakeStarted)
-      yield* awaitDeferred("caller interruption", interruptingWakeScheduled)
 
       expect(interruptingWakeCalls).toEqual([sessionID])
+      expect(interruptingWakeObservations).toEqual(["interrupt-requested"])
+      const interrupted = yield* Fiber.await(running)
+      expect(Exit.isFailure(interrupted) && Cause.hasInterruptsOnly(interrupted.cause)).toBe(true)
       expect(yield* SessionInput.pending(db, sessionID, "queue")).toHaveLength(1)
     }),
   )

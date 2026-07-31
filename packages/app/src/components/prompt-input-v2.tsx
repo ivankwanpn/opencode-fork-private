@@ -487,7 +487,8 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
           event.key.toLowerCase() !== "enter" ||
           (!event.ctrlKey && !event.metaKey) ||
           event.altKey ||
-          event.shiftKey
+          event.shiftKey ||
+          event.isComposing
         ) {
           return
         }

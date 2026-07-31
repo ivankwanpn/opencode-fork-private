@@ -20,6 +20,8 @@ import {
   InvalidRequestError,
   MessageNotFoundError,
   ServiceUnavailableError,
+  SessionInputConflictError,
+  SessionInputNotFoundError,
   SessionNotFoundError,
   UnknownError,
 } from "../errors"
@@ -356,6 +358,67 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
             identifier: "v2.session.diff",
             summary: "Get session diff",
             description: "Retrieve the file changes associated with one user turn.",
+          }),
+        ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.input.list", "/api/session/:sessionID/input", {
+        params: { sessionID: Session.ID },
+        query: { delivery: SessionInput.Delivery.pipe(Schema.optional) },
+        success: Schema.Struct({ data: Schema.Array(SessionInput.Admitted) }),
+        error: SessionNotFoundError,
+      })
+        .middleware(sessionLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "v2.session.input.list",
+            summary: "List pending session inputs",
+            description: "List pending durable Queue or Steer inputs in admitted order.",
+          }),
+        ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.input.get", "/api/session/:sessionID/input/:inputID", {
+        params: { sessionID: Session.ID, inputID: SessionMessage.ID },
+        success: Schema.Struct({ data: SessionInput.Admitted }),
+        error: [SessionInputNotFoundError, SessionNotFoundError],
+      })
+        .middleware(sessionLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "v2.session.input.get",
+            summary: "Get a session input",
+            description: "Retrieve one durable input by its exact Session and input identity.",
+          }),
+        ),
+    )
+    .add(
+      HttpApiEndpoint.post("session.input.promote", "/api/session/:sessionID/input/:inputID/promote", {
+        params: { sessionID: Session.ID, inputID: SessionMessage.ID },
+        success: Schema.Struct({ data: SessionInput.Admitted }),
+        error: [SessionInputConflictError, SessionNotFoundError],
+      })
+        .middleware(sessionLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "v2.session.input.promote",
+            summary: "Promote a session input",
+            description: "Atomically promote one pending durable input and wake session execution.",
+          }),
+        ),
+    )
+    .add(
+      HttpApiEndpoint.delete("session.input.cancel", "/api/session/:sessionID/input/:inputID", {
+        params: { sessionID: Session.ID, inputID: SessionMessage.ID },
+        success: HttpApiSchema.NoContent,
+        error: [SessionInputConflictError, SessionNotFoundError],
+      })
+        .middleware(sessionLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "v2.session.input.cancel",
+            summary: "Cancel a session input",
+            description: "Cancel one pending durable input with compare-and-set semantics.",
           }),
         ),
     )

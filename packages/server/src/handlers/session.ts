@@ -429,7 +429,14 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 ),
               ),
             )
-          yield* execution.wake(ctx.params.sessionID)
+          yield* execution.wake(ctx.params.sessionID).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to wake session after durable input promotion", {
+                sessionID: ctx.params.sessionID,
+                cause,
+              }),
+            ),
+          )
           return { data: input }
         }),
       )
@@ -458,7 +465,14 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 ),
               ),
             )
-          yield* execution.wake(ctx.params.sessionID)
+          yield* execution.wake(ctx.params.sessionID).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to wake session after durable input cancellation", {
+                sessionID: ctx.params.sessionID,
+                cause,
+              }),
+            ),
+          )
           return HttpApiSchema.NoContent.make()
         }),
       )

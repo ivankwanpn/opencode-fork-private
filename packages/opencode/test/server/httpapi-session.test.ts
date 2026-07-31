@@ -52,7 +52,7 @@ const appLayer = AppNodeBuilder.build(
     [LocationServiceMap.node, locationServiceMapLayer],
   ],
 )
-const wakeAfterCommitLayer = Layer.effect(
+const failingWakeLayer = Layer.effect(
   SessionExecution.Service,
   Effect.gen(function* () {
     const { db } = yield* Database.Service
@@ -70,7 +70,7 @@ const wakeAfterCommitLayer = Layer.effect(
             Effect.orDie,
             Effect.flatMap((rows) =>
               rows.some((row) => row.promoted !== null || row.terminal !== null)
-                ? Effect.void
+                ? Effect.die(`Advisory session wake failed: ${sessionID}`)
                 : Effect.die(`Session input was not durable before wake: ${sessionID}`),
             ),
           ),
@@ -87,7 +87,7 @@ const servedRoutes: Layer.Layer<never, Config.ConfigError, HttpServer.HttpServer
   },
 )
 const httpApiLayer = servedRoutes.pipe(
-  Layer.provide(wakeAfterCommitLayer),
+  Layer.provide(failingWakeLayer),
   Layer.provide(layerWebSocketConstructorGlobal),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),
@@ -1569,6 +1569,16 @@ describe("session HttpApi", () => {
         expect(replay.status).toBe(200)
         expect(yield* responseJson(replay)).toEqual(yield* responseJson(first))
 
+        const promotedRow = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(promoteID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(promotedRow).toMatchObject({ promoted: expect.any(Number), terminal: null })
+
         const pending = yield* requestJson<{ data: Array<{ id: string }> }>(`/api/session/${session.id}/input`, {
           headers,
         })
@@ -1579,6 +1589,16 @@ describe("session HttpApi", () => {
           headers,
         })
         expect(cancel.status).toBe(204)
+
+        const cancelledRow = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(cancelID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(cancelledRow).toEqual({ promoted: null, terminal: "cancelled" })
 
         const promoteCancelled = yield* request(`/api/session/${session.id}/input/${cancelID}/promote`, {
           method: "POST",
@@ -1647,6 +1667,15 @@ describe("session HttpApi", () => {
           id: inputID,
           promotedSeq: expect.any(Number),
         })
+        const promotedRow = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(inputID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(promotedRow).toMatchObject({ promoted: expect.any(Number), terminal: null })
       }),
     { git: true, config: { formatter: false, lsp: false } },
     30_000,

@@ -33,7 +33,7 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
@@ -52,6 +52,7 @@ const appLayer = AppNodeBuilder.build(
     [LocationServiceMap.node, locationServiceMapLayer],
   ],
 )
+const wakeExpectations = new Map<string, { inputID: string; kind: "promote" | "cancel" }>()
 const failingWakeLayer = Layer.effect(
   SessionExecution.Service,
   Effect.gen(function* () {
@@ -61,19 +62,27 @@ const failingWakeLayer = Layer.effect(
       resume: () => Effect.void,
       exclusive: (_sessionID, work) => work,
       wake: (sessionID) =>
-        db
-          .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
-          .from(SessionInputTable)
-          .where(eq(SessionInputTable.session_id, sessionID))
-          .all()
-          .pipe(
-            Effect.orDie,
-            Effect.flatMap((rows) =>
-              rows.some((row) => row.promoted !== null || row.terminal !== null)
-                ? Effect.die(`Advisory session wake failed: ${sessionID}`)
-                : Effect.die(`Session input was not durable before wake: ${sessionID}`),
-            ),
-          ),
+        Effect.gen(function* () {
+          const expected = wakeExpectations.get(sessionID)
+          if (!expected) return yield* Effect.die(`Missing advisory wake expectation: ${sessionID}`)
+          const row = yield* db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(
+              and(
+                eq(SessionInputTable.session_id, sessionID),
+                eq(SessionInputTable.id, SessionMessage.ID.make(expected.inputID)),
+              ),
+            )
+            .get()
+            .pipe(Effect.orDie)
+          const durable =
+            expected.kind === "promote"
+              ? row !== undefined && row.promoted !== null
+              : row?.terminal === "cancelled"
+          if (durable) return yield* Effect.die(`Advisory session wake failed: ${sessionID}`)
+          return yield* Effect.die(`Session input was not durable before wake: ${expected.inputID}`)
+        }),
       wait: () => Effect.void,
       interrupt: () => Effect.void,
     })
@@ -96,6 +105,10 @@ const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
 
 function pathFor(path: string, params: Record<string, string>) {
   return Object.entries(params).reduce((result, [key, value]) => result.replace(`:${key}`, value), path)
+}
+
+function expectWake(sessionID: string, inputID: string, kind: "promote" | "cancel") {
+  wakeExpectations.set(sessionID, { inputID, kind })
 }
 
 function createSession(input?: Session.CreateInput) {
@@ -262,6 +275,7 @@ function requestJson<T>(path: string, init?: RequestInit) {
 }
 
 afterEach(async () => {
+  wakeExpectations.clear()
   Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = originalWorkspaces
   await disposeAllInstances()
   await resetDatabase()
@@ -1557,10 +1571,12 @@ describe("session HttpApi", () => {
           expect(admitted.status).toBe(200)
         }
 
+        expectWake(session.id, promoteID, "promote")
         const first = yield* request(`/api/session/${session.id}/input/${promoteID}/promote`, {
           method: "POST",
           headers,
         })
+        expectWake(session.id, promoteID, "promote")
         const replay = yield* request(`/api/session/${session.id}/input/${promoteID}/promote`, {
           method: "POST",
           headers,
@@ -1584,6 +1600,7 @@ describe("session HttpApi", () => {
         })
         expect(pending.data.map((input) => input.id)).toEqual([cancelID])
 
+        expectWake(session.id, cancelID, "cancel")
         const cancel = yield* request(`/api/session/${session.id}/input/${cancelID}`, {
           method: "DELETE",
           headers,
@@ -1658,6 +1675,7 @@ describe("session HttpApi", () => {
         })
         expect(admitted.status).toBe(200)
 
+        expectWake(session.id, inputID, "promote")
         const promoted = yield* request(`/api/session/${session.id}/input/${inputID}/promote`, {
           method: "POST",
           headers,

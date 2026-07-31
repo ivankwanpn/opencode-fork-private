@@ -11,7 +11,11 @@ class SessionLocationMiddleware extends HttpApiMiddleware.Service<SessionLocatio
   { error: [InvalidRequestError, SessionNotFoundError] },
 ) {}
 
-export const ClientApi = makeDefaultApi({
+type ClientApi = ReturnType<
+  typeof makeDefaultApi<LocationMiddleware, never, SessionLocationMiddleware, never>
+>
+
+export const ClientApi: ClientApi = makeDefaultApi({
   locationMiddleware: LocationMiddleware,
   sessionLocationMiddleware: SessionLocationMiddleware,
 })

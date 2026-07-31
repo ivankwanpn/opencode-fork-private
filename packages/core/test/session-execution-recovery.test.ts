@@ -361,6 +361,14 @@ describe("SessionExecution recovery", () => {
         { sessionID: nonTaskSessionID, reason: "response-interrupted" },
       ])
       expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+      expect(
+        yield* db
+          .select({ status: SessionAttemptTable.status, retryAt: SessionAttemptTable.retry_at })
+          .from(SessionAttemptTable)
+          .where(eq(SessionAttemptTable.session_id, nonTaskSessionID))
+          .all()
+          .pipe(Effect.orDie),
+      ).toEqual([{ status: "responding", retryAt: null }])
 
       const runnerCalls = { count: 0 }
       yield* startRecovery(runnerCalls)
@@ -370,6 +378,14 @@ describe("SessionExecution recovery", () => {
         { sessionID: nonTaskSessionID, reason: "response-interrupted" },
       ])
       expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+      expect(
+        yield* db
+          .select({ status: SessionAttemptTable.status, retryAt: SessionAttemptTable.retry_at })
+          .from(SessionAttemptTable)
+          .where(eq(SessionAttemptTable.session_id, nonTaskSessionID))
+          .all()
+          .pipe(Effect.orDie),
+      ).toEqual([{ status: "responding", retryAt: null }])
     }),
   )
 

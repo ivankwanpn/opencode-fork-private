@@ -13,7 +13,7 @@ import type { PromptInputProps } from "@/components/prompt-input/contracts"
 import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } from "@/components/prompt-input/history"
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
 import { promptDesignPlaceholder, promptPlaceholder } from "@/components/prompt-input/placeholder"
-import { createPromptSubmit } from "@/components/prompt-input/submit"
+import { createPromptSubmit, followupDelivery } from "@/components/prompt-input/submit"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import { useComments } from "@/context/comments"
 import { useCommand } from "@/context/command"
@@ -279,10 +279,10 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
     newSessionWorktree: () => props.newSessionWorktree,
     onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
-    shouldQueue: props.shouldQueue,
-    onQueue: props.onQueue,
+    defaultDelivery: props.defaultDelivery,
     onAbort: props.onAbort,
     onSubmit: props.onSubmit,
+    onSubmitted: props.onSubmitted,
     model: props.controls.model.selection,
   })
 
@@ -482,6 +482,11 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         current: () => props.controls.model.selection.variant.current() ?? "default",
         onSelect: (value) => props.controls.model.selection.variant.set(value === "default" ? undefined : value),
         keybind: () => command.keybindParts("model.variant.cycle"),
+      },
+      onKeyDown: (event) => {
+        if (followupDelivery(event) !== "steer") return
+        event.preventDefault()
+        void submission.handleSubmit(event, "steer")
       },
       submit: {
         stopping,

@@ -102,6 +102,18 @@ let toolExecutionsStarted: Deferred.Deferred<void> | undefined
 let toolExecutionsReady = 5
 let activeToolExecutions = 0
 let maxActiveToolExecutions = 0
+const realWaitStepMs = 10
+const realWaitAttempts = 500
+
+function waitFor(label: string, check: () => boolean, remaining = realWaitAttempts): Effect.Effect<void, Error> {
+  return Effect.suspend(() => {
+    if (check()) return Effect.void
+    if (remaining <= 0)
+      return Effect.fail(new Error(`Timed out waiting for ${label} after ${realWaitStepMs * realWaitAttempts}ms`))
+    return Effect.promise(() => Bun.sleep(realWaitStepMs)).pipe(Effect.andThen(waitFor(label, check, remaining - 1)))
+  })
+}
+
 const client = Layer.succeed(
   LLMClient.Service,
   LLMClient.Service.of({
@@ -877,6 +889,7 @@ describe("SessionRunnerLLM", () => {
 
       const message = yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Run automatically" }) })
 
+      yield* waitFor("first runner request", () => requests.length >= 1)
       expect(requests).toHaveLength(1)
       expect(yield* session.messages({ sessionID })).toMatchObject([
         { type: "assistant", finish: "unknown", content: [] },
@@ -974,6 +987,7 @@ describe("SessionRunnerLLM", () => {
       systemUnavailable = false
       yield* session.prompt({ id: messageID, sessionID, prompt: Prompt.make({ text: "First" }) })
 
+      yield* waitFor("first runner request", () => requests.length >= 1)
       expect(requests).toHaveLength(1)
       expect(requests[0]?.messages.map((message) => message.role)).toEqual(["user"])
     }),
@@ -2790,11 +2804,12 @@ describe("SessionRunnerLLM", () => {
 
       const first = yield* session.resume(sessionID).pipe(Effect.forkChild)
       yield* Deferred.await(streamStarted)
-      yield* session.prompt({
+      const queued = yield* session.prompt({
         sessionID,
         prompt: Prompt.make({ text: "Wait until continuation ends" }),
         delivery: "queue",
       })
+      expect((yield* session.pending({ sessionID, delivery: "queue" })).map((input) => input.id)).toEqual([queued.id])
       yield* Deferred.succeed(streamGate, undefined)
       yield* Fiber.join(first)
       streamGate = undefined

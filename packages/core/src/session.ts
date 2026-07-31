@@ -1,7 +1,7 @@
 export * as SessionV2 from "./session"
 export * from "./session/schema"
 
-import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Stream } from "effect"
+import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
 import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
@@ -105,6 +105,8 @@ function forkMessage(
   return { ...message, id }
 }
 
+const promptedEventID = (inputID: SessionMessage.ID) => EventV2.ID.make(`evt_prompted_${inputID}`)
+
 export const Status = SessionAttempt.Status
 export type Status = SessionAttempt.Status
 
@@ -131,6 +133,10 @@ export { ContextSnapshotDecodeError, MessageDecodeError } from "./session/error"
 
 export const PromptConflictError = SessionCommand.PromptConflictError
 export type PromptConflictError = SessionCommand.PromptConflictError
+export class InputConflictError extends Schema.TaggedErrorClass<InputConflictError>()("Session.InputConflictError", {
+  sessionID: SessionSchema.ID,
+  inputID: SessionMessage.ID,
+}) {}
 export const CommandNotFoundError = SessionPromptExpansion.CommandNotFoundError
 export type CommandNotFoundError = SessionPromptExpansion.CommandNotFoundError
 export const AgentNotFoundError = SessionPromptExpansion.AgentNotFoundError
@@ -145,6 +151,7 @@ export type Error =
   | NotFoundError
   | MessageDecodeError
   | PromptConflictError
+  | InputConflictError
   | CommandExpansionError
   | BusyError
   | SkillNotFoundError
@@ -218,6 +225,22 @@ export interface Interface {
     resume?: boolean
     commit?: boolean
   }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | CommandExpansionError>
+  readonly pending: (input: {
+    sessionID: SessionSchema.ID
+    delivery?: SessionInput.Delivery
+  }) => Effect.Effect<ReadonlyArray<SessionInput.Admitted>, NotFoundError>
+  readonly findInput: (input: {
+    sessionID: SessionSchema.ID
+    inputID: SessionMessage.ID
+  }) => Effect.Effect<SessionInput.Admitted | undefined, NotFoundError>
+  readonly promoteInput: (input: {
+    sessionID: SessionSchema.ID
+    inputID: SessionMessage.ID
+  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | InputConflictError>
+  readonly cancelInput: (input: {
+    sessionID: SessionSchema.ID
+    inputID: SessionMessage.ID
+  }) => Effect.Effect<void, NotFoundError | InputConflictError>
   readonly shell: (input: {
     id?: EventV2.ID
     userID?: SessionMessage.ID
@@ -263,6 +286,7 @@ const layer = Layer.effect(
     const execution = yield* SessionExecution.Service
     const store = yield* SessionStore.Service
     const locations = yield* LocationServiceMap.Service
+    const scope = yield* Scope.Scope
     const decodeMessage = Schema.decodeUnknownEffect(SessionMessage.Message)
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
     const decode = (row: typeof SessionMessageTable.$inferSelect) =>
@@ -521,7 +545,7 @@ const layer = Layer.effect(
         })
       }),
       prompt: Effect.fn("V2Session.prompt")((input) =>
-        Effect.uninterruptible(
+        Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const current = yield* result.get(input.sessionID)
             const session = yield* commitStagedRevert(current)
@@ -546,14 +570,22 @@ const layer = Layer.effect(
                   .materializeAgents(prompt, agent)
                   .pipe(Effect.flatMap(prepared.attachment.materialize)),
             })
-            if (input.commit === true) yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)
-            else if (input.resume !== false) yield* execution.wake(admitted.sessionID)
+            if (input.commit === true) {
+              yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)
+              return admitted
+            }
+            if (input.resume !== false)
+              yield* restore(execution.wake(admitted.sessionID)).pipe(
+                Effect.catchCause(() => Effect.void),
+                Effect.forkIn(scope, { startImmediately: true }),
+                Effect.asVoid,
+              )
             return admitted
           }),
         ),
       ),
       command: Effect.fn("V2Session.command")((input) =>
-        Effect.uninterruptible(
+        Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const current = yield* result.get(input.sessionID)
             const session = yield* commitStagedRevert(current)
@@ -600,12 +632,70 @@ const layer = Layer.effect(
               arguments: input.arguments,
               messageID: SessionV1.MessageID.make(admitted.id),
             })
-            if (input.commit === true) yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)
-            else if (input.resume !== false) yield* execution.wake(admitted.sessionID)
+            if (input.commit === true) {
+              yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)
+              return admitted
+            }
+            if (input.resume !== false)
+              yield* restore(execution.wake(admitted.sessionID)).pipe(
+                Effect.catchCause(() => Effect.void),
+                Effect.forkIn(scope, { startImmediately: true }),
+                Effect.asVoid,
+              )
             return admitted
           }),
         ),
       ),
+      pending: Effect.fn("V2Session.pending")(function* (input) {
+        yield* result.get(input.sessionID)
+        return yield* SessionInput.pending(db, input.sessionID, input.delivery)
+      }),
+      findInput: Effect.fn("V2Session.findInput")(function* (input) {
+        yield* result.get(input.sessionID)
+        return yield* SessionInput.findForSession(db, input.sessionID, input.inputID)
+      }),
+      promoteInput: Effect.fn("V2Session.promoteInput")((input) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* result.get(input.sessionID)
+            const existing = yield* SessionInput.findForSession(db, input.sessionID, input.inputID)
+            if (existing === undefined)
+              return yield* new InputConflictError({ sessionID: input.sessionID, inputID: input.inputID })
+            if (existing.promotedSeq !== undefined) return existing
+
+            yield* events
+              .publish(
+                SessionEvent.Prompted,
+                {
+                  sessionID: input.sessionID,
+                  timestamp: existing.timeCreated,
+                  messageID: existing.id,
+                  prompt: existing.prompt,
+                  synthetic: existing.synthetic,
+                  delivery: existing.delivery,
+                },
+                { id: promptedEventID(existing.id) },
+              )
+              .pipe(
+                Effect.catchDefect((defect) =>
+                  defect instanceof SessionInput.LifecycleConflict || defect instanceof EventV2.InvalidDurableEventError
+                    ? Effect.void
+                    : Effect.die(defect),
+                ),
+              )
+
+            const current = yield* SessionInput.findForSession(db, input.sessionID, input.inputID)
+            if (current?.promotedSeq !== undefined) return current
+            return yield* new InputConflictError({ sessionID: input.sessionID, inputID: input.inputID })
+          }),
+        ),
+      ),
+      cancelInput: Effect.fn("V2Session.cancelInput")(function* (input) {
+        yield* result.get(input.sessionID)
+        const outcome = yield* SessionInput.cancelPending(db, input.sessionID, input.inputID)
+        if (outcome === "cancelled") return
+        return yield* new InputConflictError({ sessionID: input.sessionID, inputID: input.inputID })
+      }),
       shell: Effect.fn("V2Session.shell")(function* (input) {
         let session = yield* result.get(input.sessionID)
         session = yield* commitStagedRevert(session)

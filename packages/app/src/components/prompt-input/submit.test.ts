@@ -2,8 +2,11 @@ import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
 import type { ModelSelection } from "@/context/local"
+import type { FollowupDraft } from "./submit"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
+let sendFollowupDraft: typeof import("./submit").sendFollowupDraft
+let followupDelivery: typeof import("./submit").followupDelivery
 
 const createdClients: string[] = []
 const createdSessions: string[] = []
@@ -33,9 +36,10 @@ const promoted: Array<{ directory: string; sessionID: string }> = []
 const sentShell: Array<{ sessionID: string; id?: string; command: string }> = []
 const syncedDirectories: string[] = []
 const promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
-const sentPrompts: string[] = []
+const sentPrompts: unknown[] = []
 const promptInputs: unknown[] = []
 const sentCommands: unknown[] = []
+const sentInterrupts: string[] = []
 const commands: Array<{ name: string }> = []
 let serverSessionSyncs = 0
 
@@ -99,12 +103,15 @@ const clientFor = (directory: string) => {
           }
         },
         prompt: async (input: unknown) => {
-          sentPrompts.push(directory)
+          sentPrompts.push(input)
           promptInputs.push(input)
           return { data: undefined }
         },
         command: async (input: unknown) => {
           sentCommands.push(input)
+        },
+        interrupt: async (input: { sessionID: string }) => {
+          sentInterrupts.push(input.sessionID)
         },
         shell: async (input: { sessionID: string; id?: string; command: string }) => {
           sentShell.push(input)
@@ -283,6 +290,8 @@ beforeAll(async () => {
 
   const mod = await import("./submit")
   createPromptSubmit = mod.createPromptSubmit
+  sendFollowupDraft = mod.sendFollowupDraft
+  followupDelivery = mod.followupDelivery
 })
 
 beforeEach(() => {
@@ -297,6 +306,7 @@ beforeEach(() => {
   sentPrompts.length = 0
   promptInputs.length = 0
   sentCommands.length = 0
+  sentInterrupts.length = 0
   commands.length = 0
   promptValue = [{ type: "text", content: "ls", start: 0, end: 2 }]
   params = {}
@@ -489,7 +499,7 @@ describe("prompt submit worktree selection", () => {
         model: { providerID: "provider", modelID: "model", variant: "high" },
       },
     })
-    expect(sentPrompts).toEqual(["/repo/main"])
+    expect(sentPrompts).toHaveLength(1)
     expect(promptInputs[0]).toMatchObject({
       sessionID: "session-1",
       text: "ls",
@@ -500,6 +510,142 @@ describe("prompt submit worktree selection", () => {
     expect((promptInputs[0] as { legacyParts?: { id: string; type: string; text?: string }[] }).legacyParts).toEqual([
       { id: expect.stringMatching(/^prt_/), type: "text", text: "ls" },
     ])
+  })
+
+  test("uses the persisted delivery unless an explicit follow-up delivery overrides it", async () => {
+    params = { id: "session-1" }
+    let defaultDelivery: "queue" | "steer" = "steer"
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      defaultDelivery: () => defaultDelivery,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event, "steer")
+    defaultDelivery = "queue"
+    await submit.handleSubmit(event)
+    await Bun.sleep(0)
+
+    expect(promptInputs).toHaveLength(2)
+    expect(promptInputs[0]).toMatchObject({ delivery: "steer", id: expect.stringMatching(/^msg_/) })
+    expect(promptInputs[1]).toMatchObject({ delivery: "queue", id: expect.stringMatching(/^msg_/) })
+    expect((promptInputs[0] as { id: string }).id).not.toBe((promptInputs[1] as { id: string }).id)
+  })
+
+  test("passes delivery and the deterministic message id to slash commands", async () => {
+    params = { id: "session-1" }
+    commands.push({ name: "review" })
+    promptValue = [{ type: "text", content: "/review staged changes", start: 0, end: 22 }]
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      defaultDelivery: () => "queue",
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(sentCommands).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/^msg_/),
+        delivery: "queue",
+      }),
+    ])
+  })
+
+  test("reuses the persisted follow-up message id when sending a retry", async () => {
+    commands.push({ name: "review" })
+    const draft: FollowupDraft = {
+      id: "msg_retry",
+      sessionID: "session-1",
+      sessionDirectory: "/repo/main",
+      prompt: [{ type: "text", content: "/review staged changes", start: 0, end: 22 }],
+      context: [],
+      agent: "agent",
+      model: { providerID: "provider", modelID: "model" },
+    }
+
+    await sendFollowupDraft({
+      api: clientFor("/repo/main").api.session as never,
+      sync: { data: { command: commands } } as never,
+      serverSync: { session: { set: () => undefined } } as never,
+      draft,
+      delivery: "queue",
+    })
+
+    expect(sentCommands).toEqual([
+      expect.objectContaining({ id: "msg_retry", delivery: "queue" }),
+    ])
+  })
+
+  test("does not turn repeated or composing mod-enter into a steer submission", () => {
+    const base = {
+      key: "Enter",
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      repeat: false,
+      isComposing: false,
+    }
+
+    expect(followupDelivery(base)).toBe("steer")
+    expect(followupDelivery({ ...base, repeat: true })).toBeUndefined()
+    expect(followupDelivery({ ...base, isComposing: true })).toBeUndefined()
+  })
+
+  test("interrupts a blank working submit without sending a prompt or command", async () => {
+    params = { id: "session-1" }
+    promptValue = [{ type: "text", content: "   ", start: 0, end: 3 }]
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await Bun.sleep(0)
+
+    expect(sentInterrupts).toEqual(["session-1"])
+    expect(promptInputs).toEqual([])
+    expect(sentCommands).toEqual([])
   })
 
   test("submits slash commands through the current session API", async () => {
@@ -531,6 +677,7 @@ describe("prompt submit worktree selection", () => {
       {
         sessionID: "session-1",
         id: expect.stringMatching(/^msg_/),
+        delivery: "steer",
         command: "review",
         arguments: "staged changes",
         agent: "agent",

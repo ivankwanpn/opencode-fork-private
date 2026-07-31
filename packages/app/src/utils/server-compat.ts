@@ -17,6 +17,7 @@ import type {
   SessionShellOutput,
 } from "@opencode-ai/client/promise"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
+import type { Prompt } from "@opencode-ai/schema/prompt"
 
 type LegacyClient = OpencodeClient
 type LegacyFor = (directory?: string) => LegacyClient
@@ -36,7 +37,7 @@ type CompatibleSessionApi = Omit<
     input?: CompatibleCreateInput,
     requestOptions?: Parameters<ServerApi["session"]["create"]>[1],
   ) => Promise<SessionCreateOutput>
-  prompt: (input: SessionPromptInput & LegacyPrompt) => Promise<SessionPromptOutput>
+  prompt: (input: CompatiblePromptInput) => Promise<SessionPromptOutput>
   command: (
     input: CompatibleCommandInput,
     requestOptions?: Parameters<ServerApi["session"]["command"]>[1],
@@ -68,6 +69,7 @@ type LegacyPrompt = {
   variant?: string
   legacyParts?: (TextPartInput | FilePartInput | AgentPartInput)[]
 }
+type CompatiblePromptInput = SessionPromptInput & LegacyPrompt & { context?: Prompt["context"] }
 type LegacyLocation = { directory?: string }
 type CompatibleInput = {
   protocol: Promise<ServerProtocol>
@@ -238,7 +240,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async interrupt(value: Parameters<ServerApi["session"]["interrupt"]>[0]) {
         await legacy().session.abort(value)
       },
-      async prompt(value: SessionPromptInput & LegacyPrompt) {
+      async prompt(value: CompatiblePromptInput) {
         await legacy().session.promptAsync({
           sessionID: value.sessionID,
           messageID: value.id ?? undefined,
@@ -276,7 +278,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           timeCreated: Date.now(),
           type: "user",
           data: { text: value.text },
-          delivery: value.delivery ?? "steer",
+          delivery: "steer",
         }
       },
       async command(value: SessionCommandInput) {

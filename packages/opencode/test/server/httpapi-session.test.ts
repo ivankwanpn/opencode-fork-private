@@ -28,11 +28,12 @@ import { Session } from "@/session/session"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { MessageTable, SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
@@ -51,6 +52,42 @@ const appLayer = AppNodeBuilder.build(
     [LocationServiceMap.node, locationServiceMapLayer],
   ],
 )
+const wakeExpectations = new Map<string, { inputID: string; kind: "promote" | "cancel" }>()
+const failingWakeLayer = Layer.effect(
+  SessionExecution.Service,
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    return SessionExecution.Service.of({
+      active: Effect.succeed(new Set()),
+      resume: () => Effect.void,
+      exclusive: (_sessionID, work) => work,
+      wake: (sessionID) =>
+        Effect.gen(function* () {
+          const expected = wakeExpectations.get(sessionID)
+          if (!expected) return yield* Effect.die(`Missing advisory wake expectation: ${sessionID}`)
+          const row = yield* db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(
+              and(
+                eq(SessionInputTable.session_id, sessionID),
+                eq(SessionInputTable.id, SessionMessage.ID.make(expected.inputID)),
+              ),
+            )
+            .get()
+            .pipe(Effect.orDie)
+          const durable =
+            expected.kind === "promote"
+              ? row !== undefined && row.promoted !== null
+              : row?.terminal === "cancelled"
+          if (durable) return yield* Effect.die(`Advisory session wake failed: ${sessionID}`)
+          return yield* Effect.die(`Session input was not durable before wake: ${expected.inputID}`)
+        }),
+      wait: () => Effect.void,
+      interrupt: () => Effect.void,
+    })
+  }),
+).pipe(Layer.provide(appLayer))
 const servedRoutes: Layer.Layer<never, Config.ConfigError, HttpServer.HttpServer> = HttpRouter.serve(
   HttpApiApp.routes,
   {
@@ -59,6 +96,7 @@ const servedRoutes: Layer.Layer<never, Config.ConfigError, HttpServer.HttpServer
   },
 )
 const httpApiLayer = servedRoutes.pipe(
+  Layer.provide(failingWakeLayer),
   Layer.provide(layerWebSocketConstructorGlobal),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),
@@ -67,6 +105,10 @@ const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
 
 function pathFor(path: string, params: Record<string, string>) {
   return Object.entries(params).reduce((result, [key, value]) => result.replace(`:${key}`, value), path)
+}
+
+function expectWake(sessionID: string, inputID: string, kind: "promote" | "cancel") {
+  wakeExpectations.set(sessionID, { inputID, kind })
 }
 
 function createSession(input?: Session.CreateInput) {
@@ -233,6 +275,7 @@ function requestJson<T>(path: string, init?: RequestInit) {
 }
 
 afterEach(async () => {
+  wakeExpectations.clear()
   Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = originalWorkspaces
   await disposeAllInstances()
   await resetDatabase()
@@ -1414,6 +1457,286 @@ describe("session HttpApi", () => {
         expect(message).toMatchObject({ id: wakeID, type: "user" })
       }),
     { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "lists pending v2 inputs by delivery and admitted order",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "v2 input list" })
+        const inputs = [
+          { id: "msg_http_queue_first", delivery: "queue" },
+          { id: "msg_http_steer", delivery: "steer" },
+          { id: "msg_http_queue_second", delivery: "queue" },
+        ]
+
+        for (const input of inputs) {
+          const response = yield* request(`/api/session/${session.id}/prompt`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              id: input.id,
+              prompt: { text: input.id },
+              delivery: input.delivery,
+              resume: false,
+            }),
+          })
+          expect(response.status).toBe(200)
+        }
+
+        const all = yield* requestJson<{ data: Array<{ id: string; admittedSeq: number; delivery: string }> }>(
+          `/api/session/${session.id}/input`,
+          { headers },
+        )
+        expect(all.data.map((input) => input.id)).toEqual(inputs.map((input) => input.id))
+        expect(all.data.map((input) => input.admittedSeq)).toEqual([1, 2, 3])
+
+        const queued = yield* requestJson<{ data: Array<{ id: string; delivery: string }> }>(
+          `/api/session/${session.id}/input?delivery=queue`,
+          { headers },
+        )
+        expect(queued.data.map((input) => input.id)).toEqual(["msg_http_queue_first", "msg_http_queue_second"])
+        expect(queued.data.every((input) => input.delivery === "queue")).toBeTrue()
+
+        const steered = yield* requestJson<{ data: Array<{ id: string; delivery: string }> }>(
+          `/api/session/${session.id}/input?delivery=steer`,
+          { headers },
+        )
+        expect(steered.data.map((input) => input.id)).toEqual(["msg_http_steer"])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    30_000,
+  )
+
+  it.instance(
+    "looks up v2 inputs by exact session identity",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "v2 input lookup" })
+        const other = yield* createSession({ title: "v2 other input lookup" })
+        const inputID = "msg_http_exact_input"
+        const missingID = "msg_http_missing_input"
+
+        const admitted = yield* request(`/api/session/${session.id}/prompt`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ id: inputID, prompt: { text: "exact" }, resume: false }),
+        })
+        expect(admitted.status).toBe(200)
+
+        const found = yield* request(`/api/session/${session.id}/input/${inputID}`, { headers })
+        expect(found.status).toBe(200)
+        expect(yield* responseJson(found)).toMatchObject({ data: { id: inputID, sessionID: session.id } })
+
+        const missing = yield* request(`/api/session/${session.id}/input/${missingID}`, { headers })
+        expect(missing.status).toBe(404)
+        expect(yield* responseJson(missing)).toMatchObject({
+          _tag: "SessionInputNotFoundError",
+          sessionID: session.id,
+          inputID: missingID,
+        })
+
+        const otherSession = yield* request(`/api/session/${other.id}/input/${inputID}`, { headers })
+        expect(otherSession.status).toBe(404)
+        expect(yield* responseJson(otherSession)).toMatchObject({
+          _tag: "SessionInputNotFoundError",
+          sessionID: other.id,
+          inputID,
+        })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    30_000,
+  )
+
+  it.instance(
+    "promotes v2 inputs idempotently and maps input conflicts",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "v2 input promotion" })
+        const promoteID = "msg_http_promote_input"
+        const cancelID = "msg_http_cancel_input"
+
+        for (const id of [promoteID, cancelID]) {
+          const admitted = yield* request(`/api/session/${session.id}/prompt`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ id, prompt: { text: id }, resume: false }),
+          })
+          expect(admitted.status).toBe(200)
+        }
+
+        expectWake(session.id, promoteID, "promote")
+        const first = yield* request(`/api/session/${session.id}/input/${promoteID}/promote`, {
+          method: "POST",
+          headers,
+        })
+        expectWake(session.id, promoteID, "promote")
+        const replay = yield* request(`/api/session/${session.id}/input/${promoteID}/promote`, {
+          method: "POST",
+          headers,
+        })
+        expect(first.status).toBe(200)
+        expect(replay.status).toBe(200)
+        expect(yield* responseJson(replay)).toEqual(yield* responseJson(first))
+
+        const promotedRow = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(promoteID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(promotedRow).toMatchObject({ promoted: expect.any(Number), terminal: null })
+
+        const pending = yield* requestJson<{ data: Array<{ id: string }> }>(`/api/session/${session.id}/input`, {
+          headers,
+        })
+        expect(pending.data.map((input) => input.id)).toEqual([cancelID])
+
+        expectWake(session.id, cancelID, "cancel")
+        const cancel = yield* request(`/api/session/${session.id}/input/${cancelID}`, {
+          method: "DELETE",
+          headers,
+        })
+        expect(cancel.status).toBe(204)
+
+        const cancelledRow = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(cancelID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(cancelledRow).toEqual({ promoted: null, terminal: "cancelled" })
+
+        const promoteCancelled = yield* request(`/api/session/${session.id}/input/${cancelID}/promote`, {
+          method: "POST",
+          headers,
+        })
+        expect(promoteCancelled.status).toBe(409)
+        expect(yield* responseJson(promoteCancelled)).toMatchObject({
+          _tag: "SessionInputConflictError",
+          sessionID: session.id,
+          inputID: cancelID,
+        })
+
+        const cancelPromoted = yield* request(`/api/session/${session.id}/input/${promoteID}`, {
+          method: "DELETE",
+          headers,
+        })
+        expect(cancelPromoted.status).toBe(409)
+        expect(yield* responseJson(cancelPromoted)).toMatchObject({
+          _tag: "SessionInputConflictError",
+          sessionID: session.id,
+          inputID: promoteID,
+        })
+
+        const missingPromote = yield* request(`/api/session/${session.id}/input/msg_http_unknown/promote`, {
+          method: "POST",
+          headers,
+        })
+        expect(missingPromote.status).toBe(404)
+        const missingCancel = yield* request(`/api/session/${session.id}/input/msg_http_unknown`, {
+          method: "DELETE",
+          headers,
+        })
+        expect(missingCancel.status).toBe(404)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    30_000,
+  )
+
+  it.instance(
+    "serializes v2 input promotion and cancellation races",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "v2 input race" })
+        const inputID = "msg_http_race_input"
+
+        const admitted = yield* request(`/api/session/${session.id}/prompt`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ id: inputID, prompt: { text: "race" }, resume: false }),
+        })
+        expect(admitted.status).toBe(200)
+
+        expectWake(session.id, inputID, "promote")
+        const [promote, cancel] = yield* Effect.all(
+          [
+            request(`/api/session/${session.id}/input/${inputID}/promote`, { method: "POST", headers }),
+            request(`/api/session/${session.id}/input/${inputID}`, { method: "DELETE", headers }),
+          ],
+          { concurrency: "unbounded" },
+        )
+        expect(new Set([promote.status, cancel.status])).toEqual(new Set([200, 409]))
+
+        const row = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(inputID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(Number(row?.promoted !== null) + Number(row?.terminal !== null)).toBe(1)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    30_000,
+  )
+
+  it.instance(
+    "wakes v2 input execution only after promotion is durable",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const session = yield* createSession({ title: "v2 input wake ordering" })
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const inputID = "msg_http_wake_order"
+
+        const admitted = yield* request(`/api/session/${session.id}/prompt`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            id: inputID,
+            prompt: { text: "wake after commit" },
+            delivery: "steer",
+            resume: false,
+          }),
+        })
+        expect(admitted.status).toBe(200)
+
+        expectWake(session.id, inputID, "promote")
+        const promoted = yield* request(`/api/session/${session.id}/input/${inputID}/promote`, {
+          method: "POST",
+          headers,
+        })
+        expect(promoted.status).toBe(200)
+        expect((yield* json<{ data: { id: string; promotedSeq: number } }>(promoted)).data).toMatchObject({
+          id: inputID,
+          promotedSeq: expect.any(Number),
+        })
+        const promotedRow = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ promoted: SessionInputTable.promoted_seq, terminal: SessionInputTable.terminal_outcome })
+            .from(SessionInputTable)
+            .where(eq(SessionInputTable.id, SessionMessage.ID.make(inputID)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(promotedRow).toMatchObject({ promoted: expect.any(Number), terminal: null })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    30_000,
   )
 
   it.instance(

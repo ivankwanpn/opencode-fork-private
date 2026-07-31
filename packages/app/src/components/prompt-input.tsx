@@ -72,7 +72,7 @@ import {
   type PromptInputState,
   type PromptInputSubmission,
 } from "./prompt-input/contracts"
-import { createPromptSubmit } from "./prompt-input/submit"
+import { createPromptSubmit, followupDelivery } from "./prompt-input/submit"
 import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/slash-popover"
 import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
@@ -1224,10 +1224,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       },
       newSessionWorktree: () => props.newSessionWorktree,
       onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
-      shouldQueue: props.shouldQueue,
-      onQueue: props.onQueue,
+      defaultDelivery: props.defaultDelivery,
       onAbort: props.onAbort,
       onSubmit: props.onSubmit,
+      onSubmitted: props.onSubmitted,
       model: props.controls.model.selection,
     })
 
@@ -1392,7 +1392,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       ) {
         return
       }
-      void handleSubmit(event)
+      void handleSubmit(event, followupDelivery(event))
     }
   }
 

@@ -4,7 +4,7 @@ import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
 import { Admitted, Delivery, Synthetic } from "@opencode-ai/schema/session-input"
 import type { Database } from "../database/database"
-import type { EventV2 } from "../event"
+import { EventV2 } from "../event"
 import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { Prompt } from "./prompt"
@@ -57,6 +57,42 @@ const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted => {
 export const find = Effect.fn("SessionInput.find")(function* (db: DatabaseService, id: SessionMessage.ID) {
   const row = yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, id)).get().pipe(Effect.orDie)
   return row === undefined ? undefined : fromRow(row)
+})
+
+export const findForSession = Effect.fn("SessionInput.findForSession")(function* (
+  db: DatabaseService,
+  sessionID: SessionSchema.ID,
+  id: SessionMessage.ID,
+) {
+  const row = yield* db
+    .select()
+    .from(SessionInputTable)
+    .where(and(eq(SessionInputTable.id, id), eq(SessionInputTable.session_id, sessionID)))
+    .get()
+    .pipe(Effect.orDie)
+  return row === undefined ? undefined : fromRow(row)
+})
+
+export const pending = Effect.fn("SessionInput.pending")(function* (
+  db: DatabaseService,
+  sessionID: SessionSchema.ID,
+  delivery?: Delivery,
+) {
+  const rows = yield* db
+    .select()
+    .from(SessionInputTable)
+    .where(
+      and(
+        eq(SessionInputTable.session_id, sessionID),
+        isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
+        delivery === undefined ? undefined : eq(SessionInputTable.delivery, delivery),
+      ),
+    )
+    .orderBy(asc(SessionInputTable.admitted_seq))
+    .all()
+    .pipe(Effect.orDie)
+  return rows.map(fromRow)
 })
 
 export const latestPromoted = Effect.fn("SessionInput.latestPromoted")(function* (
@@ -205,6 +241,7 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
         eq(SessionInputTable.id, input.id),
         eq(SessionInputTable.session_id, input.sessionID),
         isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
       ),
     )
     .returning()
@@ -258,6 +295,50 @@ export const hasPending = Effect.fn("SessionInput.hasPending")(function* (
     .get()
     .pipe(Effect.orDie)
   return row !== undefined
+})
+
+export const cancelPending = Effect.fn("SessionInput.cancelPending")(function* (
+  db: DatabaseService,
+  sessionID: SessionSchema.ID,
+  id: SessionMessage.ID,
+) {
+  const time = yield* DateTime.now
+  const terminalSeq = yield* EventV2.latestSequence(db, sessionID)
+  const updated = yield* db
+    .update(SessionInputTable)
+    .set({
+      terminal_outcome: "cancelled",
+      terminal_message_id: null,
+      terminal_error: { message: "Input cancelled by user" },
+      terminal_time: DateTime.toEpochMillis(time),
+      terminal_seq: terminalSeq,
+    })
+    .where(
+      and(
+        eq(SessionInputTable.id, id),
+        eq(SessionInputTable.session_id, sessionID),
+        isNull(SessionInputTable.promoted_seq),
+        isNull(SessionInputTable.terminal_outcome),
+      ),
+    )
+    .returning({ id: SessionInputTable.id })
+    .get()
+    .pipe(Effect.orDie)
+  if (updated) return "cancelled" as const
+
+  const stored = yield* db
+    .select({
+      promotedSeq: SessionInputTable.promoted_seq,
+      terminalOutcome: SessionInputTable.terminal_outcome,
+    })
+    .from(SessionInputTable)
+    .where(and(eq(SessionInputTable.id, id), eq(SessionInputTable.session_id, sessionID)))
+    .get()
+    .pipe(Effect.orDie)
+  if (stored === undefined) return "missing" as const
+  if (stored.terminalOutcome !== null) return "terminal" as const
+  if (stored.promotedSeq !== null) return "promoted" as const
+  return yield* Effect.die(`Pending input was not terminalized: ${id}`)
 })
 
 export const startupCandidates = Effect.fn("SessionInput.startupCandidates")(function* (db: DatabaseService) {

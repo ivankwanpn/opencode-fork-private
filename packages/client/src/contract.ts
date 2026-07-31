@@ -11,7 +11,11 @@ class SessionLocationMiddleware extends HttpApiMiddleware.Service<SessionLocatio
   { error: [InvalidRequestError, SessionNotFoundError] },
 ) {}
 
-export const ClientApi = makeDefaultApi({
+type ClientApi = ReturnType<
+  typeof makeDefaultApi<LocationMiddleware, never, SessionLocationMiddleware, never>
+>
+
+export const ClientApi: ClientApi = makeDefaultApi({
   locationMiddleware: LocationMiddleware,
   sessionLocationMiddleware: SessionLocationMiddleware,
 })
@@ -53,6 +57,10 @@ export const endpointNames = {
   "provider.custom.discover": "discoverCustom",
   "provider.custom.configure": "configureCustom",
   "session.messages": "list",
+  "session.input.list": "inputList",
+  "session.input.get": "inputGet",
+  "session.input.promote": "inputPromote",
+  "session.input.cancel": "inputCancel",
   "integration.connect.key": "connectKey",
   "integration.connect.oauth": "connectOauth",
   "integration.attempt.status": "attemptStatus",

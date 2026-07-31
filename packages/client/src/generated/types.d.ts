@@ -50,6 +50,20 @@ export type ConflictError = {
     readonly resource?: string | undefined;
 };
 export declare const isConflictError: (value: unknown) => value is ConflictError;
+export type SessionInputNotFoundError = {
+    readonly _tag: "SessionInputNotFoundError";
+    readonly sessionID: string;
+    readonly inputID: string;
+    readonly message: string;
+};
+export declare const isSessionInputNotFoundError: (value: unknown) => value is SessionInputNotFoundError;
+export type SessionInputConflictError = {
+    readonly _tag: "SessionInputConflictError";
+    readonly sessionID: string;
+    readonly inputID: string;
+    readonly message: string;
+};
+export declare const isSessionInputConflictError: (value: unknown) => value is SessionInputConflictError;
 export type ProviderNotFoundError = {
     readonly _tag: "ProviderNotFoundError";
     readonly providerID: string;
@@ -1149,6 +1163,258 @@ export type SessionsDiffOutput = {
         readonly status?: "added" | "deleted" | "modified";
     }>;
 }["data"];
+export type SessionsInputListInput = {
+    readonly sessionID: {
+        readonly sessionID: string;
+    }["sessionID"];
+    readonly delivery?: {
+        readonly delivery?: "steer" | "queue" | undefined;
+    }["delivery"];
+};
+export type SessionsInputListOutput = {
+    readonly data: ReadonlyArray<{
+        readonly admittedSeq: number;
+        readonly id: string;
+        readonly sessionID: string;
+        readonly prompt: {
+            readonly text: string;
+            readonly context?: ReadonlyArray<{
+                readonly text: string;
+                readonly metadata?: {
+                    readonly [x: string]: JsonValue;
+                };
+            }>;
+            readonly files?: ReadonlyArray<{
+                readonly uri: string;
+                readonly mime: string;
+                readonly name?: string;
+                readonly description?: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly resource?: {
+                    readonly clientName: string;
+                    readonly uri: string;
+                };
+                readonly materialized?: ReadonlyArray<{
+                    readonly type: "text";
+                    readonly text: string;
+                } | {
+                    readonly type: "file";
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                } | {
+                    readonly type: "error";
+                    readonly message: string;
+                }>;
+            }>;
+            readonly agents?: ReadonlyArray<{
+                readonly name: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly guidance?: string;
+            }>;
+            readonly system?: string;
+            readonly tools?: {
+                readonly [x: string]: boolean;
+            };
+            readonly format?: {
+                readonly type: "text";
+            } | {
+                readonly type: "json_schema";
+                readonly schema: {
+                    readonly [x: string]: JsonValue;
+                };
+                readonly retryCount?: number;
+            };
+        };
+        readonly synthetic?: {
+            readonly description: string;
+        };
+        readonly delivery: "steer" | "queue";
+        readonly timeCreated: number;
+        readonly promotedSeq?: number;
+    }>;
+}["data"];
+export type SessionsInputGetInput = {
+    readonly sessionID: {
+        readonly sessionID: string;
+        readonly inputID: string;
+    }["sessionID"];
+    readonly inputID: {
+        readonly sessionID: string;
+        readonly inputID: string;
+    }["inputID"];
+};
+export type SessionsInputGetOutput = {
+    readonly data: {
+        readonly admittedSeq: number;
+        readonly id: string;
+        readonly sessionID: string;
+        readonly prompt: {
+            readonly text: string;
+            readonly context?: ReadonlyArray<{
+                readonly text: string;
+                readonly metadata?: {
+                    readonly [x: string]: JsonValue;
+                };
+            }>;
+            readonly files?: ReadonlyArray<{
+                readonly uri: string;
+                readonly mime: string;
+                readonly name?: string;
+                readonly description?: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly resource?: {
+                    readonly clientName: string;
+                    readonly uri: string;
+                };
+                readonly materialized?: ReadonlyArray<{
+                    readonly type: "text";
+                    readonly text: string;
+                } | {
+                    readonly type: "file";
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                } | {
+                    readonly type: "error";
+                    readonly message: string;
+                }>;
+            }>;
+            readonly agents?: ReadonlyArray<{
+                readonly name: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly guidance?: string;
+            }>;
+            readonly system?: string;
+            readonly tools?: {
+                readonly [x: string]: boolean;
+            };
+            readonly format?: {
+                readonly type: "text";
+            } | {
+                readonly type: "json_schema";
+                readonly schema: {
+                    readonly [x: string]: JsonValue;
+                };
+                readonly retryCount?: number;
+            };
+        };
+        readonly synthetic?: {
+            readonly description: string;
+        };
+        readonly delivery: "steer" | "queue";
+        readonly timeCreated: number;
+        readonly promotedSeq?: number;
+    };
+}["data"];
+export type SessionsInputPromoteInput = {
+    readonly sessionID: {
+        readonly sessionID: string;
+        readonly inputID: string;
+    }["sessionID"];
+    readonly inputID: {
+        readonly sessionID: string;
+        readonly inputID: string;
+    }["inputID"];
+};
+export type SessionsInputPromoteOutput = {
+    readonly data: {
+        readonly admittedSeq: number;
+        readonly id: string;
+        readonly sessionID: string;
+        readonly prompt: {
+            readonly text: string;
+            readonly context?: ReadonlyArray<{
+                readonly text: string;
+                readonly metadata?: {
+                    readonly [x: string]: JsonValue;
+                };
+            }>;
+            readonly files?: ReadonlyArray<{
+                readonly uri: string;
+                readonly mime: string;
+                readonly name?: string;
+                readonly description?: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly resource?: {
+                    readonly clientName: string;
+                    readonly uri: string;
+                };
+                readonly materialized?: ReadonlyArray<{
+                    readonly type: "text";
+                    readonly text: string;
+                } | {
+                    readonly type: "file";
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                } | {
+                    readonly type: "error";
+                    readonly message: string;
+                }>;
+            }>;
+            readonly agents?: ReadonlyArray<{
+                readonly name: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly guidance?: string;
+            }>;
+            readonly system?: string;
+            readonly tools?: {
+                readonly [x: string]: boolean;
+            };
+            readonly format?: {
+                readonly type: "text";
+            } | {
+                readonly type: "json_schema";
+                readonly schema: {
+                    readonly [x: string]: JsonValue;
+                };
+                readonly retryCount?: number;
+            };
+        };
+        readonly synthetic?: {
+            readonly description: string;
+        };
+        readonly delivery: "steer" | "queue";
+        readonly timeCreated: number;
+        readonly promotedSeq?: number;
+    };
+}["data"];
+export type SessionsInputCancelInput = {
+    readonly sessionID: {
+        readonly sessionID: string;
+        readonly inputID: string;
+    }["sessionID"];
+    readonly inputID: {
+        readonly sessionID: string;
+        readonly inputID: string;
+    }["inputID"];
+};
+export type SessionsInputCancelOutput = void;
 export type SessionsBackgroundInput = {
     readonly sessionID: {
         readonly sessionID: string;

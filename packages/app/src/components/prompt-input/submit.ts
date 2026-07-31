@@ -32,6 +32,7 @@ type PendingPrompt = {
 const pending = new Map<string, PendingPrompt>()
 
 export type FollowupDraft = {
+  id?: string
   sessionID: string
   sessionDirectory: string
   prompt: Prompt
@@ -39,6 +40,7 @@ export type FollowupDraft = {
   agent: string
   model: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
   variant?: string
+  delivery?: "queue" | "steer"
 }
 
 type FollowupSendInput = {
@@ -46,14 +48,32 @@ type FollowupSendInput = {
   serverSync: ServerSync
   sync: DirectorySync
   draft: FollowupDraft
+  delivery?: "queue" | "steer"
   messageID?: string
   optimisticBusy?: boolean
   before?: () => Promise<boolean> | boolean
+  onSubmitted?: (messageID: string, delivery: "queue" | "steer") => void
 }
 
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
 
 const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
+
+export function followupDelivery(
+  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey" | "repeat" | "isComposing">,
+) {
+  if (
+    event.key.toLowerCase() !== "enter" ||
+    (!event.ctrlKey && !event.metaKey) ||
+    event.altKey ||
+    event.shiftKey ||
+    event.repeat ||
+    event.isComposing
+  ) {
+    return undefined
+  }
+  return "steer" as const
+}
 
 export async function sendFollowupDraft(input: FollowupSendInput) {
   const text = draftText(input.draft.prompt)
@@ -84,7 +104,8 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
         return false
       }
 
-      const messageID = Identifier.ascending("message")
+      const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
+      const delivery = input.delivery ?? input.draft.delivery ?? "steer"
       await input.api.command({
         sessionID: input.draft.sessionID,
         id: messageID,
@@ -101,7 +122,9 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
           uri: attachment.dataUrl,
           name: attachment.filename,
         })),
+        delivery,
       })
+      input.onSubmitted?.(messageID, delivery)
       return true
     } catch (err) {
       setIdle()
@@ -109,7 +132,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     }
   }
 
-  const messageID = input.messageID ?? Identifier.ascending("message")
+  const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
   const { requestParts, optimisticParts } = buildRequestParts({
     prompt: input.draft.prompt,
     context: input.draft.context,
@@ -163,12 +186,14 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       return false
     }
 
+    const delivery = input.delivery ?? input.draft.delivery ?? "steer"
     await input.api.prompt({
       sessionID: input.draft.sessionID,
       id: messageID,
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,
+      delivery,
       legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
@@ -195,6 +220,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
           : [],
       ),
     })
+    input.onSubmitted?.(messageID, delivery)
     return true
   } catch (err) {
     batch(() => {
@@ -222,10 +248,10 @@ type PromptSubmitInput = {
   setPopover: (popover: "at" | "slash" | null) => void
   newSessionWorktree?: Accessor<string | undefined>
   onNewSessionWorktreeReset?: () => void
-  shouldQueue?: Accessor<boolean>
-  onQueue?: (draft: FollowupDraft) => void
+  defaultDelivery?: Accessor<"queue" | "steer">
   onAbort?: () => void
   onSubmit?: () => void
+  onSubmitted?: (messageID: string, delivery: "queue" | "steer") => void
   model?: ModelSelection
 }
 
@@ -292,12 +318,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
   }
 
-  const clearContext = (target: ReturnType<ReturnType<typeof usePrompt>["capture"]>) => {
-    for (const item of target.context.items()) {
-      target.context.remove(item.key)
-    }
-  }
-
   const seed = (dir: string, info: Session) => {
     serverSync().session.remember(info)
     const [, setStore] = serverSync().child(dir)
@@ -313,7 +333,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
-  const handleSubmit = async (event: Event) => {
+  const handleSubmit = async (event: Event, explicitDelivery?: "queue" | "steer") => {
     event.preventDefault()
 
     const target = prompt.capture()
@@ -327,6 +347,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
     const images = input.imageAttachments().slice()
     const mode = input.mode()
+    const delivery = explicitDelivery ?? input.defaultDelivery?.() ?? "steer"
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) void abort()
@@ -450,6 +471,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       variant,
     }
 
+    const messageID = Identifier.ascending("message")
+
     const clearInput = () => {
       submission.clear()
       input.setMode("normal")
@@ -471,13 +494,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         input.queueScroll()
       })
       return true
-    }
-
-    if (!isNewSession && mode === "normal" && input.shouldQueue?.()) {
-      input.onQueue?.(draft)
-      clearContext(submission.target())
-      clearInput()
-      return
     }
 
     input.onSubmit?.()
@@ -509,7 +525,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       const customCommand = sync().data.command.find((c) => c.name === commandName)
       if (customCommand) {
         clearInput()
-        const messageID = Identifier.ascending("message")
         serverSync().session.set("session_status", session.id, { type: "busy" })
         sdk()
           .api.session.command({
@@ -528,6 +543,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
               uri: attachment.dataUrl,
               name: attachment.filename,
             })),
+            delivery,
           })
           .catch((err) => {
             serverSync().session.set("session_status", session.id, { type: "idle" })
@@ -542,7 +558,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
 
     const commentItems = context.filter((item) => item.type === "file" && !!item.comment?.trim())
-    const messageID = Identifier.ascending("message")
 
     const removeOptimisticMessage = () => {
       sync().session.optimistic.remove({
@@ -618,9 +633,11 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       sync: sync(),
       serverSync: serverSync(),
       draft,
+      delivery,
       messageID,
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
+      onSubmitted: input.onSubmitted,
     }).catch((err) => {
       pending.delete(pendingKey(session.id))
       if (sessionDirectory === projectDirectory) {

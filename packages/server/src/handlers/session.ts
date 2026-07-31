@@ -1,4 +1,5 @@
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { DateTime, Effect, Stream } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
@@ -9,6 +10,8 @@ import {
   InvalidRequestError,
   MessageNotFoundError,
   ServiceUnavailableError,
+  SessionInputConflictError,
+  SessionInputNotFoundError,
   SessionNotFoundError,
   UnknownError,
 } from "@opencode-ai/protocol/errors"
@@ -357,6 +360,154 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 ),
               ),
           }
+        }),
+      )
+      .handle(
+        "session.input.list",
+        Effect.fn(function* (ctx) {
+          return {
+            data: yield* session
+              .pending({ sessionID: ctx.params.sessionID, delivery: ctx.query.delivery })
+              .pipe(
+                Effect.catchTag("Session.NotFoundError", (error) =>
+                  Effect.fail(
+                    new SessionNotFoundError({
+                      sessionID: error.sessionID,
+                      message: `Session not found: ${error.sessionID}`,
+                    }),
+                  ),
+                ),
+              ),
+          }
+        }),
+      )
+      .handle(
+        "session.input.get",
+        Effect.fn(function* (ctx) {
+          const input = yield* session
+            .findInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })
+            .pipe(
+              Effect.catchTag("Session.NotFoundError", (error) =>
+                Effect.fail(
+                  new SessionNotFoundError({
+                    sessionID: error.sessionID,
+                    message: `Session not found: ${error.sessionID}`,
+                  }),
+                ),
+              ),
+            )
+          if (input) return { data: input }
+          return yield* new SessionInputNotFoundError({
+            sessionID: ctx.params.sessionID,
+            inputID: ctx.params.inputID,
+            message: `Session input not found: ${ctx.params.inputID}`,
+          })
+        }),
+      )
+      .handle(
+        "session.input.promote",
+        Effect.fn(function* (ctx) {
+          const found = yield* session.findInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID }).pipe(
+            Effect.catchTag("Session.NotFoundError", (error) =>
+              Effect.fail(
+                new SessionNotFoundError({
+                  sessionID: error.sessionID,
+                  message: `Session not found: ${error.sessionID}`,
+                }),
+              ),
+            ),
+          )
+          if (found === undefined)
+            return yield* new SessionInputNotFoundError({
+              sessionID: ctx.params.sessionID,
+              inputID: ctx.params.inputID,
+              message: `Session input not found: ${ctx.params.inputID}`,
+            })
+
+          const execution = yield* SessionExecution.Service
+          const input = yield* session
+            .promoteInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })
+            .pipe(
+              Effect.catchTag("Session.NotFoundError", (error) =>
+                Effect.fail(
+                  new SessionNotFoundError({
+                    sessionID: error.sessionID,
+                    message: `Session not found: ${error.sessionID}`,
+                  }),
+                ),
+              ),
+              Effect.catchTag("Session.InputConflictError", (error) =>
+                Effect.fail(
+                  new SessionInputConflictError({
+                    sessionID: error.sessionID,
+                    inputID: error.inputID,
+                    message: `Session input cannot be promoted: ${error.inputID}`,
+                  }),
+                ),
+              ),
+            )
+          yield* execution.wake(ctx.params.sessionID).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to wake session after durable input promotion", {
+                sessionID: ctx.params.sessionID,
+                cause,
+              }),
+            ),
+          )
+          return { data: input }
+        }),
+      )
+      .handle(
+        "session.input.cancel",
+        Effect.fn(function* (ctx) {
+          const found = yield* session.findInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID }).pipe(
+            Effect.catchTag("Session.NotFoundError", (error) =>
+              Effect.fail(
+                new SessionNotFoundError({
+                  sessionID: error.sessionID,
+                  message: `Session not found: ${error.sessionID}`,
+                }),
+              ),
+            ),
+          )
+          if (found === undefined)
+            return yield* new SessionInputNotFoundError({
+              sessionID: ctx.params.sessionID,
+              inputID: ctx.params.inputID,
+              message: `Session input not found: ${ctx.params.inputID}`,
+            })
+
+          const execution = yield* SessionExecution.Service
+          yield* session
+            .cancelInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })
+            .pipe(
+              Effect.catchTag("Session.NotFoundError", (error) =>
+                Effect.fail(
+                  new SessionNotFoundError({
+                    sessionID: error.sessionID,
+                    message: `Session not found: ${error.sessionID}`,
+                  }),
+                ),
+              ),
+              Effect.catchTag("Session.InputConflictError", (error) =>
+                Effect.fail(
+                  new SessionInputConflictError({
+                    sessionID: error.sessionID,
+                    inputID: error.inputID,
+                    message: `Session input cannot be cancelled: ${error.inputID}`,
+                  }),
+                ),
+              ),
+            )
+          yield* execution.wake(ctx.params.sessionID).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to wake session after durable input cancellation", {
+                sessionID: ctx.params.sessionID,
+                cause,
+              }),
+            ),
+          )
+          return HttpApiSchema.NoContent.make()
         }),
       )
       .handle(

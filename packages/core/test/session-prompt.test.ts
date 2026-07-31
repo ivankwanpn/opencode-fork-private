@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import type { SessionHookSpec } from "@opencode-ai/plugin/v2/effect"
-import { DateTime, Effect, Fiber, Layer, Stream } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
@@ -103,8 +103,107 @@ const guidanceLocation = pluginLocationMap(undefined, undefined, (prompt, active
 const itWithAgentGuidance = testEffect(
   AppNodeBuilder.build(sessionNodes, [guidanceLocation.replacement, [SessionExecution.node, execution]]),
 )
+let blockingWakeStarted: Deferred.Deferred<void> | undefined
+let releaseBlockingWake: Deferred.Deferred<void> | undefined
+const blockingWakeObservations: string[] = []
+const blockingWakeExecution = Layer.effect(
+  SessionExecution.Service,
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    return SessionExecution.Service.of({
+      active: Effect.sync(() => new Set(activeSessions)),
+      resume: (sessionID) =>
+        Effect.sync(() => {
+          executionCalls.push(sessionID)
+        }),
+      exclusive: (_sessionID, work) => work,
+      interrupt: (sessionID) =>
+        Effect.sync(() => {
+          interruptCalls.push(sessionID)
+        }),
+      wake: (sessionID) =>
+        Effect.gen(function* () {
+          const pending = yield* SessionInput.pending(db, sessionID)
+          blockingWakeObservations.push(pending.length > 0 ? "committed" : "missing")
+          if (blockingWakeStarted) yield* Deferred.succeed(blockingWakeStarted, undefined)
+          if (releaseBlockingWake) yield* Deferred.await(releaseBlockingWake)
+          return yield* Effect.die(new Error("late wake failure"))
+        }),
+      wait: () => Effect.void,
+    })
+  }),
+)
+const itWithBlockingWake = testEffect(
+  AppNodeBuilder.build(sessionNodes, [pluginLocation.replacement, [SessionExecution.node, blockingWakeExecution]]),
+)
+let interruptingWakeStarted: Deferred.Deferred<void> | undefined
+let interruptingWakeRequested: Deferred.Deferred<void> | undefined
+const interruptingWakeCalls: SessionV2.ID[] = []
+const interruptingWakeObservations: string[] = []
+const interruptingWakeExecution = Layer.succeed(
+  SessionExecution.Service,
+  SessionExecution.Service.of({
+    active: Effect.sync(() => new Set(activeSessions)),
+    resume: (sessionID) =>
+      Effect.sync(() => {
+        executionCalls.push(sessionID)
+      }),
+    exclusive: (_sessionID, work) => work,
+    interrupt: (sessionID) =>
+      Effect.sync(() => {
+        interruptCalls.push(sessionID)
+      }),
+    wake: (sessionID) =>
+      Effect.gen(function* () {
+        interruptingWakeCalls.push(sessionID)
+        if (interruptingWakeRequested) {
+          const requested = yield* Deferred.poll(interruptingWakeRequested).pipe(
+            Effect.map((result) => result._tag === "Some"),
+          )
+          interruptingWakeObservations.push(requested ? "interrupt-requested" : "interrupt-missing")
+        }
+        if (interruptingWakeStarted) yield* Deferred.succeed(interruptingWakeStarted, undefined)
+      }),
+    wait: () => Effect.void,
+  }),
+)
+const itWithInterruptingWake = testEffect(
+  AppNodeBuilder.build(sessionNodes, [pluginLocation.replacement, [SessionExecution.node, interruptingWakeExecution]]),
+)
 const sessionID = SessionV2.ID.make("ses_prompt_test")
 const messageID = SessionMessage.ID.create()
+const realWaitStepMs = 10
+const realWaitAttempts = 500
+
+function realSleep() {
+  return Effect.promise(() => Bun.sleep(realWaitStepMs))
+}
+
+function waitFor(label: string, check: () => boolean, remaining = realWaitAttempts): Effect.Effect<void, Error> {
+  return Effect.suspend(() => {
+    if (check()) return Effect.void
+    if (remaining <= 0)
+      return Effect.fail(new Error(`Timed out waiting for ${label} after ${realWaitStepMs * realWaitAttempts}ms`))
+    return realSleep().pipe(Effect.andThen(waitFor(label, check, remaining - 1)))
+  })
+}
+
+function awaitDeferred<A, E>(
+  label: string,
+  deferred: Deferred.Deferred<A, E>,
+  remaining = realWaitAttempts,
+): Effect.Effect<A, E | Error> {
+  return Effect.suspend(() =>
+    Deferred.poll(deferred).pipe(
+      Effect.flatMap((result) => {
+        if (result._tag === "Some") return result.value
+        if (remaining <= 0)
+          return Effect.fail(new Error(`Timed out waiting for ${label} after ${realWaitStepMs * realWaitAttempts}ms`))
+        return realSleep().pipe(Effect.andThen(awaitDeferred(label, deferred, remaining - 1)))
+      }),
+    ),
+  )
+}
 
 const setup = Effect.gen(function* () {
   const { db } = yield* Database.Service
@@ -653,6 +752,7 @@ describe("SessionV2.prompt", () => {
       const retried = yield* session.prompt({ ...input, resume: true })
 
       expect(retried).toEqual(first)
+      yield* waitFor("wake call", () => wakeCalls.length >= 1)
       expect(wakeCalls).toEqual([sessionID])
     }),
   )
@@ -1026,6 +1126,7 @@ describe("SessionV2.prompt", () => {
       yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Run by default" }) })
 
       expect(executionCalls).toEqual([])
+      yield* waitFor("wake call", () => wakeCalls.length >= 1)
       expect(wakeCalls).toEqual([sessionID])
     }),
   )
@@ -1044,6 +1145,7 @@ describe("SessionV2.prompt", () => {
       })
 
       expect(executionCalls).toEqual([])
+      yield* waitFor("wake call", () => wakeCalls.length >= 1)
       expect(wakeCalls).toEqual([sessionID])
     }),
   )
@@ -1081,6 +1183,110 @@ describe("SessionV2.prompt", () => {
 
       expect(executionCalls).toEqual([])
       expect(wakeCalls).toEqual([])
+    }),
+  )
+
+  itWithBlockingWake.effect("returns the durable admission before an advisory wake completes or fails", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const session = yield* SessionV2.Service
+      const returned = yield* Deferred.make<SessionInput.Admitted>()
+      blockingWakeObservations.length = 0
+      blockingWakeStarted = yield* Deferred.make<void>()
+      releaseBlockingWake = yield* Deferred.make<void>()
+
+      const run = yield* session
+        .prompt({
+          sessionID,
+          prompt: Prompt.make({ text: "Recover queued wake later" }),
+          delivery: "queue",
+        })
+        .pipe(
+          Effect.tap((input) => Deferred.succeed(returned, input)),
+          Effect.forkChild,
+        )
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          blockingWakeStarted = undefined
+          releaseBlockingWake = undefined
+        }),
+      )
+      yield* Effect.addFinalizer(() => Fiber.interrupt(run).pipe(Effect.asVoid))
+      const release = releaseBlockingWake
+      yield* Effect.addFinalizer(() => (release ? Deferred.succeed(release, undefined).pipe(Effect.asVoid) : Effect.void))
+
+      yield* awaitDeferred("blocking wake start", blockingWakeStarted)
+      expect(blockingWakeObservations).toEqual(["committed"])
+      const admitted = yield* awaitDeferred("returned durable admission", returned)
+      expect(yield* SessionInput.find(db, admitted.id)).toEqual(admitted)
+
+      yield* Deferred.succeed(releaseBlockingWake, undefined)
+      expect(yield* Fiber.join(run)).toEqual(admitted)
+      expect(yield* SessionInput.pending(db, sessionID, "queue")).toEqual([admitted])
+    }),
+  )
+
+  itWithInterruptingWake.effect("registers advisory wake before caller cancellation can interrupt after admission commit", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const session = yield* SessionV2.Service
+      const scope = yield* Scope.Scope
+      interruptingWakeCalls.length = 0
+      interruptingWakeObservations.length = 0
+      interruptingWakeStarted = yield* Deferred.make<void>()
+      interruptingWakeRequested = yield* Deferred.make<void>()
+      const promptAdmitted = yield* Deferred.make<void>()
+      const runningReady = yield* Deferred.make<Fiber.Fiber<SessionInput.Admitted, unknown>>()
+
+      const interrupter = yield* awaitDeferred("prompt admitted event", promptAdmitted).pipe(
+        Effect.andThen(awaitDeferred("running prompt fiber", runningReady)),
+        Effect.flatMap((running) =>
+          Fiber.interrupt(running).pipe(
+            Effect.forkIn(scope, { startImmediately: true }),
+            Effect.andThen(Deferred.succeed(interruptingWakeRequested!, undefined)),
+          ),
+        ),
+        Effect.forkChild,
+      )
+      yield* Effect.addFinalizer(() => Fiber.interrupt(interrupter).pipe(Effect.asVoid))
+
+      const unsubscribe = yield* events.listen((event) =>
+        event.type === SessionEvent.PromptAdmitted.type
+          ? Deferred.succeed(promptAdmitted, undefined).pipe(
+              Effect.andThen(awaitDeferred("caller interruption request", interruptingWakeRequested!).pipe(Effect.orDie)),
+              Effect.asVoid,
+            )
+          : Effect.void,
+      )
+      yield* Effect.addFinalizer(() => unsubscribe)
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          interruptingWakeStarted = undefined
+          interruptingWakeRequested = undefined
+        }),
+      )
+
+      const running = yield* session
+        .prompt({
+          sessionID,
+          prompt: Prompt.make({ text: "Interrupt after commit" }),
+          delivery: "queue",
+        })
+        .pipe(Effect.forkChild)
+      yield* Effect.addFinalizer(() => Fiber.interrupt(running).pipe(Effect.asVoid))
+      yield* Deferred.succeed(runningReady, running)
+
+      yield* awaitDeferred("caller interruption request", interruptingWakeRequested)
+      yield* awaitDeferred("advisory wake registration", interruptingWakeStarted)
+
+      expect(interruptingWakeCalls).toEqual([sessionID])
+      expect(interruptingWakeObservations).toEqual(["interrupt-requested"])
+      const interrupted = yield* Fiber.await(running)
+      expect(Exit.isFailure(interrupted) && Cause.hasInterruptsOnly(interrupted.cause)).toBe(true)
+      expect(yield* SessionInput.pending(db, sessionID, "queue")).toHaveLength(1)
     }),
   )
 })

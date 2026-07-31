@@ -70,6 +70,26 @@ export class SessionNotFoundError extends Schema.TaggedErrorClass<SessionNotFoun
   { httpApiStatus: 404 },
 ) {}
 
+export class SessionInputNotFoundError extends Schema.TaggedErrorClass<SessionInputNotFoundError>()(
+  "SessionInputNotFoundError",
+  {
+    sessionID: Schema.String,
+    inputID: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}
+
+export class SessionInputConflictError extends Schema.TaggedErrorClass<SessionInputConflictError>()(
+  "SessionInputConflictError",
+  {
+    sessionID: Schema.String,
+    inputID: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
 export class MessageNotFoundError extends Schema.TaggedErrorClass<MessageNotFoundError>()(
   "MessageNotFoundError",
   {

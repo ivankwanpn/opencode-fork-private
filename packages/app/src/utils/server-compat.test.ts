@@ -189,6 +189,24 @@ describe("createCompatibleApi", () => {
     ])
   })
 
+  test("does not claim durable queue support for V1 prompt fallback", async () => {
+    const { api, requests } = setup("v1")
+
+    expect(
+      await api.session.prompt({
+        sessionID: "ses_1",
+        id: "msg_1",
+        text: "follow up",
+        delivery: "queue",
+      }),
+    ).toMatchObject({
+      sessionID: "ses_1",
+      id: "msg_1",
+      delivery: "steer",
+    })
+    expect(new URL(requests[0]!.url).pathname).toBe("/session/ses_1/prompt_async")
+  })
+
   test("keeps V2 session actions on the current API", async () => {
     const { api, requests } = setup("v2")
     await api.session.archive({ sessionID: "ses_1" })
@@ -204,11 +222,12 @@ describe("createCompatibleApi", () => {
       sessionID: "ses_1",
       id: "msg_1",
       text: "hello @src/index.ts",
+      context: [{ text: "review this change", metadata: { source: "comment" } }],
       files: [
         { uri: "file:///repo/src/index.ts", name: "index.ts", mention: { text: "@src/index.ts", start: 6, end: 19 } },
       ],
       agents: [{ name: "reviewer", mention: { text: "@reviewer", start: 20, end: 29 } }],
-      delivery: "steer",
+      delivery: "queue",
       resume: true,
     })
 
@@ -217,6 +236,7 @@ describe("createCompatibleApi", () => {
       id: "msg_1",
       prompt: {
         text: "hello @src/index.ts",
+        context: [{ text: "review this change", metadata: { source: "comment" } }],
         files: [
           {
             uri: "file:///repo/src/index.ts",
@@ -226,7 +246,7 @@ describe("createCompatibleApi", () => {
         ],
         agents: [{ name: "reviewer", source: { text: "@reviewer", start: 20, end: 29 } }],
       },
-      delivery: "steer",
+      delivery: "queue",
       resume: true,
     })
   })

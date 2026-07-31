@@ -37,6 +37,14 @@ import type {
   SessionsPromptOutput,
   SessionsDiffInput,
   SessionsDiffOutput,
+  SessionsInputListInput,
+  SessionsInputListOutput,
+  SessionsInputGetInput,
+  SessionsInputGetOutput,
+  SessionsInputPromoteInput,
+  SessionsInputPromoteOutput,
+  SessionsInputCancelInput,
+  SessionsInputCancelOutput,
   SessionsBackgroundInput,
   SessionsBackgroundOutput,
   SessionsCommandInput,
@@ -602,6 +610,51 @@ export function make(options: ClientOptions) {
           },
           requestOptions,
         ).then((value) => value.data),
+      inputList: (input: SessionsInputListInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: SessionsInputListOutput }>(
+          {
+            method: "GET",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/input`,
+            query: { delivery: input["delivery"] },
+            successStatus: 200,
+            declaredStatuses: [404, 400, 401],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
+      inputGet: (input: SessionsInputGetInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: SessionsInputGetOutput }>(
+          {
+            method: "GET",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/input/${encodeURIComponent(input.inputID)}`,
+            successStatus: 200,
+            declaredStatuses: [404, 400, 401],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
+      inputPromote: (input: SessionsInputPromoteInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: SessionsInputPromoteOutput }>(
+          {
+            method: "POST",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/input/${encodeURIComponent(input.inputID)}/promote`,
+            successStatus: 200,
+            declaredStatuses: [409, 404, 400, 401],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
+      inputCancel: (input: SessionsInputCancelInput, requestOptions?: RequestOptions) =>
+        request<SessionsInputCancelOutput>(
+          {
+            method: "DELETE",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/input/${encodeURIComponent(input.inputID)}`,
+            successStatus: 204,
+            declaredStatuses: [409, 404, 400, 401],
+            empty: true,
+          },
+          requestOptions,
+        ),
       background: (input: SessionsBackgroundInput, requestOptions?: RequestOptions) =>
         request<SessionsBackgroundOutput>(
           {

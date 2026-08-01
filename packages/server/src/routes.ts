@@ -37,6 +37,7 @@ import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProjectCopyNameCapability } from "./project-copy-name-capability"
 import { ProjectLifecycleCapability } from "./project-lifecycle-capability"
+import { PluginCapability } from "./plugin-capability"
 
 const applicationServices = LayerNode.group([
   Database.node,
@@ -88,6 +89,7 @@ function makeRoutes<AuthError, AuthServices>(auth: Layer.Layer<ServerAuth.Config
     Layer.provide(WorkspaceCapability.layer),
     Layer.provide(ProjectCopyNameCapability.layer),
     Layer.provide(ProjectLifecycleCapability.layer),
+    Layer.provide(PluginCapability.layer),
   )
 
   return HttpApiBuilder.layer(Api, { openapiPath: "/openapi.json" }).pipe(

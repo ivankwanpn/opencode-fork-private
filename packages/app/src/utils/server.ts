@@ -210,6 +210,7 @@ export function createApiForServer(input: {
     message: current.messages,
     model: current.models,
     provider: current.providers,
+    plugins: current["server.plugins"],
     integration: {
       list: current.integrations.list,
       get: current.integrations.get,
@@ -328,6 +329,7 @@ export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "
     }>
   }
   readonly providers: OpenCodeClient["provider"] & CustomProviderApi
+  readonly plugins: CurrentClient["server.plugins"]
   readonly config: CurrentClient["config"]
   readonly lsp: CurrentClient["lsp"]
 }

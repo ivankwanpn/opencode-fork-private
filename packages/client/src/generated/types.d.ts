@@ -8034,6 +8034,209 @@ export type ControlPlaneMoveSessionInput = {
     }["moveChanges"];
 };
 export type ControlPlaneMoveSessionOutput = void;
+export type ServerPluginsListOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsAddInput = {
+    readonly source: {
+        readonly source: string;
+    }["source"];
+};
+export type ServerPluginsAddOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsRefreshInput = {
+    readonly name: {
+        readonly name: string;
+    }["name"];
+};
+export type ServerPluginsRefreshOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsRemoveInput = {
+    readonly name: {
+        readonly name: string;
+    }["name"];
+};
+export type ServerPluginsRemoveOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsInstallInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsInstallOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsUninstallInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsUninstallOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsEnableInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsEnableOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsDisableInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsDisableOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+};
 export type EventsSubscribeOutput = OpenCodeEventEncoded;
 export type PtysShellsInput = {
     readonly location?: {

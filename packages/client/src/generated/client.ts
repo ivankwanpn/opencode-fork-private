@@ -189,6 +189,21 @@ import type {
   WorkspacesWarpOutput,
   ControlPlaneMoveSessionInput,
   ControlPlaneMoveSessionOutput,
+  ServerPluginsListOutput,
+  ServerPluginsAddInput,
+  ServerPluginsAddOutput,
+  ServerPluginsRefreshInput,
+  ServerPluginsRefreshOutput,
+  ServerPluginsRemoveInput,
+  ServerPluginsRemoveOutput,
+  ServerPluginsInstallInput,
+  ServerPluginsInstallOutput,
+  ServerPluginsUninstallInput,
+  ServerPluginsUninstallOutput,
+  ServerPluginsEnableInput,
+  ServerPluginsEnableOutput,
+  ServerPluginsDisableInput,
+  ServerPluginsDisableOutput,
   EventsSubscribeOutput,
   PtysShellsInput,
   PtysShellsOutput,
@@ -1602,6 +1617,97 @@ export function make(options: ClientOptions) {
             successStatus: 204,
             declaredStatuses: [400, 401],
             empty: true,
+          },
+          requestOptions,
+        ),
+    },
+    "server.plugins": {
+      list: (requestOptions?: RequestOptions) =>
+        request<ServerPluginsListOutput>(
+          { method: "GET", path: `/api/plugins`, successStatus: 200, declaredStatuses: [503, 401, 400], empty: false },
+          requestOptions,
+        ),
+      add: (input: ServerPluginsAddInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsAddOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/marketplace`,
+            body: { source: input["source"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      refresh: (input: ServerPluginsRefreshInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsRefreshOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/marketplace/refresh`,
+            body: { name: input["name"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      remove: (input: ServerPluginsRemoveInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsRemoveOutput>(
+          {
+            method: "DELETE",
+            path: `/api/plugins/marketplace`,
+            body: { name: input["name"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      install: (input: ServerPluginsInstallInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsInstallOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/install`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      uninstall: (input: ServerPluginsUninstallInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsUninstallOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/uninstall`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      enable: (input: ServerPluginsEnableInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsEnableOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/enable`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      disable: (input: ServerPluginsDisableInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsDisableOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/disable`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
           },
           requestOptions,
         ),

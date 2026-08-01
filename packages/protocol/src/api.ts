@@ -33,6 +33,7 @@ import { WorkspaceGroup } from "./groups/workspace"
 import { ControlPlaneGroup } from "./groups/control-plane"
 import { PathGroup } from "./groups/path"
 import { WorktreeGroup } from "./groups/worktree"
+import { PluginGroup } from "./groups/plugin"
 
 // Protocol owns middleware placement, while Server injects concrete keys so Core service identities stay downstream.
 const makeApiFromGroup = <
@@ -72,6 +73,7 @@ const makeApiFromGroup = <
     .add(ConfigGroup.middleware(locationMiddleware))
     .add(WorkspaceGroup.middleware(locationMiddleware))
     .add(ControlPlaneGroup)
+    .add(PluginGroup)
     .add(eventGroup)
     .add(PtyGroup.middleware(locationMiddleware))
     .add(makeQuestionGroup(locationMiddleware, sessionLocationMiddleware))

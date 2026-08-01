@@ -29,6 +29,7 @@ import { WorkspaceHandler } from "./handlers/workspace"
 import { ControlPlaneHandler } from "./handlers/control-plane"
 import { PathHandler } from "./handlers/path"
 import { WorktreeHandler } from "./handlers/worktree"
+import { PluginHandler } from "./handlers/plugin"
 
 export const handlers = Layer.mergeAll(
   HealthHandler,
@@ -61,4 +62,5 @@ export const handlers = Layer.mergeAll(
   ConfigHandler,
   WorkspaceHandler,
   ControlPlaneHandler,
+  PluginHandler,
 )

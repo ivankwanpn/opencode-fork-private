@@ -11,6 +11,7 @@ import { SettingsModelsV2 } from "./models"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { SettingsPluginsV2 } from "./plugins"
 
 export const DialogSettings: Component<{
   sessionID?: string
@@ -67,6 +68,10 @@ export const DialogSettings: Component<{
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </TabsV2.Trigger>
+                    <TabsV2.Trigger value="plugins">
+                      <Icon name="dot-grid" />
+                      Plugins
+                    </TabsV2.Trigger>
                   </div>
                 </div>
               </div>
@@ -91,6 +96,9 @@ export const DialogSettings: Component<{
         </TabsV2.Content>
         <TabsV2.Content value="models" class="settings-v2-panel">
           <SettingsModelsV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="plugins" class="settings-v2-panel">
+          <SettingsPluginsV2 />
         </TabsV2.Content>
       </TabsV2>
     </Dialog>

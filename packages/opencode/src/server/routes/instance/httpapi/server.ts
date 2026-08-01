@@ -127,6 +127,7 @@ import { NativeWorkspace } from "@/control-plane/native-workspace"
 import { NativeProjectCopyName } from "@/project/native-project-copy-name"
 import { NativeProjectLifecycle } from "@/project/native-project-lifecycle"
 import { NativeLocation } from "@/server/native-location"
+import { NativeClaudeMarketplace } from "@/plugin/native-claude-marketplace"
 
 export const context = Context.makeUnsafe<unknown>(new Map())
 
@@ -197,6 +198,7 @@ const serverHandlers = handlers.pipe(
   Layer.provide(NativeWorkspace.layer),
   Layer.provide(NativeProjectCopyName.layer),
   Layer.provide(NativeProjectLifecycle.layer),
+  Layer.provide(NativeClaudeMarketplace.layer),
   Layer.provide(PluginPtyEnvironment.layer),
 )
 const serverRoutes = HttpApiBuilder.layer(Api).pipe(

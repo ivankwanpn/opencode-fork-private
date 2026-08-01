@@ -1,8 +1,6 @@
 import { $ } from "bun"
-
-export type Channel = "dev" | "beta" | "prod"
-
-export function resolveChannel(): Channel { return "prod" }
+export { resolveChannel } from "../../script/src/channel"
+export type { Channel } from "../../script/src/channel"
 
 export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; assetExt: string }> = [
   {

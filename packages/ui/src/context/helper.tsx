@@ -1,4 +1,21 @@
-import { createContext, createMemo, Show, useContext, type ParentProps, type Accessor } from "solid-js"
+import {
+  createComponent,
+  createContext,
+  createMemo,
+  Show,
+  useContext,
+  type Accessor,
+  type Component,
+  type JSX,
+  type ParentProps,
+} from "solid-js"
+
+type ShowProps = {
+  when: boolean | null | undefined
+  fallback?: JSX.Element
+  children: JSX.Element
+}
+const ShowComponent = Show as Component<ShowProps>
 
 export function createSimpleContext<T, Props extends Record<string, any>>(
   input: {
@@ -14,7 +31,12 @@ export function createSimpleContext<T, Props extends Record<string, any>>(
       const gate = input.gate ?? true
 
       if (!gate) {
-        return <ctx.Provider value={init}>{props.children}</ctx.Provider>
+        return createComponent(ctx.Provider, {
+          value: init,
+          get children() {
+            return props.children
+          },
+        })
       }
 
       // Access init.ready inside the memo to make it reactive for getter properties
@@ -23,11 +45,19 @@ export function createSimpleContext<T, Props extends Record<string, any>>(
         const ready = init.ready as Accessor<boolean> | boolean | undefined
         return ready === undefined || (typeof ready === "function" ? ready() : ready)
       })
-      return (
-        <Show when={isReady()}>
-          <ctx.Provider value={init}>{props.children}</ctx.Provider>
-        </Show>
-      )
+      return createComponent(ShowComponent, {
+        get when() {
+          return isReady()
+        },
+        get children() {
+          return createComponent(ctx.Provider, {
+            value: init,
+            get children() {
+              return props.children
+            },
+          })
+        },
+      })
     },
     use() {
       const value = useContext(ctx)

@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs"
 import solidPlugin from "vite-plugin-solid"
 import tailwindcss from "@tailwindcss/vite"
 import { fileURLToPath } from "url"
+import { resolveChannel } from "../script/src/channel.ts"
 
 const theme = fileURLToPath(new URL("./public/oc-theme-preload.js", import.meta.url))
 
-const channel = "prod" // Custom fork: always prod
+const channel = resolveChannel()
 
 
 
@@ -26,6 +27,7 @@ export default [
           },
         },
         define: {
+          "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
           "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
         },
         worker: {

@@ -2,10 +2,11 @@ import { sentryVitePlugin } from "@sentry/vite-plugin"
 import { defineConfig } from "electron-vite"
 import appPlugin from "@opencode-ai/app/vite"
 import * as fs from "node:fs/promises"
+import { resolveChannel } from "../script/src/channel"
 
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
 
-const channel = "prod" // Custom fork: always prod
+const channel = resolveChannel()
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
 
@@ -87,7 +88,8 @@ const require = __cjs_mod__.createRequire(import.meta.url);
   },
   renderer: {
     define: {
-      "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify("prod"),
+      "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
     },
     plugins: [appPlugin, sentry],
     publicDir: "../../../app/public",

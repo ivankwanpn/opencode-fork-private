@@ -1128,11 +1128,22 @@ async function discoverLiveModels(provider: Info) {
   return (await fetchProviderModels({ baseURL, packageName, apiKey, headers, modelsURL })).models
 }
 
-export function mergeLiveModels(provider: Info, live: readonly ProviderModel[]) {
+export function mergeLiveModels(
+  provider: Info,
+  live: readonly ProviderModel[],
+  keepModelIDs?: ReadonlySet<string>,
+) {
   const liveIDs = new Set(live.map((model) => model.id))
   const existingIDs = new Set<string>()
   const models = Object.fromEntries(
     Object.entries(provider.models).flatMap(([modelID, model]) => {
+      // Explicitly configured models are user intent and must survive a live
+      // catalog refresh even when the upstream model-list endpoint no longer
+      // reports them.
+      if (!liveIDs.has(model.api.id) && keepModelIDs?.has(modelID)) {
+        existingIDs.add(model.api.id)
+        return [[modelID, model]]
+      }
       if (!liveIDs.has(model.api.id)) return []
       existingIDs.add(model.api.id)
       return [[modelID, model]]
@@ -1688,7 +1699,10 @@ const layer = Layer.effect(
             }),
           )
           for (const [providerID, models] of results) {
-            if (models?.length) providers[providerID].models = mergeLiveModels(providers[providerID], models)
+            if (models?.length) {
+              const configModelIDs = new Set(Object.keys(cfg.provider?.[providerID]?.models ?? {}))
+              providers[providerID].models = mergeLiveModels(providers[providerID], models, configModelIDs)
+            }
           }
         })
 

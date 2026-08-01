@@ -24,6 +24,7 @@ import { CloudflareAIGatewayAuthPlugin, CloudflareWorkersAuthPlugin } from "./cl
 import { AzureAuthPlugin } from "./azure"
 import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
+import { ModalPlugin } from "./modal/modal"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
 import { Effect, Layer, Context } from "effect"
 import { EffectBridge } from "@/effect/bridge"
@@ -90,6 +91,7 @@ function internalPlugins(flags: RuntimeFlags.Info): Array<{ id: string; plugin: 
     { id: "opencode/digitalocean-auth", plugin: DigitalOceanAuthPlugin },
     { id: "opencode/snowflake-cortex-auth", plugin: SnowflakeCortexAuthPlugin },
     { id: "opencode/xai-auth", plugin: XaiAuthPlugin },
+    { id: "opencode/modal", plugin: ModalPlugin },
   ]
 }
 

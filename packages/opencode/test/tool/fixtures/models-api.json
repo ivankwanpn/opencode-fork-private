@@ -123874,6 +123874,35 @@
     "name": "OpenRouter",
     "doc": "https://openrouter.ai/models",
     "models": {
+      "prime-intellect/intellect-3": {
+        "id": "prime-intellect/intellect-3",
+        "name": "INT-3",
+        "description": "Prime Intellect reasoning model for multi-step analysis, math, coding, and tools",
+        "family": "intellect",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [],
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "knowledge": "2025-06-30",
+        "release_date": "2025-06-30",
+        "last_updated": "2025-06-30",
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "open_weights": true,
+        "limit": {
+          "context": 128000,
+          "output": 32768
+        },
+        "cost": {
+          "input": 0.15,
+          "output": 0.6,
+          "cache_read": 0.075
+        }
+      },
       "inclusionai/ling-2.6-1t": {
         "id": "inclusionai/ling-2.6-1t",
         "name": "Ling-2.6-1T",

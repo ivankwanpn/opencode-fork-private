@@ -1,6 +1,7 @@
 import { $ } from "bun"
 import semver from "semver"
 import path from "path"
+import { resolveChannel } from "./channel"
 const rootPkgPath = path.resolve(import.meta.dir, "../../../package.json")
 const rootPkg = await Bun.file(rootPkgPath).json()
 const expectedBunVersion = rootPkg.packageManager?.split("@")[1]
@@ -18,9 +19,9 @@ const env = {
   OPENCODE_VERSION: process.env["OPENCODE_VERSION"],
   OPENCODE_RELEASE: process.env["OPENCODE_RELEASE"],
 }
-const CHANNEL = "prod" // Custom fork: always prod channel
+const CHANNEL = resolveChannel(env.OPENCODE_CHANNEL)
 const IS_PREVIEW = false // Custom fork: never preview
-const VERSION = "999.0.0" // Custom fork: fixed version
+const VERSION = "999.0.1" // Custom fork: fixed version
 const bot = ["actions-user", "opencode", "opencode-agent[bot]"]
 const teamPath = path.resolve(import.meta.dir, "../../../.github/TEAM_MEMBERS")
 const team = [

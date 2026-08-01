@@ -1,5 +1,4 @@
 import { app } from "electron"
+import { resolveChannel } from "../../../script/src/channel"
 
-type Channel = "dev" | "beta" | "prod"
-const raw = import.meta.env.OPENCODE_CHANNEL
-export const CHANNEL: Channel = raw === "dev" || raw === "beta" || raw === "prod" ? raw : "dev"
+export const CHANNEL = resolveChannel(import.meta.env.OPENCODE_CHANNEL)

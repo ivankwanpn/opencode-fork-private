@@ -343,6 +343,30 @@ describe("server session", () => {
     expect(store.data.session_message.root.map((message) => message.id)).toEqual([user.id, assistant.id])
   })
 
+  test("caps refresh page size when the cached history is larger than one API page", async () => {
+    const requests: Array<{ limit?: number }> = []
+    const messages = Array.from({ length: 509 }, (_, index) => ({
+      id: `msg_${index}`,
+      type: "user" as const,
+      text: `message ${index}`,
+      time: { created: index },
+    }))
+    const messageApi = {
+      list: async (input: { limit?: number }) => {
+        requests.push(input)
+        return { data: messages, cursor: { previous: null, next: null } }
+      },
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("root") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi)
+    store.remember(session("root"))
+
+    await store.sync("root")
+    await store.sync("root", { force: true })
+
+    expect(requests.map((request) => request.limit)).toEqual([20, 200])
+  })
+
   test("extends a current page to include the user for split assistant turns", async () => {
     const user = { id: "msg_1_user", type: "user", text: "hello", time: { created: 1 } } as const
     const assistant = (id: string, created: number) => ({

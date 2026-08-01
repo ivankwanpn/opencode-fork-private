@@ -33,7 +33,8 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const initialMessagePageSize = 20
-const historyMessagePageSize = 200
+const messageApiPageSize = 200
+const historyMessagePageSize = messageApiPageSize
 const sessionInfoLimit = 2_048
 const emptyIDs: ReadonlySet<string> = new Set()
 
@@ -543,10 +544,15 @@ export function createServerSession(
 
   const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
     if (messageApi && (await options?.protocol) !== "v1") {
+      const pageLimit = Math.min(limit, messageApiPageSize)
       const request = (cursor?: string) =>
         (options?.retry ?? retry)(() => {
           onAttempt?.()
-          return messageApi.list(cursor ? { sessionID, limit, cursor } : { sessionID, limit, order: "desc" })
+          return messageApi.list(
+            cursor
+              ? { sessionID, limit: pageLimit, cursor }
+              : { sessionID, limit: pageLimit, order: "desc" },
+          )
         })
       const first = await request(before)
       const pages = [first]

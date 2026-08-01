@@ -269,6 +269,7 @@ const layer = Layer.effect(
           ctx.worktree,
         )
       }),
+      { group: "plugins" },
     )
     const state = yield* InstanceState.make(
       Effect.fn("Skill.state")(function* () {
@@ -284,6 +285,7 @@ const layer = Layer.effect(
         yield* loadSkills(s, yield* InstanceState.get(discovered), events)
         return s
       }),
+      { group: "plugins" },
     )
 
     const get = Effect.fn("Skill.get")(function* (name: string) {

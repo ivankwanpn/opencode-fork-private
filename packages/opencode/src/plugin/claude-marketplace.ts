@@ -21,6 +21,19 @@ type MarketplaceManifest = {
   plugins: MarketplacePlugin[]
 }
 
+type PluginSource =
+  | {
+      kind: "local"
+      source: string
+    }
+  | {
+      kind: "git"
+      source: string
+      path?: string
+      ref?: string
+      sha?: string
+    }
+
 type ManagedMcpServer =
   | {
       type: "local"
@@ -158,10 +171,35 @@ async function marketplaceManifestPath(root: string) {
   throw new Error(`Marketplace manifest not found in ${root}`)
 }
 
-async function runGitClone(source: string, destination: string) {
-  await Process.run(["git", "clone", "--depth", "1", source, destination], {
+async function runGitClone(
+  source: string,
+  destination: string,
+  options: { ref?: string; sha?: string; subdirectory?: string } = {},
+) {
+  const cloneArgs = [
+    "git",
+    "clone",
+    "--depth",
+    "1",
+    ...(options.subdirectory ? ["--filter=tree:0", "--no-checkout"] : options.sha ? ["--no-checkout"] : []),
+    ...(options.ref ? ["--branch", options.ref] : []),
+    source,
+    destination,
+  ]
+  await Process.run(cloneArgs, {
     env: { GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
   })
+  if (options.subdirectory) {
+    await Process.run(["git", "sparse-checkout", "set", "--cone", "--", options.subdirectory], { cwd: destination })
+  }
+  if (options.sha) {
+    await Process.run(["git", "fetch", "--depth", "1", "origin", options.sha], { cwd: destination }).catch(() =>
+      Process.run(["git", "fetch", "--unshallow"], { cwd: destination }),
+    )
+    await Process.run(["git", "checkout", options.sha], { cwd: destination })
+  } else if (options.subdirectory) {
+    await Process.run(["git", "checkout", "HEAD"], { cwd: destination })
+  }
 }
 
 function githubUrl(source: string) {
@@ -273,7 +311,24 @@ function sourceValue(source: string | RecordValue, key: string) {
   return stringValue(source[key])
 }
 
-function pluginSource(source: string | RecordValue, marketplaceRoot: string) {
+function gitPluginSource(source: RecordValue, kind: string, url = sourceValue(source, "url")): PluginSource {
+  if (!url) throw new Error(`Claude plugin source ${kind} is missing url`)
+  const subdirectory = sourceValue(source, "path")
+  if (kind === "git-subdir" && !subdirectory) {
+    throw new Error("Claude plugin source git-subdir is missing path")
+  }
+  const ref = sourceValue(source, "ref")
+  const sha = sourceValue(source, "sha")
+  return {
+    kind: "git",
+    source: githubUrl(url) ?? url,
+    ...(subdirectory ? { path: subdirectory } : {}),
+    ...(ref ? { ref } : {}),
+    ...(sha ? { sha } : {}),
+  }
+}
+
+function pluginSource(source: string | RecordValue, marketplaceRoot: string): PluginSource {
   if (typeof source === "string") {
     const git = gitSource(source)
     if (git) return { kind: "git" as const, source: git }
@@ -285,13 +340,9 @@ function pluginSource(source: string | RecordValue, marketplaceRoot: string) {
   if (kind === "github") {
     const repo = sourceValue(source, "repo")
     if (!repo) throw new Error("GitHub plugin source is missing repo")
-    return { kind: "git" as const, source: `https://github.com/${repo}.git` }
+    return gitPluginSource(source, "github", `https://github.com/${repo}.git`)
   }
-  if (kind === "git" || kind === "url") {
-    const url = sourceValue(source, "url")
-    if (!url) throw new Error(`Plugin source ${kind} is missing url`)
-    return { kind: "git" as const, source: url }
-  }
+  if (kind === "git" || kind === "git-subdir" || kind === "url") return gitPluginSource(source, kind)
   if (kind === "directory" || kind === "file") {
     const localPath = sourceValue(source, "path")
     if (!localPath) throw new Error(`Plugin source ${kind} is missing path`)
@@ -386,7 +437,7 @@ export class ClaudeMarketplaceManager {
             ...(entry.version ? { version: entry.version } : {}),
             ...(entry.category ? { category: entry.category } : {}),
             tags: entry.tags,
-            capabilities: await this.capabilities(marketplace.cachePath, entry),
+            capabilities: await this.capabilities(marketplace.cachePath, entry).catch(() => ["plugin"]),
             installed: installed?.installed === true,
             enabled: installed?.enabled === true,
           })
@@ -544,7 +595,23 @@ export class ClaudeMarketplaceManager {
       await fsNode.cp(source.source, plugin.installPath, { recursive: true })
       return
     }
-    await runGitClone(source.source, plugin.installPath)
+    const clonePath = source.path ? `${plugin.installPath}.clone` : plugin.installPath
+    await fsNode.rm(clonePath, { recursive: true, force: true })
+    try {
+      await runGitClone(source.source, clonePath, {
+        ref: source.ref,
+        sha: source.sha,
+        subdirectory: source.path,
+      })
+      if (!source.path) return
+      const subdirectory = pathInside(clonePath, source.path)
+      if (!(await isDirectory(subdirectory))) {
+        throw new Error(`Plugin subdirectory not found: ${source.path}`)
+      }
+      await fsNode.cp(subdirectory, plugin.installPath, { recursive: true })
+    } finally {
+      if (source.path) await fsNode.rm(clonePath, { recursive: true, force: true })
+    }
   }
 
   private async pluginEntry(plugin: PluginState, marketplaceRoot: string) {
@@ -583,7 +650,11 @@ export class ClaudeMarketplaceManager {
       if (!isRecord(value) || value.version !== 1 || !isRecord(value.marketplaces) || !isRecord(value.plugins)) {
         throw new Error(`Invalid Claude marketplace state file: ${this.paths.stateFile}`)
       }
-      return value as unknown as State
+      const state = value as unknown as State
+      return {
+        ...state,
+        marketplaces: Object.fromEntries(Object.values(state.marketplaces).map((item) => [item.name, item])),
+      }
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return { version: 1, marketplaces: {}, plugins: {} }
       throw error

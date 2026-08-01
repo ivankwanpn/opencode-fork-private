@@ -78,7 +78,9 @@ export function registerIpcHandlers(deps: Deps) {
     }
   })
   ipcMain.handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
-    getStore(name).set(key, value)
+    const store = getStore(name)
+    if (store.get(key) === value) return
+    store.set(key, value)
   })
   ipcMain.handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     getStore(name).delete(key)

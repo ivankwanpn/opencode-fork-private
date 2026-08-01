@@ -203,6 +203,10 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         if (!tab || tab.type !== "draft") throw new Error(`Draft not found: ${draftID}`)
         return tab
       },
+      findDraft(draftID: string) {
+        const tab = store.find((item) => item.type === "draft" && item.draftID === draftID)
+        return tab?.type === "draft" ? tab : undefined
+      },
       async newDraft(draft: Omit<DraftTab, "type" | "draftID">, prompt?: string, model?: PromptModel) {
         const draftID = uuid()
         const tab = { type: "draft" as const, draftID, ...draft }

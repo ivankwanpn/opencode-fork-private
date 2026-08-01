@@ -61,7 +61,10 @@ test("V1 provider discovery preserves configured aliases and adds live IDs", () 
     },
   } satisfies Info
 
-  const models = mergeLiveModels(provider, [{ id: "upstream-live" }, { id: "new-live", context: 256_000 }])
+  const models = mergeLiveModels(
+    provider,
+    [{ id: "upstream-live" }, { id: "alias" }, { id: "new-live", context: 256_000 }],
+  )
 
   expect(Object.keys(models)).toEqual(["alias", "new-live"])
   expect(models.alias.name).toBe("Configured alias")

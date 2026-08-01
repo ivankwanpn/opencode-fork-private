@@ -3,6 +3,7 @@ import type { Model, Provider } from "@opencode-ai/sdk/v2"
 import { ModalPlugin } from "@/plugin/modal/modal"
 
 const BASE_MODEL_ID = "thinkingmachines/Inkling-NVFP4"
+const HUGGING_FACE_ID = "huggingface/Inkling-NVFP4"
 const RUNTIME_MODEL_ID = "workspace--inkling.us-west.modal.direct"
 const FALLBACK_RUNTIME_MODEL_ID = "workspace--inkling-fallback.us-west.modal.direct"
 
@@ -195,4 +196,44 @@ test("hides Modal models when discovery fails", async () => {
   })
 
   expect(models).toEqual({})
+})
+
+test("falls back to the Hugging Face id when both Modal identifiers are present", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return Response.json({
+        data: [
+          {
+            id: RUNTIME_MODEL_ID,
+            base_model_id: BASE_MODEL_ID,
+            hugging_face_id: HUGGING_FACE_ID,
+          },
+        ],
+      })
+    },
+  })
+  const provider = makeProvider(`${server.url}v1`)
+  const template = provider.models[BASE_MODEL_ID]!
+  provider.models = {
+    [HUGGING_FACE_ID]: {
+      ...template,
+      id: HUGGING_FACE_ID,
+      api: { ...template.api, id: HUGGING_FACE_ID },
+    },
+  }
+
+  const plugin = await ModalPlugin()
+  const models = await plugin.provider!.models!(provider, {
+    auth: {
+      type: "api",
+      key: "test-token",
+    },
+  })
+
+  expect(models[RUNTIME_MODEL_ID]).toMatchObject({
+    name: "Inkling",
+    family: "ling",
+    variants: { fallback: { reasoningEffort: "fallback" } },
+  })
 })

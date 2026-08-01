@@ -36,6 +36,8 @@ const promoted: Array<{ directory: string; sessionID: string }> = []
 const sentShell: Array<{ sessionID: string; id?: string; command: string }> = []
 const syncedDirectories: string[] = []
 const promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
+const addedSessionTabs: Array<{ server: string; sessionId: string }> = []
+const draftTabs: Array<{ type: "draft"; draftID: string; server: string }> = []
 const sentPrompts: unknown[] = []
 const promptInputs: unknown[] = []
 const sentCommands: unknown[] = []
@@ -187,9 +189,13 @@ beforeAll(async () => {
 
   mock.module("@/context/tabs", () => ({
     useTabs: () => ({
-      draft: () => ({ server: "project-server" }),
+      store: draftTabs,
+      findDraft: (draftID: string) => draftTabs.find((tab) => tab.draftID === draftID),
       promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
         promotedDrafts.push({ draftID, ...session })
+      },
+      addSessionTab: (session: { server: string; sessionId: string }) => {
+        addedSessionTabs.push(session)
       },
     }),
   }))
@@ -303,6 +309,8 @@ beforeEach(() => {
   optimisticSeeded.length = 0
   promoted.length = 0
   promotedDrafts.length = 0
+  addedSessionTabs.length = 0
+  draftTabs.splice(0, draftTabs.length, { type: "draft", draftID: "draft-1", server: "project-server" })
   sentPrompts.length = 0
   promptInputs.length = 0
   sentCommands.length = 0
@@ -463,6 +471,70 @@ describe("prompt submit worktree selection", () => {
     await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
 
     expect(promotedDrafts).toEqual([{ draftID: "draft-1", server: "project-server", sessionId: "session-1" }])
+  })
+
+  test("keeps a created session on the original server when the draft moves", async () => {
+    search = { draftId: "draft-1" }
+    let release = () => {}
+    createSessionGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const result = submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    draftTabs[0]!.server = "new-server"
+    release()
+    await result
+
+    expect(promotedDrafts).toEqual([])
+    expect(addedSessionTabs).toEqual([{ server: "project-server", sessionId: "session-1" }])
+  })
+
+  test("keeps a created session reachable when its draft closes", async () => {
+    search = { draftId: "draft-1" }
+    let release = () => {}
+    createSessionGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const result = submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    draftTabs.length = 0
+    release()
+    await result
+
+    expect(promotedDrafts).toEqual([])
+    expect(addedSessionTabs).toEqual([{ server: "project-server", sessionId: "session-1" }])
   })
 
   test("includes the selected variant on optimistic prompts", async () => {

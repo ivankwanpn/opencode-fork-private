@@ -1132,6 +1132,8 @@ export default function LegacyLayout(props: ParentProps) {
   }
 
   function rememberSessionRoute(directory: string, id: string, root = activeProjectRoot(directory)) {
+    const current = untrack(() => store.lastProjectSession[root])
+    if (current?.id === id && pathKey(current.directory) === pathKey(directory)) return root
     setStore("lastProjectSession", root, { directory, id, at: Date.now() })
     return root
   }
@@ -1667,9 +1669,9 @@ export default function LegacyLayout(props: ParentProps) {
           return
         }
 
-        if (server.projects.last() !== root) server.projects.touch(root)
+        if (pathKey(server.projects.last() ?? "") !== pathKey(root)) server.projects.touch(root)
 
-        const changed = session !== activeRoute.session || dir !== activeRoute.directory
+        const changed = session !== activeRoute.session || pathKey(dir) !== pathKey(activeRoute.directory)
         if (changed) {
           activeRoute.session = session
           activeRoute.directory = dir
@@ -1677,7 +1679,7 @@ export default function LegacyLayout(props: ParentProps) {
           return
         }
 
-        if (root === activeRoute.sessionProject) return
+        if (pathKey(root) === pathKey(activeRoute.sessionProject)) return
         activeRoute.directory = dir
         activeRoute.sessionProject = rememberSessionRoute(dir, id, root)
       },

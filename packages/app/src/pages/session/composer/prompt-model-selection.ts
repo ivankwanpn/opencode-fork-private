@@ -7,7 +7,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useProviders } from "@/hooks/use-providers"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
-import { modelVariantsForProtocol } from "./model-protocol-variants"
+import { modelVariantsForProtocol, resolveModelProtocol } from "./model-protocol-variants"
 
 export function createPromptModelSelection(input: { agent: () => { model?: ModelKey; variant?: string } | undefined }) {
   const sdk = useSDK()
@@ -54,13 +54,12 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
   )
   const selectedProtocol = () => {
     const model = current()
-    const protocols = model?.protocols ?? []
-    if (!model || protocols.length === 0) return
-    const selected = prompt.model.current()?.protocol
-    if (selected && protocols.includes(selected)) return selected
-    const saved = models.protocol.get({ providerID: model.provider.id, modelID: model.id })
-    if (saved && protocols.includes(saved)) return saved
-    return protocols.includes("openai-compatible") ? "openai-compatible" : protocols[0]
+    if (!model) return
+    return resolveModelProtocol(
+      model.protocols ?? [],
+      prompt.model.current()?.protocol,
+      models.protocol.get({ providerID: model.provider.id, modelID: model.id }),
+    )
   }
 
   const selection = {

@@ -14,7 +14,7 @@ import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
 import { ScopedKey, type ServerScope } from "@/utils/server-scope"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
-import { modelVariantsForProtocol } from "@/pages/session/composer/model-protocol-variants"
+import { modelVariantsForProtocol, resolveModelProtocol } from "@/pages/session/composer/model-protocol-variants"
 
 export type ModelKey = {
   providerID: string
@@ -261,13 +261,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const selected = () => scope()?.variant
     const selectedProtocol = () => {
       const model = current()
-      const protocols = model?.protocols ?? []
-      if (!model || protocols.length === 0) return
-      const selected = scope()?.model?.protocol
-      if (selected && protocols.includes(selected)) return selected
-      const saved = models.protocol.get({ providerID: model.provider.id, modelID: model.id })
-      if (saved && protocols.includes(saved)) return saved
-      return protocols.includes("openai-compatible") ? "openai-compatible" : protocols[0]
+      if (!model) return
+      return resolveModelProtocol(
+        model.protocols ?? [],
+        scope()?.model?.protocol,
+        models.protocol.get({ providerID: model.provider.id, modelID: model.id }),
+      )
     }
 
     const snapshot = () => {
@@ -283,7 +282,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
     const write = (next: Partial<State>) => {
       const state = {
-        ...(scope() ?? { agent: agent.current()?.name }),
+        ...(clone(scope()) ?? { agent: agent.current()?.name }),
         ...next,
       } satisfies State
 
@@ -325,6 +324,15 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               protocol: item.protocol ?? models.protocol.get(item),
             }
           : undefined
+        const currentSelection = scope()?.model
+        if (
+          currentSelection?.providerID === next?.providerID &&
+          currentSelection?.modelID === next?.modelID &&
+          currentSelection?.protocol === next?.protocol
+        ) {
+          if (next && options?.recent) models.recent.push(next)
+          return
+        }
         startTransition(() =>
           batch(() => {
             setStore("last", {
@@ -372,6 +380,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return modelVariantsForProtocol(Object.keys(item.variants), selectedProtocol())
         },
         set(value: string | undefined) {
+          if ((selected() ?? undefined) === value) return
           startTransition(() =>
             batch(() => {
               const model = current()
@@ -415,6 +424,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         set(value: CustomProvider.Protocol) {
           const currentModel = current()
           if (!currentModel || !currentModel.protocols?.includes(value)) return
+          if (scope()?.model?.protocol === value) return
           startTransition(() =>
             batch(() => {
               const key = {

@@ -1140,11 +1140,14 @@ export function mergeLiveModels(
       // Explicitly configured models are user intent and must survive a live
       // catalog refresh even when the upstream model-list endpoint no longer
       // reports them.
-      if (!liveIDs.has(model.api.id) && keepModelIDs?.has(modelID)) {
+      const listed = liveIDs.has(modelID) || liveIDs.has(model.api.id)
+      if (!listed && keepModelIDs?.has(modelID)) {
+        existingIDs.add(modelID)
         existingIDs.add(model.api.id)
         return [[modelID, model]]
       }
-      if (!liveIDs.has(model.api.id)) return []
+      if (!listed) return []
+      existingIDs.add(modelID)
       existingIDs.add(model.api.id)
       return [[modelID, model]]
     }),

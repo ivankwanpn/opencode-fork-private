@@ -60,7 +60,9 @@ export async function get(baseURL: string, apiKey: string, existing: Record<stri
 
   return Object.fromEntries(
     data.data.map((item) => {
-      const template = existing[item.base_model_id ?? item.hugging_face_id ?? item.id]
+      const template = [item.base_model_id, item.hugging_face_id, item.id]
+        .map((id) => (id ? existing[id] : undefined))
+        .find((model) => model !== undefined)
       const model: Model = {
         id: item.id,
         providerID: "modal",

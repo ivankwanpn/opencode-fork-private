@@ -3,6 +3,7 @@ import type { Catalog } from "@opencode-ai/protocol/groups/plugin"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { Effect, Layer } from "effect"
 import { Config } from "@/config/config"
+import { InstanceState } from "@/effect/instance-state"
 import { ClaudeMarketplaceManager, type ManagedMcpServer } from "./claude-marketplace"
 
 function unavailable(action: string, error: unknown) {
@@ -51,6 +52,7 @@ export const layer = Layer.effect(
         const catalog = yield* run(action, task)
         const nextServers = yield* run(`${action} MCP lookup`, () => manager.enabledMcpServers())
         yield* syncMcp(previousKeys, nextServers)
+        yield* Effect.promise(() => InstanceState.invalidateGroup("plugins"))
         return catalog
       })
 

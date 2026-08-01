@@ -156,7 +156,7 @@ const layer = Layer.effect(
       }
     })
 
-    const state = yield* InstanceState.make<State>((ctx) => init(ctx))
+    const state = yield* InstanceState.make<State>((ctx) => init(ctx), { group: "plugins" })
 
     const get = Effect.fn("Command.get")(function* (name: string) {
       const s = yield* InstanceState.get(state)

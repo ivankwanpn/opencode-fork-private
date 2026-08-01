@@ -5,6 +5,21 @@ import { registerDisposer } from "./instance-registry"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 
 const TypeId = "~opencode/InstanceState"
+const invalidationGroups = new Map<string, Set<() => Promise<void>>>()
+
+function registerInvalidation(group: string, invalidate: () => Promise<void>) {
+  const entries = invalidationGroups.get(group) ?? new Set<() => Promise<void>>()
+  entries.add(invalidate)
+  invalidationGroups.set(group, entries)
+  return () => {
+    entries.delete(invalidate)
+    if (entries.size === 0) invalidationGroups.delete(group)
+  }
+}
+
+export async function invalidateGroup(group: string) {
+  await Promise.all([...invalidationGroups.get(group) ?? []].map((invalidate) => invalidate()))
+}
 
 export interface InstanceState<A, E = never, R = never> {
   readonly [TypeId]: typeof TypeId
@@ -25,6 +40,7 @@ export const directory = Effect.map(context, (ctx) => ctx.directory)
 
 export const make = <A, E = never, R = never>(
   init: (ctx: InstanceContext) => Effect.Effect<A, E, R | Scope.Scope>,
+  options: { group?: string } = {},
 ): Effect.Effect<InstanceState<A, E, Exclude<R, Scope.Scope>>, never, R | Scope.Scope> =>
   Effect.gen(function* () {
     const cache = yield* ScopedCache.make<string, A, E, R>({
@@ -36,7 +52,15 @@ export const make = <A, E = never, R = never>(
     })
 
     const off = registerDisposer((directory) => Effect.runPromise(ScopedCache.invalidate(cache, directory)))
-    yield* Effect.addFinalizer(() => Effect.sync(off))
+    const offGroup = options.group
+      ? registerInvalidation(options.group, () => Effect.runPromise(ScopedCache.invalidateAll(cache)))
+      : undefined
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        off()
+        offGroup?.()
+      }),
+    )
 
     return {
       [TypeId]: TypeId,

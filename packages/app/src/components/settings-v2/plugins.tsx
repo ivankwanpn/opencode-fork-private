@@ -31,14 +31,12 @@ export const SettingsPluginsV2: Component = () => {
   const [source, setSource] = createSignal(DEFAULT_MARKETPLACE_SOURCE)
   const [busy, setBusy] = createSignal<string>()
   const [error, setError] = createSignal<string>()
-  const [requiresRestart, setRequiresRestart] = createSignal(false)
 
   const run = async (key: string, action: () => Promise<Catalog>) => {
     setBusy(key)
     setError(undefined)
     try {
       setCatalog(await action())
-      if (key !== "load") setRequiresRestart(true)
     } catch (reason) {
       setError(errorMessage(reason))
     } finally {
@@ -132,9 +130,6 @@ export const SettingsPluginsV2: Component = () => {
 
       <div class="settings-v2-tab-body settings-v2-plugins">
         <Show when={error()}>{(message) => <div class="settings-v2-plugins-error">{message()}</div>}</Show>
-        <Show when={requiresRestart()}>
-          <div class="settings-v2-plugins-notice">Restart OpenCode to load plugin changes.</div>
-        </Show>
 
         <Show
           when={view() === "plugins"}

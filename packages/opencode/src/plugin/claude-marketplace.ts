@@ -3,6 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Marketplace, Plugin } from "@opencode-ai/protocol/groups/plugin"
 import { Global } from "@opencode-ai/core/global"
+import { Process } from "@/util/process"
 
 type RecordValue = Record<string, unknown>
 
@@ -158,15 +159,9 @@ async function marketplaceManifestPath(root: string) {
 }
 
 async function runGitClone(source: string, destination: string) {
-  const process = Bun.spawn(["git", "clone", "--depth", "1", source, destination], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
+  await Process.run(["git", "clone", "--depth", "1", source, destination], {
+    env: { GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
   })
-  const exitCode = await process.exited
-  if (exitCode === 0) return
-  const stderr = await new Response(process.stderr).text()
-  throw new Error(`git clone failed for ${source}: ${stderr.trim() || `exit code ${exitCode}`}`)
 }
 
 function githubUrl(source: string) {

@@ -12,6 +12,7 @@ import {
   isContextOverflowFailure,
   type ProviderErrorEvent,
 } from "@opencode-ai/llm"
+import { WebSocketPool } from "@opencode-ai/llm/route"
 import type { UserMessage } from "@opencode-ai/sdk/v2/types"
 import { Cause, Clock, DateTime, Effect, FiberSet, Layer, Option, Semaphore, Stream } from "effect"
 import { AgentV2 } from "../../agent"
@@ -991,14 +992,26 @@ const layer = Layer.effect(
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
-        while (needsContinuation) {
-          const result = yield* runTurn(input.sessionID, promotion, step, initialPhysical, stopBlockCount.value)
-          initialPhysical = undefined
-          needsContinuation = result.needsContinuation
-          step = result.step + 1
-          promotion = "steer"
-          if (!needsContinuation) needsContinuation = yield* SessionInput.hasPending(db, input.sessionID, "steer")
-        }
+        // One pool per turn: every `needsContinuation` iteration of the same
+        // turn reuses the pooled Responses WebSocket connection (keyed by url +
+        // headers) instead of opening and closing a socket per provider request.
+        // The pool only takes effect when the route is the WebSocket transport
+        // and a WebSocket executor is available; every other route never reads
+        // it. `closeAll` runs when the turn region ends, including on failure
+        // or interruption.
+        const pool = yield* WebSocketPool.make()
+        yield* Effect.gen(function* () {
+          while (needsContinuation) {
+            const result = yield* runTurn(input.sessionID, promotion, step, initialPhysical, stopBlockCount.value).pipe(
+              Effect.provideService(WebSocketPool.Service, pool),
+            )
+            initialPhysical = undefined
+            needsContinuation = result.needsContinuation
+            step = result.step + 1
+            promotion = "steer"
+            if (!needsContinuation) needsContinuation = yield* SessionInput.hasPending(db, input.sessionID, "steer")
+          }
+        }).pipe(Effect.ensuring(pool.closeAll))
         shouldRun = yield* SessionInput.hasPending(db, input.sessionID, "queue")
         promotion = shouldRun ? "queue" : undefined
       }

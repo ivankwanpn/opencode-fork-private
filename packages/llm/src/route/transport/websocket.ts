@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Queue, Stream } from "effect"
+import { Cause, Context, Effect, Layer, Option, Queue, Ref, Stream } from "effect"
 import { Headers } from "effect/unstable/http"
 import { LLMError, TransportReason } from "../../schema"
 import * as HttpTransport from "./http"
@@ -206,6 +206,66 @@ export const fromWebSocket = (
 export const messageText = (message: string | Uint8Array, decoder: TextDecoder) =>
   typeof message === "string" ? message : decoder.decode(message)
 
+export type WebSocketPoolKey = {
+  readonly url: string
+  readonly headers: Headers.Headers
+  readonly headersKey: string
+}
+
+export interface WebSocketPool {
+  readonly acquire: (key: WebSocketPoolKey) => Effect.Effect<WebSocketConnection, LLMError, Service>
+  readonly release: (connection: WebSocketConnection) => Effect.Effect<void>
+  readonly invalidate: (connection: WebSocketConnection) => Effect.Effect<void>
+  readonly closeAll: Effect.Effect<void>
+}
+
+export class WebSocketPoolService extends Context.Service<WebSocketPoolService, WebSocketPool>()(
+  "@opencode/LLM/WebSocketPool",
+) {}
+
+const poolHeadersKey = (headers: Headers.Headers) => JSON.stringify(Object.entries(headers).sort())
+
+const poolCacheKey = (key: WebSocketPoolKey) => `${key.url}\n${key.headersKey}`
+
+/**
+ * A connection cache keyed by url + headers. `acquire` returns the cached
+ * connection for a key or opens a fresh one through the WebSocket executor.
+ * `release` keeps the connection cached so the next request in the same turn
+ * reuses the same socket. A broken connection must be dropped with
+ * `invalidate` (evicts and closes) so the next request opens a fresh socket.
+ * `closeAll` closes every pooled connection and clears the cache at turn end.
+ */
+export const makePool = (): Effect.Effect<WebSocketPool> =>
+  Effect.gen(function* () {
+    const cache = yield* Ref.make(new Map<string, WebSocketConnection>())
+    const acquire = (key: WebSocketPoolKey) =>
+      Ref.modify(cache, (map) => {
+        const cacheKey = poolCacheKey(key)
+        const existing = map.get(cacheKey)
+        if (existing) return [Effect.succeed(existing), map] as const
+        return [
+          Effect.gen(function* () {
+            const executor = yield* WebSocketExecutor.Service
+            return yield* executor
+              .open({ url: key.url, headers: key.headers })
+              .pipe(Effect.tap((conn) => Ref.update(cache, (m) => new Map(m).set(cacheKey, conn))))
+          }),
+          map,
+        ] as const
+      }).pipe(Effect.flatten)
+    const release = (connection: WebSocketConnection) => Effect.void
+    const invalidate = (connection: WebSocketConnection) =>
+      Ref.modify(cache, (map) => {
+        const remaining = new Map(Array.from(map.entries()).filter(([, conn]) => conn !== connection))
+        return [Effect.void, remaining] as const
+      }).pipe(Effect.flatten, Effect.andThen(connection.close))
+    const closeAll = Ref.getAndSet(cache, new Map<string, WebSocketConnection>()).pipe(
+      Effect.flatMap((map) => Effect.forEach(Array.from(map.values()), (conn) => conn.close)),
+      Effect.asVoid,
+    )
+    return { acquire, release, invalidate, closeAll }
+  })
+
 export interface JsonPrepared {
   readonly url: string
   readonly headers: Headers.Headers
@@ -238,18 +298,41 @@ export const json = <Body, Message>(input: JsonInput<Body, Message>): JsonTransp
       }
     }),
   frames: (prepared, _request, runtime) => {
-    const webSocket = runtime.webSocket
-    if (!webSocket) {
-      return Stream.fail(
-        transportError("json", "WebSocket JSON transport requires WebSocketExecutor.Service", {
-          url: prepared.url,
-          kind: "websocket",
-        }),
-      )
-    }
     const decoder = new TextDecoder()
     return Stream.unwrap(
       Effect.gen(function* () {
+        // When a turn-scoped pool is provided, reuse the pooled connection for
+        // this url + headers instead of opening and closing a socket per
+        // provider request. The executor comes from the runtime first (the
+        // layer-captured executor) and falls back to the environment service.
+        const pool = Option.getOrUndefined(yield* Effect.serviceOption(WebSocketPoolService))
+        const executor =
+          runtime.webSocket ?? Option.getOrUndefined(yield* Effect.serviceOption(WebSocketExecutor.Service))
+        if (pool && executor) {
+          const key: WebSocketPoolKey = {
+            url: prepared.url,
+            headers: prepared.headers,
+            headersKey: poolHeadersKey(prepared.headers),
+          }
+          const connection = yield* Effect.acquireRelease(
+            pool.acquire(key).pipe(Effect.provideService(WebSocketExecutor.Service, executor)),
+            (conn) => pool.release(conn),
+          )
+          yield* connection.sendText(prepared.message).pipe(Effect.onError(() => pool.invalidate(connection)))
+          return connection.messages.pipe(
+            Stream.map((message) => messageText(message, decoder)),
+            Stream.tapError(() => pool.invalidate(connection)),
+          )
+        }
+        const webSocket = runtime.webSocket
+        if (!webSocket) {
+          return Stream.fail(
+            transportError("json", "WebSocket JSON transport requires WebSocketExecutor.Service", {
+              url: prepared.url,
+              kind: "websocket",
+            }),
+          )
+        }
         const connection = yield* Effect.acquireRelease(
           webSocket.open({ url: prepared.url, headers: prepared.headers }),
           (connection) => connection.close,
@@ -272,6 +355,11 @@ export const WebSocketExecutor = {
   open,
   fromWebSocket,
   messageText,
+} as const
+
+export const WebSocketPool = {
+  Service: WebSocketPoolService,
+  make: makePool,
 } as const
 
 export const WebSocketTransport = {

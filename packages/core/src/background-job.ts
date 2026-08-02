@@ -29,6 +29,8 @@ type Active = {
   tail: Deferred.Deferred<void>
   promoted: Deferred.Deferred<Info>
   onPromote?: Effect.Effect<void>
+  onAcquire?: Effect.Effect<void>
+  onRelease?: Effect.Effect<void>
 }
 
 type State = {
@@ -40,6 +42,7 @@ type FinishResult = {
   info?: Info
   done?: Deferred.Deferred<Info>
   scope?: Scope.Closeable
+  onRelease?: Effect.Effect<void>
 }
 
 type PromoteResult = {
@@ -49,7 +52,7 @@ type PromoteResult = {
 }
 
 type StartResult =
-  | { kind: "started"; info: Info; scope: Scope.Closeable; token: object }
+  | { kind: "started"; info: Info; scope: Scope.Closeable; token: object; onAcquire?: Effect.Effect<void> }
   | {
       kind: "extended"
       info: Info
@@ -77,6 +80,8 @@ export type StartInput = {
   title?: string
   metadata?: Record<string, unknown>
   onPromote?: Effect.Effect<void>
+  onAcquire?: Effect.Effect<void>
+  onRelease?: Effect.Effect<void>
   run: Effect.Effect<string, unknown>
 }
 
@@ -172,6 +177,8 @@ export const make = Effect.gen(function* () {
       const next = {
         ...job,
         onPromote: undefined,
+        onAcquire: undefined,
+        onRelease: undefined,
         pending: 0,
         output,
         info: {
@@ -182,12 +189,16 @@ export const make = Effect.gen(function* () {
           ...runState,
         },
       }
-      return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+      return [
+        { info: snapshot(next), done: job.done, scope: job.scope, onRelease: job.onRelease },
+        new Map(jobs).set(id, next),
+      ]
     })
     if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
     if (result.scope) {
       yield* Scope.close(result.scope, Exit.void).pipe(Effect.forkIn(state.scope, { startImmediately: true }))
     }
+    if (result.onRelease) yield* result.onRelease.pipe(Effect.ignore)
     return result.info
   })
 
@@ -273,14 +284,17 @@ export const make = Effect.gen(function* () {
               tail,
               promoted,
               onPromote: input.onPromote,
+              onAcquire: input.onAcquire,
+              onRelease: input.onRelease,
             }
-            return [{ kind: "started", info: snapshot(job), scope, token }, new Map(jobs).set(id, job)] as readonly [
-              StartResult,
-              Map<string, Active>,
-            ]
+            return [
+              { kind: "started", info: snapshot(job), scope, token, onAcquire: input.onAcquire },
+              new Map(jobs).set(id, job),
+            ] as readonly [StartResult, Map<string, Active>]
           }),
         )
         if (result.kind === "started") {
+          if (result.onAcquire) yield* result.onAcquire.pipe(Effect.ignore)
           yield* fork(
             result.scope,
             id,
@@ -399,6 +413,8 @@ export const make = Effect.gen(function* () {
       const next = {
         ...job,
         onPromote: undefined,
+        onAcquire: undefined,
+        onRelease: undefined,
         pending: 0,
         info: {
           ...job.info,
@@ -406,10 +422,14 @@ export const make = Effect.gen(function* () {
           completed_at,
         },
       }
-      return [{ info: snapshot(next), done: job.done, scope: job.scope }, new Map(jobs).set(id, next)]
+      return [
+        { info: snapshot(next), done: job.done, scope: job.scope, onRelease: job.onRelease },
+        new Map(jobs).set(id, next),
+      ]
     })
     if (result.info && result.done) yield* Deferred.succeed(result.done, result.info).pipe(Effect.ignore)
     if (result.scope) yield* Scope.close(result.scope, Exit.void)
+    if (result.onRelease) yield* result.onRelease.pipe(Effect.ignore)
     return result.info
   })
 

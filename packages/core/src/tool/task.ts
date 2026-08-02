@@ -15,6 +15,7 @@ import { SessionMessage } from "../session/message"
 import { Prompt } from "../session/prompt"
 import { SessionSchema } from "../session/schema"
 import { SessionStore } from "../session/store"
+import { SubagentPermit } from "../session/subagent-permit"
 import { TaskNotification } from "../session/task-notification"
 import { TaskCancellation } from "../session/task-cancellation"
 import { TaskSubmission } from "../session/task-submission"
@@ -129,6 +130,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const config = yield* Config.Service
       const execution = yield* SessionExecution.Service
       const permission = yield* PermissionV2.Service
+      const permits = yield* SubagentPermit.Service
       const progress = yield* ToolProgress.Service
       const sessions = yield* SessionStore.Service
       const notifications = yield* TaskNotification.Service
@@ -203,6 +205,11 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           }))
         if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
         if (model) yield* commands.switchModel({ sessionID: child.id, model })
+
+        const limit = Config.latest(yield* config.entries(), "subagent_max_concurrency")
+        const reservation = yield* permits.acquire(child.id).pipe(
+          Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })),
+        )
 
         const baseMetadata = {
           parentSessionId: context.sessionID,
@@ -331,6 +338,8 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           title: input.description,
           metadata,
           onPromote: checkpoint(backgroundMetadata),
+          onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
+          onRelease: permits.release(child.id),
           run: runTask,
         })
 
@@ -412,6 +421,12 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               }),
             })
           }),
+          // The job-scope onRelease owns the permit for the background path; the
+          // foreground path releases explicitly once the observed task settles
+          // (never while it keeps running in the background after promotion).
+          Effect.tap((result) =>
+            "background" in result.metadata ? Effect.void : permits.release(child.id),
+          ),
           Effect.onInterrupt(() => background.cancel(child.id).pipe(Effect.asVoid)),
         )
       })
@@ -449,6 +464,7 @@ const deps = [
   SessionCommand.node,
   SessionExecution.node,
   SessionStore.node,
+  SubagentPermit.node,
   TaskCancellation.node,
   TaskNotification.node,
   TaskSubmission.node,

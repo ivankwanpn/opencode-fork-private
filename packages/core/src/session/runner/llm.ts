@@ -12,6 +12,7 @@ import {
   isContextOverflowFailure,
   type ProviderErrorEvent,
 } from "@opencode-ai/llm"
+import { WebSocketPool } from "@opencode-ai/llm/route"
 import type { UserMessage } from "@opencode-ai/sdk/v2/types"
 import { Cause, Clock, DateTime, Effect, FiberSet, Layer, Option, Semaphore, Stream } from "effect"
 import { AgentV2 } from "../../agent"
@@ -45,6 +46,7 @@ import { SessionInput } from "../input"
 import { SessionReminder } from "../reminder"
 import { SessionSchema } from "../schema"
 import { SessionStore } from "../store"
+import { SessionStopHook } from "../stop-hook"
 import { type RunError, Service } from "./index"
 import { SessionRunnerModel } from "./model"
 import { SessionRunnerRequestPolicy } from "./request-policy"
@@ -268,9 +270,11 @@ const layer = Layer.effect(
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
       step: number,
-      recoverOverflow?: typeof compaction.compactAfterOverflow,
-      physical: PhysicalAttempt = { attempt: 1 },
+      recoverOverflow: typeof compaction.compactAfterOverflow | undefined,
+      physical: PhysicalAttempt | undefined,
+      stopBlockCount: PluginRuntime.Mutable<number>["value"],
     ) {
+      const physicalAttempt: PhysicalAttempt = physical ?? { attempt: 1 }
       const session = yield* getSession(sessionID)
       if (session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID)
         return yield* Effect.interrupt
@@ -515,8 +519,8 @@ const layer = Layer.effect(
         attemptID,
         assistantMessageID,
         timestamp: yield* DateTime.now,
-        attempt: physical.attempt,
-        retryOf: physical.retryOf,
+        attempt: physicalAttempt.attempt,
+        retryOf: physicalAttempt.retryOf,
       })
       const publisher = createLLMEventPublisher(events, {
         sessionID: session.id,
@@ -597,7 +601,7 @@ const layer = Layer.effect(
               if (
                 event.retryable === true &&
                 !publisher.hasAssistantStarted() &&
-                physical.attempt < MAX_PROVIDER_ATTEMPTS
+                physicalAttempt.attempt < MAX_PROVIDER_ATTEMPTS
               ) {
                 retryableProviderFailure = event
                 return
@@ -688,12 +692,12 @@ const layer = Layer.effect(
             retryableProviderFailure ??
             (llmFailure?.retryable === true &&
             !publisher.hasAssistantStarted() &&
-            physical.attempt < MAX_PROVIDER_ATTEMPTS
+            physicalAttempt.attempt < MAX_PROVIDER_ATTEMPTS
               ? llmFailure
               : undefined)
           if (retryableFailure) {
             const delay = retryDelay(
-              physical.attempt,
+              physicalAttempt.attempt,
               retryableFailure instanceof LLMError ? retryableFailure : undefined,
             )
             const now = yield* Clock.currentTimeMillis
@@ -701,7 +705,7 @@ const layer = Layer.effect(
               sessionID: session.id,
               attemptID,
               timestamp: DateTime.makeUnsafe(now),
-              attempt: physical.attempt + 1,
+              attempt: physicalAttempt.attempt + 1,
               next: DateTime.makeUnsafe(now + delay),
               error: retryError(retryableFailure),
             })
@@ -709,7 +713,7 @@ const layer = Layer.effect(
             yield* restore(Effect.sleep(delay))
             return yield* Effect.die(
               retryProvider(currentStep, {
-                attempt: physical.attempt + 1,
+                attempt: physicalAttempt.attempt + 1,
                 retryOf: attemptID,
               }),
             )
@@ -791,7 +795,7 @@ const layer = Layer.effect(
             yield* withPublication(publisher.failUnsettledTools("Tool execution interrupted"))
           if (stream._tag === "Success" && !publisher.hasProviderError())
             yield* withPublication(publisher.failUnsettledTools("Provider did not return a tool result", true))
-          const continuation =
+          let continuation =
             stream._tag === "Success" &&
             !interrupted &&
             !publisher.hasProviderError() &&
@@ -811,6 +815,38 @@ const layer = Layer.effect(
                 ? "Model did not produce structured output"
                 : llmFailure?.reason.message,
           )
+          if (!continuation && stream._tag === "Success" && !publisher.hasProviderError()) {
+            const lastStored = yield* store.message(assistantMessageID)
+            const lastText =
+              lastStored?.sessionID === session.id && lastStored.message.type === "assistant"
+                ? lastStored.message.content
+                    .filter((part): part is SessionMessage.AssistantText => part.type === "text")
+                    .map((part) => part.text)
+                    .join("")
+                : undefined
+            const stop = yield* SessionStopHook.evaluateStopHooks({
+              lastAssistantMessage: lastText,
+              blockCount: stopBlockCount.get(),
+              // Main-agent turns fire `session.stop`; only subagent turns select
+              // `session.subagent.stop` (the subagent id is otherwise always defined).
+              agent: agent.info?.mode === "subagent" ? agent.id : undefined,
+            }).pipe(Effect.provideService(PluginRuntime.Service, plugins))
+            if (stop.action === "continue" && stop.continuation && stop.continuation.length > 0) {
+              stopBlockCount.update((value) => value + 1)
+              // Admission is advisory: a cancelled session, missing session, or conflicting input
+              // must not fail the provider turn, so degrade to ending the turn on any failure.
+              continuation = yield* commands
+                .admitSynthetic({
+                  sessionID: session.id,
+                  text: stop.continuation.map((fragment) => fragment.text).join("\n"),
+                  description: "stop hook continuation",
+                })
+                .pipe(
+                  Effect.as(true),
+                  Effect.catchCause(() => Effect.succeed(false)),
+                )
+            }
+          }
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (settled._tag === "Failure" && Cause.hasInterrupts(settled.cause))
             return yield* Effect.failCause(settled.cause)
@@ -822,11 +858,18 @@ const layer = Layer.effect(
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
       step: number,
-      physical?: PhysicalAttempt,
+      physical: PhysicalAttempt | undefined,
+      stopBlockCount: PluginRuntime.Mutable<number>["value"],
     ) => Effect.Effect<{ readonly needsContinuation: boolean; readonly step: number }, RunError>
 
-    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, physical) {
-      return yield* runTurnAttempt(sessionID, promotion, step, undefined, physical).pipe(
+    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (
+      sessionID,
+      promotion,
+      step,
+      physical,
+      stopBlockCount,
+    ) {
+      return yield* runTurnAttempt(sessionID, promotion, step, undefined, physical, stopBlockCount).pipe(
         Effect.catchDefect(
           Effect.fnUntraced(function* (defect) {
             if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
@@ -839,24 +882,38 @@ const layer = Layer.effect(
                 undefined,
                 defect.transition.step,
                 defect.transition.physical,
+                stopBlockCount,
               )
-            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, physical)
+            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, physical, stopBlockCount)
           }),
         ),
       )
     })
 
-    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, physical) {
-      return yield* runTurnAttempt(sessionID, promotion, step, compaction.compactAfterOverflow, physical).pipe(
+    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, physical, stopBlockCount) {
+      return yield* runTurnAttempt(
+        sessionID,
+        promotion,
+        step,
+        compaction.compactAfterOverflow,
+        physical,
+        stopBlockCount,
+      ).pipe(
         Effect.catchDefect(
           Effect.fnUntraced(function* (defect) {
             if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
             yield* Effect.yieldNow
             if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step)
+              return yield* runAfterOverflowCompaction(
+                sessionID,
+                undefined,
+                defect.transition.step,
+                undefined,
+                stopBlockCount,
+              )
             if (defect.transition._tag === "RetryProvider")
-              return yield* runTurn(sessionID, undefined, defect.transition.step, defect.transition.physical)
-            return yield* runTurn(sessionID, undefined, defect.transition.step, physical)
+              return yield* runTurn(sessionID, undefined, defect.transition.step, defect.transition.physical, stopBlockCount)
+            return yield* runTurn(sessionID, undefined, defect.transition.step, physical, stopBlockCount)
           }),
         ),
       )
@@ -932,14 +989,31 @@ const layer = Layer.effect(
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
-        while (needsContinuation) {
-          const result = yield* runTurn(input.sessionID, promotion, step, initialPhysical)
-          initialPhysical = undefined
-          needsContinuation = result.needsContinuation
-          step = result.step + 1
-          promotion = "steer"
-          if (!needsContinuation) needsContinuation = yield* SessionInput.hasPending(db, input.sessionID, "steer")
-        }
+        // One pool per turn: every `needsContinuation` iteration of the same
+        // turn reuses the pooled Responses WebSocket connection (keyed by url +
+        // headers) instead of opening and closing a socket per provider request.
+        // The pool only takes effect when the route is the WebSocket transport
+        // and a WebSocket executor is available; every other route never reads
+        // it. `closeAll` runs when the turn region ends, including on failure
+        // or interruption.
+        const pool = yield* WebSocketPool.make()
+        // Fresh per-turn cap: a drain spans multiple turns when queued inputs are
+        // promoted, and each turn owns its stop-hook block budget. The counter is
+        // shared across every provider attempt within this one turn so a hook that
+        // keeps returning "continue" is still capped at MAX_BLOCKS_PER_TURN.
+        const stopBlockCount = PluginRuntime.mutable(0)
+        yield* Effect.gen(function* () {
+          while (needsContinuation) {
+            const result = yield* runTurn(input.sessionID, promotion, step, initialPhysical, stopBlockCount.value).pipe(
+              Effect.provideService(WebSocketPool.Service, pool),
+            )
+            initialPhysical = undefined
+            needsContinuation = result.needsContinuation
+            step = result.step + 1
+            promotion = "steer"
+            if (!needsContinuation) needsContinuation = yield* SessionInput.hasPending(db, input.sessionID, "steer")
+          }
+        }).pipe(Effect.ensuring(pool.closeAll))
         shouldRun = yield* SessionInput.hasPending(db, input.sessionID, "queue")
         promotion = shouldRun ? "queue" : undefined
       }

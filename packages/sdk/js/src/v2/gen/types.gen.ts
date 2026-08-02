@@ -12666,6 +12666,7 @@ export type V2SessionPromptData = {
     prompt: PromptInput
     model?: ModelRef
     delivery?: "steer" | "queue"
+    expectedActiveAttemptID?: string
     resume?: boolean
   }
   path: {
@@ -12949,6 +12950,7 @@ export type V2SessionCommandData = {
     model?: ModelRef
     files?: Array<PromptInputFileAttachment>
     delivery?: "steer" | "queue"
+    expectedActiveAttemptID?: string
     resume?: boolean
     commit?: boolean
   }

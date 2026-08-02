@@ -30,4 +30,5 @@ export interface TransportPrepareInput<Body> {
 }
 
 export * as HttpTransport from "./http"
-export { WebSocketExecutor, WebSocketTransport } from "./websocket"
+export { WebSocketExecutor, WebSocketPool, WebSocketTransport } from "./websocket"
+export type { WebSocketConnection, WebSocketPoolKey } from "./websocket"

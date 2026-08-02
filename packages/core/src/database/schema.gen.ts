@@ -269,6 +269,7 @@ export default {
           \`description\` text NOT NULL,
           \`prompt\` text NOT NULL,
           \`agent\` text NOT NULL,
+          \`agent_path\` text,
           \`model\` text,
           \`status\` text NOT NULL,
           \`outcome\` text,

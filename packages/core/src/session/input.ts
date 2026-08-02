@@ -146,6 +146,7 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
     readonly prompt: Prompt
     readonly synthetic?: Synthetic
     readonly delivery: Delivery
+    readonly expectedActiveAttemptID?: EventV2.ID
     readonly commit?: (seq: number) => Effect.Effect<void>
   },
 ) {

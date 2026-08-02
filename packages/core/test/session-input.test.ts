@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { asc, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import { DateTime, Effect } from "effect"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -10,13 +10,15 @@ import { Project } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { SessionCommand } from "@opencode-ai/core/session/command"
+import { SessionAttempt } from "@opencode-ai/core/session/attempt"
+import { ActiveAttemptConflictError, SessionCommand } from "@opencode-ai/core/session/command"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Prompt } from "@opencode-ai/core/session/prompt"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionInputTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { testEffect } from "./lib/effect"
@@ -158,6 +160,105 @@ describe("SessionInput", () => {
       })
       expect(typeof row?.time).toBe("number")
       expect(row?.seq).toBe(cancelledSeq)
+    }),
+  )
+
+  inputIt.effect("rejects a stale expected active attempt id with ActiveAttemptConflictError", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionSchema.ID.make("ses_attempt_target")
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "attempt-target",
+          directory: "/project",
+          title: "attempt-target",
+          version: "test",
+        })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
+      const events = yield* EventV2.Service
+      const attemptID = EventV2.ID.make("evt_attempt_1")
+      const assistantMessageID = SessionMessage.ID.create()
+      yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+        sessionID,
+        attemptID,
+        assistantMessageID,
+        timestamp: yield* DateTime.now,
+        attempt: 1,
+      })
+      // advance the attempt so expectedAttemptID is stale
+      yield* events.publish(SessionEvent.ProviderAttempt.Ended, {
+        sessionID,
+        attemptID,
+        assistantMessageID,
+        timestamp: yield* DateTime.now,
+        outcome: "completed",
+        continuation: false,
+      })
+      yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+        sessionID,
+        attemptID: EventV2.ID.make("evt_attempt_2"),
+        assistantMessageID: SessionMessage.ID.create(),
+        timestamp: yield* DateTime.now,
+        attempt: 2,
+      })
+      const conflictMessageID = SessionMessage.ID.create()
+      const conflict = yield* SessionInput.admit(db, events, {
+        id: conflictMessageID,
+        sessionID,
+        prompt: Prompt.make({ text: "steer" }),
+        delivery: "steer",
+        expectedActiveAttemptID: attemptID,
+        commit: (seq) =>
+          SessionAttempt.get(db, sessionID).pipe(
+            Effect.flatMap((row) =>
+              row?.attempt_id === attemptID
+                ? Effect.void
+                : Effect.die(
+                    new ActiveAttemptConflictError({
+                      sessionID,
+                      attemptID: row?.attempt_id ?? EventV2.ID.make(""),
+                      expectedAttemptID: attemptID,
+                    }),
+                  ),
+            ),
+          ),
+      }).pipe(Effect.catchDefect((defect) => Effect.succeed(defect)))
+      expect(conflict).toBeInstanceOf(ActiveAttemptConflictError)
+      // The stale-attempt conflict runs inside the EventV2 transaction, so the
+      // rolled-back admission must leave no durable state behind: neither a
+      // session_input row nor a PromptAdmitted event for the message id.
+      const inputRow = yield* db
+        .select({ id: SessionInputTable.id })
+        .from(SessionInputTable)
+        .where(eq(SessionInputTable.id, conflictMessageID))
+        .get()
+        .pipe(Effect.orDie)
+      expect(inputRow).toBeUndefined()
+      const admittedEvents = yield* db
+        .select({ data: EventTable.data })
+        .from(EventTable)
+        .where(
+          and(
+            eq(EventTable.type, EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1)),
+            eq(EventTable.aggregate_id, sessionID),
+          ),
+        )
+        .all()
+        .pipe(Effect.orDie)
+      expect(
+        admittedEvents.some((event) => (event.data as { messageID?: unknown }).messageID === conflictMessageID),
+      ).toBe(false)
     }),
   )
 })

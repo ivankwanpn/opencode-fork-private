@@ -750,6 +750,7 @@ export type SessionsPromptInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
   }["id"]
   readonly prompt: {
@@ -789,6 +790,7 @@ export type SessionsPromptInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
   }["prompt"]
   readonly model?: {
@@ -828,6 +830,7 @@ export type SessionsPromptInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
   }["model"]
   readonly delivery?: {
@@ -867,8 +870,49 @@ export type SessionsPromptInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
   }["delivery"]
+  readonly expectedActiveAttemptID?: {
+    readonly id?: string | null
+    readonly prompt: {
+      readonly text: string
+      readonly context?: ReadonlyArray<{
+        readonly text: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+      }>
+      readonly files?: ReadonlyArray<{
+        readonly uri: string
+        readonly mime?: string
+        readonly name?: string
+        readonly description?: string
+        readonly source?: { readonly start: number; readonly end: number; readonly text: string }
+        readonly resource?: { readonly clientName: string; readonly uri: string }
+      }>
+      readonly agents?: ReadonlyArray<{
+        readonly name: string
+        readonly source?: { readonly start: number; readonly end: number; readonly text: string }
+      }>
+      readonly system?: string
+      readonly tools?: { readonly [x: string]: boolean }
+      readonly format?:
+        | { readonly type: "text" }
+        | {
+            readonly type: "json_schema"
+            readonly schema: { readonly [x: string]: JsonValue }
+            readonly retryCount?: number
+          }
+    }
+    readonly model?: {
+      readonly id: string
+      readonly providerID: string
+      readonly variant?: string
+      readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
+    } | null
+    readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
+    readonly resume?: boolean | null
+  }["expectedActiveAttemptID"]
   readonly resume?: {
     readonly id?: string | null
     readonly prompt: {
@@ -906,6 +950,7 @@ export type SessionsPromptInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
   }["resume"]
 }
@@ -1157,6 +1202,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["id"]
@@ -1180,6 +1226,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["command"]
@@ -1203,6 +1250,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["arguments"]
@@ -1226,6 +1274,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["agent"]
@@ -1249,6 +1298,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["model"]
@@ -1272,6 +1322,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["files"]
@@ -1295,9 +1346,34 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["delivery"]
+  readonly expectedActiveAttemptID?: {
+    readonly id?: string | null
+    readonly command: string
+    readonly arguments: string
+    readonly agent?: string | null
+    readonly model?: {
+      readonly id: string
+      readonly providerID: string
+      readonly variant?: string
+      readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
+    } | null
+    readonly files?: ReadonlyArray<{
+      readonly uri: string
+      readonly mime?: string
+      readonly name?: string
+      readonly description?: string
+      readonly source?: { readonly start: number; readonly end: number; readonly text: string }
+      readonly resource?: { readonly clientName: string; readonly uri: string }
+    }> | null
+    readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
+    readonly resume?: boolean | null
+    readonly commit?: boolean | null
+  }["expectedActiveAttemptID"]
   readonly resume?: {
     readonly id?: string | null
     readonly command: string
@@ -1318,6 +1394,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["resume"]
@@ -1341,6 +1418,7 @@ export type SessionsCommandInput = {
       readonly resource?: { readonly clientName: string; readonly uri: string }
     }> | null
     readonly delivery?: "steer" | "queue" | null
+    readonly expectedActiveAttemptID?: string | null
     readonly resume?: boolean | null
     readonly commit?: boolean | null
   }["commit"]

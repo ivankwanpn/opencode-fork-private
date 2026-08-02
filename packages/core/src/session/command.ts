@@ -19,6 +19,7 @@ import { ProjectV2 } from "../project"
 import { ProviderV2 } from "../provider"
 import { ProjectTable } from "../project/sql"
 import { WorkspaceV2 } from "../workspace"
+import { SessionAttempt } from "./attempt"
 import { SessionEvent } from "./event"
 import { fromRow } from "./info"
 import { SessionInput } from "./input"
@@ -38,6 +39,15 @@ export class PromptConflictError extends Schema.TaggedErrorClass<PromptConflictE
   sessionID: SessionSchema.ID,
   messageID: SessionMessage.ID,
 }) {}
+
+export class ActiveAttemptConflictError extends Schema.TaggedErrorClass<ActiveAttemptConflictError>()(
+  "Session.ActiveAttemptConflictError",
+  {
+    sessionID: SessionSchema.ID,
+    attemptID: EventV2.ID,
+    expectedAttemptID: EventV2.ID,
+  },
+) {}
 
 export class Cancelled extends Schema.TaggedErrorClass<Cancelled>()("Session.Cancelled", {
   sessionID: SessionSchema.ID,
@@ -77,11 +87,12 @@ export interface Interface {
     sessionID: SessionSchema.ID
     prompt: PromptInput.Prompt
     delivery?: SessionInput.Delivery
+    expectedActiveAttemptID?: EventV2.ID
     plugins?: PluginRuntime.Interface
     agent?: AgentV2.ID
     model?: ModelV2.Ref
     materialize?: (prompt: Prompt, activeAgent?: AgentV2.ID) => Effect.Effect<Prompt>
-  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError>
+  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | ActiveAttemptConflictError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionCommand") {}
@@ -334,16 +345,38 @@ const layer = Layer.effect(
                 prompt,
                 delivery,
               }
+              const expectedActiveAttemptID = input.expectedActiveAttemptID
+              const commit = expectedActiveAttemptID
+                ? (seq: number) =>
+                    SessionAttempt.get(db, input.sessionID).pipe(
+                      Effect.flatMap((row) =>
+                        row?.attempt_id === expectedActiveAttemptID
+                          ? Effect.void
+                          : Effect.die(
+                              new ActiveAttemptConflictError({
+                                sessionID: input.sessionID,
+                                attemptID: row?.attempt_id ?? EventV2.ID.make(""),
+                                expectedAttemptID: expectedActiveAttemptID,
+                              }),
+                            ),
+                      ),
+                    )
+                : undefined
               admitted = yield* SessionInput.admit(db, events, {
                 id: messageID,
                 sessionID: input.sessionID,
                 prompt,
                 delivery,
+                expectedActiveAttemptID,
+                commit,
               }).pipe(
-                Effect.catchDefect((defect) =>
-                  defect instanceof SessionInput.LifecycleConflict
-                    ? new PromptConflictError({ sessionID: input.sessionID, messageID })
-                    : Effect.die(defect),
+                Effect.catchDefect(
+                  (defect): Effect.Effect<never, ActiveAttemptConflictError | PromptConflictError> =>
+                    defect instanceof ActiveAttemptConflictError
+                      ? Effect.fail(defect)
+                      : defect instanceof SessionInput.LifecycleConflict
+                        ? Effect.fail(new PromptConflictError({ sessionID: input.sessionID, messageID }))
+                        : Effect.die(defect),
                 ),
               )
               if (!SessionInput.equivalent(admitted, expected))

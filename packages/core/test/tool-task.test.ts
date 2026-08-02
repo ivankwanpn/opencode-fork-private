@@ -173,13 +173,24 @@ const agentLayer = Layer.succeed(
   } as unknown as AgentV2.Interface),
 )
 
-const configLayer = Layer.succeed(
-  Config.Service,
-  Config.Service.of({
-    entries: () =>
-      Effect.succeed([new Config.Document({ type: "document", info: new Config.Info({ subagent_depth: depth }) })]),
-  }),
-)
+const makeConfigLayer = (maxConcurrency?: number) =>
+  Layer.succeed(
+    Config.Service,
+    Config.Service.of({
+      entries: () =>
+        Effect.succeed([
+          new Config.Document({
+            type: "document",
+            info: new Config.Info({
+              subagent_depth: depth,
+              ...(maxConcurrency === undefined ? {} : { subagent_max_concurrency: maxConcurrency }),
+            }),
+          }),
+        ]),
+    }),
+  )
+
+const configLayer = makeConfigLayer()
 
 const permissionLayer = Layer.succeed(
   PermissionV2.Service,
@@ -426,6 +437,7 @@ const makeLayer = (background: boolean, replacements: LayerNode.Replacements = [
 
 const foreground = testEffect(makeLayer(false))
 const background = testEffect(makeLayer(true))
+const foregroundLimited = testEffect(makeLayer(false, [[Config.node, makeConfigLayer(2)]]))
 const foregroundFastCompletion = testEffect(
   makeLayer(false, [
     [
@@ -633,6 +645,36 @@ describe("TaskTool", () => {
         { type: "error", value: "Permission denied: task general" },
       )
       expect(createCount).toBe(0)
+    }),
+  )
+
+  foregroundLimited.effect("rejects a third concurrent child when the config limit is exceeded", () =>
+    Effect.gen(function* () {
+      reset()
+      const release = yield* Deferred.make<void>()
+      const twoStarted = yield* Deferred.make<void>()
+      let startedCount = 0
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          startedCount++
+          if (startedCount === 2) yield* Deferred.succeed(twoStarted, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "limited result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const first = yield* executeTool(registry, call(input, "call-limit-1")).pipe(Effect.forkScoped)
+      const second = yield* executeTool(registry, call(input, "call-limit-2")).pipe(Effect.forkScoped)
+      yield* Deferred.await(twoStarted)
+
+      expect(yield* executeTool(registry, call(input, "call-limit-3"))).toEqual({
+        type: "error",
+        value: "Subagent concurrency limit reached",
+      })
+
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(first)
+      yield* Fiber.join(second)
     }),
   )
 

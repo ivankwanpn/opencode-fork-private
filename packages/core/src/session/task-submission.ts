@@ -6,6 +6,7 @@ import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { Identifier } from "../id/id"
 import { makeGlobalNode } from "../effect/app-node"
+import { Hash } from "../util/hash"
 import { Prompt } from "./prompt"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
@@ -23,6 +24,7 @@ export type Invocation = Identity & {
   readonly childSessionID: SessionSchema.ID
   readonly description: string
   readonly agent: string
+  readonly agentPath?: string
   readonly model?: unknown
 }
 
@@ -38,6 +40,7 @@ export type Info = {
   readonly description: string
   readonly prompt: Prompt
   readonly agent: string
+  readonly agentPath?: string
   readonly model?: unknown
   readonly status: "accepted" | "running" | "completed" | "error" | "cancelled" | "recovery-required"
   readonly outcome?: Outcome
@@ -121,6 +124,7 @@ const toInfo = (row: typeof TaskSubmissionTable.$inferSelect): Info => ({
   description: row.description,
   prompt: Schema.decodeUnknownSync(Prompt)(row.prompt),
   agent: row.agent,
+  ...(row.agent_path === null ? {} : { agentPath: row.agent_path }),
   ...(row.model === null ? {} : { model: row.model }),
   status: row.status,
   ...(row.outcome === null ? {} : { outcome: row.outcome }),
@@ -245,6 +249,7 @@ const layer = Layer.effect(
               description: input.description,
               prompt: input.prompt,
               agent: input.agent,
+              agent_path: input.agentPath,
               model: input.model,
               status: "accepted",
               time_created: timeCreated,
@@ -513,6 +518,7 @@ function matches(existing: Info, input: Invocation) {
     existing.childSessionID === input.childSessionID &&
     existing.description === input.description &&
     existing.agent === input.agent &&
+    existing.agentPath === input.agentPath &&
     serializedModel(existing.model) === serializedModel(input.model) &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )
@@ -540,11 +546,10 @@ function findCompletedAssistant(
     .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
     .find(
       (message): message is SessionMessage.Assistant =>
-        message.type === "assistant" &&
-        message.time.completed !== undefined,
+        message.type === "assistant" && message.time.completed !== undefined,
     )
 }
 
 function digest(value: string) {
-  return new Bun.CryptoHasher("sha256").update(value).digest("hex").slice(0, 32)
+  return Hash.sha256(value).slice(0, 32)
 }

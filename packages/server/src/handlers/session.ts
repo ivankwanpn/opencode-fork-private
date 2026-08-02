@@ -339,6 +339,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 prompt: ctx.payload.prompt,
                 model: ctx.payload.model,
                 delivery: ctx.payload.delivery,
+                expectedActiveAttemptID: ctx.payload.expectedActiveAttemptID,
                 resume: ctx.payload.resume,
               })
               .pipe(
@@ -355,6 +356,14 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                     new ConflictError({
                       message: `Prompt message ID conflicts with an existing durable record: ${error.messageID}`,
                       resource: error.messageID,
+                    }),
+                  ),
+                ),
+                Effect.catchTag("Session.ActiveAttemptConflictError", (error) =>
+                  Effect.fail(
+                    new ConflictError({
+                      message: `Active provider attempt changed since steer submission: expected ${error.expectedAttemptID}, found ${error.attemptID}`,
+                      resource: error.sessionID,
                     }),
                   ),
                 ),
@@ -563,6 +572,14 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                     new ConflictError({
                       message: `Command message ID conflicts with an existing durable record: ${error.messageID}`,
                       resource: error.messageID,
+                    }),
+                  ),
+                ),
+                Effect.catchTag("Session.ActiveAttemptConflictError", (error) =>
+                  Effect.fail(
+                    new ConflictError({
+                      message: `Active provider attempt changed since command submission: expected ${error.expectedAttemptID}, found ${error.attemptID}`,
+                      resource: error.sessionID,
                     }),
                   ),
                 ),

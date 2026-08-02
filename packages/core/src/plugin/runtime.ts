@@ -19,6 +19,8 @@ export const HookName = {
   toolDefinition: "tool.definition",
   commandExecuteBefore: "command.execute.before",
   providerSmallModel: "provider.small-model",
+  sessionStop: "session.stop",
+  sessionSubagentStop: "session.subagent.stop",
 } as const
 
 export type HookName = (typeof HookName)[keyof typeof HookName]

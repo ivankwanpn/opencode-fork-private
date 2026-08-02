@@ -38,6 +38,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { Snapshot } from "@opencode-ai/core/snapshot"
 import { ContextSnapshotDecodeError } from "@opencode-ai/core/session/error"
 import { SessionEvent } from "@opencode-ai/core/session/event"
+import { ActiveAttemptConflictError } from "@opencode-ai/core/session/command"
 import { SessionAttempt } from "@opencode-ai/core/session/attempt"
 import { SessionAttachment } from "@opencode-ai/core/session/attachment"
 import { AssistantErrorCodec } from "@opencode-ai/core/session/assistant-error-codec"
@@ -74,6 +75,7 @@ import {
   SessionTable,
 } from "@opencode-ai/core/session/sql"
 import { SessionStore } from "@opencode-ai/core/session/store"
+import { type StopHookEvent } from "@opencode-ai/core/session/stop-hook"
 import { SystemContext } from "@opencode-ai/core/system-context"
 import { SystemContextRegistry } from "@opencode-ai/core/system-context/registry"
 import { SkillGuidance } from "@opencode-ai/core/skill/guidance"
@@ -1048,6 +1050,24 @@ describe("SessionRunnerLLM", () => {
       expect(Exit.isFailure(exit)).toBe(true)
       if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(ContextSnapshotDecodeError)
       expect(requests).toHaveLength(0)
+    }),
+  )
+
+  it.effect("rejects a steer targeting a finished provider attempt", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "First" }), resume: false })
+      yield* session.resume(sessionID)
+      const stale = EventV2.ID.create()
+      const error = yield* session
+        .prompt({
+          sessionID,
+          prompt: Prompt.make({ text: "Steer to stale attempt" }),
+          expectedActiveAttemptID: stale,
+        })
+        .pipe(Effect.flip)
+      expect(error).toBeInstanceOf(ActiveAttemptConflictError)
     }),
   )
 
@@ -5101,6 +5121,72 @@ describe("SessionRunnerLLM", () => {
       expect(yield* session.resume(sessionID).pipe(Effect.catchDefect(Effect.succeed))).toBe(
         "Tool input delta before start: call-1",
       )
+    }),
+  )
+
+  it.effect("fires the session.stop hook when a main-agent turn ends", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      let stopHookFired = 0
+      let subagentStopHookFired = 0
+      yield* pluginBase.hook(PluginRuntime.HookName.sessionStop, (event: StopHookEvent) => {
+        stopHookFired++
+        event.outcome.set({ action: "stop" })
+      })
+      yield* pluginBase.hook(PluginRuntime.HookName.sessionSubagentStop, (event: StopHookEvent) => {
+        subagentStopHookFired++
+        event.outcome.set({ action: "stop" })
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Finish" }), resume: false })
+
+      requests.length = 0
+      response = fragmentFixture("text", "text-stop-hook", ["Done"]).completeEvents
+      yield* session.resume(sessionID)
+
+      expect(stopHookFired).toBe(1)
+      expect(subagentStopHookFired).toBe(0)
+      expect(requests).toHaveLength(1)
+    }),
+  )
+
+  it.effect("fires the session.subagent.stop hook when a subagent turn ends", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const agent = yield* AgentV2.Service
+      yield* agent.transform((editor) =>
+        editor.update(AgentV2.ID.make("reviewer"), (agent) => {
+          agent.system = "Subagent instructions"
+          agent.mode = "subagent"
+        }),
+      )
+      yield* db
+        .update(SessionTable)
+        .set({ agent: "reviewer" })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie)
+      const session = yield* SessionV2.Service
+      let stopHookFired = 0
+      let subagentStopHookFired = 0
+      yield* pluginBase.hook(PluginRuntime.HookName.sessionStop, (event: StopHookEvent) => {
+        stopHookFired++
+        event.outcome.set({ action: "stop" })
+      })
+      yield* pluginBase.hook(PluginRuntime.HookName.sessionSubagentStop, (event: StopHookEvent) => {
+        subagentStopHookFired++
+        event.outcome.set({ action: "stop" })
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Finish" }), resume: false })
+
+      requests.length = 0
+      response = fragmentFixture("text", "text-subagent-stop", ["Done"]).completeEvents
+      yield* session.resume(sessionID)
+
+      expect(subagentStopHookFired).toBe(1)
+      expect(stopHookFired).toBe(0)
+      expect(requests).toHaveLength(1)
     }),
   )
 })

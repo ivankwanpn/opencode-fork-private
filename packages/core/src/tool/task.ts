@@ -1,7 +1,7 @@
 export * as TaskTool from "./task"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Cause, Effect, Layer, Schema } from "effect"
+import { Cause, Effect, Layer, Ref, Schema } from "effect"
 import { AgentV2 } from "../agent"
 import { BackgroundJob } from "../background-job"
 import { Config } from "../config"
@@ -15,6 +15,7 @@ import { SessionMessage } from "../session/message"
 import { Prompt } from "../session/prompt"
 import { SessionSchema } from "../session/schema"
 import { SessionStore } from "../session/store"
+import { SubagentPermit } from "../session/subagent-permit"
 import { TaskNotification } from "../session/task-notification"
 import { TaskCancellation } from "../session/task-cancellation"
 import { TaskSubmission } from "../session/task-submission"
@@ -129,6 +130,13 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const config = yield* Config.Service
       const execution = yield* SessionExecution.Service
       const permission = yield* PermissionV2.Service
+      // The permit budget is built from the location config at layer construction so the
+      // configured `subagent_max_concurrency` actually bounds concurrent child sessions.
+      // It is location-scoped, not per parent: every parent session in the location shares
+      // the same budget.
+      const permits = yield* SubagentPermit.make({
+        limit: Config.latest(yield* config.entries(), "subagent_max_concurrency"),
+      })
       const progress = yield* ToolProgress.Service
       const sessions = yield* SessionStore.Service
       const notifications = yield* TaskNotification.Service
@@ -136,6 +144,24 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const submissions = yield* TaskSubmission.Service
       const tools = yield* Tools.Service
       const allowBackground = options.background ?? Flag.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+
+      const computeAgentPath = Effect.fn("TaskTool.computeAgentPath")(function* (session: SessionSchema.Info) {
+        const chain = [session]
+        let current = session
+        while (current.parentID) {
+          const ancestor = yield* sessions.get(current.parentID)
+          if (!ancestor) return yield* new ToolFailure({ message: `Session not found: ${current.parentID}` })
+          chain.push(ancestor)
+          current = ancestor
+        }
+        let path = "/root"
+        for (const entry of chain.reverse()) {
+          if (entry.parentID === undefined) continue
+          if (!entry.agent) return yield* new ToolFailure({ message: `Session has no agent: ${entry.id}` })
+          path = `${path}/${entry.agent}`
+        }
+        return path
+      })
 
       const execute = Effect.fn("TaskTool.execute")(function* (input: typeof Input.Type, context: Tool.Context) {
         const runInBackground = input.background === true
@@ -204,6 +230,14 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
         if (model) yield* commands.switchModel({ sessionID: child.id, model })
 
+        const reservation = yield* permits.acquire(child.id).pipe(
+          Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })),
+        )
+        // Until background.start succeeds and the job record owns the permit, a
+        // failure (submit conflict, checkpoint, interrupt) must release the
+        // reservation or the key leaks out of the concurrency budget forever.
+        const ownedByJob = yield* Ref.make(false)
+
         const baseMetadata = {
           parentSessionId: context.sessionID,
           sessionId: child.id,
@@ -220,26 +254,8 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             structured: { title: input.description, metadata: next },
             content: text ? [{ type: "text", text }] : [],
           })
-        yield* checkpoint(metadata)
 
-        const submission = yield* submissions
-          .submit({
-            parentSessionID: context.sessionID,
-            assistantMessageID: context.assistantMessageID,
-            toolCallID: context.toolCallID,
-            childSessionID: child.id,
-            description: input.description,
-            prompt: Prompt.make({ text: input.prompt }),
-            agent: agent.id,
-            model,
-          })
-          .pipe(
-            Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>
-              Effect.fail(new ToolFailure({ message: `Task invocation conflict: ${error.toolCallID}` })),
-            ),
-          )
-
-        const runTask = Effect.gen(function* () {
+        const runTask = (submission: TaskSubmission.Info) => Effect.gen(function* () {
           const claim = yield* submissions.claim(submission.id)
           if (!claim.acquired) {
             yield* execution.wait(child.id)
@@ -325,14 +341,47 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           jobId: child.id,
         }
 
-        const info = yield* background.start({
-          id: child.id,
-          type: name,
-          title: input.description,
-          metadata,
-          onPromote: checkpoint(backgroundMetadata),
-          run: runTask,
-        })
+        const info = yield* Effect.ensuring(
+          Effect.gen(function* () {
+            yield* checkpoint(metadata)
+
+            const parentPath = yield* computeAgentPath(parent)
+            const agentPath = `${parentPath}/${agent.id}`
+            const submission = yield* submissions
+              .submit({
+                parentSessionID: context.sessionID,
+                assistantMessageID: context.assistantMessageID,
+                toolCallID: context.toolCallID,
+                childSessionID: child.id,
+                description: input.description,
+                prompt: Prompt.make({ text: input.prompt }),
+                agent: agent.id,
+                agentPath,
+                model,
+              })
+              .pipe(
+                Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>
+                  Effect.fail(new ToolFailure({ message: `Task invocation conflict: ${error.toolCallID}` })),
+                ),
+              )
+
+            const started = yield* background.start({
+              id: child.id,
+              type: name,
+              title: input.description,
+              metadata,
+              onPromote: checkpoint(backgroundMetadata),
+              onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
+              onRelease: permits.release(child.id),
+              run: runTask(submission),
+            })
+            yield* Ref.set(ownedByJob, true)
+            return started
+          }),
+          Effect.flatMap(Ref.get(ownedByJob), (owned) =>
+            owned ? Effect.void : permits.release(child.id),
+          ),
+        )
 
         const runningResult = (mode: "started" | "updated") => {
           const output = renderOutput({
@@ -412,6 +461,12 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               }),
             })
           }),
+          // The job-scope onRelease owns the permit for the background path; the
+          // foreground path releases explicitly once the observed task settles
+          // (never while it keeps running in the background after promotion).
+          Effect.tap((result) =>
+            "background" in result.metadata ? Effect.void : permits.release(child.id),
+          ),
           Effect.onInterrupt(() => background.cancel(child.id).pipe(Effect.asVoid)),
         )
       })

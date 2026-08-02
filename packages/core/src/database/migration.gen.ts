@@ -42,5 +42,6 @@ export const migrations = (
     import("./migration/20260622202450_simplify_session_input"),
     import("./migration/20260722054520_session-provider-attempt"),
     import("./migration/20260729102613_durable_task_lifecycle"),
+    import("./migration/20260802120000_add_task_agent_path"),
   ])
 ).map((module) => module.default) satisfies DatabaseMigration.Migration[]

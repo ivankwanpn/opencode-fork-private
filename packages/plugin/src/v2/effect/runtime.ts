@@ -44,6 +44,21 @@ export type ChatParams = {
   readonly options: Record<string, unknown>
 }
 
+export type StopHookPromptFragment = {
+  readonly type: "text"
+  readonly text: string
+}
+
+export type StopHookOutcome =
+  | { readonly action: "stop"; readonly reason?: string }
+  | { readonly action: "continue"; readonly continuation: readonly StopHookPromptFragment[] }
+
+export type StopHookEvent = {
+  readonly lastAssistantMessage?: string
+  readonly blockCount: number
+  readonly outcome: MutableValue<StopHookOutcome | undefined>
+}
+
 export interface SessionHookSpec {
   readonly "message.before": {
     readonly sessionID: string
@@ -81,6 +96,8 @@ export interface SessionHookSpec {
     readonly partID: string
     readonly text: MutableValue<string>
   }
+  readonly "session.stop": StopHookEvent
+  readonly "session.subagent.stop": StopHookEvent
 }
 
 export type SessionDomain = RuntimeHooks<SessionHookSpec>

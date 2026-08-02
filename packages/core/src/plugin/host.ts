@@ -43,6 +43,8 @@ const sessionHookNames = {
   compacting: PluginRuntime.HookName.sessionCompacting,
   "compaction.autocontinue": PluginRuntime.HookName.sessionCompactionAutocontinue,
   "text.complete": PluginRuntime.HookName.sessionTextComplete,
+  "session.stop": PluginRuntime.HookName.sessionStop,
+  "session.subagent.stop": PluginRuntime.HookName.sessionSubagentStop,
 } satisfies { readonly [Name in keyof SessionHookSpec]: PluginRuntime.HookName }
 
 const permissionHookNames = {

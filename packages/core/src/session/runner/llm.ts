@@ -924,9 +924,6 @@ const layer = Layer.effect(
       readonly force: boolean
     }) {
       let force = input.force
-      // Shared across every provider attempt in this drain so the per-turn stop-hook block cap
-      // can force a stop even when a hook keeps returning "continue" forever.
-      const stopBlockCount = PluginRuntime.mutable(0)
       let projectedAttempt = yield* SessionAttempt.get(db, input.sessionID)
       if (projectedAttempt?.status === "started" || projectedAttempt?.status === "responding") {
         const stored = yield* store.message(projectedAttempt.assistant_message_id)
@@ -1000,6 +997,11 @@ const layer = Layer.effect(
         // it. `closeAll` runs when the turn region ends, including on failure
         // or interruption.
         const pool = yield* WebSocketPool.make()
+        // Fresh per-turn cap: a drain spans multiple turns when queued inputs are
+        // promoted, and each turn owns its stop-hook block budget. The counter is
+        // shared across every provider attempt within this one turn so a hook that
+        // keeps returning "continue" is still capped at MAX_BLOCKS_PER_TURN.
+        const stopBlockCount = PluginRuntime.mutable(0)
         yield* Effect.gen(function* () {
           while (needsContinuation) {
             const result = yield* runTurn(input.sessionID, promotion, step, initialPhysical, stopBlockCount.value).pipe(

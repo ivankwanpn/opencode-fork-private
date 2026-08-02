@@ -404,6 +404,8 @@ export const dict = {
   "context.usage.cost": "Kostnad",
   "context.usage.clickToView": "Klikk for å se kontekst",
   "context.usage.view": "Se kontekstforbruk",
+  "context.usage.window": "Kontekstvindu",
+  "context.usage.used": "Brukt {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

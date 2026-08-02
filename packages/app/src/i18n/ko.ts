@@ -368,6 +368,8 @@ export const dict = {
   "context.usage.cost": "비용",
   "context.usage.clickToView": "컨텍스트를 보려면 클릭",
   "context.usage.view": "컨텍스트 사용량 보기",
+  "context.usage.window": "컨텍스트 창",
+  "context.usage.used": "사용량 {{used}} / {{limit}}",
   "language.en": "English",
   "language.zh": "简体中文",
   "language.zht": "繁體中文",

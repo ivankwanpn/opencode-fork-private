@@ -450,6 +450,8 @@ export const dict = {
   "context.usage.cost": "コスト",
   "context.usage.clickToView": "クリックしてコンテキストを表示",
   "context.usage.view": "コンテキスト使用量を表示",
+  "context.usage.window": "コンテキストウィンドウ",
+  "context.usage.used": "使用済み {{used}} / {{limit}}",
   "language.en": "English",
   "language.zh": "简体中文",
   "language.zht": "繁體中文",

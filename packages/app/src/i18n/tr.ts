@@ -487,6 +487,8 @@ export const dict = {
   "context.usage.cost": "Maliyet",
   "context.usage.clickToView": "Bağlamı görüntüle",
   "context.usage.view": "Bağlam kullanımını görüntüle",
+  "context.usage.window": "Bağlam penceresi",
+  "context.usage.used": "Kullanılan {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -116,17 +120,17 @@ const runConcurrentPostAdmissionRace = Effect.fn("TaskSubmissionTest.runConcurre
       return builder.get()
     }) as () => TGet
     return wrapped
-    }
+  }
 
   const wrapSelect = <T extends ReturnType<typeof db.select>>(builder: T): T => {
-      const wrapped = Object.create(builder) as typeof builder & {
-        from: typeof builder.from
-      }
-      const wrappedFrom = ((table: Parameters<typeof builder.from>[0]) =>
-        wrapPostFrom(builder.from(table), table === TaskSubmissionTable)) as typeof builder.from
-      wrapped.from = wrappedFrom
-      return wrapped
+    const wrapped = Object.create(builder) as typeof builder & {
+      from: typeof builder.from
     }
+    const wrappedFrom = ((table: Parameters<typeof builder.from>[0]) =>
+      wrapPostFrom(builder.from(table), table === TaskSubmissionTable)) as typeof builder.from
+    wrapped.from = wrappedFrom
+    return wrapped
+  }
 
   const originalSelect = db.select.bind(db)
   yield* Effect.addFinalizer(() =>
@@ -157,6 +161,45 @@ const runConcurrentPostAdmissionRace = Effect.fn("TaskSubmissionTest.runConcurre
 })
 
 describe("TaskSubmission", () => {
+  test("derives IDs in a Node runtime without Bun globals", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-task-submission-node-"))
+    try {
+      const build = await Bun.build({
+        entrypoints: [path.join(import.meta.dir, "../src/session/task-submission.ts")],
+        format: "esm",
+        target: "node",
+      })
+      expect(build.success).toBe(true)
+      const bundle = path.join(directory, "task-submission.mjs")
+      await Bun.write(bundle, build.outputs[0]!)
+      const runtime = path.join(directory, "runtime")
+      const result = Bun.spawnSync(
+        [
+          "node",
+          "--input-type=module",
+          "-e",
+          `import { TaskSubmission } from ${JSON.stringify(pathToFileURL(bundle).href)}; process.stdout.write(TaskSubmission.inputID(${JSON.stringify(invocation)}))`,
+        ],
+        {
+          env: {
+            ...process.env,
+            XDG_DATA_HOME: path.join(runtime, "data"),
+            XDG_CACHE_HOME: path.join(runtime, "cache"),
+            XDG_CONFIG_HOME: path.join(runtime, "config"),
+            XDG_STATE_HOME: path.join(runtime, "state"),
+            OPENCODE_TEST_HOME: runtime,
+          },
+        },
+      )
+
+      expect(result.stderr.toString()).toBe("")
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout.toString()).toMatch(/^msg_task_[a-f0-9]{32}$/)
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   test("derives stable IDs from the invocation identity", () => {
     expect(TaskSubmission.inputID(invocation)).toBe(TaskSubmission.inputID({ ...invocation }))
     expect(TaskSubmission.notificationID("sub_task_1")).toBe(TaskSubmission.notificationID("sub_task_1"))

@@ -6,6 +6,7 @@ import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { Identifier } from "../id/id"
 import { makeGlobalNode } from "../effect/app-node"
+import { Hash } from "../util/hash"
 import { Prompt } from "./prompt"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
@@ -540,11 +541,10 @@ function findCompletedAssistant(
     .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
     .find(
       (message): message is SessionMessage.Assistant =>
-        message.type === "assistant" &&
-        message.time.completed !== undefined,
+        message.type === "assistant" && message.time.completed !== undefined,
     )
 }
 
 function digest(value: string) {
-  return new Bun.CryptoHasher("sha256").update(value).digest("hex").slice(0, 32)
+  return Hash.sha256(value).slice(0, 32)
 }

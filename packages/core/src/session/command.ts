@@ -39,6 +39,15 @@ export class PromptConflictError extends Schema.TaggedErrorClass<PromptConflictE
   messageID: SessionMessage.ID,
 }) {}
 
+export class ActiveAttemptConflictError extends Schema.TaggedErrorClass<ActiveAttemptConflictError>()(
+  "Session.ActiveAttemptConflictError",
+  {
+    sessionID: SessionSchema.ID,
+    attemptID: EventV2.ID,
+    expectedAttemptID: EventV2.ID,
+  },
+) {}
+
 export class Cancelled extends Schema.TaggedErrorClass<Cancelled>()("Session.Cancelled", {
   sessionID: SessionSchema.ID,
 }) {}

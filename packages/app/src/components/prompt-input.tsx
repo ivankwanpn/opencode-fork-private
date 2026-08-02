@@ -1576,7 +1576,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               }}
             />
 
-            <SessionContextUsage variant="composer" placement="top" />
+            <div class="pointer-events-auto">
+              <SessionContextUsage variant="composer" placement="top" />
+            </div>
             <div class="flex items-center gap-1 pointer-events-auto">
               <Tooltip placement="top" inactive={!working() && blank()} value={tip()}>
                 <IconButton

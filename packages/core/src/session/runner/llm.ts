@@ -826,7 +826,9 @@ const layer = Layer.effect(
             const stop = yield* SessionStopHook.evaluateStopHooks({
               lastAssistantMessage: lastText,
               blockCount: stopBlockCount.get(),
-              agent: agent.id,
+              // Main-agent turns fire `session.stop`; only subagent turns select
+              // `session.subagent.stop` (the subagent id is otherwise always defined).
+              agent: agent.info?.mode === "subagent" ? agent.id : undefined,
             }).pipe(Effect.provideService(PluginRuntime.Service, plugins))
             if (stop.action === "continue" && stop.continuation && stop.continuation.length > 0) {
               stopBlockCount.update((value) => value + 1)

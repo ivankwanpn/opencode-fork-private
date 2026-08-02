@@ -15,4 +15,11 @@ describe("createSessionContextFormatter", () => {
     expect(formatter.compact(undefined)).toBe("—")
     expect(formatter.compact(null)).toBe("—")
   })
+
+  test("formats an unavailable context limit without inventing a value", () => {
+    const formatter = createSessionContextFormatter("en-US")
+
+    expect(formatter.compact(40)).toBe("40")
+    expect(formatter.compact(undefined)).toBe("—")
+  })
 })

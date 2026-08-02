@@ -3,6 +3,7 @@ import { ProgressCircle } from "@opencode-ai/ui/progress-circle"
 import { ProgressCircleV2 } from "@opencode-ai/ui/v2/progress-circle-v2"
 import { Button } from "@opencode-ai/ui/button"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
+import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { createMediaQuery } from "@solid-primitives/media"
 
@@ -13,12 +14,13 @@ import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
 import { getSessionContext } from "@/components/session/session-context-metrics"
+import { createSessionContextFormatter } from "@/components/session/session-context-format"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { useSettings } from "@/context/settings"
 
 interface SessionContextUsageProps {
-  variant?: "button" | "indicator"
+  variant?: "button" | "indicator" | "composer"
   buttonAppearance?: "default" | "v2"
   placement?: ComponentProps<typeof TooltipV2>["placement"]
 }
@@ -74,9 +76,13 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   )
 
   const context = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
   const cost = createMemo(() => {
     return usd().format(info()?.cost ?? 0)
   })
+  const usageLabel = () => formatter().percent(context()?.usage)
+  const usedLabel = () => formatter().compact(context()?.total)
+  const limitLabel = () => formatter().compact(context()?.limit)
   const contextVisible = createMemo(() => view().reviewPanel.opened() && tabState.activeTab() === "context")
   const hasOtherTabs = createMemo(() =>
     tabs()
@@ -137,9 +143,46 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   )
 
   return (
-    <Show when={params.id}>
+    <Show when={params.id && (variant() !== "composer" || context())}>
       <TooltipV2 value={tooltipValue()} placement={props.placement ?? "top"} shift={-8}>
         <Switch>
+          <Match when={variant() === "composer" && buttonAppearance() === "v2"}>
+            <ButtonV2
+              type="button"
+              variant="ghost-muted"
+              size="small"
+              class="min-w-0 max-w-[180px] px-2 text-left"
+              onClick={openContext}
+              aria-label={language.t("context.usage.view")}
+            >
+              <div class="flex min-w-0 flex-col items-end gap-0.5 text-[10px] leading-3.5">
+                <span class="max-w-full truncate">
+                  {language.t("context.usage.window")}: {usageLabel()}
+                </span>
+                <span class="max-w-full truncate">
+                  {language.t("context.usage.used", { used: usedLabel(), limit: limitLabel() })}
+                </span>
+              </div>
+            </ButtonV2>
+          </Match>
+          <Match when={variant() === "composer"}>
+            <Button
+              type="button"
+              variant="ghost"
+              class="min-w-0 max-w-[180px] px-2 text-left"
+              onClick={openContext}
+              aria-label={language.t("context.usage.view")}
+            >
+              <div class="flex min-w-0 flex-col items-end gap-0.5 text-[10px] leading-3.5">
+                <span class="max-w-full truncate">
+                  {language.t("context.usage.window")}: {usageLabel()}
+                </span>
+                <span class="max-w-full truncate">
+                  {language.t("context.usage.used", { used: usedLabel(), limit: limitLabel() })}
+                </span>
+              </div>
+            </Button>
+          </Match>
           <Match when={variant() === "indicator"}>{circle()}</Match>
           <Match when={buttonAppearance() === "v2"}>
             <IconButtonV2

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { asc, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import { DateTime, Effect } from "effect"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -212,8 +212,9 @@ describe("SessionInput", () => {
         timestamp: yield* DateTime.now,
         attempt: 2,
       })
+      const conflictMessageID = SessionMessage.ID.create()
       const conflict = yield* SessionInput.admit(db, events, {
-        id: SessionMessage.ID.create(),
+        id: conflictMessageID,
         sessionID,
         prompt: Prompt.make({ text: "steer" }),
         delivery: "steer",
@@ -234,6 +235,30 @@ describe("SessionInput", () => {
           ),
       }).pipe(Effect.catchDefect((defect) => Effect.succeed(defect)))
       expect(conflict).toBeInstanceOf(ActiveAttemptConflictError)
+      // The stale-attempt conflict runs inside the EventV2 transaction, so the
+      // rolled-back admission must leave no durable state behind: neither a
+      // session_input row nor a PromptAdmitted event for the message id.
+      const inputRow = yield* db
+        .select({ id: SessionInputTable.id })
+        .from(SessionInputTable)
+        .where(eq(SessionInputTable.id, conflictMessageID))
+        .get()
+        .pipe(Effect.orDie)
+      expect(inputRow).toBeUndefined()
+      const admittedEvents = yield* db
+        .select({ data: EventTable.data })
+        .from(EventTable)
+        .where(
+          and(
+            eq(EventTable.type, EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1)),
+            eq(EventTable.aggregate_id, sessionID),
+          ),
+        )
+        .all()
+        .pipe(Effect.orDie)
+      expect(
+        admittedEvents.some((event) => (event.data as { messageID?: unknown }).messageID === conflictMessageID),
+      ).toBe(false)
     }),
   )
 })

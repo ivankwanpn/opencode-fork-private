@@ -1758,11 +1758,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                         data-component="prompt-protocol-control"
                         classList={{ "animate-in fade-in duration-300": providersShouldFadeIn() }}
                       >
-                        <Tooltip
-                          placement="top"
-                          gutter={4}
-                          value={language.t("provider.custom.protocol.label")}
-                        >
+                        <Tooltip placement="top" gutter={4} value={language.t("provider.custom.protocol.label")}>
                           <Select
                             size="normal"
                             options={protocols()}

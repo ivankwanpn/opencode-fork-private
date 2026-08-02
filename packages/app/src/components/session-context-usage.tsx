@@ -3,7 +3,6 @@ import { ProgressCircle } from "@opencode-ai/ui/progress-circle"
 import { ProgressCircleV2 } from "@opencode-ai/ui/v2/progress-circle-v2"
 import { Button } from "@opencode-ai/ui/button"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
-import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { createMediaQuery } from "@solid-primitives/media"
 
@@ -131,7 +130,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
     </div>
   )
 
-  const tooltipValue = () => (
+  const detailsTooltipValue = () => (
     <div class="flex w-[120px] flex-col gap-2">
       <ContextTooltipRow name={language.t("context.usage.cost")} value={cost()} />
       <ContextTooltipRow name={language.t("context.usage.usage")} value={`${context()?.usage ?? 0}%`} />
@@ -141,46 +140,41 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       />
     </div>
   )
+  const tooltipValue = () =>
+    variant() === "composer" ? (
+      <div class="flex w-[140px] flex-col gap-1">
+        <div>
+          {language.t("context.usage.window")}: {usageLabel()}
+        </div>
+        <div>{language.t("context.usage.used", { used: usedLabel(), limit: limitLabel() })}</div>
+      </div>
+    ) : (
+      detailsTooltipValue()
+    )
 
   return (
     <Show when={params.id && (variant() !== "composer" || context())}>
       <TooltipV2 value={tooltipValue()} placement={props.placement ?? "top"} shift={-8}>
         <Switch>
           <Match when={variant() === "composer" && buttonAppearance() === "v2"}>
-            <ButtonV2
+            <IconButtonV2
               type="button"
               variant="ghost-muted"
-              size="small"
-              class="min-w-0 max-w-[180px] px-2 text-left"
+              size="large"
+              icon={circleV2()}
               onClick={openContext}
               aria-label={language.t("context.usage.view")}
-            >
-              <div class="flex min-w-0 flex-col items-end gap-0.5 text-[10px] leading-3.5">
-                <span class="max-w-full truncate">
-                  {language.t("context.usage.window")}: {usageLabel()}
-                </span>
-                <span class="max-w-full truncate">
-                  {language.t("context.usage.used", { used: usedLabel(), limit: limitLabel() })}
-                </span>
-              </div>
-            </ButtonV2>
+            />
           </Match>
           <Match when={variant() === "composer"}>
             <Button
               type="button"
               variant="ghost"
-              class="min-w-0 max-w-[180px] px-2 text-left"
+              class="size-6"
               onClick={openContext}
               aria-label={language.t("context.usage.view")}
             >
-              <div class="flex min-w-0 flex-col items-end gap-0.5 text-[10px] leading-3.5">
-                <span class="max-w-full truncate">
-                  {language.t("context.usage.window")}: {usageLabel()}
-                </span>
-                <span class="max-w-full truncate">
-                  {language.t("context.usage.used", { used: usedLabel(), limit: limitLabel() })}
-                </span>
-              </div>
+              {circle()}
             </Button>
           </Match>
           <Match when={variant() === "indicator"}>{circle()}</Match>

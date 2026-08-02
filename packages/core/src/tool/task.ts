@@ -130,7 +130,13 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const config = yield* Config.Service
       const execution = yield* SessionExecution.Service
       const permission = yield* PermissionV2.Service
-      const permits = yield* SubagentPermit.Service
+      // The permit budget is built from the location config at layer construction so the
+      // configured `subagent_max_concurrency` actually bounds concurrent child sessions.
+      // It is location-scoped, not per parent: every parent session in the location shares
+      // the same budget.
+      const permits = yield* SubagentPermit.make({
+        limit: Config.latest(yield* config.entries(), "subagent_max_concurrency"),
+      })
       const progress = yield* ToolProgress.Service
       const sessions = yield* SessionStore.Service
       const notifications = yield* TaskNotification.Service
@@ -224,7 +230,6 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
         if (model) yield* commands.switchModel({ sessionID: child.id, model })
 
-        const limit = Config.latest(yield* config.entries(), "subagent_max_concurrency")
         const reservation = yield* permits.acquire(child.id).pipe(
           Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })),
         )
@@ -499,7 +504,6 @@ const deps = [
   SessionCommand.node,
   SessionExecution.node,
   SessionStore.node,
-  SubagentPermit.node,
   TaskCancellation.node,
   TaskNotification.node,
   TaskSubmission.node,

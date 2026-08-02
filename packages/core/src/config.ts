@@ -43,7 +43,8 @@ export class Info extends Schema.Class<Info>("Config.Info")({
     description: "Maximum nesting depth for subagent sessions",
   }),
   subagent_max_concurrency: NonNegativeInt.pipe(Schema.optional).annotate({
-    description: "Maximum number of concurrently running subagent child sessions per parent",
+    description:
+      "Maximum number of concurrently running subagent child sessions. The budget is shared across all parent sessions in the same project location, not scoped per parent session.",
   }),
   share: Schema.Literals(["manual", "auto", "disabled"]).pipe(Schema.optional).annotate({
     description: "Control whether sessions may be shared manually, automatically, or not at all",

@@ -235,4 +235,37 @@ describe("BackgroundJob", () => {
       expect((yield* jobs.get(job.id))?.status).toBe("running")
     }),
   )
+
+  it.live("invokes onAcquire at job start and onRelease when the job settles", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const acquired = yield* Deferred.make<void>()
+      const released = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        type: "test",
+        onAcquire: Deferred.succeed(acquired, undefined).pipe(Effect.asVoid),
+        onRelease: Deferred.succeed(released, undefined).pipe(Effect.asVoid),
+        run: Effect.succeed("done"),
+      })
+
+      expect((yield* Deferred.await(acquired).pipe(Effect.timeoutOption("1 second")))._tag).toBe("Some")
+      expect((yield* jobs.wait({ id: job.id })).info?.status).toBe("completed")
+      expect((yield* Deferred.await(released).pipe(Effect.timeoutOption("1 second")))._tag).toBe("Some")
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("invokes onRelease when a running job is cancelled", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const released = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        type: "test",
+        onRelease: Deferred.succeed(released, undefined).pipe(Effect.asVoid),
+        run: Effect.never,
+      })
+
+      expect(yield* jobs.cancel(job.id)).toMatchObject({ status: "cancelled" })
+      expect((yield* Deferred.await(released).pipe(Effect.timeoutOption("1 second")))._tag).toBe("Some")
+    }).pipe(Effect.provide(jobsLayer)),
+  )
 })

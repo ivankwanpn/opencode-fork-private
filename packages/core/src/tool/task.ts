@@ -1,7 +1,7 @@
 export * as TaskTool from "./task"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Cause, Effect, Layer, Schema } from "effect"
+import { Cause, Effect, Layer, Ref, Schema } from "effect"
 import { AgentV2 } from "../agent"
 import { BackgroundJob } from "../background-job"
 import { Config } from "../config"
@@ -210,6 +210,10 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         const reservation = yield* permits.acquire(child.id).pipe(
           Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })),
         )
+        // Until background.start succeeds and the job record owns the permit, a
+        // failure (submit conflict, checkpoint, interrupt) must release the
+        // reservation or the key leaks out of the concurrency budget forever.
+        const ownedByJob = yield* Ref.make(false)
 
         const baseMetadata = {
           parentSessionId: context.sessionID,
@@ -227,26 +231,8 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             structured: { title: input.description, metadata: next },
             content: text ? [{ type: "text", text }] : [],
           })
-        yield* checkpoint(metadata)
 
-        const submission = yield* submissions
-          .submit({
-            parentSessionID: context.sessionID,
-            assistantMessageID: context.assistantMessageID,
-            toolCallID: context.toolCallID,
-            childSessionID: child.id,
-            description: input.description,
-            prompt: Prompt.make({ text: input.prompt }),
-            agent: agent.id,
-            model,
-          })
-          .pipe(
-            Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>
-              Effect.fail(new ToolFailure({ message: `Task invocation conflict: ${error.toolCallID}` })),
-            ),
-          )
-
-        const runTask = Effect.gen(function* () {
+        const runTask = (submission: TaskSubmission.Info) => Effect.gen(function* () {
           const claim = yield* submissions.claim(submission.id)
           if (!claim.acquired) {
             yield* execution.wait(child.id)
@@ -332,16 +318,44 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           jobId: child.id,
         }
 
-        const info = yield* background.start({
-          id: child.id,
-          type: name,
-          title: input.description,
-          metadata,
-          onPromote: checkpoint(backgroundMetadata),
-          onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
-          onRelease: permits.release(child.id),
-          run: runTask,
-        })
+        const info = yield* Effect.ensuring(
+          Effect.gen(function* () {
+            yield* checkpoint(metadata)
+
+            const submission = yield* submissions
+              .submit({
+                parentSessionID: context.sessionID,
+                assistantMessageID: context.assistantMessageID,
+                toolCallID: context.toolCallID,
+                childSessionID: child.id,
+                description: input.description,
+                prompt: Prompt.make({ text: input.prompt }),
+                agent: agent.id,
+                model,
+              })
+              .pipe(
+                Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>
+                  Effect.fail(new ToolFailure({ message: `Task invocation conflict: ${error.toolCallID}` })),
+                ),
+              )
+
+            const started = yield* background.start({
+              id: child.id,
+              type: name,
+              title: input.description,
+              metadata,
+              onPromote: checkpoint(backgroundMetadata),
+              onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
+              onRelease: permits.release(child.id),
+              run: runTask(submission),
+            })
+            yield* Ref.set(ownedByJob, true)
+            return started
+          }),
+          Effect.flatMap(Ref.get(ownedByJob), (owned) =>
+            owned ? Effect.void : permits.release(child.id),
+          ),
+        )
 
         const runningResult = (mode: "started" | "updated") => {
           const output = renderOutput({

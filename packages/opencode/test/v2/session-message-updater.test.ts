@@ -267,3 +267,22 @@ test("compaction events reduce to compaction message only when completed", () =>
     time: { created: DateTime.makeUnsafe(4) },
   })
 })
+
+test("failed compaction events do not project a compaction message", () => {
+  const state: SessionMessageUpdater.MemoryState = { messages: [] }
+  const event = {
+    id: EventV2.ID.create(),
+    type: SessionEvent.Compaction.Failed.type,
+    data: {
+      sessionID: SessionID.make("session"),
+      messageID: SessionMessage.ID.create(),
+      timestamp: DateTime.makeUnsafe(1),
+      reason: "auto",
+      error: { type: "unknown", message: "summary unavailable" },
+    },
+  } as SessionEvent.Event
+
+  Effect.runSync(SessionMessageUpdater.update(SessionMessageUpdater.memory(state), event))
+
+  expect(state.messages).toEqual([])
+})

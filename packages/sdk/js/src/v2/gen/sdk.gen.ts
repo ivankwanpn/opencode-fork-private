@@ -202,6 +202,22 @@ import type {
   ServerMcpMcpResourcesResponses,
   ServerMcpMcpStatusErrors,
   ServerMcpMcpStatusResponses,
+  ServerPluginsPluginsDisableErrors,
+  ServerPluginsPluginsDisableResponses,
+  ServerPluginsPluginsEnableErrors,
+  ServerPluginsPluginsEnableResponses,
+  ServerPluginsPluginsInstallErrors,
+  ServerPluginsPluginsInstallResponses,
+  ServerPluginsPluginsListErrors,
+  ServerPluginsPluginsListResponses,
+  ServerPluginsPluginsMarketplaceAddErrors,
+  ServerPluginsPluginsMarketplaceAddResponses,
+  ServerPluginsPluginsMarketplaceRefreshErrors,
+  ServerPluginsPluginsMarketplaceRefreshResponses,
+  ServerPluginsPluginsMarketplaceRemoveErrors,
+  ServerPluginsPluginsMarketplaceRemoveResponses,
+  ServerPluginsPluginsUninstallErrors,
+  ServerPluginsPluginsUninstallResponses,
   ServerVcsVcsDiffErrors,
   ServerVcsVcsDiffResponses,
   ServerVcsVcsGetErrors,
@@ -436,6 +452,14 @@ import type {
   V2SessionGetResponses,
   V2SessionHistoryErrors,
   V2SessionHistoryResponses,
+  V2SessionInputCancelErrors,
+  V2SessionInputCancelResponses,
+  V2SessionInputGetErrors,
+  V2SessionInputGetResponses,
+  V2SessionInputListErrors,
+  V2SessionInputListResponses,
+  V2SessionInputPromoteErrors,
+  V2SessionInputPromoteResponses,
   V2SessionInterruptErrors,
   V2SessionInterruptResponses,
   V2SessionListErrors,
@@ -5218,6 +5242,136 @@ export class Agent extends HeyApiClient {
   }
 }
 
+export class Input extends HeyApiClient {
+  /**
+   * List pending session inputs
+   *
+   * List pending durable Queue or Steer inputs in admitted order.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      delivery?: "steer" | "queue"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "delivery" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<V2SessionInputListResponses, V2SessionInputListErrors, ThrowOnError>({
+      url: "/api/session/{sessionID}/input",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Cancel a session input
+   *
+   * Cancel one pending durable input with compare-and-set semantics.
+   */
+  public cancel<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      inputID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "inputID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<
+      V2SessionInputCancelResponses,
+      V2SessionInputCancelErrors,
+      ThrowOnError
+    >({
+      url: "/api/session/{sessionID}/input/{inputID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a session input
+   *
+   * Retrieve one durable input by its exact Session and input identity.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      inputID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "inputID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<V2SessionInputGetResponses, V2SessionInputGetErrors, ThrowOnError>({
+      url: "/api/session/{sessionID}/input/{inputID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Promote a session input
+   *
+   * Atomically promote one pending durable input and wake session execution.
+   */
+  public promote<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      inputID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "inputID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      V2SessionInputPromoteResponses,
+      V2SessionInputPromoteErrors,
+      ThrowOnError
+    >({
+      url: "/api/session/{sessionID}/input/{inputID}/promote",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Revert extends HeyApiClient {
   /**
    * Stage session revert
@@ -6306,6 +6460,11 @@ export class Session3 extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  private _input?: Input
+  get input(): Input {
+    return (this._input ??= new Input({ client: this.client }))
   }
 
   private _revert?: Revert
@@ -8648,6 +8807,191 @@ export class ControlPlane3 extends HeyApiClient {
   }
 }
 
+export class Marketplace extends HeyApiClient {
+  public remove<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "name" }] }])
+    return (options?.client ?? this.client).delete<
+      ServerPluginsPluginsMarketplaceRemoveResponses,
+      ServerPluginsPluginsMarketplaceRemoveErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/marketplace",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public add<ThrowOnError extends boolean = false>(
+    parameters?: {
+      source?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "source" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsMarketplaceAddResponses,
+      ServerPluginsPluginsMarketplaceAddErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/marketplace",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public refresh<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "name" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsMarketplaceRefreshResponses,
+      ServerPluginsPluginsMarketplaceRefreshErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/marketplace/refresh",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Plugins extends HeyApiClient {
+  public list<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      ServerPluginsPluginsListResponses,
+      ServerPluginsPluginsListErrors,
+      ThrowOnError
+    >({ url: "/api/plugins", ...options })
+  }
+
+  public install<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsInstallResponses,
+      ServerPluginsPluginsInstallErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/install",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public uninstall<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsUninstallResponses,
+      ServerPluginsPluginsUninstallErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/uninstall",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public enable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsEnableResponses,
+      ServerPluginsPluginsEnableErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/enable",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public disable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsDisableResponses,
+      ServerPluginsPluginsDisableErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/disable",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  private _marketplace?: Marketplace
+  get marketplace(): Marketplace {
+    return (this._marketplace ??= new Marketplace({ client: this.client }))
+  }
+}
+
+export class Plugins2 extends HeyApiClient {
+  private _plugins?: Plugins
+  get plugins(): Plugins {
+    return (this._plugins ??= new Plugins({ client: this.client }))
+  }
+}
+
 export class Server extends HeyApiClient {
   private _mcp?: Mcp3
   get mcp(): Mcp3 {
@@ -8682,6 +9026,11 @@ export class Server extends HeyApiClient {
   private _controlPlane?: ControlPlane3
   get controlPlane(): ControlPlane3 {
     return (this._controlPlane ??= new ControlPlane3({ client: this.client }))
+  }
+
+  private _plugins?: Plugins2
+  get plugins(): Plugins2 {
+    return (this._plugins ??= new Plugins2({ client: this.client }))
   }
 }
 

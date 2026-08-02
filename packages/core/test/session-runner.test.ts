@@ -1991,6 +1991,19 @@ describe("SessionRunnerLLM", () => {
       streamGate = undefined
       expect(requests).toHaveLength(2)
       expect((yield* session.context(sessionID)).some((message) => message.type === "compaction")).toBe(false)
+      const compactions = (yield* session.history({ sessionID, limit: 100 })).events.filter(
+        (event) =>
+          event.type === SessionEvent.Compaction.Started.type ||
+          event.type === SessionEvent.Compaction.Ended.type ||
+          event.type === SessionEvent.Compaction.Failed.type,
+      )
+      expect(compactions.map((event) => event.type)).toEqual([
+        SessionEvent.Compaction.Started.type,
+        SessionEvent.Compaction.Failed.type,
+      ])
+      expect(compactions.at(-1)?.data).toMatchObject({
+        error: { type: "unknown", message: "Compaction interrupted" },
+      })
     }),
   )
 

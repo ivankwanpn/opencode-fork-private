@@ -51,6 +51,7 @@ export type Event =
   | EventSessionNextCompactionStarted
   | EventSessionNextCompactionDelta
   | EventSessionNextCompactionEnded
+  | EventSessionNextCompactionFailed
   | EventSessionNextRevertStaged
   | EventSessionNextRevertCleared
   | EventSessionNextRevertCommitted
@@ -1247,6 +1248,17 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "session.next.compaction.failed"
+        properties: {
+          timestamp: number
+          sessionID: string
+          messageID: string
+          reason: "auto" | "manual"
+          error: SessionErrorUnknown
+        }
+      }
+    | {
+        id: string
         type: "session.next.revert.staged"
         properties: {
           timestamp: number
@@ -1705,6 +1717,7 @@ export type GlobalEvent = {
     | SyncEventSessionNextRetried
     | SyncEventSessionNextCompactionStarted
     | SyncEventSessionNextCompactionEnded
+    | SyncEventSessionNextCompactionFailed
     | SyncEventSessionNextRevertStaged
     | SyncEventSessionNextRevertCleared
     | SyncEventSessionNextRevertCommitted
@@ -2800,6 +2813,20 @@ export type ConflictError = {
   resource?: string
 }
 
+export type SessionInputNotFoundError = {
+  _tag: "SessionInputNotFoundError"
+  sessionID: string
+  inputID: string
+  message: string
+}
+
+export type SessionInputConflictError = {
+  _tag: "SessionInputConflictError"
+  sessionID: string
+  inputID: string
+  message: string
+}
+
 export type SessionDurableEvent =
   | SessionNextAgentSwitched
   | SessionNextModelSwitched
@@ -2831,6 +2858,7 @@ export type SessionDurableEvent =
   | SessionNextRetried
   | SessionNextCompactionStarted
   | SessionNextCompactionEnded
+  | SessionNextCompactionFailed
   | SessionNextRevertStaged
   | SessionNextRevertCleared
   | SessionNextRevertCommitted
@@ -2910,6 +2938,32 @@ export type ConsoleOrg = {
   orgID: string
   orgName: string
   active: boolean
+}
+
+export type PluginMarketplace = {
+  name: string
+  source: string
+  lastUpdated: string
+  pluginCount: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  error?: string
+}
+
+export type MarketplacePlugin = {
+  id: string
+  name: string
+  marketplace: string
+  description?: string
+  version?: string
+  category?: string
+  tags: Array<string>
+  capabilities: Array<string>
+  installed: boolean
+  enabled: boolean
+}
+
+export type PluginCatalog = {
+  marketplaces: Array<PluginMarketplace>
+  plugins: Array<MarketplacePlugin>
 }
 
 export type OutputFormat1 =
@@ -3024,6 +3078,7 @@ export type V2Event =
   | SessionNextCompactionStarted
   | SessionNextCompactionDelta
   | SessionNextCompactionEnded
+  | SessionNextCompactionFailed
   | SessionNextRevertStaged
   | SessionNextRevertCleared
   | SessionNextRevertCommitted
@@ -4301,6 +4356,24 @@ export type SyncEventSessionNextCompactionEnded = {
   }
 }
 
+export type SyncEventSessionNextCompactionFailed = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.compaction.failed.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      messageID: string
+      reason: "auto" | "manual"
+      error: SessionErrorUnknown
+    }
+  }
+}
+
 export type SyncEventSessionNextRevertStaged = {
   type: "sync"
   id: string
@@ -5144,6 +5217,27 @@ export type SessionNextCompactionEnded = {
     reason: "auto" | "manual"
     text: string
     recent: string
+  }
+}
+
+export type SessionNextCompactionFailed = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.compaction.failed"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    messageID: string
+    reason: "auto" | "manual"
+    error: SessionErrorUnknown
   }
 }
 
@@ -7324,6 +7418,18 @@ export type EventSessionNextCompactionEnded = {
     reason: "auto" | "manual"
     text: string
     recent: string
+  }
+}
+
+export type EventSessionNextCompactionFailed = {
+  id: string
+  type: "session.next.compaction.failed"
+  properties: {
+    timestamp: number
+    sessionID: string
+    messageID: string
+    reason: "auto" | "manual"
+    error: SessionErrorUnknown
   }
 }
 
@@ -12640,6 +12746,165 @@ export type V2SessionDiffResponses = {
 
 export type V2SessionDiffResponse = V2SessionDiffResponses[keyof V2SessionDiffResponses]
 
+export type V2SessionInputListData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    delivery?: "steer" | "queue"
+  }
+  url: "/api/session/{sessionID}/input"
+}
+
+export type V2SessionInputListErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionNotFoundError
+   */
+  404: SessionNotFoundError
+}
+
+export type V2SessionInputListError = V2SessionInputListErrors[keyof V2SessionInputListErrors]
+
+export type V2SessionInputListResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: Array<SessionInputAdmitted>
+  }
+}
+
+export type V2SessionInputListResponse = V2SessionInputListResponses[keyof V2SessionInputListResponses]
+
+export type V2SessionInputCancelData = {
+  body?: never
+  path: {
+    sessionID: string
+    inputID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/input/{inputID}"
+}
+
+export type V2SessionInputCancelErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionInputNotFoundError | SessionNotFoundError
+   */
+  404: SessionInputNotFoundError | SessionNotFoundError
+  /**
+   * SessionInputConflictError
+   */
+  409: SessionInputConflictError
+}
+
+export type V2SessionInputCancelError = V2SessionInputCancelErrors[keyof V2SessionInputCancelErrors]
+
+export type V2SessionInputCancelResponses = {
+  /**
+   * <No Content>
+   */
+  204: void
+}
+
+export type V2SessionInputCancelResponse = V2SessionInputCancelResponses[keyof V2SessionInputCancelResponses]
+
+export type V2SessionInputGetData = {
+  body?: never
+  path: {
+    sessionID: string
+    inputID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/input/{inputID}"
+}
+
+export type V2SessionInputGetErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionInputNotFoundError | SessionNotFoundError
+   */
+  404: SessionInputNotFoundError | SessionNotFoundError
+}
+
+export type V2SessionInputGetError = V2SessionInputGetErrors[keyof V2SessionInputGetErrors]
+
+export type V2SessionInputGetResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: SessionInputAdmitted
+  }
+}
+
+export type V2SessionInputGetResponse = V2SessionInputGetResponses[keyof V2SessionInputGetResponses]
+
+export type V2SessionInputPromoteData = {
+  body?: never
+  path: {
+    sessionID: string
+    inputID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/input/{inputID}/promote"
+}
+
+export type V2SessionInputPromoteErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * SessionInputNotFoundError | SessionNotFoundError
+   */
+  404: SessionInputNotFoundError | SessionNotFoundError
+  /**
+   * SessionInputConflictError
+   */
+  409: SessionInputConflictError
+}
+
+export type V2SessionInputPromoteError = V2SessionInputPromoteErrors[keyof V2SessionInputPromoteErrors]
+
+export type V2SessionInputPromoteResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: SessionInputAdmitted
+  }
+}
+
+export type V2SessionInputPromoteResponse = V2SessionInputPromoteResponses[keyof V2SessionInputPromoteResponses]
+
 export type V2SessionBackgroundData = {
   body?: never
   path: {
@@ -15461,6 +15726,298 @@ export type ServerControlPlaneControlPlaneMoveSessionResponses = {
 
 export type ServerControlPlaneControlPlaneMoveSessionResponse =
   ServerControlPlaneControlPlaneMoveSessionResponses[keyof ServerControlPlaneControlPlaneMoveSessionResponses]
+
+export type ServerPluginsPluginsListData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/plugins"
+}
+
+export type ServerPluginsPluginsListErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsListError = ServerPluginsPluginsListErrors[keyof ServerPluginsPluginsListErrors]
+
+export type ServerPluginsPluginsListResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsListResponse =
+  ServerPluginsPluginsListResponses[keyof ServerPluginsPluginsListResponses]
+
+export type ServerPluginsPluginsMarketplaceRemoveData = {
+  body: {
+    name: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/marketplace"
+}
+
+export type ServerPluginsPluginsMarketplaceRemoveErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsMarketplaceRemoveError =
+  ServerPluginsPluginsMarketplaceRemoveErrors[keyof ServerPluginsPluginsMarketplaceRemoveErrors]
+
+export type ServerPluginsPluginsMarketplaceRemoveResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsMarketplaceRemoveResponse =
+  ServerPluginsPluginsMarketplaceRemoveResponses[keyof ServerPluginsPluginsMarketplaceRemoveResponses]
+
+export type ServerPluginsPluginsMarketplaceAddData = {
+  body: {
+    source: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/marketplace"
+}
+
+export type ServerPluginsPluginsMarketplaceAddErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsMarketplaceAddError =
+  ServerPluginsPluginsMarketplaceAddErrors[keyof ServerPluginsPluginsMarketplaceAddErrors]
+
+export type ServerPluginsPluginsMarketplaceAddResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsMarketplaceAddResponse =
+  ServerPluginsPluginsMarketplaceAddResponses[keyof ServerPluginsPluginsMarketplaceAddResponses]
+
+export type ServerPluginsPluginsMarketplaceRefreshData = {
+  body: {
+    name: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/marketplace/refresh"
+}
+
+export type ServerPluginsPluginsMarketplaceRefreshErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsMarketplaceRefreshError =
+  ServerPluginsPluginsMarketplaceRefreshErrors[keyof ServerPluginsPluginsMarketplaceRefreshErrors]
+
+export type ServerPluginsPluginsMarketplaceRefreshResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsMarketplaceRefreshResponse =
+  ServerPluginsPluginsMarketplaceRefreshResponses[keyof ServerPluginsPluginsMarketplaceRefreshResponses]
+
+export type ServerPluginsPluginsInstallData = {
+  body: {
+    id: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/install"
+}
+
+export type ServerPluginsPluginsInstallErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsInstallError =
+  ServerPluginsPluginsInstallErrors[keyof ServerPluginsPluginsInstallErrors]
+
+export type ServerPluginsPluginsInstallResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsInstallResponse =
+  ServerPluginsPluginsInstallResponses[keyof ServerPluginsPluginsInstallResponses]
+
+export type ServerPluginsPluginsUninstallData = {
+  body: {
+    id: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/uninstall"
+}
+
+export type ServerPluginsPluginsUninstallErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsUninstallError =
+  ServerPluginsPluginsUninstallErrors[keyof ServerPluginsPluginsUninstallErrors]
+
+export type ServerPluginsPluginsUninstallResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsUninstallResponse =
+  ServerPluginsPluginsUninstallResponses[keyof ServerPluginsPluginsUninstallResponses]
+
+export type ServerPluginsPluginsEnableData = {
+  body: {
+    id: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/enable"
+}
+
+export type ServerPluginsPluginsEnableErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsEnableError = ServerPluginsPluginsEnableErrors[keyof ServerPluginsPluginsEnableErrors]
+
+export type ServerPluginsPluginsEnableResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsEnableResponse =
+  ServerPluginsPluginsEnableResponses[keyof ServerPluginsPluginsEnableResponses]
+
+export type ServerPluginsPluginsDisableData = {
+  body: {
+    id: string
+  }
+  path?: never
+  query?: never
+  url: "/api/plugins/disable"
+}
+
+export type ServerPluginsPluginsDisableErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type ServerPluginsPluginsDisableError =
+  ServerPluginsPluginsDisableErrors[keyof ServerPluginsPluginsDisableErrors]
+
+export type ServerPluginsPluginsDisableResponses = {
+  /**
+   * PluginCatalog
+   */
+  200: PluginCatalog
+}
+
+export type ServerPluginsPluginsDisableResponse =
+  ServerPluginsPluginsDisableResponses[keyof ServerPluginsPluginsDisableResponses]
 
 export type V2EventSubscribeData = {
   body?: never

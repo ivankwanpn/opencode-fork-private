@@ -567,6 +567,81 @@ describe("v2 session reducer", () => {
     })
   })
 
+  test("projects failed compaction state without partial summary", () => {
+    const reducer = createV2SessionReducer()
+    let messages: SessionMessageInfo[] = []
+    const apply = (input: object) => {
+      const result = reducer.reduce(messages, event(input))
+      if (result) messages = result.messages
+      return result
+    }
+    const current = {
+      id: "evt_failed_compaction",
+      metadata: { source: "test" },
+      location: { directory: "/repo" },
+    }
+
+    apply({
+      ...current,
+      type: "session.next.compaction.started",
+      data: { timestamp: 12, sessionID: "ses_1", messageID: "msg_compaction", reason: "manual" },
+    })
+    apply({
+      ...current,
+      type: "session.next.compaction.delta",
+      data: { timestamp: 13, sessionID: "ses_1", messageID: "msg_compaction", text: "partial" },
+    })
+    apply({
+      ...current,
+      type: "session.next.compaction.failed",
+      data: {
+        timestamp: 14,
+        sessionID: "ses_1",
+        messageID: "msg_compaction",
+        reason: "manual",
+        error: { type: "unknown", message: "summary unavailable" },
+      },
+    })
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: "msg_compaction",
+      type: "compaction",
+      status: "failed",
+      metadata: { source: "test" },
+      reason: "manual",
+      error: { type: "unknown", message: "summary unavailable" },
+      time: { created: 12 },
+    })
+    expect(messages[0]).not.toHaveProperty("summary")
+    expect(messages[0]).not.toHaveProperty("recent")
+
+    const missingStarted = reducer.reduce(
+      [],
+      event({
+        ...current,
+        type: "session.next.compaction.failed",
+        data: {
+          timestamp: 20,
+          sessionID: "ses_1",
+          messageID: "msg_missing_started",
+          reason: "auto",
+          error: { type: "unknown", message: "missing start" },
+        },
+      }),
+    )
+    expect(missingStarted?.messages).toContainEqual(
+      expect.objectContaining({
+        id: "msg_missing_started",
+        type: "compaction",
+        status: "failed",
+        reason: "auto",
+        error: { type: "unknown", message: "missing start" },
+        time: { created: 20 },
+      }),
+    )
+  })
+
   test("hydrates a current imported message once", () => {
     const reducer = createV2SessionReducer()
     const imported = {

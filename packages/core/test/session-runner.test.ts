@@ -38,6 +38,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { Snapshot } from "@opencode-ai/core/snapshot"
 import { ContextSnapshotDecodeError } from "@opencode-ai/core/session/error"
 import { SessionEvent } from "@opencode-ai/core/session/event"
+import { ActiveAttemptConflictError } from "@opencode-ai/core/session/command"
 import { SessionAttempt } from "@opencode-ai/core/session/attempt"
 import { SessionAttachment } from "@opencode-ai/core/session/attachment"
 import { AssistantErrorCodec } from "@opencode-ai/core/session/assistant-error-codec"
@@ -1048,6 +1049,24 @@ describe("SessionRunnerLLM", () => {
       expect(Exit.isFailure(exit)).toBe(true)
       if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(ContextSnapshotDecodeError)
       expect(requests).toHaveLength(0)
+    }),
+  )
+
+  it.effect("rejects a steer targeting a finished provider attempt", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "First" }), resume: false })
+      yield* session.resume(sessionID)
+      const stale = EventV2.ID.create()
+      const error = yield* session
+        .prompt({
+          sessionID,
+          prompt: Prompt.make({ text: "Steer to stale attempt" }),
+          expectedActiveAttemptID: stale,
+        })
+        .pipe(Effect.flip)
+      expect(error).toBeInstanceOf(ActiveAttemptConflictError)
     }),
   )
 

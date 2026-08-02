@@ -537,6 +537,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         .pipe(
           SessionError.mapSessionNotFound,
           Effect.catchTag("Session.PromptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+          Effect.catchTag("Session.ActiveAttemptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
         )
       yield* session.touch(ctx.params.sessionID)
 
@@ -628,6 +629,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         .pipe(
           SessionError.mapSessionNotFound,
           Effect.catchTag("Session.PromptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+          Effect.catchTag("Session.ActiveAttemptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
         )
       yield* session.touch(ctx.params.sessionID)
       if (ctx.payload.noReply !== true) {

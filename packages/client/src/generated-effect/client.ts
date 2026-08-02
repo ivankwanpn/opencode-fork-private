@@ -185,6 +185,7 @@ type Endpoint4_13Input = {
   readonly prompt: Endpoint4_13Request["payload"]["prompt"]
   readonly model?: Endpoint4_13Request["payload"]["model"]
   readonly delivery?: Endpoint4_13Request["payload"]["delivery"]
+  readonly expectedActiveAttemptID?: Endpoint4_13Request["payload"]["expectedActiveAttemptID"]
   readonly resume?: Endpoint4_13Request["payload"]["resume"]
 }
 const Endpoint4_13 = (raw: RawClient["server.session"]) => (input: Endpoint4_13Input) =>
@@ -195,6 +196,7 @@ const Endpoint4_13 = (raw: RawClient["server.session"]) => (input: Endpoint4_13I
       prompt: input["prompt"],
       model: input["model"],
       delivery: input["delivery"],
+      expectedActiveAttemptID: input["expectedActiveAttemptID"],
       resume: input["resume"],
     },
   }).pipe(
@@ -271,6 +273,7 @@ type Endpoint4_20Input = {
   readonly model?: Endpoint4_20Request["payload"]["model"]
   readonly files?: Endpoint4_20Request["payload"]["files"]
   readonly delivery?: Endpoint4_20Request["payload"]["delivery"]
+  readonly expectedActiveAttemptID?: Endpoint4_20Request["payload"]["expectedActiveAttemptID"]
   readonly resume?: Endpoint4_20Request["payload"]["resume"]
   readonly commit?: Endpoint4_20Request["payload"]["commit"]
 }
@@ -285,6 +288,7 @@ const Endpoint4_20 = (raw: RawClient["server.session"]) => (input: Endpoint4_20I
       model: input["model"],
       files: input["files"],
       delivery: input["delivery"],
+      expectedActiveAttemptID: input["expectedActiveAttemptID"],
       resume: input["resume"],
       commit: input["commit"],
     },

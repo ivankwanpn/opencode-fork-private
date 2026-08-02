@@ -88,4 +88,59 @@ describe("WebSocketPool", () => {
       expect((yield* Ref.get(closed))).toBe(1)
     }),
   )
+
+  it.effect("closeAll closes every connection even when one close fails", () =>
+    Effect.gen(function* () {
+      const opened = yield* Ref.make(0)
+      const closed: number[] = []
+      const executor = WebSocketExecutor.Service.of({
+        open: () =>
+          Effect.gen(function* () {
+            const id = yield* Ref.getAndUpdate(opened, (count) => count + 1)
+            return {
+              sendText: () => Effect.void,
+              messages: Stream.empty,
+              close: id === 0 ? Effect.die("close failed") : Effect.sync(() => closed.push(id)),
+            }
+          }),
+      })
+      const exercise = Effect.gen(function* () {
+        const pool = yield* WebSocketPool.make()
+        const firstKey: WebSocketPoolKey = { url: "ws://mock/key-1", headers: Headers.empty, headersKey: "" }
+        const secondKey: WebSocketPoolKey = { url: "ws://mock/key-2", headers: Headers.empty, headersKey: "" }
+        yield* pool.acquire(firstKey)
+        yield* pool.acquire(secondKey)
+        yield* pool.closeAll
+        expect(closed).toEqual([1])
+      })
+      yield* exercise.pipe(Effect.provideService(WebSocketExecutor.Service, executor))
+    }),
+  )
+
+  it.effect("invalidate evicts a connection even when its close fails", () =>
+    Effect.gen(function* () {
+      const opened = yield* Ref.make(0)
+      const executor = WebSocketExecutor.Service.of({
+        open: () =>
+          Effect.gen(function* () {
+            const id = yield* Ref.getAndUpdate(opened, (count) => count + 1)
+            return {
+              sendText: () => Effect.void,
+              messages: Stream.empty,
+              close: id === 0 ? Effect.die("close failed") : Effect.void,
+            }
+          }),
+      })
+      const exercise = Effect.gen(function* () {
+        const pool = yield* WebSocketPool.make()
+        const key: WebSocketPoolKey = { url: "ws://mock/key", headers: Headers.empty, headersKey: "" }
+        const first = yield* pool.acquire(key)
+        yield* pool.invalidate(first)
+        const second = yield* pool.acquire(key)
+        expect(second).not.toBe(first)
+        expect((yield* Ref.get(opened))).toBe(2)
+      })
+      yield* exercise.pipe(Effect.provideService(WebSocketExecutor.Service, executor))
+    }),
+  )
 })

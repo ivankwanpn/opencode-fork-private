@@ -258,9 +258,9 @@ export const makePool = (): Effect.Effect<WebSocketPool> =>
       Ref.modify(cache, (map) => {
         const remaining = new Map(Array.from(map.entries()).filter(([, conn]) => conn !== connection))
         return [Effect.void, remaining] as const
-      }).pipe(Effect.flatten, Effect.andThen(connection.close))
+      }).pipe(Effect.flatten, Effect.andThen(connection.close.pipe(Effect.ignoreCause)))
     const closeAll = Ref.getAndSet(cache, new Map<string, WebSocketConnection>()).pipe(
-      Effect.flatMap((map) => Effect.forEach(Array.from(map.values()), (conn) => conn.close)),
+      Effect.flatMap((map) => Effect.forEach(Array.from(map.values()), (conn) => conn.close.pipe(Effect.ignoreCause))),
       Effect.asVoid,
     )
     return { acquire, release, invalidate, closeAll }

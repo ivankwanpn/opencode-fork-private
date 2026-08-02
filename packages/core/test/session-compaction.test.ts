@@ -136,11 +136,11 @@ describe("SessionCompaction manual lifecycle", () => {
 
   it.effect("leaves the active checkpoint unchanged when summarization fails", () =>
     Effect.gen(function* () {
-      const published: string[] = []
+      const published: Array<{ type: string; data: Record<string, unknown> }> = []
       const events = {
         publish: (definition: { readonly type: string }, data: Record<string, unknown>) =>
           Effect.sync(() => {
-            published.push(definition.type)
+            published.push({ type: definition.type, data })
             return { id: EventV2.ID.create(), type: definition.type, data }
           }),
       } as unknown as EventV2.Interface
@@ -161,7 +161,13 @@ describe("SessionCompaction manual lifecycle", () => {
           request: LLM.request({ model, messages: [], tools: [] }),
         }),
       ).toBeFalse()
-      expect(published).toEqual([SessionEvent.Compaction.Started.type])
+      expect(published.map((event) => event.type)).toEqual([
+        SessionEvent.Compaction.Started.type,
+        SessionEvent.Compaction.Failed.type,
+      ])
+      expect(published.at(-1)?.data).toMatchObject({
+        error: { type: "unknown", message: "summary unavailable" },
+      })
     }),
   )
 })

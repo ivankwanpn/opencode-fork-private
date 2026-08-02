@@ -396,6 +396,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
         case "session.next.retried":
         case "session.next.compaction.started":
         case "session.next.compaction.delta":
+        case "session.next.compaction.failed":
           break
         case "session.next.compaction.ended":
           message.update(event.data.sessionID, (draft) => {

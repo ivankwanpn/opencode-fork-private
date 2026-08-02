@@ -32,6 +32,7 @@ import {
   createPromptInputV2State,
   type PromptInputV2Interaction,
 } from "@opencode-ai/session-ui/v2/prompt-input/interaction"
+import { SessionContextUsage } from "@/components/session-context-usage"
 
 export type PromptInputV2ComposerProps = {
   class?: string
@@ -77,6 +78,7 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
             }
           />
         }
+        footerControl={<SessionContextUsage variant="composer" buttonAppearance="v2" placement="top" />}
       />
     </div>
   )

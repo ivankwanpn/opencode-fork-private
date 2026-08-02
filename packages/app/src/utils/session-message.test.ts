@@ -118,6 +118,52 @@ describe("normalizeSessionMessages", () => {
     })
   })
 
+  test("projects only completed compaction messages into timeline parts", () => {
+    const user = { id: "msg_user", type: "user", text: "hello", time: { created: 1 } } as SessionMessageInfo
+    const partsFor = (message: SessionMessageInfo) =>
+      normalizeSessionMessages("ses_1", [user, message]).parts.get("msg_user") ?? []
+    const running = {
+      id: "msg_running",
+      type: "compaction",
+      status: "running",
+      reason: "auto",
+      summary: "partial",
+      recent: "",
+      time: { created: 2 },
+    } as SessionMessageInfo
+    const failed = {
+      id: "msg_failed",
+      type: "compaction",
+      status: "failed",
+      reason: "manual",
+      error: { type: "unknown", message: "summary unavailable" },
+      time: { created: 3 },
+    } as SessionMessageInfo
+    const completedAuto = {
+      id: "msg_completed_auto",
+      type: "compaction",
+      status: "completed",
+      reason: "auto",
+      summary: "summary",
+      recent: "recent",
+      time: { created: 4 },
+    } as SessionMessageInfo
+    const completedManual = {
+      id: "msg_completed_manual",
+      type: "compaction",
+      status: "completed",
+      reason: "manual",
+      summary: "summary",
+      recent: "recent",
+      time: { created: 5 },
+    } as SessionMessageInfo
+
+    expect(partsFor(running).some((part) => part.type === "compaction")).toBeFalse()
+    expect(partsFor(failed).some((part) => part.type === "compaction")).toBeFalse()
+    expect(partsFor(completedAuto)).toContainEqual(expect.objectContaining({ type: "compaction", auto: true }))
+    expect(partsFor(completedManual)).toContainEqual(expect.objectContaining({ type: "compaction", auto: false }))
+  })
+
   test("projects current V2 attachments without legacy source metadata", () => {
     const source = [
       {

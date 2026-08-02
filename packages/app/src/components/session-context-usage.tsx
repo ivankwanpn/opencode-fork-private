@@ -13,12 +13,13 @@ import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
 import { getSessionContext } from "@/components/session/session-context-metrics"
+import { createSessionContextFormatter } from "@/components/session/session-context-format"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { useSettings } from "@/context/settings"
 
 interface SessionContextUsageProps {
-  variant?: "button" | "indicator"
+  variant?: "button" | "indicator" | "composer"
   buttonAppearance?: "default" | "v2"
   placement?: ComponentProps<typeof TooltipV2>["placement"]
 }
@@ -74,9 +75,13 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   )
 
   const context = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
   const cost = createMemo(() => {
     return usd().format(info()?.cost ?? 0)
   })
+  const usageLabel = () => formatter().percent(context()?.usage)
+  const usedLabel = () => formatter().compact(context()?.total)
+  const limitLabel = () => formatter().compact(context()?.limit)
   const contextVisible = createMemo(() => view().reviewPanel.opened() && tabState.activeTab() === "context")
   const hasOtherTabs = createMemo(() =>
     tabs()
@@ -125,7 +130,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
     </div>
   )
 
-  const tooltipValue = () => (
+  const detailsTooltipValue = () => (
     <div class="flex w-[120px] flex-col gap-2">
       <ContextTooltipRow name={language.t("context.usage.cost")} value={cost()} />
       <ContextTooltipRow name={language.t("context.usage.usage")} value={`${context()?.usage ?? 0}%`} />
@@ -135,11 +140,43 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       />
     </div>
   )
+  const tooltipValue = () =>
+    variant() === "composer" ? (
+      <div class="flex w-[140px] flex-col gap-1">
+        <div>
+          {language.t("context.usage.window")}: {usageLabel()}
+        </div>
+        <div>{language.t("context.usage.used", { used: usedLabel(), limit: limitLabel() })}</div>
+      </div>
+    ) : (
+      detailsTooltipValue()
+    )
 
   return (
-    <Show when={params.id}>
+    <Show when={params.id && (variant() !== "composer" || context())}>
       <TooltipV2 value={tooltipValue()} placement={props.placement ?? "top"} shift={-8}>
         <Switch>
+          <Match when={variant() === "composer" && buttonAppearance() === "v2"}>
+            <IconButtonV2
+              type="button"
+              variant="ghost-muted"
+              size="large"
+              icon={circleV2()}
+              onClick={openContext}
+              aria-label={language.t("context.usage.view")}
+            />
+          </Match>
+          <Match when={variant() === "composer"}>
+            <Button
+              type="button"
+              variant="ghost"
+              class="size-6"
+              onClick={openContext}
+              aria-label={language.t("context.usage.view")}
+            >
+              {circle()}
+            </Button>
+          </Match>
           <Match when={variant() === "indicator"}>{circle()}</Match>
           <Match when={buttonAppearance() === "v2"}>
             <IconButtonV2

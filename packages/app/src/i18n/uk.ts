@@ -492,6 +492,8 @@ export const dict = {
   "context.usage.cost": "Вартість",
   "context.usage.clickToView": "Натисніть, щоб переглянути контекст",
   "context.usage.view": "Переглянути використання контексту",
+  "context.usage.window": "Контекстне вікно",
+  "context.usage.used": "Використано {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

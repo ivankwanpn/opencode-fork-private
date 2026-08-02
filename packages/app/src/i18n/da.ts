@@ -482,6 +482,8 @@ export const dict = {
   "context.usage.cost": "Omkostning",
   "context.usage.clickToView": "Klik for at se kontekst",
   "context.usage.view": "Se kontekstforbrug",
+  "context.usage.window": "Kontekstvindue",
+  "context.usage.used": "Brugt {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

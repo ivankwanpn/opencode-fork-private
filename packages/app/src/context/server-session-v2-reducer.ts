@@ -687,6 +687,23 @@ export function createV2SessionReducer() {
           [current.id],
         )
       }
+      case "session.next.compaction.failed": {
+        const current = source.findLast(
+          (item): item is Extract<Compaction, { status: "running" }> =>
+            item.type === "compaction" && item.status === "running" && item.id === event.data.messageID,
+        )
+        const failed: Extract<Compaction, { status: "failed" }> = {
+          id: current?.id ?? event.data.messageID,
+          type: "compaction",
+          status: "failed",
+          metadata: current?.metadata ?? legacyJsonRecord(event.metadata),
+          reason: event.data.reason,
+          error: event.data.error,
+          time: current?.time ?? { created: event.data.timestamp },
+        }
+        if (!current) return append(failed)
+        return result(update(source, current.id, () => failed), [failed.id])
+      }
       case "session.compaction.started":
         return append({
           id: event.data.inputID ?? messageID(event.id),

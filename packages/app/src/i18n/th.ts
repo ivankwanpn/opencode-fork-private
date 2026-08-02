@@ -482,6 +482,8 @@ export const dict = {
   "context.usage.cost": "ต้นทุน",
   "context.usage.clickToView": "คลิกเพื่อดูบริบท",
   "context.usage.view": "ดูการใช้บริบท",
+  "context.usage.window": "หน้าต่างบริบท",
+  "context.usage.used": "ใช้แล้ว {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

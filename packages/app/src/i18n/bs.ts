@@ -484,6 +484,8 @@ export const dict = {
   "context.usage.cost": "Trošak",
   "context.usage.clickToView": "Klikni da vidiš kontekst",
   "context.usage.view": "Prikaži korištenje konteksta",
+  "context.usage.window": "Kontekstni prozor",
+  "context.usage.used": "Iskorišteno {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

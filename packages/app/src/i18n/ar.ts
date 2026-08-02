@@ -449,6 +449,8 @@ export const dict = {
   "context.usage.cost": "تكلفة",
   "context.usage.clickToView": "انقر لعرض السياق",
   "context.usage.view": "عرض استخدام السياق",
+  "context.usage.window": "نافذة السياق",
+  "context.usage.used": "المستخدم {{used}} / {{limit}}",
   "language.en": "English",
   "language.zh": "简体中文",
   "language.zht": "繁體中文",

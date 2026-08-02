@@ -500,6 +500,8 @@ export const dict = {
   "context.usage.cost": "成本",
   "context.usage.clickToView": "點擊查看上下文",
   "context.usage.view": "檢視上下文用量",
+  "context.usage.window": "上下文視窗",
+  "context.usage.used": "已使用 {{used}} / {{limit}}",
 
   "language.en": "English",
   "language.zh": "简体中文",

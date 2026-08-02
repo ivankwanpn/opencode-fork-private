@@ -2,7 +2,7 @@ export * as SessionCompaction from "./compaction"
 
 import { LLM, LLMClient, LLMError, LLMEvent, Message, type LLMRequest, type Model } from "@opencode-ai/llm"
 import type { UserMessage } from "@opencode-ai/sdk/v2/types"
-import { Context, DateTime, Effect, Layer, Stream } from "effect"
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Stream } from "effect"
 import { AgentV2 } from "../agent"
 import { Config } from "../config"
 import { makeLocationNode } from "../effect/app-node"
@@ -257,56 +257,90 @@ export const make = (dependencies: Dependencies) => {
       })
     const summaryOutput = Math.min(output || SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS)
     if (context !== undefined && context > 0 && Token.estimate(summaryPrompt) > context - summaryOutput) return false
-    const messageID = SessionMessage.ID.create()
-    yield* dependencies.events.publish(SessionEvent.Compaction.Started, {
-      sessionID: input.sessionID,
-      messageID,
-      timestamp: yield* DateTime.now,
-      reason: input.reason,
-    })
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const messageID = SessionMessage.ID.create()
+        yield* dependencies.events.publish(SessionEvent.Compaction.Started, {
+          sessionID: input.sessionID,
+          messageID,
+          timestamp: yield* DateTime.now,
+          reason: input.reason,
+        })
 
-    const chunks: string[] = []
-    let failed = false
-    const summarized = yield* dependencies.llm
-      .stream(
-        LLM.request({
-          model: input.model,
-          messages: [Message.user(summaryPrompt)],
-          tools: [],
-          generation: { maxTokens: summaryOutput },
-        }),
-      )
-      .pipe(
-        Stream.runForEach((event) => {
-          if (LLMEvent.is.providerError(event)) {
-            failed = true
-            return Effect.void
-          }
-          if (!LLMEvent.is.textDelta(event)) return Effect.void
-          chunks.push(event.text)
-          return dependencies.events
-            .publish(SessionEvent.Compaction.Delta, {
+        const chunks: string[] = []
+        let providerFailure: string | undefined
+        const streamed = yield* restore(
+          dependencies.llm
+            .stream(
+              LLM.request({
+                model: input.model,
+                messages: [Message.user(summaryPrompt)],
+                tools: [],
+                generation: { maxTokens: summaryOutput },
+              }),
+            )
+            .pipe(
+              Stream.runForEach((event) => {
+                if (LLMEvent.is.providerError(event)) {
+                  providerFailure = event.message
+                  return Effect.void
+                }
+                if (!LLMEvent.is.textDelta(event)) return Effect.void
+                chunks.push(event.text)
+                return dependencies.events
+                  .publish(SessionEvent.Compaction.Delta, {
+                    sessionID: input.sessionID,
+                    messageID,
+                    timestamp: DateTime.makeUnsafe(Date.now()),
+                    text: event.text,
+                  })
+                  .pipe(Effect.asVoid)
+              }),
+            ),
+        ).pipe(Effect.exit)
+
+        const publishFailed = (message: string) =>
+          dependencies.events
+            .publish(SessionEvent.Compaction.Failed, {
               sessionID: input.sessionID,
               messageID,
               timestamp: DateTime.makeUnsafe(Date.now()),
-              text: event.text,
+              reason: input.reason,
+              error: { type: "unknown", message },
             })
             .pipe(Effect.asVoid)
-        }),
-        Effect.as(true),
-        Effect.catchTag("LLM.Error", () => Effect.succeed(false)),
-      )
-    const summary = chunks.join("")
-    if (!summarized || failed || !summary.trim()) return false
-    yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
-      sessionID: input.sessionID,
-      messageID,
-      timestamp: yield* DateTime.now,
-      reason: input.reason,
-      text: summary,
-      recent: target.recent,
-    })
-    return true
+
+        if (Exit.isFailure(streamed)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(streamed.cause))
+          const interrupted = Cause.hasInterruptsOnly(streamed.cause)
+          const recoverable =
+            error instanceof LLMError && !Cause.hasInterrupts(streamed.cause) && !Cause.hasDies(streamed.cause)
+          yield* publishFailed(
+            interrupted ? "Compaction interrupted" : recoverable ? error.reason.message : "Compaction failed",
+          )
+          if (recoverable) return false
+          return yield* Effect.failCause(
+            streamed.cause as unknown as Cause.Cause<SessionRunnerModel.Error | MessageDecodeError>,
+          )
+        }
+
+        const summary = chunks.join("")
+        if (providerFailure !== undefined || !summary.trim()) {
+          yield* publishFailed(providerFailure ?? "Empty summary")
+          return false
+        }
+
+        yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
+          sessionID: input.sessionID,
+          messageID,
+          timestamp: yield* DateTime.now,
+          reason: input.reason,
+          text: summary,
+          recent: target.recent,
+        })
+        return true
+      }),
+    )
   })
 
   const compactAfterOverflow = Effect.fn("SessionCompaction.compactAfterOverflow")((input: Input) =>

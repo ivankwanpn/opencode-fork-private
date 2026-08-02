@@ -119,7 +119,7 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
       parts.set(message.id, assistantParts(sessionID, message))
       return
     }
-    if (message.type !== "compaction" || !parentID) return
+    if (message.type !== "compaction" || message.status !== "completed" || !parentID) return
     parts.set(parentID, [
       ...(parts.get(parentID) ?? []),
       {

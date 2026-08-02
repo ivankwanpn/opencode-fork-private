@@ -24,6 +24,7 @@ export type Invocation = Identity & {
   readonly childSessionID: SessionSchema.ID
   readonly description: string
   readonly agent: string
+  readonly agentPath?: string
   readonly model?: unknown
 }
 
@@ -39,6 +40,7 @@ export type Info = {
   readonly description: string
   readonly prompt: Prompt
   readonly agent: string
+  readonly agentPath?: string
   readonly model?: unknown
   readonly status: "accepted" | "running" | "completed" | "error" | "cancelled" | "recovery-required"
   readonly outcome?: Outcome
@@ -122,6 +124,7 @@ const toInfo = (row: typeof TaskSubmissionTable.$inferSelect): Info => ({
   description: row.description,
   prompt: Schema.decodeUnknownSync(Prompt)(row.prompt),
   agent: row.agent,
+  ...(row.agent_path === null ? {} : { agentPath: row.agent_path }),
   ...(row.model === null ? {} : { model: row.model }),
   status: row.status,
   ...(row.outcome === null ? {} : { outcome: row.outcome }),
@@ -246,6 +249,7 @@ const layer = Layer.effect(
               description: input.description,
               prompt: input.prompt,
               agent: input.agent,
+              agent_path: input.agentPath,
               model: input.model,
               status: "accepted",
               time_created: timeCreated,
@@ -514,6 +518,7 @@ function matches(existing: Info, input: Invocation) {
     existing.childSessionID === input.childSessionID &&
     existing.description === input.description &&
     existing.agent === input.agent &&
+    existing.agentPath === input.agentPath &&
     serializedModel(existing.model) === serializedModel(input.model) &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )

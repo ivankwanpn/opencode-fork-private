@@ -1,9 +1,9 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "4bd8182d-1fc5-408d-8344-5abc3d0e2073",
+  "id": "e514c35d-f98a-4fd3-8043-53e1123cac1f",
   "prevIds": [
-    "114d0df8-5d85-4f47-9edb-40d993aa7ec4"
+    "4bd8182d-1fc5-408d-8344-5abc3d0e2073"
   ],
   "ddl": [
     {
@@ -1755,6 +1755,16 @@
       "default": null,
       "generated": null,
       "name": "agent",
+      "entityType": "columns",
+      "table": "task_submission"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "agent_path",
       "entityType": "columns",
       "table": "task_submission"
     },

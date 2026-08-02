@@ -139,6 +139,24 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const tools = yield* Tools.Service
       const allowBackground = options.background ?? Flag.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
 
+      const computeAgentPath = Effect.fn("TaskTool.computeAgentPath")(function* (session: SessionSchema.Info) {
+        const chain = [session]
+        let current = session
+        while (current.parentID) {
+          const ancestor = yield* sessions.get(current.parentID)
+          if (!ancestor) return yield* new ToolFailure({ message: `Session not found: ${current.parentID}` })
+          chain.push(ancestor)
+          current = ancestor
+        }
+        let path = "/root"
+        for (const entry of chain.reverse()) {
+          if (entry.parentID === undefined) continue
+          if (!entry.agent) return yield* new ToolFailure({ message: `Session has no agent: ${entry.id}` })
+          path = `${path}/${entry.agent}`
+        }
+        return path
+      })
+
       const execute = Effect.fn("TaskTool.execute")(function* (input: typeof Input.Type, context: Tool.Context) {
         const runInBackground = input.background === true
         if (runInBackground && !allowBackground)
@@ -322,6 +340,8 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           Effect.gen(function* () {
             yield* checkpoint(metadata)
 
+            const parentPath = yield* computeAgentPath(parent)
+            const agentPath = `${parentPath}/${agent.id}`
             const submission = yield* submissions
               .submit({
                 parentSessionID: context.sessionID,
@@ -331,6 +351,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
                 description: input.description,
                 prompt: Prompt.make({ text: input.prompt }),
                 agent: agent.id,
+                agentPath,
                 model,
               })
               .pipe(

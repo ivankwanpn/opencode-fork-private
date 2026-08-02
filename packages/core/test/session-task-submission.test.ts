@@ -213,6 +213,22 @@ describe("TaskSubmission", () => {
     )
   })
 
+  it.effect("persists and recovers an agent path on the submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const info = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Agent path task",
+        agent: "general",
+        agentPath: "/root/researcher",
+      })
+      const recovered = yield* submissions.get(info.id)
+      expect(recovered?.agentPath).toBe("/root/researcher")
+    }),
+  )
+
   it.effect("adopts exact retries and terminalizes the child input once", () =>
     Effect.gen(function* () {
       yield* setup

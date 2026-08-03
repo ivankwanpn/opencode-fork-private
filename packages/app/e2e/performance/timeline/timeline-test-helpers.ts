@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test"
 import { base64Encode } from "@opencode-ai/core/util/encode"
-import { mockOpenCodeServer } from "../../utils/mock-server"
+import { mockOpenCodeServer, type MockServerConfig } from "../../utils/mock-server"
 import { fixture, pageMessages } from "./session-timeline-stress.fixture"
 
 export async function installTimelineSettings(page: Page) {
@@ -22,7 +22,8 @@ export async function installTimelineSettings(page: Page) {
 export function mockStressTimeline(
   page: Page,
   input?: {
-    onMessages?: (input: { sessionID: string; before?: string; phase: "start" | "end" }) => void
+    onMessages?: MockServerConfig["onMessages"]
+    beforeMessagesResponse?: MockServerConfig["beforeMessagesResponse"]
     vcsDiff?: unknown[]
   },
 ) {
@@ -33,6 +34,7 @@ export function mockStressTimeline(
     project: fixture.project,
     pageMessages,
     onMessages: input?.onMessages,
+    beforeMessagesResponse: input?.beforeMessagesResponse,
     vcsDiff: input?.vcsDiff,
   })
 }

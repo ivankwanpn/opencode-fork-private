@@ -459,7 +459,6 @@ describe("event-driven subagent loop", () => {
         return yield* Effect.fail(
           new Error(`Parent continuation messages: ${JSON.stringify(scenario.parentRequests[1]!.messages)}`),
         )
-      expect(settled).toEqual([expect.stringContaining('state="running"'), expect.stringContaining('state="running"')])
       yield* Effect.all(
         Object.entries(scenario.children).map(([name, child]) => awaitSignal(`child ${name}`, child.started)),
         {
@@ -472,6 +471,12 @@ describe("event-driven subagent loop", () => {
       expect(submissions).toHaveLength(2)
       const first = submissions.find((item) => item.tool_call_id === "call-child-a")!
       const second = submissions.find((item) => item.tool_call_id === "call-child-b")!
+      expect(
+        settled.filter((text) => text.includes(`<task id="${first.child_session_id}" state="running">`)),
+      ).toHaveLength(1)
+      expect(
+        settled.filter((text) => text.includes(`<task id="${second.child_session_id}" state="running">`)),
+      ).toHaveLength(1)
       expect((yield* background.get(first.child_session_id))?.status).toBe("running")
       expect((yield* background.get(second.child_session_id))?.status).toBe("running")
       const active = yield* execution.active
@@ -493,6 +498,8 @@ describe("event-driven subagent loop", () => {
       expect(userTexts(scenario.parentRequests[2]!).join("\n")).toContain(`<task id="${first.child_session_id}"`)
       expect(userTexts(scenario.parentRequests[2]!).join("\n")).toContain(scenario.children.A.result)
       expect((yield* background.get(second.child_session_id))?.status).toBe("running")
+      const activeAfterFirst = yield* execution.active
+      expect(activeAfterFirst.has(second.child_session_id)).toBe(true)
 
       yield* Deferred.succeed(scenario.children.B.release, undefined)
       expect((yield* background.wait({ id: second.child_session_id })).outcome).toBe("completed")
@@ -559,6 +566,8 @@ describe("event-driven subagent loop", () => {
           .pipe(Effect.orDie),
       ).toHaveLength(2)
 
+      expect(scenario.parentRequests).toHaveLength(2)
+      expect((yield* Deferred.poll(scenario.parentStarted[2]!))._tag).toBe("None")
       yield* Deferred.succeed(scenario.parentGate!, undefined)
       yield* Deferred.await(scenario.parentStarted[2]!)
       yield* execution.wait(parentSessionID)

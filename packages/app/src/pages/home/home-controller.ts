@@ -3,7 +3,7 @@ import { type HomeProjectSelection, useLayout } from "@/context/layout"
 import { ServerConnection, useServer } from "@/context/server"
 import { useServerSync } from "@/context/server-sync"
 import { useTabs } from "@/context/tabs"
-import { toggleHomeProjectSelection } from "@/pages/layout/helpers"
+import { projectForDirectory, toggleHomeProjectSelection } from "@/pages/layout/helpers"
 import { createEffect, createMemo } from "solid-js"
 
 export function createHomeController() {
@@ -27,11 +27,11 @@ export function createHomeController() {
     () => focusedServerCtx()?.projects.recentlyClosed() ?? layout.projects.recentlyClosed(),
   )
   const homedir = createMemo(() => focusedSync().data.path.home ?? "")
-  const selectedProject = createMemo(() => projects().find((project) => project.worktree === selection().directory))
+  const selectedProject = createMemo(() => projectForDirectory(projects(), selection().directory))
   const newSessionProject = createMemo(
     () =>
       selectedProject() ??
-      projects().find((project) => project.worktree === focusedServerCtx()?.projects.last()) ??
+      projectForDirectory(projects(), focusedServerCtx()?.projects.last()) ??
       projects()[0],
   )
 
@@ -77,13 +77,7 @@ export function createHomeController() {
       select: (conn: ServerConnection.Any, directory: string) => {
         const key = ServerConnection.key(conn)
         if (global.servers.health[key]?.healthy === false) return
-        if (
-          !global
-            .ensureServerCtx(conn)
-            .projects.list()
-            .some((project) => project.worktree === directory)
-        )
-          return
+        if (!projectForDirectory(global.ensureServerCtx(conn).projects.list(), directory)) return
         setSelection(toggleHomeProjectSelection(selection(), key, directory))
       },
       add: (conn: ServerConnection.Any, directories: string[]) => {

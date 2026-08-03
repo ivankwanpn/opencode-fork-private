@@ -20,6 +20,7 @@ import { ServerRowMenuView, serverMenuLabels } from "@/components/server/server-
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
 import { fileManagerApp } from "@/utils/file-manager"
+import { pathKey } from "@/utils/path-key"
 
 const HOME_PROJECT_NAV_LABEL = "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
 
@@ -343,7 +344,7 @@ function HomeProjectList(props: HomeProjectListProps) {
       <div class="flex min-w-0 flex-col gap-1" ref={listRef}>
         {/* Keyed on worktree strings: the enriched project objects are
             recreated on every store or sync update, so iterating them directly
-            remounts all rows — killing any in-flight drag activation (the
+            remounts all rows ??killing any in-flight drag activation (the
             row's sortable unregisters on unmount) and discarding animations.
             String keys keep row elements alive and move them on reorder. */}
         <For each={props.items.map((project) => project.worktree)}>
@@ -361,6 +362,14 @@ function HomeProjectSlot(
   },
 ) {
   const project = createMemo(() => props.items.find((item) => item.worktree === props.worktree))
+  const selected = () => {
+    const selection = props.selection()
+    return (
+      selection.server === ServerConnection.key(props.server) &&
+      selection.directory !== undefined &&
+      pathKey(selection.directory) === pathKey(props.worktree)
+    )
+  }
 
   return (
     <Show when={project()}>
@@ -371,10 +380,7 @@ function HomeProjectSlot(
           server={props.server}
           index={props.index}
           serverSelected={props.selection().server === ServerConnection.key(props.server)}
-          selected={
-            props.selection().server === ServerConnection.key(props.server) &&
-            props.selection().directory === props.worktree
-          }
+          selected={selected()}
           unseen={props.unseenCount(props.server, item())}
         />
       )}
@@ -464,10 +470,9 @@ function HomeProjectRow(
     },
   })
   let pointerDownSelected: boolean | undefined
-  const contextMenuID = () => projectContextMenuID(props.server, props.project.worktree)
+  const contextMenuID = projectContextMenuID(props.server, props.project.worktree)
   onCleanup(() => {
-    const id = contextMenuID()
-    if (props.contextMenuOpen(id)) props.onSetContextMenuOpen(id, false)
+    if (props.contextMenuOpen(contextMenuID)) props.onSetContextMenuOpen(contextMenuID, false)
   })
   return (
     <div
@@ -522,14 +527,14 @@ function HomeProjectRow(
           hover-reveal absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1
           group-hover/project:opacity-100 focus-within:opacity-100 data-[menu=true]:opacity-100
         `}
-        data-menu={props.contextMenuOpen(contextMenuID())}
+        data-menu={props.contextMenuOpen(contextMenuID)}
       >
         <MenuV2
           gutter={6}
           modal={false}
           placement="bottom-end"
-          open={props.contextMenuOpen(contextMenuID())}
-          onOpenChange={(open) => props.onSetContextMenuOpen(contextMenuID(), open)}
+          open={props.contextMenuOpen(contextMenuID)}
+          onOpenChange={(open) => props.onSetContextMenuOpen(contextMenuID, open)}
         >
           <MenuV2.Trigger
             as={IconButtonV2}

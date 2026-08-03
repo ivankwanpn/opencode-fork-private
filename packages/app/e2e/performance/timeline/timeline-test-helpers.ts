@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test"
 import { base64Encode } from "@opencode-ai/core/util/encode"
-import { mockOpenCodeServer } from "../../utils/mock-server"
+import { mockOpenCodeServer, type MockServerConfig } from "../../utils/mock-server"
 import { fixture, pageMessages } from "./session-timeline-stress.fixture"
 
 export async function installTimelineSettings(page: Page) {
@@ -22,7 +22,8 @@ export async function installTimelineSettings(page: Page) {
 export function mockStressTimeline(
   page: Page,
   input?: {
-    onMessages?: (input: { sessionID: string; before?: string; phase: "start" | "end" }) => void
+    onMessages?: MockServerConfig["onMessages"]
+    beforeMessagesResponse?: MockServerConfig["beforeMessagesResponse"]
     vcsDiff?: unknown[]
   },
 ) {
@@ -33,14 +34,21 @@ export function mockStressTimeline(
     project: fixture.project,
     pageMessages,
     onMessages: input?.onMessages,
+    beforeMessagesResponse: input?.beforeMessagesResponse,
     vcsDiff: input?.vcsDiff,
   })
 }
 
 export async function installStressSessionTabs(page: Page, input?: { draftID?: string; sessionIDs?: string[] }) {
   const server = stressServer()
+  const sessionIDs = input?.sessionIDs ?? [fixture.sourceID, fixture.targetID]
+  const sessions = sessionIDs.flatMap((id) => {
+    const session = fixture.sessions.find((item) => item.id === id)
+    if (!session) return []
+    return [{ id, title: session.title, directory: session.directory }]
+  })
   await page.addInitScript(
-    ({ directory, sessionIDs, dirBase64, server, draftID }) => {
+    ({ directory, sessions, dirBase64, server, serverBase64, draftID }) => {
       localStorage.setItem(
         "opencode.global.dat:server",
         JSON.stringify({
@@ -51,21 +59,29 @@ export async function installStressSessionTabs(page: Page, input?: { draftID?: s
       localStorage.setItem(
         "opencode.window.browser.dat:tabs",
         JSON.stringify([
-          ...sessionIDs.map((sessionId) => ({
+          ...sessions.map((session) => ({
             type: "session",
             server,
             dirBase64,
-            sessionId,
+            sessionId: session.id,
           })),
           ...(draftID ? [{ type: "draft", draftID, server, directory }] : []),
         ]),
       )
+      const info = Object.fromEntries(
+        sessions.map((session) => [
+          `${server}\n/server/${serverBase64}/session/${session.id}`,
+          { title: session.title, directory: session.directory },
+        ]),
+      )
+      localStorage.setItem("opencode.window.browser.dat:tabs.info", JSON.stringify(info))
     },
     {
       directory: fixture.directory,
-      sessionIDs: input?.sessionIDs ?? [fixture.sourceID, fixture.targetID],
+      sessions,
       dirBase64: base64Encode(fixture.directory),
       server,
+      serverBase64: base64Encode(server),
       draftID: input?.draftID,
     },
   )

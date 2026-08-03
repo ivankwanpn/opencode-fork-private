@@ -57,12 +57,17 @@ export const childSessionOnPath = (sessions: Session[] | undefined, rootID: stri
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree) || project.worktree
 
+const sameDirectory = (left: string | undefined, right: string | undefined) => {
+  if (!left || !right) return false
+  return pathKey(left) === pathKey(right)
+}
+
 export function toggleHomeProjectSelection(
   current: HomeProjectSelection | undefined,
   server: ServerConnection.Key,
   directory: string,
 ): HomeProjectSelection {
-  if (current?.server === server && current.directory === directory) return { server }
+  if (current?.server === server && sameDirectory(current.directory, directory)) return { server }
   return { server, directory }
 }
 
@@ -73,7 +78,7 @@ export function closeHomeProject(
   directory: string,
 ) {
   projects.close(directory)
-  if (selected?.server === server && selected.directory === directory) return { server }
+  if (selected?.server === server && sameDirectory(selected.directory, directory)) return { server }
   return selected
 }
 
@@ -113,6 +118,12 @@ export function projectForSession<T extends { id?: string; worktree: string; san
     (project) =>
       pathKey(project.worktree) === directory || project.sandboxes?.some((sandbox) => pathKey(sandbox) === directory),
   )
+}
+
+export function projectForDirectory<T extends { worktree: string }>(projects: T[], directory: string | undefined) {
+  if (!directory) return
+  const key = pathKey(directory)
+  return projects.find((project) => pathKey(project.worktree) === key)
 }
 
 export const errorMessage = (err: unknown, fallback: string) => {

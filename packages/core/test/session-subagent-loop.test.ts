@@ -83,16 +83,9 @@ const userTexts = (request: LLMRequest) =>
     message.role === "user" ? message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])) : [],
   )
 
-const toolResultTexts = (request: LLMRequest) =>
+const toolResultParts = (request: LLMRequest) =>
   request.messages.flatMap((message) =>
-    message.role === "tool"
-      ? message.content.flatMap((part) => {
-          if (part.type !== "tool-result") return []
-          if (part.result.type === "text" && typeof part.result.value === "string") return [part.result.value]
-          if (part.result.type !== "content") return []
-          return part.result.value.flatMap((content) => (content.type === "text" ? [content.text] : []))
-        })
-      : [],
+    message.role === "tool" ? message.content.flatMap((part) => (part.type === "tool-result" ? [part] : [])) : [],
   )
 
 const completed = (id: string, text: string): LLMEvent[] => [
@@ -454,7 +447,7 @@ describe("event-driven subagent loop", () => {
 
       yield* createParent(session, parentSessionID, scenario.parentPrompt)
       yield* awaitSignal("parent continuation", scenario.parentStarted[1]!)
-      const settled = toolResultTexts(scenario.parentRequests[1]!)
+      const settled = toolResultParts(scenario.parentRequests[1]!)
       if (settled.length === 0)
         return yield* Effect.fail(
           new Error(`Parent continuation messages: ${JSON.stringify(scenario.parentRequests[1]!.messages)}`),
@@ -471,12 +464,33 @@ describe("event-driven subagent loop", () => {
       expect(submissions).toHaveLength(2)
       const first = submissions.find((item) => item.tool_call_id === "call-child-a")!
       const second = submissions.find((item) => item.tool_call_id === "call-child-b")!
-      expect(
-        settled.filter((text) => text.includes(`<task id="${first.child_session_id}" state="running">`)),
-      ).toHaveLength(1)
-      expect(
-        settled.filter((text) => text.includes(`<task id="${second.child_session_id}" state="running">`)),
-      ).toHaveLength(1)
+      const running = settled.filter(
+        (part) =>
+          part.result.type === "text" &&
+          typeof part.result.value === "string" &&
+          part.result.value.includes('state="running"'),
+      )
+      expect(running).toHaveLength(2)
+      expect(running).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: first.tool_call_id,
+            name: "task",
+            result: expect.objectContaining({
+              type: "text",
+              value: expect.stringContaining(`<task id="${first.child_session_id}" state="running">`),
+            }),
+          }),
+          expect.objectContaining({
+            id: second.tool_call_id,
+            name: "task",
+            result: expect.objectContaining({
+              type: "text",
+              value: expect.stringContaining(`<task id="${second.child_session_id}" state="running">`),
+            }),
+          }),
+        ]),
+      )
       expect((yield* background.get(first.child_session_id))?.status).toBe("running")
       expect((yield* background.get(second.child_session_id))?.status).toBe("running")
       const active = yield* execution.active

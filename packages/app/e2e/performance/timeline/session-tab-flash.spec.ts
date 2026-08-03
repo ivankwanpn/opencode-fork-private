@@ -60,6 +60,7 @@ benchmark("stages restored session tabs after paint with one request in flight",
     releaseFirstResponse = resolve
   })
   let firstResponseSessionID: string | undefined
+  const expectedRestoreOrder = [fixture.sourceID, fixture.targetID, fixture.childID]
 
   const sourceSession = fixture.sessions.find((session) => session.id === fixture.sourceID)
   const targetSession = fixture.sessions.find((session) => session.id === fixture.targetID)
@@ -135,22 +136,25 @@ benchmark("stages restored session tabs after paint with one request in flight",
   await expect.poll(() => pendingIdleCallbacks(page)).toBeGreaterThan(0)
 
   expect(await releaseIdleCallback(page)).toBe(true)
-  await expect.poll(() => started.length).toBe(1)
+  await expect.poll(() => started).toEqual([expectedRestoreOrder[0]])
   expect(await releaseIdleCallback(page)).toBe(false)
-  await expect.poll(() => started.length).toBe(1)
+  expect(started).toEqual([expectedRestoreOrder[0]])
 
   releaseFirstResponse()
-  await expect.poll(() => completed.length).toBe(1)
+  await expect.poll(() => completed).toEqual([expectedRestoreOrder[0]])
 
   await expect.poll(() => pendingIdleCallbacks(page)).toBeGreaterThan(0)
   expect(await releaseIdleCallback(page)).toBe(true)
-  await expect.poll(() => completed.length).toBe(2)
+  await expect.poll(() => started).toEqual(expectedRestoreOrder.slice(0, 2))
+  await expect.poll(() => completed).toEqual(expectedRestoreOrder.slice(0, 2))
 
   await expect.poll(() => pendingIdleCallbacks(page)).toBeGreaterThan(0)
   expect(await releaseIdleCallback(page)).toBe(true)
-  await expect.poll(() => completed.length).toBe(3)
+  await expect.poll(() => started).toEqual(expectedRestoreOrder)
+  await expect.poll(() => completed).toEqual(expectedRestoreOrder)
 
-  expect(new Set(started)).toEqual(new Set([fixture.sourceID, fixture.targetID, fixture.childID]))
+  expect(started).toHaveLength(3)
+  expect(completed).toHaveLength(3)
   expect(maxConcurrentMessages).toBe(1)
   report({
     requestCount: started.length,

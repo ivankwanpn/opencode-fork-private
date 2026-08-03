@@ -30,7 +30,7 @@ import { testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { SessionInputTable, TaskSubmissionTable } from "@opencode-ai/core/session/sql"
+import { SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "@opencode-ai/core/session/sql"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -762,6 +762,11 @@ describe("tool.task", () => {
       expect(job.metadata?.parentSessionId).toBe(chat.id)
       yield* jobs.promote(job.id)
 
+      const { db } = yield* Database.Service
+      expect(yield* db.select({ delivery: TaskSubmissionTable.completion_delivery }).from(TaskSubmissionTable).all()).toEqual([
+        { delivery: "parent" },
+      ])
+
       const result = yield* Fiber.join(fiber)
       expect(result.metadata.background).toBe(true)
       expect(result.output).toContain(`state="running"`)
@@ -770,6 +775,7 @@ describe("tool.task", () => {
 
       yield* Deferred.succeed(done, undefined)
       expect((yield* jobs.wait({ id: result.metadata.sessionId })).info?.output).toBe("background done")
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
       expect((yield* Deferred.await(injected)).parts[0]?.type).toBe("text")
       expect(runs).toBe(1)
     }),

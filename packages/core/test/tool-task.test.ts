@@ -342,6 +342,16 @@ const taskSubmissionLayer = Layer.succeed(
         return info
       }),
     get: (id) => Effect.succeed(taskSubmissions.get(id)),
+    latestByChild: (input) =>
+      Effect.succeed(
+        Array.from(taskSubmissions.values())
+          .filter(
+            (submission) =>
+              submission.parentSessionID === input.parentSessionID &&
+              submission.childSessionID === input.childSessionID,
+          )
+          .toSorted((a, b) => b.timeCreated - a.timeCreated || b.id.localeCompare(a.id))[0],
+      ),
     promoteDelivery: (id) =>
       Effect.gen(function* () {
         if (promotionSignal) yield* Deferred.succeed(promotionSignal, undefined).pipe(Effect.ignore)

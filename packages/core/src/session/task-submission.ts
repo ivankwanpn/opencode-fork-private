@@ -1,6 +1,6 @@
 export * as TaskSubmission from "./task-submission"
 
-import { and, eq, isNull, or, sql } from "drizzle-orm"
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -101,6 +101,10 @@ export type RecoveryRequiredInput = {
 export interface Interface {
   readonly submit: (input: Invocation) => Effect.Effect<Info, InvocationConflict | Cancelled>
   readonly get: (id: string) => Effect.Effect<Info | undefined>
+  readonly latestByChild: (input: {
+    readonly parentSessionID: SessionSchema.ID
+    readonly childSessionID: SessionSchema.ID
+  }) => Effect.Effect<Info | undefined>
   readonly claim: (id: string) => Effect.Effect<ClaimResult, Missing>
   readonly terminalize: (input: TerminalizeInput) => Effect.Effect<Info | undefined>
   readonly promoteDelivery: (submissionID: string) => Effect.Effect<Info | undefined>
@@ -198,6 +202,23 @@ const layer = Layer.effect(
         .select()
         .from(TaskSubmissionTable)
         .where(eq(TaskSubmissionTable.id, id))
+        .get()
+        .pipe(Effect.orDie)
+      return row === undefined ? undefined : toInfo(row)
+    })
+
+    const latestByChild: Interface["latestByChild"] = Effect.fn("TaskSubmission.latestByChild")(function* (input) {
+      const row = yield* db
+        .select()
+        .from(TaskSubmissionTable)
+        .where(
+          and(
+            eq(TaskSubmissionTable.parent_session_id, input.parentSessionID),
+            eq(TaskSubmissionTable.child_session_id, input.childSessionID),
+          ),
+        )
+        .orderBy(desc(TaskSubmissionTable.time_created), desc(TaskSubmissionTable.id))
+        .limit(1)
         .get()
         .pipe(Effect.orDie)
       return row === undefined ? undefined : toInfo(row)
@@ -569,6 +590,7 @@ const layer = Layer.effect(
     return Service.of({
       submit,
       get,
+      latestByChild,
       claim,
       terminalize,
       promoteDelivery,

@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
+import * as TestClock from "effect/testing/TestClock"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -227,6 +228,65 @@ describe("TaskSubmission", () => {
       })
       const recovered = yield* submissions.get(info.id)
       expect(recovered).toMatchObject({ agentPath: "/root/researcher", completionDelivery: "parent" })
+    }),
+  )
+
+  it.effect("returns the latest child submission within the owning parent", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const otherParentID = SessionSchema.ID.make("ses_task_other_parent")
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: otherParentID,
+          project_id: Project.ID.global,
+          slug: "task-other-parent",
+          directory: "/project",
+          title: "task other parent",
+          version: "test",
+        })
+        .run()
+        .pipe(Effect.orDie)
+
+      const older = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Older child invocation",
+        agent: "general",
+      })
+      yield* TestClock.adjust(1)
+      const newer = yield* submissions.submit({
+        ...invocation,
+        assistantMessageID: SessionMessage.ID.make("msg_task_assistant_newer"),
+        toolCallID: "call_task_newer",
+        childSessionID,
+        description: "Newer child invocation",
+        agent: "general",
+      })
+      yield* TestClock.adjust(1)
+      const otherParent = yield* submissions.submit({
+        ...invocation,
+        parentSessionID: otherParentID,
+        assistantMessageID: SessionMessage.ID.make("msg_task_assistant_other_parent"),
+        toolCallID: "call_task_other_parent",
+        childSessionID,
+        description: "Other parent invocation",
+        agent: "general",
+      })
+
+      expect(older.timeCreated).toBeLessThan(newer.timeCreated)
+      expect(yield* submissions.latestByChild({ parentSessionID: invocation.parentSessionID, childSessionID })).toEqual(
+        newer,
+      )
+      expect(yield* submissions.latestByChild({ parentSessionID: otherParentID, childSessionID })).toEqual(otherParent)
+      expect(
+        yield* submissions.latestByChild({
+          parentSessionID: SessionSchema.ID.make("ses_task_unknown_parent"),
+          childSessionID,
+        }),
+      ).toBeUndefined()
     }),
   )
 

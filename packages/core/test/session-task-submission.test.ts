@@ -7,6 +7,7 @@ import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
 import { TestClock } from "effect/testing"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Project } from "@opencode-ai/core/project"
@@ -28,7 +29,9 @@ import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
-  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node])),
+  AppNodeBuilder.build(
+    LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node, BackgroundJob.node]),
+  ),
 )
 
 const invocation = {
@@ -458,6 +461,46 @@ describe("TaskSubmission", () => {
         id: submitted.id,
         completionDelivery: "parent",
       })
+    }),
+  )
+
+  it.effect("keeps durable parent ownership when post-commit promotion work fails", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const jobs = yield* BackgroundJob.Service
+      const { db } = yield* Database.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Post-commit promotion task",
+        agent: "general",
+        completionDelivery: "tool" as const,
+      }
+      const submitted = yield* submissions.submit(input)
+
+      yield* jobs.start({
+        id: childSessionID,
+        type: "task",
+        metadata: { sessionID: childSessionID },
+        onPromote: Effect.gen(function* () {
+          const promoted = yield* submissions.promoteDelivery(submitted.id)
+          if (!promoted) return yield* Effect.die("submission disappeared during promotion")
+          yield* Effect.fail(new Error("post-commit advisory failure")).pipe(Effect.ignore)
+        }),
+        run: Effect.never,
+      })
+
+      expect(yield* jobs.promote(childSessionID)).toMatchObject({ metadata: { background: true } })
+      expect(yield* submissions.get(submitted.id)).toMatchObject({ completionDelivery: "parent" })
+
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "post-commit result",
+      })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      yield* jobs.cancel(childSessionID)
     }),
   )
 

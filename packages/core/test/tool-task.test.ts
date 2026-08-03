@@ -56,6 +56,7 @@ let terminalizeRelease: Deferred.Deferred<void> | undefined
 let promotionSignal: Deferred.Deferred<void> | undefined
 let promotionRelease: Deferred.Deferred<void> | undefined
 let promoteDeliveryMissing = false
+let notificationDrainFailure = false
 let resumeHandler: SessionExecution.Interface["resume"]
 
 const info = (input: {
@@ -140,6 +141,7 @@ const reset = () => {
   promotionSignal = undefined
   promotionRelease = undefined
   promoteDeliveryMissing = false
+  notificationDrainFailure = false
   sessions.set(rootID, info({ id: rootID, agent: AgentV2.ID.make("build"), model }))
   sessions.set(parentID, info({ id: parentID, agent: AgentV2.ID.make("build"), model }))
   agents.set(
@@ -479,6 +481,25 @@ const makeLayer = (background?: boolean, replacements: LayerNode.Replacements = 
 const defaultCapability = testEffect(makeLayer())
 const foreground = testEffect(makeLayer(false))
 const background = testEffect(makeLayer(true))
+const promotionPostCommitFailure = testEffect(
+  makeLayer(undefined, [
+    [
+      TaskNotification.node,
+      Layer.succeed(
+        TaskNotification.Service,
+        TaskNotification.Service.of({
+          drain: () => {
+            if (notificationDrainFailure) {
+              notificationDrainFailure = false
+              return Effect.die(new Error("post-commit notification failure"))
+            }
+            return Effect.succeed(0)
+          },
+        }),
+      ),
+    ],
+  ]),
+)
 const foregroundLimited = testEffect(makeLayer(false, [[Config.node, makeConfigLayer(2)]]))
 const foregroundFastCompletion = testEffect(
   makeLayer(false, [
@@ -1018,6 +1039,42 @@ describe("TaskTool", () => {
         type: "text",
         value: expect.stringContaining('state="running"'),
       })
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
+    }),
+  )
+
+  promotionPostCommitFailure.effect("keeps background ownership after advisory promotion work fails", () =>
+    Effect.gen(function* () {
+      reset()
+      notificationDrainFailure = true
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "post-commit result"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-post-commit-promotion"),
+      ).pipe(Effect.forkScoped)
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* Deferred.await(started)
+
+      expect(yield* jobs.promote(childID)).toMatchObject({ metadata: { background: true } })
+      expect(Array.from(taskSubmissions.values()).find((submission) => submission.childSessionID === childID)).toMatchObject({
+        completionDelivery: "parent",
+      })
+      expect(yield* Fiber.join(running)).toMatchObject({
+        type: "text",
+        value: expect.stringContaining('state="running"'),
+      })
+
       yield* Deferred.succeed(release, undefined)
       expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
     }),

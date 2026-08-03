@@ -439,6 +439,103 @@ test("renders admitted prompts only after they become model-visible", async () =
   }
 })
 
+test("projects durable synthetic task completions before the parent's resumed response", async () => {
+  const events = createEventSource()
+  const calls = createFetch(undefined, events)
+  let sync!: ReturnType<typeof useData>
+  let ready!: () => void
+  const mounted = new Promise<void>((resolve) => {
+    ready = resolve
+  })
+
+  function Probe() {
+    sync = useData()
+    onMount(ready)
+    return <box />
+  }
+
+  const app = await testRender(() => (
+    <TestTuiContexts>
+      <SDKProvider url="http://test" directory={directory} events={events.source} fetch={calls.fetch}>
+        <ProjectProvider>
+          <DataProvider>
+            <Probe />
+          </DataProvider>
+        </ProjectProvider>
+      </SDKProvider>
+    </TestTuiContexts>
+  ))
+
+  try {
+    await mounted
+    emitEvent(events, {
+      id: "evt_background_result",
+      type: "session.next.prompted",
+      properties: {
+        sessionID: "session-1",
+        messageID: "msg_background_result",
+        timestamp: 1,
+        prompt: { text: '<task id="ses_child" state="completed">\n<task_result>complete</task_result>\n</task>' },
+        synthetic: { description: "Background task completed: inspect flow" },
+        delivery: "steer",
+      },
+    } as Event)
+
+    await wait(() => sync.session.message.list("session-1")?.length === 1)
+    const synthetic = sync.session.message.list("session-1")?.[0]
+    expect(synthetic).toMatchObject({
+      id: "msg_background_result",
+      type: "synthetic",
+      text: expect.stringContaining('<task id="ses_child"'),
+      description: "Background task completed: inspect flow",
+    })
+
+    emitEvent(events, {
+      id: "evt_parent_step",
+      type: "session.next.step.started",
+      properties: {
+        sessionID: "session-1",
+        assistantMessageID: "msg_parent_resumed",
+        timestamp: 2,
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+      },
+    } as Event)
+    emitEvent(events, {
+      id: "evt_parent_text_started",
+      type: "session.next.text.started",
+      properties: {
+        sessionID: "session-1",
+        assistantMessageID: "msg_parent_resumed",
+        textID: "txt_parent_resumed",
+        timestamp: 3,
+      },
+    } as Event)
+    emitEvent(events, {
+      id: "evt_parent_text_ended",
+      type: "session.next.text.ended",
+      properties: {
+        sessionID: "session-1",
+        assistantMessageID: "msg_parent_resumed",
+        textID: "txt_parent_resumed",
+        timestamp: 4,
+        text: "Parent resumed after the task completed.",
+      },
+    } as Event)
+
+    await wait(() => sync.session.message.list("session-1")?.length === 2)
+    const resumed = sync.session.message.list("session-1")?.[0]
+    expect(resumed?.type).toBe("assistant")
+    if (resumed?.type !== "assistant") return
+    expect(resumed.id).toBe("msg_parent_resumed")
+    expect(resumed.content).toEqual([
+      { type: "text", id: "txt_parent_resumed", text: "Parent resumed after the task completed." },
+    ])
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
 test("projects live context updates with their message ID", async () => {
   const events = createEventSource()
   const calls = createFetch(undefined, events)

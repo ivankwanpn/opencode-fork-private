@@ -227,6 +227,7 @@ describe("createCompatibleApi", () => {
         { uri: "file:///repo/src/index.ts", name: "index.ts", mention: { text: "@src/index.ts", start: 6, end: 19 } },
       ],
       agents: [{ name: "reviewer", mention: { text: "@reviewer", start: 20, end: 29 } }],
+      legacyParts: [{ id: "prt_legacy", type: "text", text: "legacy prompt text" }],
       delivery: "queue",
       resume: true,
     })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { eq } from "drizzle-orm"
-import { Deferred, Effect, Fiber } from "effect"
+import { Deferred, Effect, Fiber, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -197,7 +197,20 @@ describe("TaskCancellation", () => {
         EventV2.latestSequence(db, sessionID),
       )
       expect(terminalInputs.map((input) => input.terminal_seq).toSorted()).toEqual(expectedTerminalSeqs.toSorted())
-      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(2)
+      const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
+      expect(outbox).toHaveLength(2)
+      const cancelledSubmissions = yield* db
+        .select({ id: TaskSubmissionTable.id, childSessionID: TaskSubmissionTable.child_session_id })
+        .from(TaskSubmissionTable)
+        .where(eq(TaskSubmissionTable.outcome, "cancelled"))
+        .all()
+      cancelledSubmissions.forEach((submission) => {
+        const row = outbox.find((row) => row.submission_id === submission.id)
+        expect(row).toBeDefined()
+        expect(Schema.decodeUnknownSync(Schema.Struct({ taskID: Schema.String }))(row?.payload).taskID).toBe(
+          submission.childSessionID,
+        )
+      })
 
       const escaped = yield* submissions
         .submit({

@@ -122,6 +122,7 @@ const layer = Layer.effect(
                     parent_session_id: updated.parent_session_id,
                     message_id: TaskSubmission.notificationID(updated.id),
                     payload: {
+                      taskID: updated.child_session_id,
                       state: "cancelled",
                       description: updated.description,
                       text: "Task cancelled by ownership root",

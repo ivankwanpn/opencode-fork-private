@@ -247,6 +247,13 @@ describe("layout workspace helpers", () => {
         "/home/luke/repos/amazon",
       ),
     ).toEqual({ server: serverKey("https://debian.example") })
+    expect(
+      toggleHomeProjectSelection(
+        { server: serverKey("https://windows.example"), directory: "C:\\Users\\Luke\\repo\\amazon\\" },
+        serverKey("https://windows.example"),
+        "C:/Users/Luke/repo/amazon",
+      ),
+    ).toEqual({ server: serverKey("https://windows.example") })
   })
 
   test("closes a home project through its server context", () => {
@@ -269,6 +276,14 @@ describe("layout workspace helpers", () => {
         "/shared",
       ),
     ).toEqual({ server: serverKey("https://debian.example") })
+    expect(
+      closeHomeProject(
+        { server: serverKey("https://windows.example"), directory: "C:\\shared\\repo\\" },
+        serverKey("https://windows.example"),
+        { close: (directory) => closed.push(directory) },
+        "C:/shared/repo",
+      ),
+    ).toEqual({ server: serverKey("https://windows.example") })
   })
 
   test("defers home project navigation until its server is active", () => {

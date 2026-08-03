@@ -317,6 +317,7 @@ function syntheticUser(input: {
   session: SessionsGetOutput
   created: number
   text?: string
+  description?: string
   compaction?: boolean
   agent: string
   model: { id: string; providerID: string; variant?: string }
@@ -350,7 +351,7 @@ function syntheticUser(input: {
             sessionID: input.session.id,
             messageID: input.id,
             type: "text",
-            text: input.text ?? "",
+            text: [input.description, input.text].filter(Boolean).join("\n\n"),
             synthetic: true,
           },
         ],
@@ -473,6 +474,7 @@ export function legacyTranscriptFromNative(input: {
         session: input.session,
         created: message.time.created,
         text: message.text,
+        description: message.type === "synthetic" ? message.description : undefined,
         agent,
         model,
       })

@@ -32,6 +32,7 @@ export const StatusRecord = Schema.Struct({
   timeCompleted: Schema.optional(Schema.Number),
   result: Schema.optional(Schema.String),
   error: Schema.optional(Schema.Unknown),
+  timedOut: Schema.optional(Schema.Boolean),
 })
 
 export const Output = Schema.Array(StatusRecord)
@@ -63,26 +64,43 @@ const layer = Layer.effectDiscard(
             execute: (input, context) =>
               Effect.gen(function* () {
                 const taskIDs = Array.from(
-                  new Set(input.task_ids.map((taskID) => SessionSchema.ID.make(taskID.trim()))),
+                  new Set(
+                    yield* Effect.forEach(input.task_ids, (taskID) =>
+                      Schema.decodeUnknownEffect(SessionSchema.ID)(taskID.trim()).pipe(
+                        Effect.mapError(() => new ToolFailure({ message: "Invalid task ID" })),
+                      ),
+                    ),
+                  ),
                 )
                 const current = yield* Effect.forEach(taskIDs, (taskID) => resolve(context.sessionID, taskID))
-                if ((input.timeout_ms ?? 0) > 0) {
-                  const deadline = (yield* Clock.currentTimeMillis) + input.timeout_ms!
-                  yield* Effect.forEach(
-                    current.filter((submission) => submission.outcome === undefined),
-                    (submission) =>
-                      Effect.gen(function* () {
-                        const job = yield* background.get(submission.childSessionID)
-                        if (job?.status !== "running") return
-                        yield* background.wait({
-                          id: submission.childSessionID,
-                          timeout: Math.max(0, deadline - (yield* Clock.currentTimeMillis)),
-                        })
-                      }),
-                    { concurrency: "unbounded", discard: true },
-                  )
-                }
-                return (yield* Effect.forEach(taskIDs, (taskID) => resolve(context.sessionID, taskID))).map(toRecord)
+                const timeout = input.timeout_ms ?? 0
+                const deadline = timeout === 0 ? undefined : (yield* Clock.currentTimeMillis) + timeout
+                const timedOut =
+                  deadline === undefined
+                    ? []
+                    : (
+                        yield* Effect.forEach(
+                          current.filter((submission) => submission.outcome === undefined),
+                          (submission) =>
+                            Effect.gen(function* () {
+                              const job = yield* background.get(submission.childSessionID)
+                              if (job?.status !== "running") return
+                              const result = yield* background.wait({
+                                id: submission.childSessionID,
+                                timeout: Math.max(0, deadline - (yield* Clock.currentTimeMillis)),
+                              })
+                              return result.timedOut ? submission.childSessionID : undefined
+                            }),
+                          { concurrency: "unbounded" },
+                        )
+                      ).filter((taskID): taskID is SessionSchema.ID => taskID !== undefined)
+                return (yield* Effect.forEach(taskIDs, (taskID) => resolve(context.sessionID, taskID))).map(
+                  (submission) =>
+                    toRecord(
+                      submission,
+                      submission.outcome === undefined && timedOut.includes(submission.childSessionID),
+                    ),
+                )
               }),
           }),
           "task",
@@ -98,7 +116,7 @@ export const node = makeLocationNode({
   deps: [BackgroundJob.node, TaskSubmission.node, ToolRegistry.node],
 })
 
-function toRecord(submission: TaskSubmission.Info): typeof StatusRecord.Type {
+function toRecord(submission: TaskSubmission.Info, timedOut: boolean): typeof StatusRecord.Type {
   return {
     taskID: submission.childSessionID,
     status: submission.status,
@@ -108,6 +126,7 @@ function toRecord(submission: TaskSubmission.Info): typeof StatusRecord.Type {
     ...(submission.timeCompleted === undefined ? {} : { timeCompleted: submission.timeCompleted }),
     ...(submission.resultText === undefined ? {} : { result: submission.resultText }),
     ...(submission.error === undefined ? {} : { error: submission.error }),
+    ...(timedOut ? { timedOut: true } : {}),
   }
 }
 

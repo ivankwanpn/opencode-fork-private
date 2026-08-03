@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Deferred, Effect, Fiber } from "effect"
-import * as TestClock from "effect/testing/TestClock"
+import { TestClock } from "effect/testing"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -157,6 +157,21 @@ describe("GetTaskOutputTool", () => {
     }),
   )
 
+  it.effect("settles malformed and whitespace task IDs as controlled failures", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const results = yield* Effect.forEach(["", "   ", "foo"], (taskID, index) =>
+        executeTool(registry, call({ task_ids: [taskID] }, parentID, `call-malformed-${index}`)),
+      )
+
+      expect(results).toEqual([
+        { type: "error", value: "Invalid task ID" },
+        { type: "error", value: "Invalid task ID" },
+        { type: "error", value: "Invalid task ID" },
+      ])
+    }),
+  )
+
   it.effect("returns immediate durable snapshots when timeout is omitted or zero", () =>
     Effect.gen(function* () {
       const acceptedID = SessionSchema.ID.make("ses_task_output_accepted")
@@ -258,8 +273,22 @@ describe("GetTaskOutputTool", () => {
       yield* Effect.yieldNow
       expect(waiting.pollUnsafe()).toBeDefined()
       expect((yield* Fiber.join(waiting)).output?.structured).toEqual([
-        expect.objectContaining({ taskID: firstID, status: "running" }),
-        expect.objectContaining({ taskID: secondID, status: "running" }),
+        {
+          taskID: firstID,
+          status: "running",
+          description: `Task ${firstID}`,
+          agent: "general",
+          timeCreated: expect.any(Number),
+          timedOut: true,
+        },
+        {
+          taskID: secondID,
+          status: "running",
+          description: `Task ${secondID}`,
+          agent: "general",
+          timeCreated: expect.any(Number),
+          timedOut: true,
+        },
       ])
       yield* jobs.cancel(firstID)
       yield* jobs.cancel(secondID)

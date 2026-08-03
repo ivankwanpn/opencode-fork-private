@@ -612,6 +612,142 @@ describe("TaskTool", () => {
     }),
   )
 
+  defaultCapability.effect("runs in the background by default", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "default background result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(registry, call(input, "call-default-background")).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+
+      expect(settledBeforeRelease).toBeDefined()
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining('state="running"') },
+        output: { structured: { metadata: { background: true } } },
+      })
+    }),
+  )
+
+  defaultCapability.effect("runs in the background when explicitly requested", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "explicit background result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(
+        registry,
+        call({ ...input, background: true }, "call-explicit-background"),
+      ).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+
+      expect(settledBeforeRelease).toBeDefined()
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining('state="running"') },
+        output: { structured: { metadata: { background: true } } },
+      })
+    }),
+  )
+
+  defaultCapability.effect("waits for an explicitly foreground task without notifying the parent", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "explicit foreground result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(
+        registry,
+        call({ ...input, background: false }, "call-explicit-foreground"),
+      ).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+
+      expect(settledBeforeRelease).toBeUndefined()
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining("explicit foreground result") },
+      })
+      expect(settled.output?.structured).not.toHaveProperty("metadata.background")
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "tool" }])
+      expect(syntheticAdmissions).toHaveLength(0)
+      expect(woken).toHaveLength(0)
+    }),
+  )
+
+  foreground.effect("keeps omitted background foreground-only and rejects explicit background", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "capability-disabled foreground result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(registry, call(input, "call-capability-disabled-default")).pipe(
+        Effect.forkScoped,
+      )
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+      const rejected = yield* executeTool(
+        registry,
+        call({ ...input, background: true }, "call-capability-disabled-background"),
+      )
+
+      expect(settledBeforeRelease).toBeUndefined()
+      expect(settled.result).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("capability-disabled foreground result"),
+      })
+      expect(rejected).toEqual({
+        type: "error",
+        value: "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
+      })
+      expect(createCount).toBe(1)
+    }),
+  )
+
   foreground.effect("creates and executes a durable foreground child session", () =>
     Effect.gen(function* () {
       reset()
@@ -827,7 +963,10 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(registry, call(input, "call-promote")).pipe(Effect.forkScoped)
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-promote"),
+      ).pipe(Effect.forkScoped)
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* jobs.promote(childID)
@@ -860,7 +999,10 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(registry, call(input, "call-terminal-promote")).pipe(Effect.forkScoped)
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-terminal-promote"),
+      ).pipe(Effect.forkScoped)
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* Deferred.succeed(releaseCompletion, undefined)
@@ -918,7 +1060,10 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(registry, call(input, "call-missing-promotion")).pipe(Effect.forkScoped)
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-missing-promotion"),
+      ).pipe(Effect.forkScoped)
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       const first = yield* jobs.promote(childID).pipe(Effect.exit)
@@ -996,7 +1141,10 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(registry, call(input, "call-cancel")).pipe(Effect.forkScoped)
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-cancel"),
+      ).pipe(Effect.forkScoped)
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* Fiber.interrupt(running).pipe(Effect.forkScoped)

@@ -370,7 +370,16 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               type: name,
               title: input.description,
               metadata,
-              onPromote: checkpoint(backgroundMetadata),
+              onPromote: Effect.gen(function* () {
+                const promoted = yield* submissions.promoteDelivery(submission.id)
+                if (!promoted)
+                  return yield* new ToolFailure({ message: `Task submission disappeared: ${submission.id}` })
+                yield* notifications.drain({
+                  admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+                  wake: execution.wake,
+                })
+                yield* checkpoint(backgroundMetadata)
+              }).pipe(Effect.orDie),
               onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
               onRelease: permits.release(child.id),
               run: runTask(submission),

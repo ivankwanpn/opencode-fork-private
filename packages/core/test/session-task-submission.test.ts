@@ -275,6 +275,108 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("does not enqueue parent delivery for a terminal tool-owned submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Foreground task",
+        agent: "general",
+        completionDelivery: "tool",
+      })
+
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "foreground result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(0)
+    }),
+  )
+
+  it.effect("enqueues one parent delivery for a terminal parent-owned submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Background task",
+        agent: "general",
+      })
+
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "background result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("enqueues one parent delivery when a running tool-owned submission is promoted before terminalization", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Promoted running task",
+        agent: "general",
+        completionDelivery: "tool",
+      })
+      yield* submissions.claim(submitted.id)
+
+      expect(yield* submissions.promoteDelivery(submitted.id)).toMatchObject({
+        status: "running",
+        completionDelivery: "parent",
+      })
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "promoted result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("enqueues one parent delivery when a terminal tool-owned submission is promoted repeatedly", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Late promoted task",
+        agent: "general",
+        completionDelivery: "tool",
+      })
+      const terminal = yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "late promoted result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(0)
+      const promoted = yield* submissions.promoteDelivery(submitted.id)
+      const duplicate = yield* submissions.promoteDelivery(submitted.id)
+
+      expect(promoted).toMatchObject({ status: "completed", completionDelivery: "parent" })
+      expect(duplicate).toEqual(promoted)
+      expect(terminal).toMatchObject({ status: "completed", completionDelivery: "tool" })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
   it.effect("coalesces concurrent first submissions for one invocation", () =>
     Effect.gen(function* () {
       yield* setup

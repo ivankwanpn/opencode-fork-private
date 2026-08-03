@@ -103,6 +103,7 @@ export interface Interface {
   readonly get: (id: string) => Effect.Effect<Info | undefined>
   readonly claim: (id: string) => Effect.Effect<ClaimResult, Missing>
   readonly terminalize: (input: TerminalizeInput) => Effect.Effect<Info | undefined>
+  readonly promoteDelivery: (submissionID: string) => Effect.Effect<Info | undefined>
   readonly recoverSession: (input: RecoveryInput) => Effect.Effect<number>
   readonly recoverCompleted: (input: SessionRecoveryInput) => Effect.Effect<number>
   readonly markRecoveryRequired: (input: RecoveryRequiredInput) => Effect.Effect<number>
@@ -304,6 +305,30 @@ const layer = Layer.effect(
       return toInfo(recovered)
     })
 
+    const enqueueNotification = Effect.fn("TaskSubmission.enqueueNotification")(function* (
+      row: typeof TaskSubmissionTable.$inferSelect,
+      timeCreated: number,
+    ) {
+      if (row.outcome === null) return
+      const text =
+        row.result_text ??
+        (typeof row.error === "object" && row.error !== null && "message" in row.error ? String(row.error.message) : "")
+      yield* db
+        .insert(TaskNotificationOutboxTable)
+        .values({
+          id: Identifier.create("outbox", "ascending"),
+          submission_id: row.id,
+          parent_session_id: row.parent_session_id,
+          message_id: notificationID(row.id),
+          payload: { state: row.outcome, description: row.description, text },
+          status: "pending",
+          time_created: timeCreated,
+        })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
+    })
+
     const terminalize: Interface["terminalize"] = Effect.fn("TaskSubmission.terminalize")(function* (input) {
       const now = yield* Clock.currentTimeMillis
       return yield* db
@@ -359,26 +384,54 @@ const layer = Layer.effect(
               .pipe(Effect.orDie)
             if (!projected) return yield* Effect.die(`Task input was not pending: ${updated.child_input_id}`)
 
-            const text =
-              input.resultText ??
-              (typeof input.error === "object" && input.error !== null && "message" in input.error
-                ? String(input.error.message)
-                : "")
-            yield* db
-              .insert(TaskNotificationOutboxTable)
-              .values({
-                id: Identifier.create("outbox", "ascending"),
-                submission_id: updated.id,
-                parent_session_id: updated.parent_session_id,
-                message_id: notificationID(updated.id),
-                payload: { state: input.outcome, description: updated.description, text },
-                status: "pending",
-                time_created: now,
-              })
-              .onConflictDoNothing()
-              .run()
-              .pipe(Effect.orDie)
+            if (updated.completion_delivery === "parent") yield* enqueueNotification(updated, now)
             return toInfo(updated)
+          }),
+        )
+        .pipe(Effect.orDie)
+    })
+
+    const promoteDelivery: Interface["promoteDelivery"] = Effect.fn("TaskSubmission.promoteDelivery")(function* (
+      submissionID,
+    ) {
+      const now = yield* Clock.currentTimeMillis
+      return yield* db
+        .transaction(() =>
+          Effect.gen(function* () {
+            const row = yield* db
+              .select()
+              .from(TaskSubmissionTable)
+              .where(eq(TaskSubmissionTable.id, submissionID))
+              .get()
+              .pipe(Effect.orDie)
+            if (!row) return undefined
+
+            const updated =
+              row.completion_delivery === "tool"
+                ? yield* db
+                    .update(TaskSubmissionTable)
+                    .set({ completion_delivery: "parent" })
+                    .where(
+                      and(
+                        eq(TaskSubmissionTable.id, submissionID),
+                        eq(TaskSubmissionTable.completion_delivery, "tool"),
+                      ),
+                    )
+                    .returning()
+                    .get()
+                    .pipe(Effect.orDie)
+                : row
+            const current =
+              updated ??
+              (yield* db
+                .select()
+                .from(TaskSubmissionTable)
+                .where(eq(TaskSubmissionTable.id, submissionID))
+                .get()
+                .pipe(Effect.orDie))
+            if (!current) return undefined
+            if (current.outcome !== null) yield* enqueueNotification(current, now)
+            return toInfo(current)
           }),
         )
         .pipe(Effect.orDie)
@@ -513,7 +566,16 @@ const layer = Layer.effect(
       },
     )
 
-    return Service.of({ submit, get, claim, terminalize, recoverSession, recoverCompleted, markRecoveryRequired })
+    return Service.of({
+      submit,
+      get,
+      claim,
+      terminalize,
+      promoteDelivery,
+      recoverSession,
+      recoverCompleted,
+      markRecoveryRequired,
+    })
   }),
 )
 

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Deferred, Effect, Fiber, Layer } from "effect"
+import { Cause, DateTime, Deferred, Effect, Fiber, Layer } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Config } from "@opencode-ai/core/config"
@@ -50,6 +50,8 @@ let childSequence = 0
 let createCount = 0
 let notificationSignal: Deferred.Deferred<void> | undefined
 let interruptedSignal: Deferred.Deferred<void> | undefined
+let terminalizedSignal: Deferred.Deferred<void> | undefined
+let terminalizeRelease: Deferred.Deferred<void> | undefined
 let resumeHandler: SessionExecution.Interface["resume"]
 
 const info = (input: {
@@ -129,6 +131,8 @@ const reset = () => {
   createCount = 0
   notificationSignal = undefined
   interruptedSignal = undefined
+  terminalizedSignal = undefined
+  terminalizeRelease = undefined
   sessions.set(rootID, info({ id: rootID, agent: AgentV2.ID.make("build"), model }))
   sessions.set(parentID, info({ id: parentID, agent: AgentV2.ID.make("build"), model }))
   agents.set(
@@ -331,6 +335,14 @@ const taskSubmissionLayer = Layer.succeed(
         return info
       }),
     get: (id) => Effect.succeed(taskSubmissions.get(id)),
+    promoteDelivery: (id) =>
+      Effect.sync(() => {
+        const info = taskSubmissions.get(id)
+        if (!info) return undefined
+        const promoted = { ...info, completionDelivery: "parent" as const }
+        taskSubmissions.set(id, promoted)
+        return promoted
+      }),
     claim: (id) =>
       Effect.gen(function* () {
         const info = taskSubmissions.get(id)
@@ -341,7 +353,7 @@ const taskSubmissionLayer = Layer.succeed(
         return { acquired: true, info: claimed }
       }),
     terminalize: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const info = taskSubmissions.get(input.submissionID)
         if (!info) return undefined
         if (info.outcome) return info
@@ -355,6 +367,8 @@ const taskSubmissionLayer = Layer.succeed(
           timeCompleted: 1,
         }
         taskSubmissions.set(input.submissionID, settled)
+        if (terminalizedSignal) yield* Deferred.succeed(terminalizedSignal, undefined).pipe(Effect.ignore)
+        if (terminalizeRelease) yield* Deferred.await(terminalizeRelease)
         return settled
       }),
     recoverSession: () => Effect.succeed(0),
@@ -366,31 +380,37 @@ const taskSubmissionLayer = Layer.succeed(
 const taskNotificationLayer = Layer.succeed(
   TaskNotification.Service,
   TaskNotification.Service.of({
-    drain: (_input) =>
+    drain: (input) =>
       Effect.gen(function* () {
         const completed = Array.from(taskSubmissions.values()).filter(
-          (submission) => submission.outcome && !deliveredTaskSubmissions.has(submission.id),
+          (submission) =>
+            submission.completionDelivery === "parent" &&
+            submission.outcome &&
+            !deliveredTaskSubmissions.has(submission.id),
         )
-        completed.forEach((submission) => {
-          deliveredTaskSubmissions.add(submission.id)
-          const state = submission.outcome === "error" ? "error" : "completed"
-          const text = submission.resultText ?? String(submission.error ?? "")
-          syntheticAdmissions.push({
-            id: TaskSubmission.notificationID(submission.id),
-            sessionID: submission.parentSessionID,
-            text: renderTaskResult({
-              sessionID: submission.childSessionID,
-              state,
-              summary: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
-              text,
+        yield* Effect.forEach(
+          completed,
+          (submission) =>
+            Effect.gen(function* () {
+              deliveredTaskSubmissions.add(submission.id)
+              const state = submission.outcome === "error" ? "error" : "completed"
+              const text = submission.resultText ?? String(submission.error ?? "")
+              yield* input.admit({
+                id: TaskSubmission.notificationID(submission.id),
+                sessionID: submission.parentSessionID,
+                text: renderTaskResult({
+                  sessionID: submission.childSessionID,
+                  state,
+                  summary: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
+                  text,
+                }),
+                description: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
+                delivery: "steer",
+              })
+              yield* input.wake(submission.parentSessionID)
             }),
-            description: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
-            delivery: "steer",
-          })
-          woken.push(submission.parentSessionID)
-        })
-        if (completed.length > 0 && notificationSignal)
-          yield* Deferred.succeed(notificationSignal, undefined).pipe(Effect.ignore)
+          { discard: true },
+        ).pipe(Effect.catchCause((cause) => Effect.die(Cause.squash(cause))))
         return completed.length
       }),
   }),
@@ -787,7 +807,6 @@ describe("TaskTool", () => {
       reset()
       const release = yield* Deferred.make<void>()
       const started = yield* Deferred.make<void>()
-      notificationSignal = yield* Deferred.make<void>()
       resumeHandler = (sessionID) =>
         Effect.gen(function* () {
           resumed.push(sessionID)
@@ -808,8 +827,59 @@ describe("TaskTool", () => {
         value: expect.stringContaining('state="running"'),
       })
       yield* Deferred.succeed(release, undefined)
-      yield* Deferred.await(notificationSignal)
       expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
+    }),
+  )
+
+  background.effect("delivers exactly once when foreground completion wins the promotion race", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const releaseCompletion = yield* Deferred.make<void>()
+      terminalizedSignal = yield* Deferred.make<void>()
+      terminalizeRelease = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(releaseCompletion)
+          contexts.set(sessionID, childContext(sessionID, "terminal before promotion"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const running = yield* executeTool(registry, call(input, "call-terminal-promote")).pipe(Effect.forkScoped)
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* Deferred.await(started)
+      yield* Deferred.succeed(releaseCompletion, undefined)
+      yield* Deferred.await(terminalizedSignal)
+
+      const terminalSubmissions = Array.from(taskSubmissions.values())
+      const terminalAdmissions = [...syntheticAdmissions]
+
+      yield* jobs.promote(childID)
+
+      const runningResult = yield* Fiber.join(running)
+      const promotedSubmissions = Array.from(taskSubmissions.values())
+      const promotedAdmissions = [...syntheticAdmissions]
+      const promotedWakes = [...woken]
+      yield* Deferred.succeed(terminalizeRelease, undefined)
+      const completed = yield* jobs.wait({ id: childID })
+
+      expect(terminalSubmissions).toMatchObject([{ status: "completed", completionDelivery: "tool" }])
+      expect(terminalAdmissions).toHaveLength(0)
+      expect(runningResult).toMatchObject({
+        type: "text",
+        value: expect.stringContaining('state="running"'),
+      })
+      expect(promotedSubmissions).toMatchObject([
+        { status: "completed", completionDelivery: "parent" },
+      ])
+      expect(promotedAdmissions).toHaveLength(1)
+      expect(promotedWakes).toEqual([parentID])
+      expect(completed.info?.status).toBe("completed")
+      expect(syntheticAdmissions).toHaveLength(1)
+      expect(woken).toEqual([parentID])
     }),
   )
 

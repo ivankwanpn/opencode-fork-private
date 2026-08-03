@@ -114,6 +114,8 @@ const layer = Layer.effect(
                   .run()
                   .pipe(Effect.orDie)
 
+                if (updated.completion_delivery !== "parent") continue
+
                 yield* db
                   .insert(TaskNotificationOutboxTable)
                   .values({

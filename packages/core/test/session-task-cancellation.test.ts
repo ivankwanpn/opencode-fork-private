@@ -257,6 +257,45 @@ describe("TaskCancellation", () => {
     }),
   )
 
+  it.effect("does not enqueue parent cancellation delivery for a tool-owned submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const cancellation = yield* TaskCancellation.Service
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const toolOwned = yield* submissions.submit({
+        parentSessionID: root,
+        assistantMessageID: SessionMessage.ID.make("msg_cancel_tool_assistant"),
+        toolCallID: "call_cancel_tool_child",
+        childSessionID: child,
+        description: "foreground cancellation",
+        prompt,
+        agent: "general",
+        completionDelivery: "tool",
+      })
+
+      yield* cancellation.cancelTree({
+        rootSessionID: root,
+        interrupt: () => Effect.void,
+        wait: () => Effect.void,
+      })
+
+      expect(
+        yield* db
+          .select({ id: TaskNotificationOutboxTable.submission_id })
+          .from(TaskNotificationOutboxTable)
+          .all(),
+      ).not.toContainEqual({ id: toolOwned.id })
+      expect(
+        yield* db
+          .select({ id: TaskSubmissionTable.id, delivery: TaskSubmissionTable.completion_delivery })
+          .from(TaskSubmissionTable)
+          .where(eq(TaskSubmissionTable.id, toolOwned.id))
+          .get(),
+      ).toEqual({ id: toolOwned.id, delivery: "tool" })
+    }),
+  )
+
   it.effect("rejects submissions targeting a cancelled child session", () =>
     Effect.gen(function* () {
       yield* setup

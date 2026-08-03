@@ -355,6 +355,8 @@ export const TaskTool = Tool.define(
       }
 
       if (info.metadata?.background === true) {
+        const promoted = yield* submissions.promoteDelivery(submission.id)
+        if (!promoted) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
         return backgroundResult("updated")
       }
 

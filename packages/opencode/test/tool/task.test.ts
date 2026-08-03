@@ -819,7 +819,7 @@ describe("tool.task", () => {
     }),
   )
 
-  background.instance("background task completion waits for running updates", () =>
+  background.instance("background task continuations promote their completion delivery", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const { chat, assistant } = yield* seed()
@@ -877,6 +877,17 @@ describe("tool.task", () => {
       expect(result.metadata.sessionId).toBe(started.metadata.sessionId)
       expect(result.metadata.background).toBe(true)
       expect(result.output).toContain("Background task updated")
+      const { db } = yield* Database.Service
+      const submissions = yield* db
+        .select({ id: TaskSubmissionTable.id, description: TaskSubmissionTable.description, delivery: TaskSubmissionTable.completion_delivery })
+        .from(TaskSubmissionTable)
+        .all()
+      expect(submissions.map((submission) => ({ description: submission.description, delivery: submission.delivery }))).toEqual([
+        { description: "inspect bug", delivery: "parent" },
+        { description: "add investigation scope", delivery: "parent" },
+      ])
+      const continuation = submissions.find((submission) => submission.description === "add investigation scope")
+      if (!continuation) return yield* Effect.die("continuation task submission not found")
       first.resolve()
       expect((yield* jobs.get(started.metadata.sessionId))?.status).toBe("running")
       expect((yield* Effect.promise(() => updated.promise)).parts).toEqual([
@@ -891,6 +902,9 @@ describe("tool.task", () => {
       expect(notification.variant).toBe("xhigh")
       expect(notification.parts[0]?.type).toBe("text")
       if (notification.parts[0]?.type === "text") expect(notification.parts[0].text).toContain("second done")
+      expect(
+        yield* db.select({ submissionID: TaskNotificationOutboxTable.submission_id }).from(TaskNotificationOutboxTable).all(),
+      ).toContainEqual({ submissionID: continuation.id })
     }),
   )
 

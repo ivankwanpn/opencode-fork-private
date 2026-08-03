@@ -36,6 +36,7 @@ const invocation = {
   description: "Inspect notifications",
   agent: "general",
   prompt: Prompt.make({ text: "inspect notifications" }),
+  completionDelivery: "parent" as const,
 }
 
 const admissions: TaskNotification.Admission[] = []

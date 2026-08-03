@@ -229,6 +229,7 @@ export const TaskTool = Tool.define(
         prompt: Prompt.make({ text: params.prompt }),
         agent: next.name,
         model,
+        completionDelivery: runInBackground ? "parent" : "tool",
       })
 
       const admitNotification = (input: TaskNotification.Admission) =>

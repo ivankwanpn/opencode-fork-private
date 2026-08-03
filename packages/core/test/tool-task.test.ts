@@ -313,6 +313,7 @@ const taskSubmissionLayer = Layer.succeed(
           prompt: input.prompt,
           agent: input.agent,
           model: input.model,
+          completionDelivery: input.completionDelivery,
           status: "accepted",
           timeCreated: 0,
         }
@@ -595,6 +596,7 @@ describe("TaskTool", () => {
 
       expect(child).toMatchObject({ parentID, agent: "general", model })
       expect(admissions).toMatchObject([{ sessionID: childID, prompt: { text: input.prompt }, delivery: "steer" }])
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "tool" }])
       expect(resumed).toEqual([childID])
       expect(assertions).toMatchObject([
         {
@@ -727,6 +729,7 @@ describe("TaskTool", () => {
         value: expect.stringContaining(`id="${childID}" state="running"`),
       })
       expect((yield* jobs.get(childID))?.status).toBe("running")
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "parent" }])
 
       yield* Deferred.succeed(release, undefined)
       yield* Deferred.await(notificationSignal)

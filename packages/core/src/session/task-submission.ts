@@ -20,12 +20,15 @@ export type Identity = {
   readonly prompt: Prompt
 }
 
+export type CompletionDelivery = "tool" | "parent"
+
 export type Invocation = Identity & {
   readonly childSessionID: SessionSchema.ID
   readonly description: string
   readonly agent: string
   readonly agentPath?: string
   readonly model?: unknown
+  readonly completionDelivery: CompletionDelivery
 }
 
 export type Outcome = "completed" | "error" | "cancelled" | "recovery-required"
@@ -42,6 +45,7 @@ export type Info = {
   readonly agent: string
   readonly agentPath?: string
   readonly model?: unknown
+  readonly completionDelivery: CompletionDelivery
   readonly status: "accepted" | "running" | "completed" | "error" | "cancelled" | "recovery-required"
   readonly outcome?: Outcome
   readonly resultMessageID?: SessionMessage.ID
@@ -126,6 +130,7 @@ const toInfo = (row: typeof TaskSubmissionTable.$inferSelect): Info => ({
   agent: row.agent,
   ...(row.agent_path === null ? {} : { agentPath: row.agent_path }),
   ...(row.model === null ? {} : { model: row.model }),
+  completionDelivery: row.completion_delivery,
   status: row.status,
   ...(row.outcome === null ? {} : { outcome: row.outcome }),
   ...(row.result_message_id === null ? {} : { resultMessageID: SessionMessage.ID.make(row.result_message_id) }),
@@ -251,6 +256,7 @@ const layer = Layer.effect(
               agent: input.agent,
               agent_path: input.agentPath,
               model: input.model,
+              completion_delivery: input.completionDelivery,
               status: "accepted",
               time_created: timeCreated,
             })
@@ -520,6 +526,7 @@ function matches(existing: Info, input: Invocation) {
     existing.agent === input.agent &&
     existing.agentPath === input.agentPath &&
     serializedModel(existing.model) === serializedModel(input.model) &&
+    existing.completionDelivery === input.completionDelivery &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )
 }

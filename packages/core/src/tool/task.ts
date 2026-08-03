@@ -357,6 +357,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
                 agent: agent.id,
                 agentPath,
                 model,
+                completionDelivery: runInBackground ? "parent" : "tool",
               })
               .pipe(
                 Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>

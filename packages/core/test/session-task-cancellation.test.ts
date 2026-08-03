@@ -92,6 +92,7 @@ const setup = Effect.gen(function* () {
     description: "cancel child",
     prompt,
     agent: "general",
+    completionDelivery: "parent",
   })
   yield* submissions.submit({
     parentSessionID: child,
@@ -101,6 +102,7 @@ const setup = Effect.gen(function* () {
     description: "cancel grandchild",
     prompt,
     agent: "general",
+    completionDelivery: "parent",
   })
 })
 
@@ -206,6 +208,7 @@ describe("TaskCancellation", () => {
           description: "escape",
           prompt,
           agent: "general",
+          completionDelivery: "parent",
         })
         .pipe(Effect.flip)
       expect(escaped._tag).toBe("TaskSubmission.Cancelled")
@@ -226,6 +229,7 @@ describe("TaskCancellation", () => {
           description: "race",
           prompt,
           agent: "general",
+          completionDelivery: "parent",
         })
         .pipe(Effect.catchTag("TaskSubmission.Cancelled", (error) => Effect.succeed(error)))
       const [, submitted] = yield* Effect.all(
@@ -261,6 +265,7 @@ describe("TaskCancellation", () => {
           description: "target cancelled child",
           prompt,
           agent: "general",
+          completionDelivery: "parent",
         })
         .pipe(Effect.flip)
 

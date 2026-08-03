@@ -35,6 +35,7 @@ const invocation = {
   assistantMessageID: SessionMessage.ID.make("msg_task_assistant"),
   toolCallID: "call_task_1",
   prompt: Prompt.make({ text: "inspect the lifecycle" }),
+  completionDelivery: "parent" as const,
 }
 
 const childSessionID = SessionSchema.ID.make("ses_task_child")
@@ -225,7 +226,7 @@ describe("TaskSubmission", () => {
         agentPath: "/root/researcher",
       })
       const recovered = yield* submissions.get(info.id)
-      expect(recovered?.agentPath).toBe("/root/researcher")
+      expect(recovered).toMatchObject({ agentPath: "/root/researcher", completionDelivery: "parent" })
     }),
   )
 
@@ -247,6 +248,7 @@ describe("TaskSubmission", () => {
         agent: "general",
       })
 
+      expect(first.completionDelivery).toBe("parent")
       expect(retry).toEqual(first)
       const terminal = yield* submissions.terminalize({
         submissionID: first.id,
@@ -260,7 +262,7 @@ describe("TaskSubmission", () => {
         error: { message: "late failure" },
       })
 
-      expect(terminal).toMatchObject({ status: "completed", resultText: "done" })
+      expect(terminal).toMatchObject({ status: "completed", resultText: "done", completionDelivery: "parent" })
       expect(duplicate).toEqual(terminal)
       const inputRow = (yield* db.select().from(SessionInputTable).all())[0]
       expect(inputRow).toMatchObject({
@@ -312,6 +314,26 @@ describe("TaskSubmission", () => {
           ...input,
           description: "Different lifecycle",
         })
+        .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
+
+      expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
+    }),
+  )
+
+  it.effect("rejects a retry that changes completion delivery ownership", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      }
+      yield* submissions.submit(input)
+
+      const conflict = yield* submissions
+        .submit({ ...input, completionDelivery: "tool" })
         .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
 
       expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
@@ -440,6 +462,7 @@ describe("TaskSubmission", () => {
 
       expect(first.acquired).toBe(true)
       expect(first.info.status).toBe("running")
+      expect(first.info.completionDelivery).toBe("parent")
       expect(second.acquired).toBe(false)
       expect(second.info).toEqual(first.info)
     }),
@@ -494,6 +517,7 @@ describe("TaskSubmission", () => {
       expect(yield* submissions.get(submitted.id)).toMatchObject({
         outcome: "completed",
         resultText: "recovered result",
+        completionDelivery: "parent",
       })
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
     }),

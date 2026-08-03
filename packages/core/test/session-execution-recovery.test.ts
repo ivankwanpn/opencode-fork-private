@@ -49,6 +49,7 @@ const invocation = {
   description: "Recover background task",
   prompt: Prompt.make({ text: "Recover background task" }),
   agent: "general",
+  completionDelivery: "parent" as const,
 }
 
 const commandLayer = Layer.succeed(

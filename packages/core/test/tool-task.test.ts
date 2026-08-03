@@ -928,6 +928,39 @@ describe("TaskTool", () => {
     }),
   )
 
+  background.effect("promotes an explicit foreground continuation of a running background task", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "background continuation"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const first = yield* executeTool(registry, call({ ...input, background: true }, "call-existing-background"))
+      expect(first).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      const childID = Array.from(taskSubmissions.values())[0]!.childSessionID
+      yield* Deferred.await(started)
+
+      const foreground = yield* executeTool(
+        registry,
+        call({ ...input, background: false, task_id: childID }, "call-explicit-foreground"),
+      )
+
+      expect(foreground).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      expect(Array.from(taskSubmissions.values()).find((submission) => submission.toolCallID === "call-explicit-foreground"))
+        .toMatchObject({ completionDelivery: "parent" })
+
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
+    }),
+  )
+
   foregroundFastCompletion.effect(
     "returns a completed foreground result when promotion observation resolves undefined after fast completion",
     () =>

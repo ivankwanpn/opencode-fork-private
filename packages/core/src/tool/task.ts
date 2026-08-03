@@ -344,7 +344,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           jobId: child.id,
         }
 
-        const info = yield* Effect.ensuring(
+        const started = yield* Effect.ensuring(
           Effect.gen(function* () {
             yield* checkpoint(metadata)
 
@@ -389,12 +389,13 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               run: runTask(submission),
             })
             yield* Ref.set(ownedByJob, true)
-            return started
+            return { info: started, submissionID: submission.id }
           }),
           Effect.flatMap(Ref.get(ownedByJob), (owned) =>
             owned ? Effect.void : permits.release(child.id),
           ),
         )
+        const info = started.info
 
         const runningResult = (mode: "started" | "updated") => {
           const output = renderOutput({
@@ -413,6 +414,11 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         }
 
         if (info.metadata?.background === true) {
+          if (!runInBackground) {
+            const promoted = yield* submissions.promoteDelivery(started.submissionID)
+            if (!promoted)
+              return yield* new ToolFailure({ message: `Task submission disappeared: ${started.submissionID}` })
+          }
           const result = runningResult("updated")
           yield* checkpoint(result.metadata, result.output)
           return result

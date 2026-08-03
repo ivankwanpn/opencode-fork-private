@@ -343,7 +343,7 @@ function HomeProjectList(props: HomeProjectListProps) {
       <div class="flex min-w-0 flex-col gap-1" ref={listRef}>
         {/* Keyed on worktree strings: the enriched project objects are
             recreated on every store or sync update, so iterating them directly
-            remounts all rows — killing any in-flight drag activation (the
+            remounts all rows ??killing any in-flight drag activation (the
             row's sortable unregisters on unmount) and discarding animations.
             String keys keep row elements alive and move them on reorder. */}
         <For each={props.items.map((project) => project.worktree)}>
@@ -464,10 +464,9 @@ function HomeProjectRow(
     },
   })
   let pointerDownSelected: boolean | undefined
-  const contextMenuID = () => projectContextMenuID(props.server, props.project.worktree)
+  const contextMenuID = projectContextMenuID(props.server, props.project.worktree)
   onCleanup(() => {
-    const id = contextMenuID()
-    if (props.contextMenuOpen(id)) props.onSetContextMenuOpen(id, false)
+    if (props.contextMenuOpen(contextMenuID)) props.onSetContextMenuOpen(contextMenuID, false)
   })
   return (
     <div
@@ -522,14 +521,14 @@ function HomeProjectRow(
           hover-reveal absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1
           group-hover/project:opacity-100 focus-within:opacity-100 data-[menu=true]:opacity-100
         `}
-        data-menu={props.contextMenuOpen(contextMenuID())}
+        data-menu={props.contextMenuOpen(contextMenuID)}
       >
         <MenuV2
           gutter={6}
           modal={false}
           placement="bottom-end"
-          open={props.contextMenuOpen(contextMenuID())}
-          onOpenChange={(open) => props.onSetContextMenuOpen(contextMenuID(), open)}
+          open={props.contextMenuOpen(contextMenuID)}
+          onOpenChange={(open) => props.onSetContextMenuOpen(contextMenuID, open)}
         >
           <MenuV2.Trigger
             as={IconButtonV2}

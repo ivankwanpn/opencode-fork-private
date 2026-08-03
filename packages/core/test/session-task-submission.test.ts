@@ -271,7 +271,9 @@ describe("TaskSubmission", () => {
         terminal_error: null,
       })
       expect(typeof inputRow?.terminal_seq).toBe("number")
-      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0]?.payload).toMatchObject({ taskID: childSessionID })
     }),
   )
 

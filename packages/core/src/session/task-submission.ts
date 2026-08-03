@@ -320,7 +320,7 @@ const layer = Layer.effect(
           submission_id: row.id,
           parent_session_id: row.parent_session_id,
           message_id: notificationID(row.id),
-          payload: { state: row.outcome, description: row.description, text },
+          payload: { taskID: row.child_session_id, state: row.outcome, description: row.description, text },
           status: "pending",
           time_created: timeCreated,
         })

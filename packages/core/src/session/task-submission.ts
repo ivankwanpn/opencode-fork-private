@@ -246,7 +246,7 @@ const layer = Layer.effect(
     const submit: Interface["submit"] = Effect.fn("TaskSubmission.submit")(function* (input) {
       const existing = yield* findInvocation(input)
       if (existing) {
-        if (!matches(toInfo(existing), input))
+        if (!matches(toInfo(existing), input, existing.requested_completion_delivery))
           return yield* new InvocationConflict({
             parentSessionID: input.parentSessionID,
             assistantMessageID: input.assistantMessageID,
@@ -278,6 +278,7 @@ const layer = Layer.effect(
               agent: input.agent,
               agent_path: input.agentPath,
               model: input.model,
+              requested_completion_delivery: input.completionDelivery,
               completion_delivery: input.completionDelivery,
               status: "accepted",
               time_created: timeCreated,
@@ -305,7 +306,7 @@ const layer = Layer.effect(
 
       const row = yield* findInvocation(input)
       if (row) {
-        if (!matches(toInfo(row), input))
+        if (!matches(toInfo(row), input, row.requested_completion_delivery))
           return yield* new InvocationConflict({
             parentSessionID: input.parentSessionID,
             assistantMessageID: input.assistantMessageID,
@@ -316,7 +317,7 @@ const layer = Layer.effect(
 
       yield* commit(admitted.admittedSeq)
       const recovered = yield* findInvocation(input)
-      if (recovered && !matches(toInfo(recovered), input))
+      if (recovered && !matches(toInfo(recovered), input, recovered.requested_completion_delivery))
         return yield* new InvocationConflict({
           parentSessionID: input.parentSessionID,
           assistantMessageID: input.assistantMessageID,
@@ -603,14 +604,14 @@ const layer = Layer.effect(
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node, EventV2.node] })
 
-function matches(existing: Info, input: Invocation) {
+function matches(existing: Info, input: Invocation, requestedCompletionDelivery = existing.completionDelivery) {
   return (
     existing.childSessionID === input.childSessionID &&
     existing.description === input.description &&
     existing.agent === input.agent &&
     existing.agentPath === input.agentPath &&
     serializedModel(existing.model) === serializedModel(input.model) &&
-    existing.completionDelivery === input.completionDelivery &&
+    requestedCompletionDelivery === input.completionDelivery &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )
 }

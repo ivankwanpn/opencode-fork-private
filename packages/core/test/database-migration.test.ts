@@ -16,6 +16,7 @@ import contextEpochAgentMigration from "@opencode-ai/core/database/migration/202
 import simplifyIntegrationCredentialsMigration from "@opencode-ai/core/database/migration/20260611192811_lush_chimera"
 import simplifySessionInputMigration from "@opencode-ai/core/database/migration/20260622202450_simplify_session_input"
 import taskCompletionDeliveryMigration from "@opencode-ai/core/database/migration/20260803144306_task_completion_delivery"
+import taskRequestedCompletionDeliveryMigration from "@opencode-ai/core/database/migration/20260803200310_task_requested_completion_delivery"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -174,6 +175,51 @@ describe("DatabaseMigration", () => {
         expect(yield* db.get(sql`SELECT completion_delivery FROM task_submission WHERE id = 'sub_existing'`)).toEqual({
           completion_delivery: "parent",
         })
+      }),
+    )
+  })
+
+  test("backfills requested delivery from existing task submission ownership", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* db.run(sql`
+          CREATE TABLE task_submission (
+            id text PRIMARY KEY,
+            parent_session_id text NOT NULL,
+            assistant_message_id text NOT NULL,
+            tool_call_id text NOT NULL,
+            child_session_id text NOT NULL,
+            child_input_id text NOT NULL,
+            description text NOT NULL,
+            prompt text NOT NULL,
+            agent text NOT NULL,
+            agent_path text,
+            model text,
+            completion_delivery text DEFAULT 'parent' NOT NULL,
+            status text NOT NULL,
+            outcome text,
+            result_message_id text,
+            result_text text,
+            error text,
+            time_created integer NOT NULL,
+            time_completed integer
+          )
+        `)
+        yield* db.run(sql`
+          INSERT INTO task_submission (
+            id, parent_session_id, assistant_message_id, tool_call_id, child_session_id, child_input_id,
+            description, prompt, agent, completion_delivery, status, time_created
+          ) VALUES ('sub_tool', 'ses_parent', 'msg_parent', 'call_tool', 'ses_child', 'msg_child', 'tool task', '{}', 'general', 'tool', 'accepted', 1)
+        `)
+
+        yield* DatabaseMigration.applyOnly(db, [taskRequestedCompletionDeliveryMigration])
+
+        expect(
+          yield* db.get(
+            sql`SELECT requested_completion_delivery FROM task_submission WHERE id = 'sub_tool'`,
+          ),
+        ).toEqual({ requested_completion_delivery: "tool" })
       }),
     )
   })

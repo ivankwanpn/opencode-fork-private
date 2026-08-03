@@ -201,6 +201,7 @@ export const TaskSubmissionTable = sqliteTable(
     agent: text().notNull(),
     agent_path: text(),
     model: text({ mode: "json" }).$type<unknown>(),
+    requested_completion_delivery: text().$type<"tool" | "parent">().notNull().default("parent"),
     completion_delivery: text().$type<"tool" | "parent">().notNull().default("parent"),
     status: text().$type<TaskSubmissionStatus>().notNull(),
     outcome: text().$type<"completed" | "error" | "cancelled" | "recovery-required">(),

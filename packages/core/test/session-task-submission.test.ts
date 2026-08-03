@@ -439,6 +439,28 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("adopts the original tool-owned invocation after promotion", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Promoted retry task",
+        agent: "general",
+        completionDelivery: "tool" as const,
+      }
+      const submitted = yield* submissions.submit(input)
+
+      yield* submissions.promoteDelivery(submitted.id)
+
+      expect(yield* submissions.submit(input)).toMatchObject({
+        id: submitted.id,
+        completionDelivery: "parent",
+      })
+    }),
+  )
+
   it.effect("coalesces concurrent first submissions for one invocation", () =>
     Effect.gen(function* () {
       yield* setup

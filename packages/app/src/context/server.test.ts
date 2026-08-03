@@ -197,6 +197,33 @@ describe("createServerProjects", () => {
       dispose()
     })
   })
+
+  test("uses normalized path identity for active projects", () => {
+    createRoot((dispose) => {
+      const [scope] = createSignal(ServerScope.local)
+      const [store, setStore] = createStore({ projects: {}, lastProject: {}, recentlyClosed: {} })
+      const projects = createServerProjects({ scope, store, setStore })
+
+      projects.open("D:\\repo")
+      projects.open("D:/other")
+      projects.open("D:/repo/")
+      expect(projects.list()).toHaveLength(2)
+
+      projects.collapse("D:/repo/")
+      expect(projects.list()[1]?.expanded).toBe(false)
+
+      projects.move("D:/repo/", 0)
+      expect(projects.list()[0]?.worktree).toBe("D:\\repo")
+
+      projects.expand("D:\\repo\\")
+      expect(projects.list()[0]?.expanded).toBe(true)
+
+      projects.close("D:/repo/")
+      expect(projects.list()).toEqual([{ worktree: "D:/other", expanded: true }])
+      expect(projects.recentlyClosed()).toEqual(["D:/repo/"])
+      dispose()
+    })
+  })
 })
 
 describe("migrateCanonicalLocalServerState", () => {

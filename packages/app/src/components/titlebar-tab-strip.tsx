@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createRoot, For, onCleanup, onMount } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount } from "solid-js"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
 import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
@@ -16,6 +16,7 @@ import { useTabs } from "@/context/tabs"
 import { createTabPromptState } from "@/context/prompt"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { canStartTabDrag, isTabCloseTarget } from "./titlebar-tab-gesture"
+import { createTabPrefetchQueue } from "./titlebar-tab-prefetch"
 
 function SessionTabSlot(props: {
   tab: SessionTab
@@ -24,6 +25,7 @@ function SessionTabSlot(props: {
   active: () => boolean
   forceTruncate: boolean
   serverCtx: () => ServerCtx | undefined
+  prefetch: ReturnType<typeof createTabPrefetchQueue>
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
 }) {
@@ -41,33 +43,30 @@ function SessionTabSlot(props: {
   const sdk = createMemo(() => props.serverCtx()?.sdk ?? null)
   const cachedSession = createMemo(() => props.serverCtx()?.sync.session.peek(props.tab.sessionId))
   const persisted = createMemo(() => tabs.info[props.id])
-  const [loadedSession] = createResource(
-    () => {
-      const ctx = props.serverCtx()
-      return ctx ? { id: props.tab.sessionId, ctx } : null
-    },
-    ({ id, ctx }) => ctx.sync.session.resolve(id).catch(() => undefined),
-  )
-  const session = createMemo(() => cachedSession() ?? loadedSession())
-  const missingSession = createMemo(() => !!props.serverCtx() && !loadedSession.loading && !session())
-  let prefetched = false
+  let alive = true
+  const [attempted, setAttempted] = createSignal(false)
+  const session = cachedSession
+  const missingSession = createMemo(() => !!props.serverCtx() && attempted() && !session())
 
   createEffect(() => {
     const ctx = props.serverCtx()
-    const value = session()
-    if (!ctx || !value || prefetched) return
-    prefetched = true
-    createRoot((dispose) => {
-      try {
-        void ctx.sync
-          .ensureDirSyncContext(value.directory)
-          .session.sync(value.id)
-          .catch(() => {})
-          .finally(dispose)
-      } catch {
-        dispose()
-      }
+    props.prefetch.remove(props.id)
+    if (props.active()) {
+      return
+    }
+    if (!ctx) return
+
+    props.prefetch.add(props.id, async () => {
+      const value = await ctx.sync.session.resolve(props.tab.sessionId).catch(() => undefined)
+      if (alive) setAttempted(true)
+      if (!value) return
+      await ctx.sync.ensureDirSyncContext(value.directory).session.sync(value.id)
     })
+  })
+
+  onCleanup(() => {
+    alive = false
+    props.prefetch.remove(props.id)
   })
 
   createEffect(() => {
@@ -85,6 +84,8 @@ function SessionTabSlot(props: {
   return (
     <div
       ref={sortable.ref}
+      onPointerEnter={() => props.prefetch.promote(props.id)}
+      onFocusIn={() => props.prefetch.promote(props.id)}
       data-titlebar-tab-slot
       data-tab-key={props.id}
       data-active={props.active()}
@@ -175,6 +176,7 @@ export function TitlebarTabStrip(props: {
   let scrollRef!: HTMLDivElement
   let listRef!: HTMLDivElement
   let resizeFrame: number | undefined
+  const prefetch = createTabPrefetchQueue()
 
   const tabIds = () => props.tabs.map(tabKey)
 
@@ -200,6 +202,7 @@ export function TitlebarTabStrip(props: {
 
   onCleanup(() => {
     if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+    prefetch.dispose()
   })
 
   createEffect(() => {
@@ -237,6 +240,7 @@ export function TitlebarTabStrip(props: {
             const tab = props.tabs.find((item) => tabKey(item) === source.id.toString())
             if (!tab) return
             const tabEl = source.element?.querySelector<HTMLDivElement>("[data-titlebar-tab]")
+            prefetch.remove(tabKey(tab))
             props.onNavigate(tab, tabEl ?? undefined)
           }}
           onDragEnd={(event) => {
@@ -255,7 +259,11 @@ export function TitlebarTabStrip(props: {
               {(tab, index) => {
                 const id = tabKey(tab)
                 let ref!: HTMLDivElement
-                useTabShortcut(index, () => props.onNavigate(tab, ref))
+                const navigate = (element?: HTMLDivElement) => {
+                  prefetch.remove(id)
+                  props.onNavigate(tab, element)
+                }
+                useTabShortcut(index, () => navigate(ref))
                 const serverCtx = createMemo(() => {
                   if (tab.type !== "session") return
                   const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
@@ -271,11 +279,15 @@ export function TitlebarTabStrip(props: {
                       active={() => props.currentTab() === tab}
                       forceTruncate={props.forceTruncate}
                       serverCtx={serverCtx}
+                      prefetch={prefetch}
                       onNavigate={(element) => {
                         ref = element
-                        props.onNavigate(tab, element)
+                        navigate(element)
                       }}
-                      onClose={() => props.onClose(tab)}
+                      onClose={() => {
+                        prefetch.remove(id)
+                        props.onClose(tab)
+                      }}
                     />
                   )
                 }
@@ -289,9 +301,12 @@ export function TitlebarTabStrip(props: {
                     title={language.t("command.session.new")}
                     onNavigate={(element) => {
                       ref = element
-                      props.onNavigate(tab, element)
+                      navigate(element)
                     }}
-                    onClose={() => props.onClose(tab)}
+                    onClose={() => {
+                      prefetch.remove(id)
+                      props.onClose(tab)
+                    }}
                   />
                 )
               }}

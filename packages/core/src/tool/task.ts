@@ -379,7 +379,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
                   wake: execution.wake,
                 })
                 yield* checkpoint(backgroundMetadata)
-              }).pipe(Effect.orDie),
+              }),
               onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
               onRelease: permits.release(child.id),
               run: runTask(submission),

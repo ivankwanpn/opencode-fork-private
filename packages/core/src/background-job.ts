@@ -28,7 +28,7 @@ type Active = {
   output?: { sequence: number; text: string }
   tail: Deferred.Deferred<void>
   promoted: Deferred.Deferred<Info>
-  onPromote?: Effect.Effect<void>
+  onPromote?: Effect.Effect<void, Error>
   onAcquire?: Effect.Effect<void>
   onRelease?: Effect.Effect<void>
 }
@@ -48,7 +48,6 @@ type FinishResult = {
 type PromoteResult = {
   info?: Info
   promoted?: Deferred.Deferred<Info>
-  onPromote?: Effect.Effect<void>
 }
 
 type StartResult =
@@ -79,7 +78,7 @@ export type StartInput = {
   type: string
   title?: string
   metadata?: Record<string, unknown>
-  onPromote?: Effect.Effect<void>
+  onPromote?: Effect.Effect<void, Error>
   onAcquire?: Effect.Effect<void>
   onRelease?: Effect.Effect<void>
   run: Effect.Effect<string, unknown>
@@ -110,7 +109,7 @@ export interface Interface {
   readonly extend: (input: ExtendInput) => Effect.Effect<boolean>
   readonly wait: (input: WaitInput) => Effect.Effect<WaitResult>
   readonly waitForPromotion: (id: string) => Effect.Effect<Info | undefined>
-  readonly promote: (id: string) => Effect.Effect<Info | undefined>
+  readonly promote: (id: string) => Effect.Effect<Info | undefined, Error>
   readonly cancel: (id: string) => Effect.Effect<Info | undefined>
 }
 
@@ -385,6 +384,7 @@ export const make = Effect.gen(function* () {
         if (!job || job.info.status !== "running") return [{}, jobs] as readonly [PromoteResult, Map<string, Active>]
         if (job.info.metadata?.background === true)
           return [{ info: snapshot(job) }, jobs] as readonly [PromoteResult, Map<string, Active>]
+        if (job.onPromote) yield* job.onPromote
         const next = {
           ...job,
           onPromote: undefined,
@@ -394,13 +394,12 @@ export const make = Effect.gen(function* () {
           },
         }
         return [
-          { info: snapshot(next), onPromote: job.onPromote, promoted: job.promoted },
+          { info: snapshot(next), promoted: job.promoted },
           new Map(jobs).set(id, next),
         ] as readonly [PromoteResult, Map<string, Active>]
       }),
     )
     if (result.info && result.promoted) yield* Deferred.succeed(result.promoted, result.info).pipe(Effect.ignore)
-    if (result.onPromote) yield* result.onPromote.pipe(Effect.ignore)
     return result.info
   })
 

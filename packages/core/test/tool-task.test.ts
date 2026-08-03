@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
-import { Cause, DateTime, Deferred, Effect, Fiber, Layer } from "effect"
+import { ToolFailure } from "@opencode-ai/llm"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Config } from "@opencode-ai/core/config"
@@ -52,6 +53,9 @@ let notificationSignal: Deferred.Deferred<void> | undefined
 let interruptedSignal: Deferred.Deferred<void> | undefined
 let terminalizedSignal: Deferred.Deferred<void> | undefined
 let terminalizeRelease: Deferred.Deferred<void> | undefined
+let promotionSignal: Deferred.Deferred<void> | undefined
+let promotionRelease: Deferred.Deferred<void> | undefined
+let promoteDeliveryMissing = false
 let resumeHandler: SessionExecution.Interface["resume"]
 
 const info = (input: {
@@ -133,6 +137,9 @@ const reset = () => {
   interruptedSignal = undefined
   terminalizedSignal = undefined
   terminalizeRelease = undefined
+  promotionSignal = undefined
+  promotionRelease = undefined
+  promoteDeliveryMissing = false
   sessions.set(rootID, info({ id: rootID, agent: AgentV2.ID.make("build"), model }))
   sessions.set(parentID, info({ id: parentID, agent: AgentV2.ID.make("build"), model }))
   agents.set(
@@ -336,7 +343,10 @@ const taskSubmissionLayer = Layer.succeed(
       }),
     get: (id) => Effect.succeed(taskSubmissions.get(id)),
     promoteDelivery: (id) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        if (promotionSignal) yield* Deferred.succeed(promotionSignal, undefined).pipe(Effect.ignore)
+        if (promotionRelease) yield* Deferred.await(promotionRelease)
+        if (promoteDeliveryMissing) return undefined
         const info = taskSubmissions.get(id)
         if (!info) return undefined
         const promoted = { ...info, completionDelivery: "parent" as const }
@@ -838,6 +848,8 @@ describe("TaskTool", () => {
       const releaseCompletion = yield* Deferred.make<void>()
       terminalizedSignal = yield* Deferred.make<void>()
       terminalizeRelease = yield* Deferred.make<void>()
+      promotionSignal = yield* Deferred.make<void>()
+      promotionRelease = yield* Deferred.make<void>()
       resumeHandler = (sessionID) =>
         Effect.gen(function* () {
           resumed.push(sessionID)
@@ -857,8 +869,13 @@ describe("TaskTool", () => {
       const terminalSubmissions = Array.from(taskSubmissions.values())
       const terminalAdmissions = [...syntheticAdmissions]
 
-      yield* jobs.promote(childID)
-
+      const promoting = yield* jobs.promote(childID).pipe(Effect.forkScoped)
+      yield* Deferred.await(promotionSignal)
+      yield* Effect.yieldNow
+      const runningBeforePromotion = running.pollUnsafe()
+      const checkpointsBeforePromotion = progressUpdates.length
+      yield* Deferred.succeed(promotionRelease, undefined)
+      yield* Fiber.join(promoting)
       const runningResult = yield* Fiber.join(running)
       const promotedSubmissions = Array.from(taskSubmissions.values())
       const promotedAdmissions = [...syntheticAdmissions]
@@ -868,6 +885,8 @@ describe("TaskTool", () => {
 
       expect(terminalSubmissions).toMatchObject([{ status: "completed", completionDelivery: "tool" }])
       expect(terminalAdmissions).toHaveLength(0)
+      expect(runningBeforePromotion).toBeUndefined()
+      expect(checkpointsBeforePromotion).toBe(1)
       expect(runningResult).toMatchObject({
         type: "text",
         value: expect.stringContaining('state="running"'),
@@ -880,6 +899,52 @@ describe("TaskTool", () => {
       expect(completed.info?.status).toBe("completed")
       expect(syntheticAdmissions).toHaveLength(1)
       expect(woken).toEqual([parentID])
+    }),
+  )
+
+  background.effect("keeps foreground promotion retryable when its durable submission is missing", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "retried promotion"))
+        })
+      promoteDeliveryMissing = true
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const running = yield* executeTool(registry, call(input, "call-missing-promotion")).pipe(Effect.forkScoped)
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* Deferred.await(started)
+      const first = yield* jobs.promote(childID).pipe(Effect.exit)
+      yield* Effect.yieldNow
+      const afterFailure = yield* jobs.get(childID)
+      const runningAfterFailure = running.pollUnsafe()
+      const checkpointsAfterFailure = progressUpdates.length
+
+      promoteDeliveryMissing = false
+      const second = yield* jobs.promote(childID)
+      const runningResult = yield* Fiber.join(running)
+      yield* Deferred.succeed(release, undefined)
+      const completed = yield* jobs.wait({ id: childID })
+
+      expect(Exit.isFailure(first)).toBe(true)
+      if (Exit.isFailure(first)) {
+        expect(Cause.squash(first.cause)).toBeInstanceOf(ToolFailure)
+        expect(String(Cause.squash(first.cause))).toContain("Task submission disappeared")
+      }
+      expect(afterFailure?.metadata?.background).not.toBe(true)
+      expect(runningAfterFailure).toBeUndefined()
+      expect(checkpointsAfterFailure).toBe(1)
+      expect(second).toMatchObject({ metadata: { background: true } })
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "parent" }])
+      expect(runningResult).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      expect(completed.info?.status).toBe("completed")
     }),
   )
 

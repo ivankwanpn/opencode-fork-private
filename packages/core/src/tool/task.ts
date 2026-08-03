@@ -23,7 +23,6 @@ import { ToolProgress } from "./progress"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
-import { Flag } from "../flag/flag"
 
 export const name = "task"
 
@@ -143,7 +142,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const cancellation = yield* TaskCancellation.Service
       const submissions = yield* TaskSubmission.Service
       const tools = yield* Tools.Service
-      const allowBackground = options.background ?? Flag.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+      const allowBackground = options.background ?? true
 
       const computeAgentPath = Effect.fn("TaskTool.computeAgentPath")(function* (session: SessionSchema.Info) {
         const chain = [session]

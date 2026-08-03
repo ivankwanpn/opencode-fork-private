@@ -414,8 +414,8 @@ const progressLayer = Layer.succeed(
   }),
 )
 
-const makeLayer = (background: boolean, replacements: LayerNode.Replacements = []) => {
-  const taskNode = TaskTool.nodeWithOptions({ background })
+const makeLayer = (background?: boolean, replacements: LayerNode.Replacements = []) => {
+  const taskNode = background === undefined ? TaskTool.node : TaskTool.nodeWithOptions({ background })
   return AppNodeBuilder.build(
     LayerNode.group([BackgroundJob.node, ToolRegistry.node, ToolRegistry.toolsNode, taskNode]),
     [
@@ -435,6 +435,7 @@ const makeLayer = (background: boolean, replacements: LayerNode.Replacements = [
   )
 }
 
+const defaultCapability = testEffect(makeLayer())
 const foreground = testEffect(makeLayer(false))
 const background = testEffect(makeLayer(true))
 const foregroundLimited = testEffect(makeLayer(false, [[Config.node, makeConfigLayer(2)]]))
@@ -542,6 +543,16 @@ const input = {
 }
 
 describe("TaskTool", () => {
+  defaultCapability.effect("exposes background mode to the model by default", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+      const definition = (yield* toolDefinitions(registry))[0]
+
+      expect((definition?.inputSchema.properties as Record<string, unknown> | undefined)?.background).toBeDefined()
+    }),
+  )
+
   foreground.effect("hides background mode from the model when the experiment is disabled", () =>
     Effect.gen(function* () {
       reset()

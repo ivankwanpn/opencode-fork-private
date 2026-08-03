@@ -663,6 +663,10 @@ const scenarios: Scenario[] = [
     check(body.healthy === true, "v2 server should report healthy")
     check(Number.isInteger(body.pid), "v2 server should report its process ID")
   }),
+  http.protected.get("/api/capability", "v2.capability.get").json(200, (body) => {
+    object(body)
+    check(body.backgroundSubagents === true, "V2 background subagents should be enabled by default")
+  }),
   http.protected.get("/api/location", "v2.location.get").json(200, object),
   http.protected.get("/api/agent", "v2.agent.list").json(200, locationData(array)),
   http.protected.get("/api/model", "v2.model.list").json(200, locationData(array)),

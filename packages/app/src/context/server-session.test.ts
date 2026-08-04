@@ -201,13 +201,17 @@ describe("server session", () => {
       data: { sessionID: "child", assistantMessageID: "msg_2_assistant", ordinal: 0, delta: "world" },
     })
 
-    expect(ctx.store.data.session_message.child?.at(-1)).toMatchObject({
-      id: "msg_2_assistant",
-      type: "assistant",
-      content: [{ type: "text", text: "world" }],
-    })
+    expect(ctx.store.data.session_message.child?.at(-1)).toEqual(
+      expect.objectContaining({
+        id: "msg_2_assistant",
+        type: "assistant",
+        content: [expect.objectContaining({ type: "text", text: "world" })],
+      }),
+    )
     expect(ctx.store.data.message.child?.map((message) => message.id)).toEqual(["msg_1_user", "msg_2_assistant"])
-    expect(ctx.store.data.part.msg_2_assistant).toMatchObject([{ type: "text", text: "world" }])
+    expect(ctx.store.data.part.msg_2_assistant).toEqual([
+      expect.objectContaining({ type: "text", text: "world" }),
+    ])
   })
 
   test("projects current move, retry, provider attempt, and revert state", () => {
@@ -431,9 +435,9 @@ describe("server session", () => {
     await store.sync("root")
 
     expect(store.data.message.root.map((message) => message.id)).toEqual([user.id, assistant.id])
-    expect(store.data.session_message.root).toMatchObject([
-      { id: user.id, type: "user", text: "text" },
-      { id: assistant.id, type: "assistant" },
+    expect(store.data.session_message.root).toEqual([
+      expect.objectContaining({ id: user.id, type: "user", text: "text" }),
+      expect.objectContaining({ id: assistant.id, type: "assistant" }),
     ])
 
     const next = userMessage("message-3", { sessionID: "root" })
@@ -1517,6 +1521,7 @@ describe("server session", () => {
 
     await store.history.loadMore("child")
 
+    guard.active = false
     expect(store.data.message.child).toEqual([older, latest])
   })
 
@@ -1762,7 +1767,7 @@ describe("server session", () => {
     await Promise.all([store.context.refresh("child"), store.context.refresh("child")])
 
     expect(requests).toEqual([{ sessionID: "child" }])
-    expect(store.context.get("child")).toMatchObject([{ id: "assistant", type: "assistant" }])
+    expect(store.context.get("child")).toEqual([expect.objectContaining({ id: "assistant", type: "assistant" })])
   })
 
   test("refreshes V2 context only at stable compaction boundaries", async () => {

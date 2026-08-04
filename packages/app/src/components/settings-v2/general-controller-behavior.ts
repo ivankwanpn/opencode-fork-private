@@ -1,3 +1,4 @@
+import type { ServerSDK } from "@/context/server-sdk"
 import { onCleanup } from "solid-js"
 
 export type ShellOption = {
@@ -11,6 +12,14 @@ export type ShellSelectOption = {
   value: string
   name: string
   terminalOnly: boolean
+}
+
+export function loadShells(sdk: Pick<ServerSDK, "apiForGeneration">) {
+  return sdk
+    .apiForGeneration()
+    .then((api) => api.pty.shells())
+    .then((result) => result.data ?? [])
+    .catch(() => [])
 }
 
 export function createShellOptions(input: { shells: ShellOption[]; current: string | undefined }) {

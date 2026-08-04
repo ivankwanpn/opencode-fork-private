@@ -130,6 +130,45 @@ describe("bootstrapDirectory", () => {
     expect(mcpReads).toEqual([])
   })
 
+  test("uses the V2 active snapshot instead of the legacy status endpoint", async () => {
+    let legacyStatusCalls = 0
+    const [store, setStore] = directoryState()
+
+    await bootstrapDirectory({
+      directory: "/project",
+      scope: ServerScope.local,
+      mcp: false,
+      global: {
+        config: {} satisfies Config,
+        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+        project: [{ id: "project", worktree: "/project" } as Project],
+        provider,
+      },
+      sdk: {
+        session: {
+          status: async () => {
+            legacyStatusCalls++
+            throw new Error("legacy status endpoint should not be called for V2")
+          },
+        },
+      } as unknown as OpencodeClient,
+      api,
+      activeSessions: () => ({ ses_running: { type: "running" } }),
+      protocol: Promise.resolve("v2" as const),
+      store,
+      setStore,
+      vcsCache: { setStore() {} } as unknown as VcsCache,
+      loadSessions() {},
+      translate: (key) => key,
+      queryClient: new QueryClient(),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    expect(legacyStatusCalls).toBe(0)
+    expect(store.session_status).toEqual({ ses_running: { type: "busy" } })
+  })
+
   test("does not overwrite requests changed while list snapshots are in flight", async () => {
     const [store, setStore] = directoryState()
     const revisions = { permission: 0, question: 0 }

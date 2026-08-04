@@ -609,6 +609,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         queryClient,
         session,
         protocol: serverSDK.protocolForGeneration,
+        activeSessions: () => activeSessionsQuery.data,
         pendingRequestRevision: pendingRequestRevision(directory),
       })
     })

@@ -1,8 +1,25 @@
 import { describe, expect, test, vi } from "bun:test"
 import { createRoot } from "solid-js"
-import { createShellOptions, createSoundPreviewController } from "./general-controller-behavior"
+import { createShellOptions, createSoundPreviewController, loadShells } from "./general-controller-behavior"
 
 describe("settings v2 controllers", () => {
+  test("loads shells through the selected server protocol generation", async () => {
+    const calls: string[] = []
+    const shells = await loadShells({
+      apiForGeneration: async () => ({
+        pty: {
+          shells: async () => {
+            calls.push("v2")
+            return { data: [{ path: "/bin/bash", name: "bash", acceptable: true }] }
+          },
+        },
+      }),
+    } as Parameters<typeof loadShells>[0])
+
+    expect(calls).toEqual(["v2"])
+    expect(shells).toEqual([{ path: "/bin/bash", name: "bash", acceptable: true }])
+  })
+
   test("normalizes shell names and preserves an unavailable configured shell", () => {
     expect(
       createShellOptions({

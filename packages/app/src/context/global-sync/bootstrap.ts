@@ -8,6 +8,7 @@ import type {
   QuestionRequest,
   ReferenceInfo,
   Session,
+  SessionStatus,
 } from "@opencode-ai/sdk/v2/client"
 import type {
   AgentListInput,
@@ -26,6 +27,7 @@ import type {
   QuestionApi,
   ReferenceListInput,
   ReferenceListOutput,
+  SessionActiveOutput,
   SessionApi,
   VcsApi,
 } from "@opencode-ai/client/promise"
@@ -390,6 +392,11 @@ export const loadReferencesQuery = (
     placeholderData: [],
   })
 
+function normalizeSessionStatus(status: SessionStatus | SessionActiveOutput[string]): SessionStatus {
+  if (status.type === "running") return { type: "busy" }
+  return status
+}
+
 export async function bootstrapDirectory(input: {
   directory: string
   scope: ServerScope
@@ -424,6 +431,7 @@ export async function bootstrapDirectory(input: {
   queryClient: QueryClient
   session?: ServerSession
   protocol?: ServerProtocolResolver
+  activeSessions?: () => SessionActiveOutput | undefined
   pendingRequestRevision?: {
     permission: () => number
     question: () => number
@@ -463,18 +471,27 @@ export async function bootstrapDirectory(input: {
       () =>
         retry(() =>
           (async () => {
-            if ((await resolveServerProtocol(input.protocol)) !== "v1") return
-            const x = await input.sdk.session.status()
+            const protocol = await resolveServerProtocol(input.protocol)
+            const snapshot =
+              protocol === "v1"
+                ? ((await input.sdk.session.status()).data ?? {})
+                : protocol === "v2"
+                  ? input.activeSessions?.()
+                  : undefined
+            if (!snapshot) return
+            const statuses: Record<string, SessionStatus> = Object.fromEntries(
+              Object.entries(snapshot).map(([sessionID, status]) => [sessionID, normalizeSessionStatus(status)]),
+            )
             if (!input.session) {
-              input.setStore("session_status", x.data!)
+              input.setStore("session_status", statuses)
               return
             }
-            const statuses = x.data ?? {}
             input.session.set(
               "session_status",
               produce((draft) => {
                 for (const sessionID of Object.keys(draft)) {
                   if (statuses[sessionID]) continue
+                  if (protocol === "v2" && draft[sessionID]?.type === "retry") continue
                   if (input.session?.get(sessionID)?.directory === input.directory) delete draft[sessionID]
                 }
               }),

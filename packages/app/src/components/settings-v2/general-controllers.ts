@@ -17,7 +17,7 @@ import {
   useSettings,
 } from "@/context/settings"
 import { playSoundById, SOUND_OPTIONS } from "@/utils/sound"
-import { createSoundPreviewController, type ShellOption } from "./general-controller-behavior"
+import { createSoundPreviewController, loadShells, type ShellOption } from "./general-controller-behavior"
 
 export { createShellOptions, createSoundPreviewController } from "./general-controller-behavior"
 export type { ShellOption, ShellSelectOption } from "./general-controller-behavior"
@@ -53,11 +53,7 @@ export function createShellSettingsController() {
   const serverSdk = useServerSDK()
   const serverSync = useServerSync()
   const [shells] = createResource(
-    async () => {
-      const sdk = serverSdk()
-      if ((await sdk.protocolForGeneration()) === "v1") return (await sdk.client.pty.shells()).data ?? []
-      return [] as ShellOption[]
-    },
+    () => loadShells(serverSdk()),
     { initialValue: [] as ShellOption[] },
   )
   const current = createMemo(() => serverSync().data.config.shell ?? "")

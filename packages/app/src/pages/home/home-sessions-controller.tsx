@@ -78,7 +78,7 @@ export function createHomeSessionsController(home: HomeController) {
               signal,
             )
           : await loadHomeSessionIndex(
-              (input, options) => ctx.sdk.client.v2.session.list(input, options),
+              (input, options) => ctx.sdk.api.session.list(input, options),
               eventSequence,
               signal,
             )

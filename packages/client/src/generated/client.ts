@@ -442,6 +442,7 @@ export function make(options: ClientOptions) {
               limit: input?.["limit"],
               order: input?.["order"],
               search: input?.["search"],
+              parentID: input?.["parentID"],
               directory: input?.["directory"],
               project: input?.["project"],
               subpath: input?.["subpath"],

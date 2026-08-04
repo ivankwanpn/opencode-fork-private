@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, isNull, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { AgentV2 } from "./agent"
 import { WorkspaceV2 } from "./workspace"
@@ -62,6 +62,7 @@ const ListInputBase = {
   search: Schema.String.pipe(Schema.optional),
   limit: PositiveInt.pipe(Schema.optional),
   order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
+  parentID: Schema.NullOr(SessionSchema.ID).pipe(Schema.optional),
   anchor: ListAnchor.pipe(Schema.optional),
 }
 
@@ -470,6 +471,9 @@ const layer = Layer.effect(
         if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
         if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
         if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
+        if (input.parentID === null) conditions.push(isNull(SessionTable.parent_id))
+        if (input.parentID !== undefined && input.parentID !== null)
+          conditions.push(eq(SessionTable.parent_id, input.parentID))
         if (input.anchor) {
           conditions.push(
             order === "asc"

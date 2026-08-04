@@ -43,6 +43,9 @@ const SessionsQueryFields = {
     description: "Session order for the first page. Use desc for newest first or asc for oldest first.",
   }),
   search: Schema.optional(Schema.String),
+  parentID: Schema.NullOr(Session.ID).pipe(Schema.optional).annotate({
+    description: "Filter by parent session. Use null to return root sessions only.",
+  }),
 }
 
 const SessionsDirectoryQuery = Schema.Struct({

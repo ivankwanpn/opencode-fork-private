@@ -35,7 +35,7 @@ import type { DragEvent } from "@thisbeyond/solid-dnd"
 import { useProviders } from "@/hooks/use-providers"
 import { toaster } from "@opencode-ai/ui/toast"
 import { setV2Toast, showToast, ToastRegion } from "@/utils/toast"
-import { runServerSessionMutation, useServerSDK } from "@/context/server-sdk"
+import { resolveServerSessionApi, runServerSessionMutation, useServerSDK } from "@/context/server-sdk"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
 import { clearWorkspaceTerminals } from "@/context/terminal"
 import { pickSessionCacheEvictions } from "@/context/global-sync/session-cache"
@@ -88,6 +88,10 @@ import { SidebarContent } from "./layout/sidebar-shell"
 
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
+  const resolveSessionApi = () => {
+    const target = serverSDK()
+    return resolveServerSessionApi({ protocol: target.protocol, api: target.api, currentApi: target.currentApi })
+  }
   const [store, setStore, , ready] = persisted(
     Persist.serverGlobal(serverSDK().scope, "layout.page", ["layout.page.v1"]),
     createStore({
@@ -1230,15 +1234,17 @@ export default function LegacyLayout(props: ParentProps) {
     }
 
     const fetched = latestRootSession(
-      await Promise.all(
-        dirs.map(async (item) => ({
-          path: { directory: item },
-          session: await listAllSessions(serverSDK().api.session, {
-            directory: item,
-            parentID: null,
-            order: "desc",
-          }).catch(() => []),
-        })),
+      await resolveSessionApi().then((api) =>
+        Promise.all(
+          dirs.map(async (item) => ({
+            path: { directory: item },
+            session: await listAllSessions(api, {
+              directory: item,
+              parentID: null,
+              order: "desc",
+            }).catch(() => []),
+          })),
+        ),
       ),
       Date.now(),
     )
@@ -1450,7 +1456,9 @@ export default function LegacyLayout(props: ParentProps) {
     })
     const dismiss = () => toaster.dismiss(progress)
 
-    const sessions = await listAllSessions(serverSDK().api.session, { directory, order: "desc" }).catch(() => [])
+    const sessions = await resolveSessionApi()
+      .then((api) => listAllSessions(api, { directory, order: "desc" }))
+      .catch(() => [])
 
     clearWorkspaceTerminals(
       directory,
@@ -1584,10 +1592,9 @@ export default function LegacyLayout(props: ParentProps) {
     })
 
     const refresh = async () => {
-      const sessions = await listAllSessions(serverSDK().api.session, {
-        directory: props.directory,
-        order: "desc",
-      }).catch(() => [])
+      const sessions = await resolveSessionApi()
+        .then((api) => listAllSessions(api, { directory: props.directory, order: "desc" }))
+        .catch(() => [])
       const active = sessions.filter((session) => session.time.archived === undefined)
       setState({ sessions: active })
     }

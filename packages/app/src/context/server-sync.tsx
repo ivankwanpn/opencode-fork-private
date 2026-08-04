@@ -12,7 +12,7 @@ import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
-import { ServerSDK } from "./server-sdk"
+import { resolveServerSessionApi, ServerSDK } from "./server-sdk"
 import {
   bootstrapDirectory,
   bootstrapGlobal,
@@ -327,7 +327,11 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const activeSessionsQuery = useQuery(() =>
     loadActiveSessionsQuery(serverSDK.scope, {
       active: async () => {
-        const active = await serverSDK.api.session.active()
+        const active = await resolveServerSessionApi({
+          protocol: serverSDK.protocol,
+          api: serverSDK.api,
+          currentApi: serverSDK.currentApi,
+        }).then((api) => api.active())
         seedActiveSessionStatuses(session, active)
         for (const sessionID of Object.keys(active)) {
           void session.resolve(sessionID).catch(() => undefined)
@@ -486,12 +490,17 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const promise = queryClient
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
-          queryFn: () =>
-            resolveServerProtocol(serverSDK.protocolForGeneration).then((protocol) =>
-              protocol === "v1"
-                ? loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
-                : loadRootSessions({ api: serverSDK.api.session, directory, limit }),
-            )
+        queryFn: () =>
+          resolveServerProtocol(serverSDK.protocolForGeneration)
+            .then(async (protocol) => {
+              if (protocol === "v1") return loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
+              const api = await resolveServerSessionApi({
+                protocol: serverSDK.protocol,
+                api: serverSDK.api,
+                currentApi: serverSDK.currentApi,
+              })
+              return loadRootSessions({ api, directory, limit })
+            })
             .then((x) => {
               const nonArchived = (x.data ?? [])
                 .filter((s) => !!s?.id)

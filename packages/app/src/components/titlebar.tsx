@@ -253,8 +253,12 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
                 return conn ? { route, sdk: global.ensureServerCtx(conn).sdk } : undefined
               },
               ({ route, sdk }) =>
-                sdk.api.session
-                  .get({ sessionID: route.sessionId })
+                resolveServerSessionApi({
+                  protocol: sdk.protocol,
+                  api: sdk.api,
+                  currentApi: sdk.currentApi,
+                })
+                  .then((api) => api.get({ sessionID: route.sessionId }))
                   .then(normalizeSessionInfo)
                   .catch(() => {}),
             )

@@ -11,6 +11,7 @@ import { commandPaletteOptions, formatKeybindParts, useCommand } from "@/context
 import { useGlobal } from "@/context/global"
 import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
+import { resolveServerSessionApi } from "@/context/server-sdk"
 import { useTabs } from "@/context/tabs"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { getRelativeTime } from "@/utils/time"
@@ -79,7 +80,12 @@ export function DialogHomeCommandPaletteV2(props: {
     server: ServerConnection.key(props.server),
     opened: serverCtx.projects.list,
     stored: () => serverCtx.sync.data.project,
-    load: (search, signal) => serverCtx.sdk.api.session.list({ parentID: null, search, limit: 50 }, { signal }),
+    load: (search, signal) =>
+      resolveServerSessionApi({
+        protocol: serverCtx.sdk.protocol,
+        api: serverCtx.sdk.api,
+        currentApi: serverCtx.sdk.currentApi,
+      }).then((api) => api.list({ parentID: null, search, limit: 50 }, { signal })),
     untitled: () => language.t("command.session.new"),
     category: () => language.t("command.category.session"),
   })

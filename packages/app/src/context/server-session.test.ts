@@ -216,6 +216,43 @@ describe("server session", () => {
     ])
   })
 
+  test("does not hydrate a stale V2 event through a V1 generation", async () => {
+    let calls = 0
+    const api = createV2OnlyApi({
+      protocol: Promise.resolve("v1" as const),
+      current: {
+        session: {
+          message: async () => {
+            calls++
+            return {
+              id: "message",
+              type: "user",
+              text: "hello",
+              time: { created: 1 },
+            }
+          },
+        },
+      } as unknown as ServerApi,
+    })
+    const store = createServerSession({} as OpencodeClient, {
+      protocol: Promise.resolve("v1" as const),
+      api,
+    })
+
+    store.applyV2({
+      id: "event",
+      created: 1,
+      type: "session.next.message.imported",
+      data: {
+        sessionID: "child",
+        message: { id: "message", type: "user", text: "hello", time: { created: 1 } },
+      },
+    } as unknown as V2Event)
+    await Promise.resolve()
+
+    expect(calls).toBe(0)
+  })
+
   test("projects current move, retry, provider attempt, and revert state", () => {
     const ctx = setup({ child: session("child") })
     ctx.store.remember(session("child"))

@@ -994,7 +994,12 @@ export function createServerSession(
   const hydrateV2Message = (sessionID: string, messageID: string) => {
     const currentSessionApi = options?.apiForGeneration
       ? options.apiForGeneration().then((api) => api.session)
-      : Promise.resolve(options?.api ? resolveCompatibleApi(options.api, "v2").session : sessionApi)
+      : options?.api
+        ? resolveServerProtocol(options.protocol).then((protocol) => {
+            if (protocol === "v1") return
+            return resolveCompatibleApi(options.api!, "v2").session
+          })
+        : Promise.resolve(sessionApi)
     if (!options?.apiForGeneration && !options?.api && !sessionApi) return
     const active = generation(sessionID)
     void currentSessionApi

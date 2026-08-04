@@ -61,6 +61,11 @@ import type {
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
 import { extractArray } from "@/utils/response-helpers"
+import {
+  notifySessionTabsReconcile,
+  notifySessionTabsRemoved,
+  sessionTabsRemovedFromServerEvent,
+} from "@/components/titlebar-session-events"
 
 type GlobalStore = {
   ready: boolean
@@ -603,6 +608,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
+    const server = ServerConnection.key(serverSDK.server)
+    const removedTabs = sessionTabsRemovedFromServerEvent({ server, directory, event })
+    if (removedTabs) notifySessionTabsRemoved(removedTabs)
     if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
       homeSessions.apply(event)
     }
@@ -610,6 +618,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
     if (directory === "global") {
       if (eventType === "server.connected") {
+        notifySessionTabsReconcile({ server })
         if (!recent) {
           void bootstrap.refetch()
           void activeSessionsQuery
@@ -617,7 +626,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
             .then((result) => {
               if (result.data === undefined) return
               const sessionIDs = reconcileActiveSessionStatuses(session, result.data)
-              return Promise.allSettled(sessionIDs.map((sessionID) => session.sync(sessionID, { force: true })))
+              return Promise.allSettled(
+                sessionIDs.flatMap((sessionID) => [
+                  session.sync(sessionID, { force: true }),
+                  session.context.refresh(sessionID),
+                ]),
+              )
             })
             .catch((error) => console.error("Failed to recover sessions after server reconnect", error))
         } else if (activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching) {

@@ -266,7 +266,7 @@ describe("run interactive runtime", () => {
         requests.push({
           method: request.method,
           pathname: new URL(request.url).pathname,
-          body: request.method === "GET" ? undefined : await request.clone().json(),
+          body: request.body ? await request.clone().json() : undefined,
         })
 
         if (new URL(request.url).pathname === "/api/fs/find") {
@@ -279,6 +279,7 @@ describe("run interactive runtime", () => {
           })
         }
 
+        if (new URL(request.url).pathname === "/api/session/ses-1/background") return Response.json(true)
         return new Response(null, { status: 204 })
       }) as typeof globalThis.fetch,
     })
@@ -307,6 +308,7 @@ describe("run interactive runtime", () => {
           files = await input.findFiles("src")
           await input.onPermissionReply({ requestID: "permission-1", reply: "once" })
           await input.onQuestionReply({ requestID: "question-1", answers: [["yes"]] })
+          input.onBackground?.()
           const surface = footer()
           return {
             footer: surface,
@@ -345,6 +347,11 @@ describe("run interactive runtime", () => {
         method: "POST",
         pathname: "/api/session/ses-1/question/question-1/reply",
         body: { answers: [["yes"]] },
+      },
+      {
+        method: "POST",
+        pathname: "/api/session/ses-1/background",
+        body: undefined,
       },
     ])
   })

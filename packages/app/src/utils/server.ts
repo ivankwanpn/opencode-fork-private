@@ -65,6 +65,7 @@ export function createApiForServer(input: {
   const prompt = async (
     value: Parameters<OpenCodeClient["session"]["prompt"]>[0] & {
       context?: Parameters<CurrentClient["sessions"]["prompt"]>[0]["prompt"]["context"]
+      expectedActiveAttemptID?: string
       model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
       variant?: string
     },
@@ -97,6 +98,7 @@ export function createApiForServer(input: {
             }
           : undefined,
         delivery: value.delivery,
+        expectedActiveAttemptID: value.expectedActiveAttemptID,
         resume: value.resume,
       },
       requestOptions,
@@ -130,6 +132,35 @@ export function createApiForServer(input: {
     if (!response.ok) throw result
     return result as Awaited<ReturnType<OpenCodeClient["pty"]["connectToken"]>>
   }
+
+  const shell = (
+    value: Parameters<OpenCodeClient["session"]["shell"]>[0] & {
+      agent?: string
+      model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
+      variant?: string
+      resume?: boolean
+    },
+    requestOptions?: Parameters<OpenCodeClient["session"]["shell"]>[1],
+  ) =>
+    current.sessions.shell(
+      {
+        sessionID: value.sessionID,
+        id: value.id,
+        userID: undefined,
+        command: value.command,
+        agent: value.agent,
+        model: value.model
+          ? {
+              id: value.model.modelID,
+              providerID: value.model.providerID,
+              variant: value.variant,
+              protocol: value.model.protocol,
+            }
+          : undefined,
+        resume: value.resume,
+      },
+      requestOptions,
+    )
 
   const rename: OpenCodeClient["session"]["rename"] = (value, requestOptions) =>
     current.sessions.update({ sessionID: value.sessionID, title: value.title }, requestOptions).then(() => undefined)
@@ -201,6 +232,7 @@ export function createApiForServer(input: {
       rename,
       archive,
       prompt,
+      shell,
       revert: {
         stage: current.sessions.stage,
         clear: current.sessions.clear,

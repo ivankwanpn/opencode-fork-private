@@ -229,6 +229,7 @@ describe("createCompatibleApi", () => {
       agents: [{ name: "reviewer", mention: { text: "@reviewer", start: 20, end: 29 } }],
       legacyParts: [{ id: "prt_legacy", type: "text", text: "legacy prompt text" }],
       delivery: "queue",
+      expectedActiveAttemptID: "evt_attempt_1",
       resume: true,
     })
 
@@ -248,6 +249,29 @@ describe("createCompatibleApi", () => {
         agents: [{ name: "reviewer", source: { text: "@reviewer", start: 20, end: 29 } }],
       },
       delivery: "queue",
+      expectedActiveAttemptID: "evt_attempt_1",
+      resume: true,
+    })
+  })
+
+  test("translates the legacy shell model to the V2 model reference", async () => {
+    const { api, requests } = setup("v2")
+    await api.session.shell({
+      sessionID: "ses_1",
+      id: "evt_shell_1",
+      command: "pnpm test",
+      agent: "build",
+      model: { providerID: "provider", modelID: "model", protocol: "anthropic-messages" },
+      variant: "high",
+      resume: true,
+    })
+
+    expect(new URL(requests[0]!.url).pathname).toBe("/api/session/ses_1/shell")
+    expect(await requests[0]!.json()).toEqual({
+      id: "evt_shell_1",
+      command: "pnpm test",
+      agent: "build",
+      model: { id: "model", providerID: "provider", variant: "high", protocol: "anthropic-messages" },
       resume: true,
     })
   })

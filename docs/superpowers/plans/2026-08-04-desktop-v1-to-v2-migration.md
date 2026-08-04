@@ -1,8 +1,8 @@
 # Desktop V1 to V2 Migration Plan
 
-> Status: proposed for branch `999.0.7`.
+> Status: in progress for branch `999.0.8`.
 >
-> This document plans the migration. It does not remove legacy routes or compatibility code by itself.
+> The first `999.0.8` slice hardens the Desktop connection boundary. It does not remove legacy routes or compatibility code by itself.
 
 ## Goal
 
@@ -18,9 +18,9 @@ The current source does not support the claim that Desktop is entirely V1. It al
 | --- | --- | --- |
 | Desktop sidecar | `packages/desktop/electron.vite.config.ts` bundles `packages/opencode/dist/node.js` as `virtual:opencode-server`. | Verify the bundled server starts with the same V2 service graph as the development server. |
 | Server routes | `packages/opencode/src/server/routes/instance/httpapi/server.ts` composes typed V2 `serverRoutes` together with legacy root and instance routes. | Keep route coexistence until every Desktop workflow has a V2 contract and compatibility tests. |
-| Protocol detection | `packages/app/src/utils/server-protocol.ts` probes `/api/health`, then `/global/health`; a healthy modern response with a numeric PID is classified as V2. | Make the decision observable and test the packaged sidecar, old server, and malformed health responses. |
+| Protocol detection | `packages/app/src/utils/server-protocol.ts` probes `/api/health`, then `/global/health`; a healthy modern response with a numeric PID is classified as V2. Desktop sidecars additionally require `/api/capability`. | Keep external-server fallback, but fail closed instead of silently treating a bundled sidecar as V1 when its V2 contract is incomplete. |
 | API selection | `packages/app/src/context/server-sdk.tsx` subscribes to V2 events for V2 servers and legacy events for V1 servers. | Move the normal Desktop connection to an explicit V2 client; retain fallback only at the connection boundary. |
-| Compatibility API | `packages/app/src/utils/server-compat.ts` selects the current V2 API or maps operations to legacy APIs. V1 prompt uses `session.promptAsync`. | Inventory every legacy branch before deleting it; do not infer migration completion from prompt alone. |
+| Compatibility API | `packages/app/src/utils/server-compat.ts` selects the current V2 API or maps operations to legacy APIs. V1 prompt uses `session.promptAsync`; V2 prompt and shell are adapted at the current API boundary. | Inventory every legacy branch before deleting it; do not infer migration completion from prompt alone. |
 | Session prompt | `packages/server/src/handlers/session.ts` handles `session.prompt` through `SessionV2.Service`. | Add end-to-end Desktop tests that prove prompt admission reaches V2 `SessionExecution`. |
 | Native server | `createNativeRoutes()` exposes the V2 `serverRoutes` used by native clients. | Prefer this contract for Desktop-owned sidecars and TUI/CLI parity. |
 
@@ -36,6 +36,15 @@ The current source does not support the claim that Desktop is entirely V1. It al
 ## Phase 0: Baseline and Contract Tests
 
 Before changing the client selection logic, record the current behavior for a packaged Desktop sidecar and a development server.
+
+### 999.0.8 progress
+
+- [x] V2 prompt forwards `delivery`, `resume`, and `expectedActiveAttemptID` without dropping them.
+- [x] V2 shell converts the Desktop model shape (`modelID`) into the V2 model reference (`id`).
+- [x] Sidecar protocol selection fails closed unless V2 health and capability contracts are present.
+- [x] Protocol authentication and V1/V2 prompt/shell compatibility regressions are covered by app tests.
+- [ ] Packaged `resources/app.asar` sidecar smoke test is still pending.
+- [ ] Session restore, reconnect, compaction, permissions, questions, MCP, plugins, marketplaces, and PTY workflows remain pending migration coverage.
 
 ### Tests to add
 

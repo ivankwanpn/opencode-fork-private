@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ServerApi } from "./server"
-import { createCompatibleApi } from "./server-compat"
+import { createCompatibleApi, createV2OnlyApi } from "./server-compat"
 
 function currentApi(calls: string[]) {
   const current = {
@@ -58,6 +58,30 @@ function currentApi(calls: string[]) {
 }
 
 describe("server compatibility API", () => {
+  test("blocks all current API calls when a sidecar loses its V2 protocol", async () => {
+    const calls: string[] = []
+    const api = createV2OnlyApi({
+      protocol: Promise.resolve("v1"),
+      current: currentApi(calls),
+    })
+
+    await expect(api.session.inputList({ sessionID: "ses_1", delivery: "queue" })).rejects.toThrow(
+      "V2 server protocol unavailable",
+    )
+    expect(calls).toEqual([])
+  })
+
+  test("allows the current API while a sidecar has the V2 protocol", async () => {
+    const calls: string[] = []
+    const api = createV2OnlyApi({
+      protocol: Promise.resolve("v2"),
+      current: currentApi(calls),
+    })
+
+    await expect(api.session.inputList({ sessionID: "ses_1", delivery: "queue" })).resolves.toEqual([])
+    expect(calls).toEqual(["inputList"])
+  })
+
   test("does not leak V2 session input methods into V1 connections", async () => {
     const calls: string[] = []
     const api = createCompatibleApi({

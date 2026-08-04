@@ -130,6 +130,17 @@ export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
   return lazyApi(() => resolveProtocol(input.protocol).then((protocol) => (protocol === "v1" ? v1 : input.current)), input.current)
 }
 
+export function createV2OnlyApi(input: Pick<CompatibleInput, "protocol" | "current">): CompatibleApi {
+  return lazyApi(
+    () =>
+      resolveProtocol(input.protocol).then((protocol) => {
+        if (protocol !== "v2") throw new Error("V2 server protocol unavailable")
+        return input.current
+      }),
+    input.current,
+  )
+}
+
 function resolveProtocol(input: CompatibleInput["protocol"]) {
   return typeof input === "function" ? input() : input
 }

@@ -12,7 +12,7 @@ import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
-import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
+import { createCompatibleApi, createV2OnlyApi, type CompatibleApi } from "@/utils/server-compat"
 import { createSessionMutationQueue } from "@/utils/session-mutation"
 export { resolveServerSessionApi, runServerSessionMutation } from "@/utils/session-mutation"
 
@@ -389,7 +389,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // silently drift into legacy execution routes.
   const api =
     server.type === "sidecar"
-      ? currentApi
+      ? createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
       : createCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
 
   return {

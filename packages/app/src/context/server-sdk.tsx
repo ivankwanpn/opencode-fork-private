@@ -13,6 +13,7 @@ import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
+import { createSessionMutationQueue } from "@/utils/session-mutation"
 
 const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
@@ -197,6 +198,7 @@ type ServerSDKBase = {
   client: ReturnType<typeof createSdkForServer>
   api: CompatibleApi
   currentApi: ServerApi
+  sessionMutations: ReturnType<typeof createSessionMutationQueue>
   event: {
     on: ServerEventEmitter["on"]
     listen: ServerEventEmitter["listen"]
@@ -205,6 +207,14 @@ type ServerSDKBase = {
   createClient: (
     opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">,
   ) => ReturnType<typeof createSdkForServer>
+}
+
+export function resolveServerSessionApi(input: {
+  protocol: Promise<ServerProtocol>
+  api: CompatibleApi
+  currentApi: ServerApi
+}): Promise<CompatibleApi["session"] | ServerApi["session"]> {
+  return input.protocol.then((protocol) => (protocol === "v1" ? input.api.session : input.currentApi.session))
 }
 
 function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerScope): ServerSDKBase {
@@ -244,6 +254,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const emitter = createGlobalEmitter<{
     [key: string]: ServerEvent
   }>()
+  const sessionMutations = createSessionMutationQueue()
 
   type Queued = QueuedServerEvent
   const FLUSH_FRAME_MS = 16
@@ -400,6 +411,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     client: sdk,
     api,
     currentApi,
+    sessionMutations,
     event: {
       on: emitter.on.bind(emitter),
       listen: emitter.listen.bind(emitter),
@@ -483,6 +495,8 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     directory,
     client,
     api,
+    currentApi: serverSDK.currentApi,
+    sessionMutations: serverSDK.sessionMutations,
     event: emitter,
     get url() {
       return serverSDK.url

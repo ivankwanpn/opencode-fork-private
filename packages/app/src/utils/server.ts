@@ -342,7 +342,10 @@ type CompatibleLocationApi = OpenCodeClient["location"] & Pick<CurrentClient["lo
 
 export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "project" | "worktree"> & {
   readonly session: OpenCodeClient["session"] &
-    Pick<CurrentClient["sessions"], "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel">
+    Pick<
+      CurrentClient["sessions"],
+      "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel" | "todo"
+    >
   readonly location: CompatibleLocationApi
   readonly project: CompatibleProjectApi
   readonly worktree: CurrentClient["worktrees"]

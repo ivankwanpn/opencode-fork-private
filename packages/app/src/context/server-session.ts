@@ -30,6 +30,8 @@ import { normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
 import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
+import { extractArray } from "@/utils/response-helpers"
+import type { ServerApi } from "@/utils/server"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
@@ -190,7 +192,11 @@ function reconcileFetched<T extends { id: string }>(
   return [...result.values()].sort((a, b) => cmp(a.id, b.id))
 }
 
-type ServerSessionOptions = { retry?: typeof retry; protocol?: ServerProtocolResolver }
+type ServerSessionOptions = {
+  retry?: typeof retry
+  protocol?: ServerProtocolResolver
+  currentSession?: Pick<ServerApi["session"], "todo">
+}
 
 export function createServerSession(
   client: OpencodeClient,
@@ -1482,7 +1488,17 @@ export function createServerSession(
     async todo(sessionID: string, request?: { force?: boolean }) {
       touch(sessionID)
       if (data.todo[sessionID] !== undefined && !request?.force) return
-      if ((await resolveServerProtocol(options?.protocol)) === "v2") {
+      const protocol = await resolveServerProtocol(options?.protocol)
+      const currentSession = options?.currentSession
+      if (protocol === "v2" && currentSession) {
+        return runInflight(inflightTodo, sessionID, async () => {
+          const active = generation(sessionID)
+          const result = await (options?.retry ?? retry)(() => currentSession.todo({ sessionID }))
+          if (generations.get(sessionID) !== active) return
+          setData("todo", sessionID, reconcile(extractArray<Todo>(result)))
+        })
+      }
+      if (protocol === "v2") {
         setData("todo", sessionID, [])
         return
       }

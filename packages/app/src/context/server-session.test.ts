@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { retry } from "@opencode-ai/core/util/retry"
 import type { MessageApi, OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
-import type { Message, OpencodeClient, Part, Session, V2Event } from "@opencode-ai/sdk/v2/client"
+import type { Message, OpencodeClient, Part, Session, Todo, V2Event } from "@opencode-ai/sdk/v2/client"
+import type { ServerApi } from "@/utils/server"
 import { createServerSession } from "./server-session"
 
 const session = (id: string, parentID?: string): Session => ({
@@ -1819,6 +1820,25 @@ describe("server session", () => {
     apply("session.idle", { sessionID: "child" })
     await flush()
     expect(requests).toEqual(["child", "child", "child"])
+  })
+
+  test("loads the canonical V2 todo projection instead of returning an empty placeholder", async () => {
+    const todos = [{ content: "finish migration", status: "pending", priority: "high" }] as Todo[]
+    const currentSession = {
+      todo: async (input: { sessionID: string }) => {
+        expect(input).toEqual({ sessionID: "child" })
+        return todos
+      },
+    } as Pick<ServerApi["session"], "todo">
+    const store = createServerSession({} as OpencodeClient, {} as SessionApi, {} as MessageApi, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+      currentSession,
+    })
+
+    await store.todo("child")
+
+    expect(store.data.todo.child).toEqual(todos)
   })
 
   test("preserves pinned session content under server-wide cache pressure", () => {

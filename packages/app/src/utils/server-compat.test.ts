@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ServerApi } from "./server"
-import { createCompatibleApi, createV2OnlyApi } from "./server-compat"
+import { createCompatibleApi, createV2OnlyApi, resolveCompatibleApiForProtocol } from "./server-compat"
 
 function currentApi(calls: string[]) {
   const current = {
@@ -197,6 +197,24 @@ describe("server compatibility API", () => {
     await expect(api.session.inputList({ sessionID: "ses_1", delivery: "queue" })).rejects.toThrow(
       "Durable session follow-up inputs is unavailable on a V1 server",
     )
+    expect(calls).toEqual(["inputList"])
+  })
+
+  test("keeps a resolved API on the generation selected before reconnect", async () => {
+    const calls: string[] = []
+    let protocol: "v1" | "v2" = "v2"
+    const api = createCompatibleApi({
+      protocol: () => Promise.resolve(protocol),
+      current: currentApi(calls),
+      legacy: () => {
+        throw new Error("legacy client should not be used")
+      },
+    })
+
+    const selected = await resolveCompatibleApiForProtocol(api, () => Promise.resolve(protocol))
+    protocol = "v1"
+
+    await expect(selected.session.inputList({ sessionID: "ses_1", delivery: "queue" })).resolves.toEqual([])
     expect(calls).toEqual(["inputList"])
   })
 })

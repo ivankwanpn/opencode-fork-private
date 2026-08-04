@@ -1905,4 +1905,36 @@ describe("server session", () => {
     expect(ctx.store.data.message.active?.map((message) => message.id)).toEqual(["message"])
     expect(ctx.store.data.session_status["session-0"]).toBeUndefined()
   })
+
+  test("does not apply a late V2 message hydration after session eviction", async () => {
+    const pending = Promise.withResolvers<Message>()
+    const sessionApi = {
+      message: async () => pending.promise,
+    } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, {} as MessageApi, {
+      retry: retryImmediately,
+    })
+
+    store.applyV2({
+      id: "evt_imported",
+      created: 1,
+      type: "session.next.message.imported",
+      metadata: {},
+      location: { directory: "/repo" },
+      data: {
+        timestamp: 1,
+        sessionID: "child",
+        message: { id: "msg_imported", type: "user", text: "imported", time: { created: 1 } },
+      },
+    } as unknown as V2Event)
+    store.evict("child")
+
+    pending.resolve(
+      { id: "msg_imported", type: "user", text: "imported", time: { created: 1 } } as unknown as Message,
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(store.data.session_message.child).toBeUndefined()
+  })
 })

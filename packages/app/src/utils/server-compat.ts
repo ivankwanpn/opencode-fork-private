@@ -1,5 +1,5 @@
 import type { ServerApi } from "./server"
-import type { ServerProtocol } from "./server-protocol"
+import type { ServerProtocol, ServerProtocolResolver } from "./server-protocol"
 import type { AgentPartInput, FilePartInput, OpencodeClient, Session, TextPartInput } from "@opencode-ai/sdk/v2/client"
 import type {
   Project,
@@ -82,7 +82,7 @@ type CompatibleInput = {
   directory?: string
 }
 
-type CompatibleImplementation = CompatibleApi | ServerApi
+export type CompatibleImplementation = CompatibleApi | ServerApi
 const compatibleResolvers = new WeakMap<object, (protocol: ServerProtocol) => CompatibleImplementation>()
 
 function mime(uri: string) {
@@ -148,6 +148,13 @@ export function createV2OnlyApi(input: Pick<CompatibleInput, "protocol" | "curre
 
 export function resolveCompatibleApi(api: CompatibleApi, protocol: ServerProtocol): CompatibleImplementation {
   return compatibleResolvers.get(api)?.(protocol) ?? api
+}
+
+export function resolveCompatibleApiForProtocol(
+  api: CompatibleApi,
+  protocol: ServerProtocolResolver,
+): Promise<CompatibleImplementation> {
+  return resolveProtocol(protocol).then((value) => resolveCompatibleApi(api, value))
 }
 
 function resolveProtocol(input: CompatibleInput["protocol"]) {

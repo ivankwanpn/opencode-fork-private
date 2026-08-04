@@ -189,11 +189,23 @@ export function resumeStreamAfterPageShow(event: PageTransitionEvent, start: () 
 }
 
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
+export type ServerGenerationDiagnostics = {
+  protocol: ServerProtocol | undefined
+  protocolGeneration: number
+  eventGeneration: number
+  reconnects: number
+  started: boolean
+  lastConnectedAt?: number
+  lastEventAt?: number
+}
 type ServerSDKBase = {
   server: ServerConnection.Any
   scope: ServerScope
   protocol: Promise<ServerProtocol>
   protocolForGeneration: () => Promise<ServerProtocol>
+  protocolGeneration: () => number
+  eventGeneration: () => number
+  diagnostics: () => ServerGenerationDiagnostics
   protocolKind: Accessor<ServerProtocol | undefined>
   url: string
   client: ReturnType<typeof createSdkForServer>
@@ -234,10 +246,17 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch, {
     v2Only: server.type === "sidecar",
   })
+  let protocolGeneration = 1
+  let eventGeneration = 0
+  let reconnects = 0
+  let lastConnectedAt: number | undefined
+  let lastEventAt: number | undefined
   const [protocolSource, setProtocolSource] = createSignal(protocol)
   const [protocolKind] = createResource(protocolSource, (value) => value)
   const protocolForGeneration = () => protocol
   const refreshProtocol = () => {
+    protocolGeneration += 1
+    reconnects += 1
     protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch, {
       v2Only: server.type === "sidecar",
     })
@@ -298,10 +317,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     const active = ++generation
     const previous = run
     const current = (async () => {
-      if (previous) await previous
+      if (previous) {
+        await previous
+        flush()
+      }
       let reconnect = false
       // oxlint-disable-next-line no-unmodified-loop-condition -- `started` is set to false by stop() which also aborts; both flags are checked to allow graceful exit
       while (!abort.signal.aborted && started && generation === active) {
+        const streamGeneration = ++eventGeneration
         attempt = new AbortController()
         const onAbort = () => {
           attempt?.abort()
@@ -310,13 +333,22 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         try {
           if (reconnect) refreshProtocol()
           const kind = await protocolForGeneration()
+          lastConnectedAt = Date.now()
+          console.debug("[global-sdk] event stream connected", {
+            protocol: kind,
+            protocolGeneration,
+            eventGeneration: streamGeneration,
+            reconnects,
+          })
           const events =
             kind === "v1"
               ? (await eventSdk.global.event({ signal: attempt.signal })).stream
               : eventApi.event.subscribe({ signal: attempt.signal })
           let yielded = Date.now()
           for await (const event of events) {
+            if (abort.signal.aborted || !started || generation !== active || eventGeneration !== streamGeneration) break
             streamErrorLogged = false
+            lastEventAt = Date.now()
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
@@ -342,6 +374,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         }
 
         if (abort.signal.aborted || !started || generation !== active) return
+        flush()
         reconnect = true
         await wait(RECONNECT_DELAY_MS)
       }
@@ -399,6 +432,17 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       return protocolForGeneration()
     },
     protocolForGeneration,
+    protocolGeneration: () => protocolGeneration,
+    eventGeneration: () => eventGeneration,
+    diagnostics: () => ({
+      protocol: protocolKind(),
+      protocolGeneration,
+      eventGeneration,
+      reconnects,
+      started,
+      lastConnectedAt,
+      lastEventAt,
+    }),
     protocolKind,
     url: server.http.url,
     client: sdk,
@@ -485,6 +529,9 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     get protocol() {
       return serverSDK.protocolForGeneration()
     },
+    protocolGeneration: serverSDK.protocolGeneration,
+    eventGeneration: serverSDK.eventGeneration,
+    diagnostics: serverSDK.diagnostics,
     directory,
     client,
     api,

@@ -981,9 +981,11 @@ export function createServerSession(
   const hydrateV2Message = (sessionID: string, messageID: string) => {
     const currentSessionApi = options?.api ? resolveCompatibleApi(options.api, "v2").session : sessionApi
     if (!currentSessionApi) return
+    const active = generation(sessionID)
     void currentSessionApi
       .message({ sessionID, messageID })
       .then((message) => {
+        if (generations.get(sessionID) !== active) return
         const current = data.session_message[sessionID] ?? []
         const messages = [...current.filter((item) => item.id !== message.id), message].sort((a, b) => cmp(a.id, b.id))
         projectV2({ sessionID, messages, touched: [message.id] })

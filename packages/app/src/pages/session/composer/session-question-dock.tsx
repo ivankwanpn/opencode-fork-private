@@ -13,6 +13,7 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useServerSDK } from "@/context/server-sdk"
 import { ScopedKey } from "@/utils/server-scope"
+import { resolveCompatibleApiForProtocol } from "@/utils/server-compat"
 
 const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
 
@@ -223,8 +224,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   }
 
   const replyMutation = useMutation(() => ({
-    mutationFn: (answers: QuestionAnswer[]) =>
-      sdk().api.question.reply({ sessionID: props.request.sessionID, requestID: props.request.id, answers }),
+    mutationFn: (answers: QuestionAnswer[]) => {
+      const target = sdk()
+      return resolveCompatibleApiForProtocol(target.api, target.protocol).then((api) =>
+        api.question.reply({ sessionID: props.request.sessionID, requestID: props.request.id, answers }),
+      )
+    },
     onMutate: () => {
       props.onSubmit()
     },
@@ -236,7 +241,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   }))
 
   const rejectMutation = useMutation(() => ({
-    mutationFn: () => sdk().api.question.reject({ sessionID: props.request.sessionID, requestID: props.request.id }),
+    mutationFn: () => {
+      const target = sdk()
+      return resolveCompatibleApiForProtocol(target.api, target.protocol).then((api) =>
+        api.question.reject({ sessionID: props.request.sessionID, requestID: props.request.id }),
+      )
+    },
     onMutate: () => {
       props.onSubmit()
     },

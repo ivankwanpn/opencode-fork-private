@@ -472,7 +472,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
 
   const api =
     serverSDK.server.type === "sidecar"
-      ? serverSDK.currentApi
+      ? serverSDK.api
       : createCompatibleApi({
           protocol: serverSDK.protocolForGeneration,
           current: serverSDK.currentApi,

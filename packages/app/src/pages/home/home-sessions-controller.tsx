@@ -71,11 +71,10 @@ export function createHomeSessionsController(home: HomeController) {
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
       const protocol = await ctx.sdk.protocol
-      const sessionList = (input: Parameters<typeof ctx.sdk.currentApi.session.list>[0], options?: Parameters<typeof ctx.sdk.currentApi.session.list>[1]) =>
+      const sessionList = (input: Parameters<typeof ctx.sdk.api.session.list>[0], options?: Parameters<typeof ctx.sdk.api.session.list>[1]) =>
         resolveServerSessionApi({
           protocol: ctx.sdk.protocol,
           api: ctx.sdk.api,
-          currentApi: ctx.sdk.currentApi,
         }).then((api) => api.list(input, options))
       const index =
         protocol === "v1"
@@ -226,7 +225,6 @@ export function createHomeSessionsController(home: HomeController) {
             runServerSessionMutation({
               protocol: ctx.sdk.protocol,
               api: ctx.sdk.api,
-              currentApi: ctx.sdk.currentApi,
               sessionMutations: ctx.sdk.sessionMutations,
               sessionID,
               run: (api) => api.archive({ sessionID, directory: session.directory }),

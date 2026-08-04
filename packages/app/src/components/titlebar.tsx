@@ -256,7 +256,6 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
                 resolveServerSessionApi({
                   protocol: sdk.protocol,
                   api: sdk.api,
-                  currentApi: sdk.currentApi,
                 })
                   .then((api) => api.get({ sessionID: route.sessionId }))
                   .then(normalizeSessionInfo)
@@ -325,7 +324,6 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
               void resolveServerSessionApi({
                 protocol: target.protocol,
                 api: target.api,
-                currentApi: target.currentApi,
               })
                 .then((api) =>
                   Promise.all(

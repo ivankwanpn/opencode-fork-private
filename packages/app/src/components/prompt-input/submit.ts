@@ -305,7 +305,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     return runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: (api) => api.interrupt({ sessionID }).catch(() => {}),
@@ -396,7 +395,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const submissionSessionApi = await resolveServerSessionApi({
       protocol: submissionSDK.protocol,
       api: submissionSDK.api,
-      currentApi: submissionSDK.currentApi,
     })
     const projectDirectory = submissionSDK.directory
     const permissionState = permission.currentServerState()

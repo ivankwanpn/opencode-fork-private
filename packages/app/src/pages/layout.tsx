@@ -90,7 +90,7 @@ export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
   const resolveSessionApi = () => {
     const target = serverSDK()
-    return resolveServerSessionApi({ protocol: target.protocol, api: target.api, currentApi: target.currentApi })
+    return resolveServerSessionApi({ protocol: target.protocol, api: target.api })
   }
   const [store, setStore, , ready] = persisted(
     Persist.serverGlobal(serverSDK().scope, "layout.page", ["layout.page.v1"]),
@@ -874,7 +874,6 @@ export default function LegacyLayout(props: ParentProps) {
     await runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID: session.id,
       run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
@@ -1494,7 +1493,6 @@ export default function LegacyLayout(props: ParentProps) {
           return runServerSessionMutation({
             protocol: target.protocol,
             api: target.api,
-            currentApi: target.currentApi,
             sessionMutations: target.sessionMutations,
             sessionID: session.id,
             run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),

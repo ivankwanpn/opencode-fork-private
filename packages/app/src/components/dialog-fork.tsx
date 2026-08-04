@@ -73,7 +73,6 @@ export const DialogFork: Component = () => {
     runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: (api) => api.fork({ sessionID, messageID: item.id }),

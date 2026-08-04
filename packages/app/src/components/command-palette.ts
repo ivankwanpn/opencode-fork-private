@@ -150,7 +150,6 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
       resolveServerSessionApi({
         protocol: serverSDK.protocol,
         api: serverSDK.api,
-        currentApi: serverSDK.currentApi,
       }).then((api) => api.list({ parentID: null, search, limit: 50 }, { signal })),
     untitled: () => language.t("command.session.new"),
     category: () => language.t("command.category.session"),

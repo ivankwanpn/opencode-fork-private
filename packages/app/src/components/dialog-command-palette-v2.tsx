@@ -84,7 +84,6 @@ export function DialogHomeCommandPaletteV2(props: {
       resolveServerSessionApi({
         protocol: serverCtx.sdk.protocol,
         api: serverCtx.sdk.api,
-        currentApi: serverCtx.sdk.currentApi,
       }).then((api) => api.list({ parentID: null, search, limit: 50 }, { signal })),
     untitled: () => language.t("command.session.new"),
     category: () => language.t("command.category.session"),

@@ -662,7 +662,6 @@ export function MessageTimeline(props: {
       return runServerSessionMutation({
         protocol: target.protocol,
         api: target.api,
-        currentApi: target.currentApi,
         sessionMutations: target.sessionMutations,
         sessionID: id,
         run: (api) => api.share({ sessionID: id }),
@@ -679,7 +678,6 @@ export function MessageTimeline(props: {
       return runServerSessionMutation({
         protocol: target.protocol,
         api: target.api,
-        currentApi: target.currentApi,
         sessionMutations: target.sessionMutations,
         sessionID: id,
         run: (api) => api.unshare({ sessionID: id }),
@@ -696,7 +694,6 @@ export function MessageTimeline(props: {
       return runServerSessionMutation({
         protocol: target.protocol,
         api: target.api,
-        currentApi: target.currentApi,
         sessionMutations: target.sessionMutations,
         sessionID: input.id,
         run: (api) => api.rename({ sessionID: input.id, title: input.title }),
@@ -848,7 +845,6 @@ export function MessageTimeline(props: {
     await runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: (api) => api.archive({ sessionID }),
@@ -884,7 +880,6 @@ export function MessageTimeline(props: {
     const result = await runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: async (api) => {

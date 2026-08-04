@@ -138,7 +138,6 @@ export const createDirSyncContext = (
         const response = await resolveServerSessionApi({
           protocol: serverSDK.protocol,
           api: serverSDK.api,
-          currentApi: serverSDK.currentApi,
         }).then((api) => api.list({ directory, limit: store.limit, order: "desc" }))
         const sessions = response.data
           .map(normalizeSessionInfo)
@@ -152,7 +151,6 @@ export const createDirSyncContext = (
         await runServerSessionMutation({
           protocol: serverSDK.protocol,
           api: serverSDK.api,
-          currentApi: serverSDK.currentApi,
           sessionMutations: serverSDK.sessionMutations,
           sessionID,
           run: (api) => api.archive({ sessionID, directory }),

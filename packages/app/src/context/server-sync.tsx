@@ -311,7 +311,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
     protocol: serverSDK.protocolForGeneration,
-    currentSession: serverSDK.currentApi.session,
+    currentSession: serverSDK.api.session,
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
@@ -330,7 +330,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         const active = await resolveServerSessionApi({
           protocol: serverSDK.protocol,
           api: serverSDK.api,
-          currentApi: serverSDK.currentApi,
         }).then((api) => api.active())
         seedActiveSessionStatuses(session, active)
         for (const sessionID of Object.keys(active)) {
@@ -497,7 +496,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
               const api = await resolveServerSessionApi({
                 protocol: serverSDK.protocol,
                 api: serverSDK.api,
-                currentApi: serverSDK.currentApi,
               })
               return loadRootSessions({ api, directory, limit })
             })

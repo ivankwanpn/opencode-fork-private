@@ -198,7 +198,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const url = await runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: (api) => api.share({ sessionID }),
@@ -225,7 +224,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     await runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: (api) => api.unshare({ sessionID }),
@@ -337,7 +335,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         runServerSessionMutation({
           protocol: target.protocol,
           api: target.api,
-          currentApi: target.currentApi,
           sessionMutations: target.sessionMutations,
           sessionID,
           run: async (api) => {
@@ -372,7 +369,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
           runServerSessionMutation({
             protocol: target.protocol,
             api: target.api,
-            currentApi: target.currentApi,
             sessionMutations: target.sessionMutations,
             sessionID,
             run: (api) => api.revert.clear({ sessionID }),
@@ -390,7 +386,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         runServerSessionMutation({
           protocol: target.protocol,
           api: target.api,
-          currentApi: target.currentApi,
           sessionMutations: target.sessionMutations,
           sessionID,
           run: (api) => api.revert.stage({ sessionID, messageID: next.id }),
@@ -417,7 +412,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     await runServerSessionMutation({
       protocol: target.protocol,
       api: target.api,
-      currentApi: target.currentApi,
       sessionMutations: target.sessionMutations,
       sessionID,
       run: (api) =>

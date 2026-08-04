@@ -405,13 +405,12 @@ export default function Page() {
 
   const followupState = createSessionFollowupState({
     sessionID: () => params.id,
-    api: () => sdk().currentApi.session,
+    api: () => sdk().api.session,
     mutate: (sessionID, task) => {
       const target = sdk()
       return runServerSessionMutation({
         protocol: target.protocol,
         api: target.api,
-        currentApi: target.currentApi,
         sessionMutations: target.sessionMutations,
         sessionID,
         run: task,
@@ -1794,7 +1793,6 @@ export default function Page() {
           runServerSessionMutation({
             protocol: sdkTarget.protocol,
             api: sdkTarget.api,
-            currentApi: sdkTarget.currentApi,
             sessionMutations: sdkTarget.sessionMutations,
             sessionID: input.sessionID,
             run: async (api) => {
@@ -1833,7 +1831,6 @@ export default function Page() {
           runServerSessionMutation({
             protocol: sdkTarget.protocol,
             api: sdkTarget.api,
-            currentApi: sdkTarget.currentApi,
             sessionMutations: sdkTarget.sessionMutations,
             sessionID,
             run: async (api) => {

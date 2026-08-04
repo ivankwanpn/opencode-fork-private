@@ -152,7 +152,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
   const discoverMutation = useMutation(() => ({
     mutationFn: async () => {
       if (!(await available())) return
-      return serverSDK().currentApi.providers.discoverCustom({
+      return serverSDK().api.providers.discoverCustom({
         baseURL: form.baseURL.trim(),
         apiKey: form.apiKey.trim() || undefined,
         headers: headers(),
@@ -220,7 +220,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
   const saveMutation = useMutation(() => ({
     mutationFn: async (result: CustomProvider.ConfigureInput) => {
       if (!(await available())) return
-      const configured = await serverSDK().currentApi.providers.configureCustom({
+      const configured = await serverSDK().api.providers.configureCustom({
         ...result,
         location: location(),
       })

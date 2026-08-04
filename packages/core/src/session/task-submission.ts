@@ -12,6 +12,7 @@ import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
 import { SessionAttemptTable, SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
+import { TaskNotification } from "./task-notification"
 
 export type Identity = {
   readonly parentSessionID: SessionSchema.ID
@@ -150,6 +151,7 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     const events = yield* EventV2.Service
+    const notifications = yield* TaskNotification.Service
 
     const isCancelled = Effect.fn("TaskSubmission.isCancelled")(function* (sessionID: SessionSchema.ID) {
       const rows = yield* db
@@ -353,7 +355,7 @@ const layer = Layer.effect(
 
     const terminalize: Interface["terminalize"] = Effect.fn("TaskSubmission.terminalize")(function* (input) {
       const now = yield* Clock.currentTimeMillis
-      return yield* db
+      const result = yield* db
         .transaction(() =>
           Effect.gen(function* () {
             const row = yield* db
@@ -411,13 +413,15 @@ const layer = Layer.effect(
           }),
         )
         .pipe(Effect.orDie)
+      if (result?.completionDelivery === "parent") yield* notifications.signal()
+      return result
     })
 
     const promoteDelivery: Interface["promoteDelivery"] = Effect.fn("TaskSubmission.promoteDelivery")(function* (
       submissionID,
     ) {
       const now = yield* Clock.currentTimeMillis
-      return yield* db
+      const result = yield* db
         .transaction(() =>
           Effect.gen(function* () {
             const row = yield* db
@@ -457,6 +461,8 @@ const layer = Layer.effect(
           }),
         )
         .pipe(Effect.orDie)
+      if (result?.completionDelivery === "parent") yield* notifications.signal()
+      return result
     })
 
     const recoverOne = Effect.fn("TaskSubmission.recoverOne")(function* (
@@ -602,7 +608,7 @@ const layer = Layer.effect(
   }),
 )
 
-export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node, EventV2.node] })
+export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node, EventV2.node, TaskNotification.node] })
 
 function matches(existing: Info, input: Invocation, requestedCompletionDelivery = existing.completionDelivery) {
   return (

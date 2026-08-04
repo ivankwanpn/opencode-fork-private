@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Layer } from "effect"
+import { Cause, Clock, Effect, Layer, Stream } from "effect"
 import { and, desc, eq, isNotNull, isNull, lte, or } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { LocationServiceMap } from "../../location-service-map"
@@ -173,6 +173,12 @@ const layer = Layer.effect(
     const notifications = yield* TaskNotification.Service
     const submissions = yield* TaskSubmission.Service
     const current: { service?: SessionExecution.Interface } = {}
+    const drainNotifications = Effect.fn("SessionExecutionLocal.drainNotifications")(function* () {
+      yield* notifications.drain({
+        admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+        wake: (sessionID) => current.service?.wake(sessionID) ?? Effect.void,
+      })
+    })
     const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, SessionRunner.RunError>({
       drain: Effect.fnUntraced(function* (sessionID: SessionSchema.ID, force) {
         const session = yield* store.get(sessionID)
@@ -211,10 +217,7 @@ const layer = Layer.effect(
           Effect.ensuring(idle),
         )
         yield* recoverCompletedSubmissions(sessionID, store, submissions)
-        yield* notifications.drain({
-          admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
-          wake: (sessionID) => current.service?.wake(sessionID) ?? Effect.void,
-        })
+        yield* drainNotifications()
       }),
     })
 
@@ -235,13 +238,6 @@ const layer = Layer.effect(
     })
     current.service = service
 
-    yield* notifications
-      .drain({
-        admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
-        wake: (sessionID) => current.service?.wake(sessionID) ?? Effect.void,
-      })
-      .pipe(Effect.forkScoped)
-
     const now = yield* Clock.currentTimeMillis
     for (const recovery of yield* startupRecoveryCandidates(db, now)) {
       yield* recoverCompletedSubmissions(recovery.sessionID, store, submissions)
@@ -252,6 +248,20 @@ const layer = Layer.effect(
           .markRecoveryRequired({ ...recovery, childInputID })
           .pipe(Effect.catch(() => Effect.succeed(0)))
     }
+    yield* drainNotifications()
+    yield* notifications
+      .subscribe()
+      .pipe(
+        Stream.runForEach(() =>
+          drainNotifications().pipe(
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause)
+              return Effect.logError("Failed to drain task notifications", cause).pipe(Effect.asVoid)
+            }),
+          ),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      )
     for (const sessionID of yield* startupCandidates(db, now))
       yield* coordinator.run(sessionID).pipe(
         Effect.catch(() => Effect.void),

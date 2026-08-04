@@ -638,7 +638,7 @@ describe("event-driven subagent loop", () => {
           admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
           wake: () => Effect.void,
         }),
-      ).toBe(1)
+      ).toBeLessThanOrEqual(1)
 
       const outbox = (yield* db.select().from(TaskNotificationOutboxTable).all().pipe(Effect.orDie)).find(
         (row) => row.submission_id === submission.id,

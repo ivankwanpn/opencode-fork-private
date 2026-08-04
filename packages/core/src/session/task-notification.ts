@@ -1,7 +1,7 @@
 export * as TaskNotification from "./task-notification"
 
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm"
-import { Cause, Clock, Context, Effect, Layer, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Layer, PubSub, Schema, Stream } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
 import { SessionMessage } from "./message"
@@ -26,6 +26,9 @@ export type Admission = {
 }
 
 export interface Interface {
+  /** Process-local advisory wakeup; the outbox remains the durable source of truth. */
+  readonly signal: () => Effect.Effect<void>
+  readonly subscribe: () => Stream.Stream<void>
   readonly drain: (input: {
     readonly admit: (input: Admission) => Effect.Effect<unknown, unknown>
     readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
@@ -38,6 +41,7 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const { db } = yield* Database.Service
+    const signal = yield* PubSub.sliding<void>(1)
 
     const isCancelled = Effect.fn("TaskNotification.isCancelled")(function* (sessionID: SessionSchema.ID) {
       const rows = yield* db
@@ -214,7 +218,11 @@ const layer = Layer.effect(
       return results.filter((result) => result).length
     })
 
-    return Service.of({ drain })
+    return Service.of({
+      signal: () => PubSub.publish(signal, undefined).pipe(Effect.asVoid),
+      subscribe: () => Stream.fromPubSub(signal),
+      drain,
+    })
   }),
 )
 

@@ -31,10 +31,11 @@ export function resolveServerSessionApi(input: {
 }
 
 export function runServerSessionMutation<T>(input: {
-  protocol: Promise<"v1" | "v2">
-  api: CompatibleApi
+  protocol?: Promise<"v1" | "v2">
+  api?: CompatibleApi
   sessionMutations: ReturnType<typeof createSessionMutationQueue>
   sessionID: string
+  apiForGeneration?: () => Promise<CompatibleImplementation>
   run: (api: ServerSessionApi) => Promise<T>
 }) {
   return input.sessionMutations.run(input.sessionID, async () => input.run(await resolveServerSessionApi(input)))

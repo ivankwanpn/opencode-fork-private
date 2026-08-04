@@ -872,10 +872,9 @@ export default function LegacyLayout(props: ParentProps) {
 
     const target = serverSDK()
     await runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID: session.id,
+      apiForGeneration: target.apiForGeneration,
       run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
     })
     setStore(
@@ -1502,10 +1501,9 @@ export default function LegacyLayout(props: ParentProps) {
         .map((session) => {
           const target = serverSDK()
           return runServerSessionMutation({
-            protocol: target.protocol,
-            api: target.api,
             sessionMutations: target.sessionMutations,
             sessionID: session.id,
+            apiForGeneration: target.apiForGeneration,
             run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
           }).catch(() => undefined)
         }),

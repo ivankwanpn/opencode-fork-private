@@ -148,10 +148,9 @@ export const createDirSyncContext = (
       more: createMemo(() => current()[0].session.length >= current()[0].limit),
       archive: async (sessionID: string) => {
         await runServerSessionMutation({
-          protocol: serverSDK.protocol,
-          api: serverSDK.api,
           sessionMutations: serverSDK.sessionMutations,
           sessionID,
+          apiForGeneration: serverSDK.apiForGeneration,
           run: (api) => api.archive({ sessionID, directory }),
         })
         serverSync.session.evict(sessionID)

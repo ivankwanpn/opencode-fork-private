@@ -196,10 +196,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
     const target = sdk()
     const url = await runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID,
+      apiForGeneration: target.apiForGeneration,
       run: (api) => api.share({ sessionID }),
     })
       .then((res) => res.url)
@@ -222,10 +221,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
     const target = sdk()
     await runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID,
+      apiForGeneration: target.apiForGeneration,
       run: (api) => api.unshare({ sessionID }),
     })
       .then(() =>
@@ -333,10 +331,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       prompt: promptSession,
       request: () =>
         runServerSessionMutation({
-          protocol: target.protocol,
-          api: target.api,
           sessionMutations: target.sessionMutations,
           sessionID,
+          apiForGeneration: target.apiForGeneration,
           run: async (api) => {
             if (sync().data.session_working(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
             return api.revert.stage({ sessionID, messageID: message.id })
@@ -367,10 +364,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         prompt: promptSession,
         request: () =>
           runServerSessionMutation({
-            protocol: target.protocol,
-            api: target.api,
             sessionMutations: target.sessionMutations,
             sessionID,
+            apiForGeneration: target.apiForGeneration,
             run: (api) => api.revert.clear({ sessionID }),
           }),
         updatePrompt: (promptSession) => promptSession.reset(),
@@ -384,10 +380,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       prompt: promptSession,
       request: () =>
         runServerSessionMutation({
-          protocol: target.protocol,
-          api: target.api,
           sessionMutations: target.sessionMutations,
           sessionID,
+          apiForGeneration: target.apiForGeneration,
           run: (api) => api.revert.stage({ sessionID, messageID: next.id }),
         }),
       updatePrompt: () => undefined,
@@ -410,10 +405,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
     const target = sdk()
     await runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID,
+      apiForGeneration: target.apiForGeneration,
       run: (api) =>
         api.compact({
           sessionID,

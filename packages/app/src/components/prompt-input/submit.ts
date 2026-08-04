@@ -299,10 +299,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
     const target = sdk()
     return runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID,
+      apiForGeneration: target.apiForGeneration,
       run: (api) => api.interrupt({ sessionID }).catch(() => {}),
     })
   }

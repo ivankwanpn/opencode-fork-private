@@ -660,10 +660,9 @@ export function MessageTimeline(props: {
     mutationFn: (id: string) => {
       const target = sdk()
       return runServerSessionMutation({
-        protocol: target.protocol,
-        api: target.api,
         sessionMutations: target.sessionMutations,
         sessionID: id,
+        apiForGeneration: target.apiForGeneration,
         run: (api) => api.share({ sessionID: id }),
       })
     },
@@ -676,10 +675,9 @@ export function MessageTimeline(props: {
     mutationFn: (id: string) => {
       const target = sdk()
       return runServerSessionMutation({
-        protocol: target.protocol,
-        api: target.api,
         sessionMutations: target.sessionMutations,
         sessionID: id,
+        apiForGeneration: target.apiForGeneration,
         run: (api) => api.unshare({ sessionID: id }),
       })
     },
@@ -692,10 +690,9 @@ export function MessageTimeline(props: {
     mutationFn: (input: { id: string; title: string }) => {
       const target = sdk()
       return runServerSessionMutation({
-        protocol: target.protocol,
-        api: target.api,
         sessionMutations: target.sessionMutations,
         sessionID: input.id,
+        apiForGeneration: target.apiForGeneration,
         run: (api) => api.rename({ sessionID: input.id, title: input.title }),
       })
     },
@@ -843,10 +840,9 @@ export function MessageTimeline(props: {
 
     const target = sdk()
     await runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID,
+      apiForGeneration: target.apiForGeneration,
       run: (api) => api.archive({ sessionID }),
     })
       .then(() => {
@@ -878,10 +874,9 @@ export function MessageTimeline(props: {
 
     const target = sdk()
     const result = await runServerSessionMutation({
-      protocol: target.protocol,
-      api: target.api,
       sessionMutations: target.sessionMutations,
       sessionID,
+      apiForGeneration: target.apiForGeneration,
       run: async (api) => {
         if (sync().data.session_working(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
         await api.remove({ sessionID })

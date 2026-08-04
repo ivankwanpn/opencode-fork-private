@@ -224,10 +224,9 @@ export function createHomeSessionsController(home: HomeController) {
           session,
           archive: (sessionID) =>
             runServerSessionMutation({
-              protocol: ctx.sdk.protocol,
-              api: ctx.sdk.api,
               sessionMutations: ctx.sdk.sessionMutations,
               sessionID,
+              apiForGeneration: ctx.sdk.apiForGeneration,
               run: (api) => api.archive({ sessionID, directory: session.directory }),
             }),
           remove: () => {

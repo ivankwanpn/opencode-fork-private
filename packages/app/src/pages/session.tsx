@@ -413,10 +413,9 @@ export default function Page() {
     mutate: (sessionID, task) => {
       const target = sdk()
       return runServerSessionMutation({
-        protocol: target.protocol,
-        api: target.api,
         sessionMutations: target.sessionMutations,
         sessionID,
+        apiForGeneration: target.apiForGeneration,
         run: task,
       })
     },
@@ -1812,10 +1811,9 @@ export default function Page() {
         },
         request: () =>
           runServerSessionMutation({
-            protocol: sdkTarget.protocol,
-            api: sdkTarget.api,
             sessionMutations: sdkTarget.sessionMutations,
             sessionID: input.sessionID,
+            apiForGeneration: sdkTarget.apiForGeneration,
             run: async (api) => {
               if (busy(input.sessionID)) await api.interrupt({ sessionID: input.sessionID }).catch(() => {})
               return api.revert.stage(input)
@@ -1850,10 +1848,9 @@ export default function Page() {
         },
         request: () =>
           runServerSessionMutation({
-            protocol: sdkTarget.protocol,
-            api: sdkTarget.api,
             sessionMutations: sdkTarget.sessionMutations,
             sessionID,
+            apiForGeneration: sdkTarget.apiForGeneration,
             run: async (api) => {
               if (busy(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
               if (!next) {

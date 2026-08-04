@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ServerApi } from "./server"
 import { createV2OnlyApi } from "./server-compat"
-import { createSessionMutationQueue, resolveServerSessionApi } from "./session-mutation"
+import { createSessionMutationQueue, resolveServerSessionApi, runServerSessionMutation } from "./session-mutation"
 
 describe("session mutation queue", () => {
   test("serializes mutations for one session while allowing other sessions to proceed", async () => {
@@ -95,5 +95,30 @@ describe("session mutation queue", () => {
       "V2 server protocol unavailable",
     )
     expect(calls).toEqual([])
+  })
+
+  test("prefers the generation-pinned API over a stale protocol pair", async () => {
+    const calls: string[] = []
+    const current = {
+      session: {
+        inputList: async () => {
+          calls.push("inputList")
+          return []
+        },
+      },
+    } as unknown as ServerApi
+    const api = createV2OnlyApi({ protocol: Promise.resolve("v1"), current })
+
+    await expect(
+      runServerSessionMutation({
+        protocol: Promise.resolve("v1"),
+        api,
+        apiForGeneration: () => Promise.resolve(current),
+        sessionMutations: createSessionMutationQueue(),
+        sessionID: "ses_1",
+        run: (session) => session.inputList({ sessionID: "ses_1", delivery: "queue" }).then(() => true),
+      }),
+    ).resolves.toBe(true)
+    expect(calls).toEqual(["inputList"])
   })
 })

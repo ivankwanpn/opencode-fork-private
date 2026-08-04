@@ -76,7 +76,7 @@ type CompatiblePromptInput = SessionPromptInput &
   }
 type LegacyLocation = { directory?: string }
 type CompatibleInput = {
-  protocol: Promise<ServerProtocol>
+  protocol: Promise<ServerProtocol> | (() => Promise<ServerProtocol>)
   current: ServerApi
   legacy: LegacyFor
   directory?: string
@@ -121,22 +121,33 @@ function projectInfo(project: Project): Awaited<ReturnType<ServerApi["project"][
   }
 }
 
-export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
-  const v1 = createV1Api(input)
-  return lazyApi(
-    input.protocol.then((protocol) => (protocol === "v1" ? v1 : input.current)),
-    input.current,
-  )
+function unsupportedV1(operation: string): never {
+  throw new Error(`${operation} is unavailable on a V1 server`)
 }
 
-function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
+export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
+  const v1 = createV1Api(input)
+  return lazyApi(() => resolveProtocol(input.protocol).then((protocol) => (protocol === "v1" ? v1 : input.current)), input.current)
+}
+
+function resolveProtocol(input: CompatibleInput["protocol"]) {
+  return typeof input === "function" ? input() : input
+}
+
+type LazyImplementation<T> = Promise<T> | (() => Promise<T>)
+
+function resolveImplementation<T>(implementation: LazyImplementation<T>) {
+  return typeof implementation === "function" ? implementation() : implementation
+}
+
+function lazyApi<T extends object>(implementation: LazyImplementation<T>, shape: T): T {
   const cache = new Map<PropertyKey, unknown>()
   return new Proxy(shape, {
     get(target, property, receiver) {
       const sample = Reflect.get(target, property, receiver)
       if (typeof sample === "function") {
         return (...args: unknown[]) =>
-          implementation.then((value) => {
+          resolveImplementation(implementation).then((value) => {
             const method = Reflect.get(value, property)
             if (typeof method !== "function") throw new Error(`API method unavailable: ${String(property)}`)
             return Reflect.apply(method, value, args)
@@ -145,7 +156,7 @@ function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
       if (sample === null || typeof sample !== "object") return sample
       if (cache.has(property)) return cache.get(property)
       const nested = lazyApi(
-        implementation.then((value) => {
+        () => resolveImplementation(implementation).then((value) => {
           const result = Reflect.get(value, property)
           if (result === null || typeof result !== "object") {
             throw new Error(`API namespace unavailable: ${String(property)}`)
@@ -173,6 +184,16 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
 
   return {
     ...input.current,
+    plugins: {
+      list: async () => unsupportedV1("Plugin management"),
+      add: async () => unsupportedV1("Plugin management"),
+      refresh: async () => unsupportedV1("Plugin management"),
+      remove: async () => unsupportedV1("Plugin management"),
+      install: async () => unsupportedV1("Plugin management"),
+      uninstall: async () => unsupportedV1("Plugin management"),
+      enable: async () => unsupportedV1("Plugin management"),
+      disable: async () => unsupportedV1("Plugin management"),
+    } as ServerApi["plugins"],
     session: {
       ...input.current.session,
       async list(
@@ -244,6 +265,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async interrupt(value: Parameters<ServerApi["session"]["interrupt"]>[0]) {
         await legacy().session.abort(value)
       },
+      switchAgent: async () => unsupportedV1("Session agent switching"),
+      switchModel: async () => unsupportedV1("Session model switching"),
       async prompt(value: CompatiblePromptInput) {
         await legacy().session.promptAsync({
           sessionID: value.sessionID,
@@ -334,6 +357,13 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           type: "compaction",
         }
       },
+      inputList: async () => unsupportedV1("Durable session follow-up inputs"),
+      inputGet: async () => unsupportedV1("Durable session follow-up inputs"),
+      inputPromote: async () => unsupportedV1("Durable session follow-up inputs"),
+      inputCancel: async () => unsupportedV1("Durable session follow-up inputs"),
+      background: async () => unsupportedV1("Background session execution"),
+      wait: async () => unsupportedV1("Durable session waiting"),
+      context: async () => unsupportedV1("V2 session context"),
       revert: {
         stage: async (value: Parameters<ServerApi["session"]["revert"]["stage"]>[0]) => {
           await legacy().session.revert(value)
@@ -342,7 +372,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         clear: async (value: Parameters<ServerApi["session"]["revert"]["clear"]>[0]) => {
           await legacy().session.unrevert(value)
         },
-        commit: input.current.session.revert.commit,
+        commit: async () => unsupportedV1("V2 session revert commit"),
       },
     },
     project: {

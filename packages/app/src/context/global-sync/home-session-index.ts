@@ -1,5 +1,8 @@
 import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
+import type { SessionInfo } from "@opencode-ai/client/promise"
 import type { QueryClient } from "@tanstack/solid-query"
+import { normalizeSessionInfo } from "@/utils/session"
+import { extractArray } from "@/utils/response-helpers"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
 
@@ -22,6 +25,10 @@ export const homeSessionIndexKey = (server: string) => ["home", "session-index",
 export const homeSessionEventsKey = (server: string) => ["home", "session-events", server] as const
 
 type HomeSessionPage = { data?: V2SessionListResponse }
+type LegacyHomeSessionList = (
+  input: { directory: string; parentID: null; limit: number; order: "desc" },
+  options: { signal?: AbortSignal },
+) => Promise<unknown>
 
 export async function loadHomeSessionIndex(
   list: (
@@ -48,6 +55,35 @@ export async function loadHomeSessionIndex(
     if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
       return { sessions: parseHomeSessionIndex(data), eventSequence }
     cursor = page.cursor.next
+  }
+}
+
+export async function loadLegacyHomeSessionIndex(
+  directories: readonly string[],
+  list: LegacyHomeSessionList,
+  eventSequence = 0,
+  signal?: AbortSignal,
+) {
+  const uniqueDirectories = [...new Map(directories.map((directory) => [pathKey(directory), directory])).values()]
+  const sessions = (
+    await Promise.all(
+      uniqueDirectories.map(async (directory) => {
+        const result = await list(
+          { directory, parentID: null, limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" },
+          { signal },
+        )
+        return extractArray<SessionInfo | Session>(result).map(normalizeSessionInfo)
+      }),
+    )
+  ).flat()
+
+  return {
+    sessions: [...new Map(
+      sessions
+        .filter((session) => !session.parentID && typeof session.time.archived !== "number")
+        .map((session) => [session.id, session] as const),
+    ).values()],
+    eventSequence,
   }
 }
 

@@ -405,12 +405,13 @@ export default function Page() {
   const followupState = createSessionFollowupState({
     sessionID: () => params.id,
     api: () => sdk().api.session,
+    enabled: () => serverSDK().protocolKind() === "v2",
   })
   const [followupEdit, setFollowupEdit] = createStore<Record<string, SessionFollowupEdit | undefined>>({})
 
   createEffect(
     on(
-      () => [params.id, sdk().directory, serverSDK().scope] as const,
+      () => [params.id, sdk().directory, serverSDK().scope, serverSDK().protocolKind()] as const,
       ([sessionID]) => {
         void followupState.refresh().catch((error) => {
           console.debug("[session-followup] failed to refresh durable inputs", { sessionID, error })

@@ -58,7 +58,7 @@ export async function spawnWslSidecar(
   })
   const url = `http://127.0.0.1:${port}`
   const startup = new AbortController()
-  const health = pollWslHealth(() => checkHealth(url, password), startup.signal)
+  const health = pollWslHealth(() => checkHealth(url, password, { v2Only: true }), startup.signal)
   const timeoutMs = opts.healthTimeoutMs ?? 30_000
   let timeout: ReturnType<typeof setTimeout>
   const timedOut = new Promise<never>(

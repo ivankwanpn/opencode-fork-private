@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { Message } from "@opencode-ai/sdk/v2/client"
-import { getSessionContext } from "./session-context-metrics"
+import type { Message, SessionMessage } from "@opencode-ai/sdk/v2/client"
+import { getSessionContext, getV2SessionContext } from "./session-context-metrics"
 
 const assistant = (
   id: string,
@@ -95,5 +95,44 @@ describe("getSessionContext", () => {
     const ctx = getSessionContext(undefined, undefined)
 
     expect(ctx).toBeUndefined()
+  })
+
+  test("uses the active V2 context projection", () => {
+    const messages = [
+      {
+        id: "old",
+        type: "user",
+        time: { created: 1 },
+        text: "old",
+      },
+      {
+        id: "current",
+        type: "assistant",
+        time: { created: 2, completed: 3 },
+        agent: "build",
+        model: { providerID: "openai", id: "gpt-4.1" },
+        tokens: {
+          input: 300,
+          output: 100,
+          reasoning: 50,
+          cache: { read: 25, write: 25 },
+        },
+        content: [],
+      },
+    ] satisfies SessionMessage[]
+
+    const ctx = getV2SessionContext(messages, [
+      {
+        id: "openai",
+        name: "OpenAI",
+        models: {
+          "gpt-4.1": { name: "GPT-4.1", limit: { context: 1000 } },
+        },
+      },
+    ])
+
+    expect(ctx?.message.id).toBe("current")
+    expect(ctx?.total).toBe(500)
+    expect(ctx?.usage).toBe(50)
   })
 })

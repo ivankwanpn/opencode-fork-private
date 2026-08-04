@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import type { SessionInfo } from "@opencode-ai/client/promise"
 import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
 import {
   applyHomeSessionEvent,
   appendHomeSessionEvent,
   HOME_V2_SESSION_PAGE_LIMIT,
+  loadLegacyHomeSessionIndex,
   loadHomeSessionIndex,
   homeSessionIndexSessions,
   homeSessionIndexRefresh,
@@ -69,6 +71,44 @@ describe("Home V2 session index", () => {
         input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc", cursor: "next-page" },
         signal: controller.signal,
       },
+    ])
+  })
+
+  test("loads a V1 Home index through explicit per-directory requests", async () => {
+    const calls: string[] = []
+    const legacy = (input: { id: string; directory: string; parentID?: string; archived?: number }) =>
+      ({
+        id: input.id,
+        slug: input.id,
+        projectID: "project",
+        directory: input.directory,
+        parentID: input.parentID,
+        title: input.id,
+        version: "",
+        time: { created: 1, updated: 2, archived: input.archived },
+      }) as unknown as SessionInfo
+
+    const result = await loadLegacyHomeSessionIndex(
+      ["/one", "/one", "/two"],
+      async (input) => {
+        calls.push(input.directory)
+        return {
+          data:
+            input.directory === "/two"
+              ? [legacy({ id: "archived", directory: input.directory, archived: 3 })]
+              : [
+                  legacy({ id: "root", directory: input.directory }),
+                  legacy({ id: "child", directory: input.directory, parentID: "root" }),
+                ],
+        }
+      },
+      4,
+    )
+
+    expect(calls).toEqual(["/one", "/two"])
+    expect(result.eventSequence).toBe(4)
+    expect(result.sessions).toEqual([
+      expect.objectContaining({ id: "root", directory: "/one", slug: "root", version: "" }),
     ])
   })
 

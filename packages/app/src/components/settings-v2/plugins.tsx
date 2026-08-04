@@ -44,7 +44,7 @@ export const SettingsPluginsV2: Component = () => {
     }
   }
 
-  const load = () => run("load", () => sdk().currentApi.plugins.list())
+  const load = () => run("load", () => sdk().api.plugins.list())
 
   const filtered = createMemo(() => {
     const query = filter().trim().toLowerCase()
@@ -62,9 +62,9 @@ export const SettingsPluginsV2: Component = () => {
   const addMarketplace = () => {
     const value = source().trim()
     if (!value) return
-    void run("add-marketplace", () =>
-      sdk()
-        .currentApi.plugins.add({ source: value })
+      void run("add-marketplace", () =>
+        sdk()
+        .api.plugins.add({ source: value })
         .then((result) => {
           setSource("")
           return result
@@ -73,15 +73,15 @@ export const SettingsPluginsV2: Component = () => {
   }
 
   const install = (item: PluginItem) =>
-    void run(`install:${item.id}`, () => sdk().currentApi.plugins.install({ id: item.id }))
+    void run(`install:${item.id}`, () => sdk().api.plugins.install({ id: item.id }))
 
   const toggle = (item: PluginItem, enabled: boolean) =>
     void run(`${enabled ? "enable" : "disable"}:${item.id}`, () =>
-      enabled ? sdk().currentApi.plugins.enable({ id: item.id }) : sdk().currentApi.plugins.disable({ id: item.id }),
+      enabled ? sdk().api.plugins.enable({ id: item.id }) : sdk().api.plugins.disable({ id: item.id }),
     )
 
   const uninstall = (item: PluginItem) =>
-    void run(`uninstall:${item.id}`, () => sdk().currentApi.plugins.uninstall({ id: item.id }))
+    void run(`uninstall:${item.id}`, () => sdk().api.plugins.uninstall({ id: item.id }))
 
   onMount(() => void load())
 
@@ -180,7 +180,7 @@ export const SettingsPluginsV2: Component = () => {
                             disabled={Boolean(busy())}
                             onClick={() =>
                               void run(`refresh:${marketplace.name}`, () =>
-                                sdk().currentApi.plugins.refresh({ name: marketplace.name }),
+                                sdk().api.plugins.refresh({ name: marketplace.name }),
                               )
                             }
                           />
@@ -191,7 +191,7 @@ export const SettingsPluginsV2: Component = () => {
                             disabled={Boolean(busy())}
                             onClick={() =>
                               void run(`remove:${marketplace.name}`, () =>
-                                sdk().currentApi.plugins.remove({ name: marketplace.name }),
+                                sdk().api.plugins.remove({ name: marketplace.name }),
                               )
                             }
                           >

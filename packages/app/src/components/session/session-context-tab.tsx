@@ -15,7 +15,7 @@ import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { getSessionContext } from "./session-context-metrics"
+import { getSessionContext, getV2SessionContext } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
 
@@ -110,8 +110,20 @@ export function SessionContextTab() {
     { equals: same },
   )
 
+  const contextMessages = createMemo(() => (params.id ? sync().session.context.get(params.id) : undefined))
+  const activeMessages = createMemo(
+    () => {
+      const context = contextMessages()
+      if (!context) return messages()
+      const ids = new Set(context.map((message) => message.id))
+      return messages().filter((message) => ids.has(message.id))
+    },
+    emptyMessages,
+    { equals: same },
+  )
+
   const userMessages = createMemo(
-    () => messages().filter((m) => m.role === "user") as UserMessage[],
+    () => activeMessages().filter((m) => m.role === "user") as UserMessage[],
     emptyUserMessages,
     { equals: same },
   )
@@ -134,7 +146,11 @@ export function SessionContextTab() {
       }),
   )
 
-  const ctx = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const ctx = createMemo(() => {
+    const context = contextMessages()
+    if (context) return getV2SessionContext(context, [...providers.all().values()])
+    return getSessionContext(messages(), [...providers.all().values()])
+  })
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
 
   const cost = createMemo(() => {
@@ -142,7 +158,7 @@ export function SessionContextTab() {
   })
 
   const counts = createMemo(() => {
-    const all = messages()
+    const all = activeMessages()
     const user = all.reduce((count, x) => count + (x.role === "user" ? 1 : 0), 0)
     const assistant = all.reduce((count, x) => count + (x.role === "assistant" ? 1 : 0), 0)
     return {
@@ -153,10 +169,13 @@ export function SessionContextTab() {
   })
 
   const systemPrompt = createMemo(() => {
+    const context = contextMessages()
+    const system = context?.findLast((message) => message.type === "system")
+    if (system?.type === "system" && system.text.trim()) return system.text.trim()
     const msg = findLast(visibleUserMessages(), (m) => !!m.system)
-    const system = msg?.system
-    if (!system) return
-    const trimmed = system.trim()
+    const legacy = msg?.system
+    if (!legacy) return
+    const trimmed = legacy.trim()
     if (!trimmed) return
     return trimmed
   })
@@ -175,12 +194,12 @@ export function SessionContextTab() {
 
   const breakdown = createMemo(
     on(
-      () => [ctx()?.message.id, ctx()?.input, messages().length, systemPrompt()],
+      () => [ctx()?.message.id, ctx()?.input, activeMessages().length, systemPrompt()],
       () => {
         const c = ctx()
         if (!c?.input) return []
         return estimateSessionContextBreakdown({
-          messages: messages(),
+          messages: activeMessages(),
           parts: sync().data.part as Record<string, Part[] | undefined>,
           input: c.input,
           systemPrompt: systemPrompt(),
@@ -256,9 +275,19 @@ export function SessionContextTab() {
 
   createEffect(
     on(
-      () => messages().length,
+      () => activeMessages().length,
       () => {
         requestAnimationFrame(restoreScroll)
+      },
+      { defer: true },
+    ),
+  )
+
+  createEffect(
+    on(
+      () => params.id,
+      (sessionID) => {
+        if (sessionID) void sync().session.context.refresh(sessionID).catch(() => {})
       },
       { defer: true },
     ),
@@ -330,7 +359,7 @@ export function SessionContextTab() {
         <div class="flex flex-col gap-2">
           <div class="text-12-regular text-text-weak">{language.t("context.rawMessages.title")}</div>
           <Accordion multiple>
-            <For each={messages()}>
+            <For each={activeMessages()}>
               {(message) => (
                 <RawMessage message={message} getParts={getParts} onRendered={restoreScroll} time={formatter().time} />
               )}

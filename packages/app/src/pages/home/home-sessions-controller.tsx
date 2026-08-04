@@ -8,6 +8,7 @@ import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTra
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
 import {
+  loadLegacyHomeSessionIndex,
   loadHomeSessionIndex,
   retainHomeSessions,
   type HomeSessionEvents,
@@ -68,11 +69,19 @@ export function createHomeSessionsController(home: HomeController) {
       if (!ctx) return { sessions: [], eventSequence: 0 }
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
-      const index = await loadHomeSessionIndex(
-        (input, options) => ctx.sdk.client.v2.session.list(input, options),
-        eventSequence,
-        signal,
-      )
+      const index =
+        (await ctx.sdk.protocol) === "v1"
+          ? await loadLegacyHomeSessionIndex(
+              projectDirectories(),
+              (input, options) => ctx.sdk.api.session.list(input, options),
+              eventSequence,
+              signal,
+            )
+          : await loadHomeSessionIndex(
+              (input, options) => ctx.sdk.client.v2.session.list(input, options),
+              eventSequence,
+              signal,
+            )
       cache.complete(eventSequence)
       return index
     },
@@ -215,13 +224,15 @@ export function createHomeSessionsController(home: HomeController) {
           server: ServerConnection.key(conn),
           session,
           archive: (sessionID) => ctx.sdk.api.session.archive({ sessionID, directory: session.directory }),
-          remove: () =>
+          remove: () => {
+            ctx.sync.session.evict(session.id)
             setStore(
               produce((draft) => {
                 const match = Binary.search(draft.session, session.id, (item) => item.id)
                 if (match.found) draft.session.splice(match.index, 1)
               }),
-            ),
+            )
+          },
           onError: (cause) =>
             showToast({
               title: language.t("common.requestFailed"),

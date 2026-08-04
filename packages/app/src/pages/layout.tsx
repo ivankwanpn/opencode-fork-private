@@ -58,6 +58,7 @@ import { ConstrainDragXAxis, getDraggableId } from "@/utils/solid-dnd"
 import { DebugBar } from "@/components/debug-bar"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar } from "@/components/titlebar"
+import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { ServerConnection, useServer } from "@/context/server"
 import { useLanguage, type Locale } from "@/context/language"
@@ -872,6 +873,8 @@ export default function LegacyLayout(props: ParentProps) {
         if (match.found) draft.session.splice(match.index, 1)
       }),
     )
+    serverSync().session.evict(session.id)
+    notifySessionTabsRemoved({ directory: session.directory, sessionIDs: [session.id] })
     if (session.id === params.id) {
       if (nextSession) {
         navigate(`/${params.dir}/session/${nextSession.id}`)

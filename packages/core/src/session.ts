@@ -41,6 +41,7 @@ import { Revert } from "@opencode-ai/schema/revert"
 import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 import { SessionV1 } from "./v1/session"
+import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 
 export const RevertState = Revert.State
 export type RevertState = Revert.State
@@ -821,22 +822,41 @@ const layer = Layer.effect(
       compact: Effect.fn("V2Session.compact")(function* (input) {
         const session = yield* result.get(input.sessionID)
         let shouldContinue = false
-        const work = SessionCompaction.Service.use((compaction) =>
-          compaction.compact({
-            session,
-            prompt: input.prompt,
-            reason: input.reason ?? "manual",
-          }),
-        ).pipe(
-          Effect.provide(locations.get(session.location)),
-          Effect.orDie,
-          Effect.tap((outcome) =>
-            Effect.sync(() => {
-              shouldContinue = outcome.shouldContinue
-            }),
-          ),
-          Effect.asVoid,
-        )
+        const work = Effect.gen(function* () {
+          yield* events.publish(
+            SessionStatusEvent.Status,
+            { sessionID: session.id, status: { type: "busy" } },
+            { location: session.location },
+          )
+          yield* Effect.ensuring(
+            SessionCompaction.Service.use((compaction) =>
+              compaction.compact({
+                session,
+                prompt: input.prompt,
+                reason: input.reason ?? "manual",
+              }),
+            ).pipe(
+              Effect.provide(locations.get(session.location)),
+              Effect.orDie,
+              Effect.tap((outcome) =>
+                Effect.sync(() => {
+                  shouldContinue = outcome.shouldContinue
+                }),
+              ),
+              Effect.asVoid,
+            ),
+            events
+              .publish(
+                SessionStatusEvent.Status,
+                { sessionID: session.id, status: { type: "idle" } },
+                { location: session.location },
+              )
+              .pipe(
+                Effect.andThen(events.publish(SessionStatusEvent.Idle, { sessionID: session.id }, { location: session.location })),
+                Effect.asVoid,
+              ),
+          )
+        })
         yield* execution.exclusive(session.id, work)
         if (shouldContinue) yield* execution.resume(session.id).pipe(Effect.orDie)
       }),

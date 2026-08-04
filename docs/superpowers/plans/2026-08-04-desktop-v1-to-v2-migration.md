@@ -1,8 +1,8 @@
 # Desktop V1 to V2 Migration Plan
 
-> Status: in progress for branch `999.0.8`.
+> Status: in progress for branch `999.0.9`.
 >
-> The first `999.0.8` slice hardens the Desktop connection boundary. It does not remove legacy routes or compatibility code by itself.
+> The first `999.0.9` slice hardens the Desktop connection boundary. It does not remove legacy routes or compatibility code by itself.
 
 ## Goal
 
@@ -37,14 +37,18 @@ The current source does not support the claim that Desktop is entirely V1. It al
 
 Before changing the client selection logic, record the current behavior for a packaged Desktop sidecar and a development server.
 
-### 999.0.8 progress
+### 999.0.9 progress
 
 - [x] V2 prompt forwards `delivery`, `resume`, and `expectedActiveAttemptID` without dropping them.
 - [x] V2 shell converts the Desktop model shape (`modelID`) into the V2 model reference (`id`).
 - [x] Sidecar protocol selection fails closed unless V2 health and capability contracts are present.
+- [x] Desktop health probing preserves the `/global/health` fallback for external V1 connections and validates both V2 sidecar responses.
 - [x] Protocol authentication and V1/V2 prompt/shell compatibility regressions are covered by app tests.
-- [ ] Packaged `resources/app.asar` sidecar smoke test is still pending.
-- [ ] Session restore, reconnect, compaction, permissions, questions, MCP, plugins, marketplaces, and PTY workflows remain pending migration coverage.
+- [x] Reconnect recovery refreshes active sessions, reconciles stale busy state, and force-syncs affected session projections when a valid snapshot is available.
+- [x] Packaged `resources/app.asar` sidecar smoke test passes against the bundled sidecar.
+- [x] Packaged reconnect/restore integration, permissions, questions, MCP, plugin catalog, and PTY lifecycle have V2 smoke coverage.
+- [x] Packaged provider-backed prompt execution and compaction lifecycle have smoke coverage through a local OpenAI-compatible fake provider.
+- [x] Packaged plugin install and marketplace mutation have smoke coverage through a local Claude marketplace fixture.
 
 ### Tests to add
 
@@ -69,6 +73,14 @@ Before changing the client selection logic, record the current behavior for a pa
 ### Baseline evidence
 
 Record the exact sidecar build commit, channel, version, health response, route set, and database location used by the tests. This is required because Desktop can otherwise appear to use V2 while loading an older `opencode/dist/node.js` artifact.
+
+### 999.0.9 artifact evidence
+
+- `packages/desktop/package.json` and the packaged `app.asar` metadata report version `999.0.9`.
+- `bun run package:win` completed with `OPENCODE_CHANNEL=prod` and produced `packages/desktop/dist/win-unpacked/resources/app.asar`.
+- Static archive inspection found `out/main/sidecar.js`, `out/renderer/index.html`, one bundled server chunk, `/api/health`, `/api/capability`, and `backgroundSubagents` in the archive.
+- The live packaged smoke report at `C:\Users\inkik\AppData\Local\Temp\opencode-packaged-sidecar-smoke.json` confirms the actual `app.asar/out/main/sidecar.js` selected V2 and passed health, capability, `/doc` OpenAPI, SSE, session admission, provider execution, compaction, permission, question, MCP, plugin catalog, PTY, interrupt, and reconnect checks.
+- The smoke test keeps a separate `resume: false` prompt for durable-admission/reconnect coverage and uses a second `resume: true` session with `test/test-model` to verify provider execution, `session.next.compaction.started`, `session.next.compaction.delta`, `session.next.compaction.ended`, and inactive state after reconnect.
 
 ## Phase 1: Make the Desktop-Owned Connection V2-First
 
@@ -189,6 +201,7 @@ bun run script/httpapi-exercise.ts --mode effect --fail-on-missing --fail-on-ski
 # packaged Desktop smoke test
 cd ../desktop
 bun run package:win
+bun run test:packaged-sidecar
 ```
 
 The packaged smoke test must verify the actual `resources/app.asar` sidecar, not only the source development server. Capture the protocol kind and version from diagnostics.

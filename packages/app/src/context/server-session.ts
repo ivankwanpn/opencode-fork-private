@@ -14,6 +14,7 @@ import type {
   Part,
   PermissionRequest,
   QuestionRequest,
+  SessionMessage,
   Session,
   SessionStatus,
   Todo,
@@ -207,6 +208,7 @@ export function createServerSession(
     question: {} as Record<string, QuestionRequest[]>,
     message: {} as Record<string, Message[]>,
     session_message: {} as Record<string, SessionMessageInfo[]>,
+    session_context: {} as Record<string, readonly SessionMessage[] | undefined>,
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
     session_working(id: string) {
@@ -215,6 +217,7 @@ export function createServerSession(
   })
   const requests = new Map<string, Promise<Session>>()
   const inflight = new Map<string, Promise<void>>()
+  const contextLoads = new Map<string, Promise<void>>()
   const inflightTodo = new Map<string, Promise<void>>()
   const optimistic = new Map<string, Map<string, OptimisticItem>>()
   const v2 = createV2SessionReducer()
@@ -493,6 +496,7 @@ export function createServerSession(
       clearOptimistic(sessionID)
       requests.delete(sessionID)
       inflight.delete(sessionID)
+      contextLoads.delete(sessionID)
       inflightTodo.delete(sessionID)
       messageLoads.delete(sessionID)
       v2.clear(sessionID)
@@ -858,6 +862,17 @@ export function createServerSession(
     })
   }
 
+  const refreshContext = (sessionID: string) => {
+    if (!options?.protocol) return Promise.resolve()
+    return runInflight(contextLoads, sessionID, async () => {
+      if ((await options.protocol) === "v1") return
+      const active = generation(sessionID)
+      const result = await (options.retry ?? retry)(() => client.v2.session.context({ sessionID }))
+      if (generations.get(sessionID) !== active) return
+      setData("session_context", sessionID, result.data)
+    })
+  }
+
   const prefetch = async (sessionID: string, limit: number) => {
     touch(sessionID)
     await inflight.get(sessionID)
@@ -979,6 +994,9 @@ export function createServerSession(
       if (info) remember({ ...info, time: { ...info.time, archived: event.created, updated: event.created } })
       evict([sessionID])
     }
+    if (event.type === "session.status")
+      setData("session_status", sessionID, reconcile(event.data.status as SessionStatus))
+    if (event.type === "session.idle") setData("session_status", sessionID, reconcile({ type: "idle" }))
     if (event.type === "session.execution.started")
       setData("session_status", sessionID, reconcile({ type: "busy" }))
     if (event.type === "session.next.provider.attempt.started")
@@ -1040,6 +1058,17 @@ export function createServerSession(
       event.type === "session.revert.committed"
     )
       void resolve(sessionID, { force: true }).catch(() => {})
+    const eventType = event.type as string
+    if (
+      eventType === "session.idle" ||
+      eventType === "session.next.context.updated" ||
+      eventType === "session.context.updated" ||
+      eventType === "session.next.compaction.ended" ||
+      eventType === "session.next.compaction.failed" ||
+      eventType === "session.compaction.ended" ||
+      eventType === "session.compaction.failed"
+    )
+      void refreshContext(sessionID).catch(() => {})
   }
 
   const apply = (event: { type: string; properties?: unknown }) => {
@@ -1084,6 +1113,11 @@ export function createServerSession(
       case "session.status": {
         const props = event.properties as { sessionID: string; status: SessionStatus }
         setData("session_status", props.sessionID, reconcile(props.status))
+        return
+      }
+      case "session.idle": {
+        const props = event.properties as { sessionID: string }
+        setData("session_status", props.sessionID, reconcile({ type: "idle" }))
         return
       }
       case "message.updated": {
@@ -1367,6 +1401,12 @@ export function createServerSession(
       },
     },
     sync,
+    context: {
+      get(sessionID: string) {
+        return data.session_context[sessionID]
+      },
+      refresh: refreshContext,
+    },
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
       if (data.message[sessionID] === undefined) return true

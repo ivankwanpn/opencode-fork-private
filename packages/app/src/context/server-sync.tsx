@@ -204,6 +204,38 @@ export function seedActiveSessionStatuses(
   }
 }
 
+export function reconcileActiveSessionStatuses(
+  session: Pick<ServerSession, "data" | "set">,
+  active: SessionActiveOutput | Record<string, SessionStatus>,
+) {
+  const reload = new Set([
+    ...Object.keys(active),
+    ...Object.entries(session.data.session_status)
+      .filter(([, status]) => status.type !== "idle")
+      .map(([sessionID]) => sessionID),
+  ])
+
+  session.set(
+    "session_status",
+    produce((draft) => {
+      for (const sessionID of Object.keys(draft)) {
+        const status = active[sessionID]
+        if (status) {
+          draft[sessionID] = status.type === "running" ? { type: "busy" } : status
+          continue
+        }
+        if (draft[sessionID]?.type === "busy") draft[sessionID] = { type: "idle" }
+      }
+
+      for (const [sessionID, status] of Object.entries(active)) {
+        draft[sessionID] = status.type === "running" ? { type: "busy" } : status
+      }
+    }),
+  )
+
+  return [...reload]
+}
+
 function makeQueryOptionsApi(
   scope: ServerScope,
   serverSDK: () => OpencodeClient,
@@ -237,6 +269,27 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
   const sessionMeta = new Map<string, { limit: number }>()
+  const requestRevisions = new Map<string, { permission: number; question: number }>()
+
+  const pendingRequestRevision = (directory: string) => {
+    const key = directoryKey(directory)
+    const current = requestRevisions.get(key) ?? { permission: 0, question: 0 }
+    requestRevisions.set(key, current)
+    return {
+      permission: () => requestRevisions.get(key)?.permission ?? 0,
+      question: () => requestRevisions.get(key)?.question ?? 0,
+    }
+  }
+
+  const bumpPendingRequestRevision = (directory: string, type: string) => {
+    const key = directoryKey(directory)
+    const current = requestRevisions.get(key) ?? { permission: 0, question: 0 }
+    if (type.startsWith("permission.")) {
+      requestRevisions.set(key, { ...current, permission: current.permission + 1 })
+      return
+    }
+    if (type.startsWith("question.")) requestRevisions.set(key, { ...current, question: current.question + 1 })
+  }
 
   const sdkFor = (directory: string) => {
     const key = directoryKey(directory)
@@ -387,6 +440,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       const key = directoryKey(directory)
       queue.clear(key)
       sessionMeta.delete(key)
+      requestRevisions.delete(key)
       sdkCache.delete(key)
       clearProviderRev(serverSDK.scope, key)
     },
@@ -510,6 +564,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         queryClient,
         session,
         protocol: serverSDK.protocol,
+        pendingRequestRevision: pendingRequestRevision(directory),
       })
     })
 
@@ -553,8 +608,21 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     homeSessions.refresh(event.type)
 
     if (directory === "global") {
-      if (eventType === "server.connected" && activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching)
-        void activeSessionsQuery.refetch()
+      if (eventType === "server.connected") {
+        if (!recent) {
+          void bootstrap.refetch()
+          void activeSessionsQuery
+            .refetch()
+            .then((result) => {
+              if (result.data === undefined) return
+              const sessionIDs = reconcileActiveSessionStatuses(session, result.data)
+              return Promise.allSettled(sessionIDs.map((sessionID) => session.sync(sessionID, { force: true })))
+            })
+            .catch((error) => console.error("Failed to recover sessions after server reconnect", error))
+        } else if (activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching) {
+          void activeSessionsQuery.refetch()
+        }
+      }
       applyGlobalEvent({
         event,
         project: globalStore.project,
@@ -594,6 +662,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const existing = children.children[key]
     if (!existing) return
     children.mark(key)
+    if (
+      eventType === "permission.asked" ||
+      eventType === "permission.replied" ||
+      eventType === "question.asked" ||
+      eventType === "question.replied" ||
+      eventType === "question.rejected"
+    )
+      bumpPendingRequestRevision(key, eventType)
     if (
       event.current?.type === "session.moved" ||
       event.current?.type === "session.next.moved" ||

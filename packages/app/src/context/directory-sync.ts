@@ -116,6 +116,16 @@ export const createDirSyncContext = (
         await serverSync.session.sync(sessionID, options)
         index(sessionID)
       },
+      context: {
+        get(sessionID: string) {
+          const session = serverSync.session.get(sessionID)
+          if (session?.directory !== directory) return
+          return serverSync.session.context.get(sessionID)
+        },
+        refresh(sessionID: string) {
+          return serverSync.session.context.refresh(sessionID)
+        },
+      },
       todo: serverSync.session.todo,
       history: serverSync.session.history,
       evict(sessionID: string) {
@@ -135,6 +145,7 @@ export const createDirSyncContext = (
       more: createMemo(() => current()[0].session.length >= current()[0].limit),
       archive: async (sessionID: string) => {
         await serverSDK.api.session.archive({ sessionID, directory })
+        serverSync.session.evict(sessionID)
         current()[1](
           "session",
           produce((draft) => {

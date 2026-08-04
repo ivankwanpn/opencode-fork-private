@@ -21,6 +21,7 @@ export type SessionFollowupEdit = {
 export function createSessionFollowupState(input: {
   sessionID: () => string | undefined
   api: () => SessionFollowupApi
+  enabled?: () => boolean
 }) {
   const [store, setStore] = createStore({
     items: [] as SessionFollowupItem[],
@@ -30,6 +31,7 @@ export function createSessionFollowupState(input: {
   let request = 0
 
   const currentSession = () => input.sessionID()
+  const enabled = () => input.enabled?.() ?? true
 
   const pending = (sessionID: string, items: readonly SessionFollowupItem[]) =>
     items
@@ -42,7 +44,8 @@ export function createSessionFollowupState(input: {
 
   const refresh = async () => {
     const sessionID = currentSession()
-    if (!sessionID) {
+    if (!sessionID || !enabled()) {
+      request++
       setStore("items", [])
       setStore("loading", false)
       return
@@ -63,7 +66,7 @@ export function createSessionFollowupState(input: {
 
   const reconcile = async (inputID: string) => {
     const sessionID = currentSession()
-    if (!sessionID) return
+    if (!sessionID || !enabled()) return
 
     const item = await input.api().inputGet({ sessionID, inputID })
     if (currentSession() !== sessionID) return item
@@ -74,7 +77,7 @@ export function createSessionFollowupState(input: {
 
   const promote = async (inputID: string) => {
     const sessionID = currentSession()
-    if (!sessionID || store.sending) return false
+    if (!sessionID || !enabled() || store.sending) return false
 
     const api = input.api()
     setStore("sending", inputID)
@@ -94,7 +97,7 @@ export function createSessionFollowupState(input: {
 
   const cancel = async (inputID: string) => {
     const sessionID = currentSession()
-    if (!sessionID || store.sending) return false
+    if (!sessionID || !enabled() || store.sending) return false
 
     const api = input.api()
     setStore("sending", inputID)

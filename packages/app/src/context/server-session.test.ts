@@ -1706,6 +1706,121 @@ describe("server session", () => {
     expect(ctx.get).toEqual([])
   })
 
+  test("clears a busy session when the idle lifecycle event arrives", () => {
+    const ctx = setup({})
+    ctx.store.remember(session("root"))
+    ctx.store.set("session_status", "root", { type: "busy" })
+
+    ctx.store.applyV2({
+      id: "evt_idle",
+      created: 2,
+      type: "session.idle",
+      data: { sessionID: "root" },
+    } as V2Event)
+
+    expect(ctx.store.data.session_status.root).toEqual({ type: "idle" })
+    expect(ctx.store.data.session_working("root")).toBe(false)
+  })
+
+  test("loads and deduplicates the V2 context projection", async () => {
+    const requests: unknown[] = []
+    const client = {
+      session: {
+        get: async () => ({ data: session("child") }),
+      },
+      v2: {
+        session: {
+          context: async (input: unknown) => {
+            requests.push(input)
+            return {
+              data: [
+                {
+                  id: "assistant",
+                  type: "assistant",
+                  time: { created: 2, completed: 3 },
+                  agent: "build",
+                  model: { providerID: "provider", id: "model" },
+                  content: [],
+                  tokens: {
+                    input: 10,
+                    output: 2,
+                    reasoning: 1,
+                    cache: { read: 0, write: 0 },
+                  },
+                },
+              ],
+            }
+          },
+        },
+      },
+    } as unknown as OpencodeClient
+    const store = createServerSession(client, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+
+    await Promise.all([store.context.refresh("child"), store.context.refresh("child")])
+
+    expect(requests).toEqual([{ sessionID: "child" }])
+    expect(store.context.get("child")).toMatchObject([{ id: "assistant", type: "assistant" }])
+  })
+
+  test("refreshes V2 context only at stable compaction boundaries", async () => {
+    const requests: string[] = []
+    const client = {
+      v2: {
+        session: {
+          context: async (input: { sessionID: string }) => {
+            requests.push(input.sessionID)
+            return { data: [] }
+          },
+        },
+      },
+    } as unknown as OpencodeClient
+    const store = createServerSession(client, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+    const current = { id: "evt_compaction", metadata: {}, location: { directory: "/repo" } }
+    const apply = (type: string, data: object) =>
+      store.applyV2({ ...current, type, data } as unknown as V2Event)
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    apply("session.next.compaction.started", {
+      timestamp: 1,
+      sessionID: "child",
+      messageID: "msg_compaction",
+      reason: "manual",
+    })
+    await flush()
+    expect(requests).toEqual([])
+
+    apply("session.next.compaction.ended", {
+      timestamp: 2,
+      sessionID: "child",
+      messageID: "msg_compaction",
+      reason: "manual",
+      text: "summary",
+      recent: "recent",
+    })
+    await flush()
+    expect(requests).toEqual(["child"])
+
+    apply("session.next.compaction.failed", {
+      timestamp: 3,
+      sessionID: "child",
+      messageID: "msg_compaction_2",
+      reason: "auto",
+      error: { type: "unknown", message: "failed" },
+    })
+    await flush()
+    expect(requests).toEqual(["child", "child"])
+
+    apply("session.idle", { sessionID: "child" })
+    await flush()
+    expect(requests).toEqual(["child", "child", "child"])
+  })
+
   test("preserves pinned session content under server-wide cache pressure", () => {
     const ctx = setup({})
     ctx.store.pin("active")

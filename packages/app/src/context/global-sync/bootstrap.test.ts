@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
-import type { Config, OpencodeClient, Project } from "@opencode-ai/sdk/v2/client"
+import type { Config, OpencodeClient, PermissionRequest, Project, QuestionRequest } from "@opencode-ai/sdk/v2/client"
 import type { AgentApi, CommandApi, ProjectApi, ReferenceApi } from "@opencode-ai/client/promise"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
@@ -127,6 +127,88 @@ describe("bootstrapDirectory", () => {
 
     expect(store.status).toBe("complete")
     expect(mcpReads).toEqual([])
+  })
+
+  test("does not overwrite requests changed while list snapshots are in flight", async () => {
+    const [store, setStore] = directoryState()
+    const revisions = { permission: 0, question: 0 }
+    const permission = {
+      id: "per_1",
+      sessionID: "ses_1",
+      permission: "read",
+      patterns: ["src/**"],
+      metadata: {},
+      always: [],
+    } satisfies PermissionRequest
+    const question = {
+      id: "que_1",
+      sessionID: "ses_1",
+      questions: [{ question: "Continue?", header: "Continue", options: [] }],
+    } satisfies QuestionRequest
+
+    let startPermission!: () => void
+    let startQuestion!: () => void
+    const permissionStarted = new Promise<void>((resolve) => {
+      startPermission = resolve
+    })
+    const questionStarted = new Promise<void>((resolve) => {
+      startQuestion = resolve
+    })
+    type EmptyList = { location: Record<string, never>; data: never[] }
+    let resolvePermission!: (value: EmptyList) => void
+    let resolveQuestion!: (value: EmptyList) => void
+    const permissionList = () => {
+      startPermission()
+      return new Promise<EmptyList>((resolve) => {
+        resolvePermission = resolve
+      })
+    }
+    const questionList = () => {
+      startQuestion()
+      return new Promise<EmptyList>((resolve) => {
+        resolveQuestion = resolve
+      })
+    }
+
+    const running = bootstrapDirectory({
+      directory: "/project",
+      scope: ServerScope.local,
+      mcp: false,
+      global: {
+        config: {} satisfies Config,
+        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+        project: [{ id: "project", worktree: "/project" } as Project],
+        provider,
+      },
+      sdk: {} as OpencodeClient,
+      api: {
+        ...api,
+        permission: { request: { list: permissionList } },
+        question: { request: { list: questionList } },
+      } as unknown as ServerApi,
+      store,
+      setStore,
+      vcsCache: { setStore() {} } as unknown as VcsCache,
+      loadSessions() {},
+      translate: (key) => key,
+      queryClient: new QueryClient(),
+      pendingRequestRevision: {
+        permission: () => revisions.permission,
+        question: () => revisions.question,
+      },
+    })
+
+    await Promise.all([permissionStarted, questionStarted])
+    setStore("permission", permission.sessionID, [permission])
+    setStore("question", question.sessionID, [question])
+    revisions.permission += 1
+    revisions.question += 1
+    resolvePermission({ location: {}, data: [] })
+    resolveQuestion({ location: {}, data: [] })
+    await running
+
+    expect(store.permission.ses_1).toEqual([permission])
+    expect(store.question.ses_1).toEqual([question])
   })
 })
 

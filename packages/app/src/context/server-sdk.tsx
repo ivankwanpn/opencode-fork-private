@@ -3,7 +3,7 @@ import type { Event, V2Event } from "@opencode-ai/sdk/v2/client"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { type Accessor, batch, createMemo, createResource, onCleanup, onMount } from "solid-js"
+import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
 import { usePlatform } from "./platform"
@@ -191,6 +191,7 @@ type ServerSDKBase = {
   server: ServerConnection.Any
   scope: ServerScope
   protocol: Promise<ServerProtocol>
+  protocolForGeneration: () => Promise<ServerProtocol>
   protocolKind: Accessor<ServerProtocol | undefined>
   url: string
   client: ReturnType<typeof createSdkForServer>
@@ -227,13 +228,19 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     fetch: eventFetch,
     server: server.http,
   })
-  const protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch, {
+  let protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch, {
     v2Only: server.type === "sidecar",
   })
-  const [protocolKind] = createResource(
-    () => protocol,
-    (value) => value,
-  )
+  const [protocolSource, setProtocolSource] = createSignal(protocol)
+  const [protocolKind] = createResource(protocolSource, (value) => value)
+  const protocolForGeneration = () => protocol
+  const refreshProtocol = () => {
+    protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch, {
+      v2Only: server.type === "sidecar",
+    })
+    setProtocolSource(protocol)
+    return protocol
+  }
   const emitter = createGlobalEmitter<{
     [key: string]: ServerEvent
   }>()
@@ -288,6 +295,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     const previous = run
     const current = (async () => {
       if (previous) await previous
+      let reconnect = false
       // oxlint-disable-next-line no-unmodified-loop-condition -- `started` is set to false by stop() which also aborts; both flags are checked to allow graceful exit
       while (!abort.signal.aborted && started && generation === active) {
         attempt = new AbortController()
@@ -296,7 +304,8 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         }
         abort.signal.addEventListener("abort", onAbort)
         try {
-          const kind = await protocol
+          if (reconnect) refreshProtocol()
+          const kind = await protocolForGeneration()
           const events =
             kind === "v1"
               ? (await eventSdk.global.event({ signal: attempt.signal })).stream
@@ -329,6 +338,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         }
 
         if (abort.signal.aborted || !started || generation !== active) return
+        reconnect = true
         await wait(RECONNECT_DELAY_MS)
       }
     })().finally(() => {
@@ -370,12 +380,13 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       throwOnError: true,
       directory,
     })
-  const api = createCompatibleApi({ protocol, current: currentApi, legacy })
+  const api = createCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
 
   return {
     server,
     scope,
     protocol,
+    protocolForGeneration,
     protocolKind,
     url: server.http.url,
     client: sdk,
@@ -452,7 +463,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     directory,
     client,
     api: createCompatibleApi({
-      protocol: serverSDK.protocol,
+      protocol: serverSDK.protocolForGeneration,
       current: serverSDK.currentApi,
       legacy: (next) => serverSDK.createClient({ directory: next ?? directory, throwOnError: true }),
       directory,

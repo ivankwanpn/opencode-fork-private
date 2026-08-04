@@ -31,7 +31,7 @@ type CompatibleCreateInput = Omit<SessionCreateInput, "model"> & { model?: Compa
 type CompatibleCommandInput = Omit<SessionCommandInput, "model"> & { model?: CompatibleModel | null }
 type CompatibleSessionApi = Omit<
   ServerApi["session"],
-  "create" | "prompt" | "command" | "shell" | "compact" | "rename" | "archive" | "remove"
+  "create" | "prompt" | "command" | "shell" | "compact" | "todo" | "rename" | "archive" | "remove"
 > & {
   create: (
     input?: CompatibleCreateInput,
@@ -44,6 +44,7 @@ type CompatibleSessionApi = Omit<
   ) => Promise<SessionCommandOutput>
   shell: (input: SessionShellInput & LegacyPrompt & { resume?: boolean }) => Promise<SessionShellOutput>
   compact: (input: SessionCompactInput & { model?: LegacyPrompt["model"] }) => Promise<SessionCompactOutput>
+  todo: (input: Parameters<ServerApi["session"]["todo"]>[0]) => ReturnType<ServerApi["session"]["todo"]>
   rename: (
     input: Parameters<ServerApi["session"]["rename"]>[0] & LegacyLocation,
   ) => ReturnType<ServerApi["session"]["rename"]>
@@ -279,6 +280,10 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           ),
         )
       },
+      async todo(value: Parameters<ServerApi["session"]["todo"]>[0]) {
+        const result = await legacy().session.todo({ sessionID: value.sessionID })
+        return result.data ?? []
+      },
       async rename(value: Parameters<ServerApi["session"]["rename"]>[0] & LegacyLocation) {
         await legacy(value).session.update({ sessionID: value.sessionID, title: value.title })
       },
@@ -481,6 +486,13 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         const result = await legacy(value?.location).path.get()
         if (!result.data) throw new Error("Path unavailable")
         return result.data
+      },
+    },
+    lsp: {
+      ...input.current.lsp,
+      async status(value?: Parameters<ServerApi["lsp"]["status"]>[0]) {
+        const result = await legacy(value?.location).lsp.status()
+        return located(result.data ?? [], value?.location)
       },
     },
     vcs: {

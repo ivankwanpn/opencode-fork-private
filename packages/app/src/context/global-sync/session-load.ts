@@ -1,9 +1,10 @@
 import type { SessionApi } from "@opencode-ai/client/promise"
 import { normalizeSessionInfo } from "@/utils/session"
+import type { ServerApi } from "@/utils/server"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { extractArray } from "@/utils/response-helpers"
 
-export async function loadRootSessions(input: { api: Pick<SessionApi, "list">; directory: string; limit: number }) {
+export async function loadRootSessions(input: { api: Pick<ServerApi["session"], "list">; directory: string; limit: number }) {
   const result = await input.api.list({
     directory: input.directory,
     parentID: null,
@@ -17,6 +18,8 @@ export async function loadRootSessions(input: { api: Pick<SessionApi, "list">; d
   } as const
 }
 
+// Some older V1 servers reject the limited list query. Keep the retry at the
+// explicit V1 boundary so the V2 session list contract stays strict.
 export async function loadRootSessionsV1(input: { client: OpencodeClient; directory: string; limit: number }) {
   try {
     const result = await input.client.session.list({ directory: input.directory, roots: true, limit: input.limit })

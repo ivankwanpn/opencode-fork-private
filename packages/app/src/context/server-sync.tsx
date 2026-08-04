@@ -45,7 +45,7 @@ import { useGlobal } from "./global"
 import { ServerConnection, useServer } from "./server"
 import { retry } from "@opencode-ai/core/util/retry"
 import type { ServerScope } from "@/utils/server-scope"
-import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
+import type { ServerProtocolResolver } from "@/utils/server-protocol"
 import { createHomeSessionIndexCache } from "./global-sync/home-session-index"
 import { persisted } from "@/utils/persist"
 import type { ServerApi } from "@/utils/server"
@@ -163,9 +163,7 @@ export const loadMcpResourcesQuery = (
 export const loadLspQuery = (
   scope: ServerScope,
   directory: string,
-  sdk: OpencodeClient,
   api: ServerApi["lsp"],
-  protocol: ServerProtocolResolver,
   apiForGeneration?: () => Promise<CompatibleImplementation>,
   generationFor?: () => Promise<ServerGeneration>,
 ) =>
@@ -173,8 +171,6 @@ export const loadLspQuery = (
     queryKey: [scope, directory, "lsp"] as const,
     queryFn: async () => {
       const generation = await generationFor?.()
-      const serverProtocol = generation?.protocol ?? (await resolveServerProtocol(protocol))
-      if (serverProtocol === "v1") return (await sdk.lsp.status()).data ?? []
       const current = generation?.api.lsp ?? (await apiForGeneration?.())?.lsp ?? api
       return (await current.status({ location: { directory } })).data.slice()
     },
@@ -300,7 +296,7 @@ function makeQueryOptionsApi(
     mcpResources: (directory: PathKey) =>
       loadMcpResourcesQuery(scope, directory, serverAPI.mcp, apiForGeneration),
     lsp: (directory: PathKey) =>
-      loadLspQuery(scope, directory, sdkFor(directory), serverAPI.lsp, protocol, apiForGeneration, generationFor),
+      loadLspQuery(scope, directory, serverAPI.lsp, apiForGeneration, generationFor),
     sessions: (directory: PathKey) => ({ queryKey: [scope, directory, "loadSessions"] as const }),
   }
 }
@@ -544,12 +540,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
         queryFn: () =>
-          serverSDK
-            .generationFor()
-            .then(({ protocol, api }) => {
-              if (protocol === "v1") return loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
-              return loadRootSessions({ api: api.session, directory, limit })
-            })
+          serverSDK.generationFor().then(({ protocol, api }) => {
+            if (protocol === "v1") return loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
+            return loadRootSessions({ api: api.session, directory, limit })
+          })
             .then((x) => {
               const nonArchived = (x.data ?? [])
                 .filter((s) => !!s?.id)

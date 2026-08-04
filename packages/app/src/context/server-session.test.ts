@@ -3,7 +3,7 @@ import type { retry } from "@opencode-ai/core/util/retry"
 import type { MessageApi, OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
 import type { Message, OpencodeClient, Part, Session, Todo, V2Event } from "@opencode-ai/sdk/v2/client"
 import type { ServerApi } from "@/utils/server"
-import { createV2OnlyApi } from "@/utils/server-compat"
+import { createV2OnlyApi, type CompatibleApi } from "@/utils/server-compat"
 import { createServerSession } from "./server-session"
 
 const session = (id: string, parentID?: string): Session => ({
@@ -1967,6 +1967,31 @@ describe("server session", () => {
       protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
       currentSession,
+    })
+
+    await store.todo("child")
+
+    expect(store.data.todo.child).toEqual(todos)
+  })
+
+  test("loads a V1 todo through the selected compatibility API", async () => {
+    const todos = [{ content: "finish migration", status: "pending", priority: "high" }] as Todo[]
+    const api = {
+      session: {
+        todo: async () => todos,
+      },
+    } as unknown as CompatibleApi
+    const client = {
+      session: {
+        todo: async () => {
+          throw new Error("direct V1 todo endpoint should not be called")
+        },
+      },
+    } as unknown as OpencodeClient
+    const store = createServerSession(client, api.session, {} as MessageApi, {
+      protocol: Promise.resolve("v1" as const),
+      api,
+      retry: retryImmediately,
     })
 
     await store.todo("child")

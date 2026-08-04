@@ -25,6 +25,10 @@ function currentApi(calls: string[]) {
       inputCancel: async () => {
         calls.push("inputCancel")
       },
+      todo: async () => {
+        calls.push("todo")
+        return []
+      },
       revert: {
         stage: async () => undefined,
         clear: async () => undefined,
@@ -63,6 +67,9 @@ function currentApi(calls: string[]) {
     },
     credential: {},
     pty: {},
+    lsp: {
+      status: async () => ({ location: {}, data: [] }),
+    },
     plugins: {
       list: async () => {
         calls.push("plugins.list")
@@ -191,6 +198,37 @@ describe("server compatibility API", () => {
       data: { status: "connected" },
     })
     expect(calls).toEqual([["/repo", { name: "demo" }]])
+  })
+
+  test("maps V1 todo and LSP reads through the compatibility adapter", async () => {
+    const calls: string[] = []
+    const todos = [{ id: "todo_1", content: "finish migration", status: "pending", priority: "high" }]
+    const api = createCompatibleApi({
+      protocol: Promise.resolve("v1"),
+      current: currentApi([]),
+      legacy: () =>
+        ({
+          session: {
+            todo: async (input: { sessionID: string }) => {
+              calls.push(`todo:${input.sessionID}`)
+              return { data: todos }
+            },
+          },
+          lsp: {
+            status: async () => {
+              calls.push("lsp")
+              return { data: [{ id: "typescript", name: "TypeScript", root: "/repo", status: "connected" }] }
+            },
+          },
+        }) as never,
+    })
+
+    await expect(api.session.todo({ sessionID: "ses_1" })).resolves.toEqual(todos)
+    await expect(api.lsp.status({ location: { directory: "/repo" } })).resolves.toEqual({
+      location: { directory: "/repo", project: { id: "", directory: "/repo" } },
+      data: [{ id: "typescript", name: "TypeScript", root: "/repo", status: "connected" }],
+    })
+    expect(calls).toEqual(["todo:ses_1", "lsp"])
   })
 
   test("does not send V1 OAuth cleanup through the current API", async () => {

@@ -1556,15 +1556,13 @@ export function createServerSession(
       const selected = options?.generationFor ? await options.generationFor() : undefined
       const protocol = selected?.protocol ?? (await resolveServerProtocol(options?.protocol))
       const currentSession =
-        protocol === "v2"
-          ? (selected?.api.session ??
-            (options?.apiForGeneration
-              ? (await options.apiForGeneration()).session
-              : options?.api
-                ? resolveCompatibleApi(options.api, protocol).session
-                : options?.currentSession))
-          : undefined
-      if (protocol === "v2" && currentSession) {
+        selected?.api.session ??
+        (options?.apiForGeneration
+          ? (await options.apiForGeneration()).session
+          : options?.api && protocol
+            ? resolveCompatibleApi(options.api, protocol).session
+            : options?.currentSession)
+      if (currentSession) {
         return runInflight(inflightTodo, sessionID, async () => {
           const active = generation(sessionID)
           const result = await (options?.retry ?? retry)(() => currentSession.todo({ sessionID }))

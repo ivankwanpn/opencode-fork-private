@@ -864,13 +864,15 @@ export function createServerSession(
   }
 
   const refreshContext = (sessionID: string) => {
-    if (!options?.protocol) return Promise.resolve()
+    if (!sessionApi || !options?.protocol) return Promise.resolve()
     return runInflight(contextLoads, sessionID, async () => {
       if ((await resolveServerProtocol(options.protocol)) === "v1") return
       const active = generation(sessionID)
-      const result = await (options.retry ?? retry)(() => client.v2.session.context({ sessionID }))
+      const result = await (options.retry ?? retry)(() => sessionApi.context({ sessionID }))
       if (generations.get(sessionID) !== active) return
-      setData("session_context", sessionID, result.data)
+      // The injected current API returns the V2 protocol shape; the shared
+      // legacy client type predates the V2 content identifiers.
+      setData("session_context", sessionID, result as unknown as readonly SessionMessage[])
     })
   }
 

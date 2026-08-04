@@ -1733,33 +1733,30 @@ describe("server session", () => {
       session: {
         get: async () => ({ data: session("child") }),
       },
-      v2: {
-        session: {
-          context: async (input: unknown) => {
-            requests.push(input)
-            return {
-              data: [
-                {
-                  id: "assistant",
-                  type: "assistant",
-                  time: { created: 2, completed: 3 },
-                  agent: "build",
-                  model: { providerID: "provider", id: "model" },
-                  content: [],
-                  tokens: {
-                    input: 10,
-                    output: 2,
-                    reasoning: 1,
-                    cache: { read: 0, write: 0 },
-                  },
-                },
-              ],
-            }
-          },
-        },
-      },
     } as unknown as OpencodeClient
-    const store = createServerSession(client, {
+    const sessionApi = {
+      context: async (input: unknown) => {
+        requests.push(input)
+        return [
+          {
+            id: "assistant",
+            type: "assistant" as const,
+            time: { created: 2, completed: 3 },
+            agent: "build",
+            model: { providerID: "provider", id: "model" },
+            content: [],
+            tokens: {
+              input: 10,
+              output: 2,
+              reasoning: 1,
+              cache: { read: 0, write: 0 },
+            },
+          },
+        ]
+      },
+    } as unknown as SessionApi
+    const messageApi = {} as MessageApi
+    const store = createServerSession(client, sessionApi, messageApi, {
       protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
@@ -1773,16 +1770,14 @@ describe("server session", () => {
   test("refreshes V2 context only at stable compaction boundaries", async () => {
     const requests: string[] = []
     const client = {
-      v2: {
-        session: {
-          context: async (input: { sessionID: string }) => {
-            requests.push(input.sessionID)
-            return { data: [] }
-          },
-        },
-      },
     } as unknown as OpencodeClient
-    const store = createServerSession(client, {
+    const sessionApi = {
+      context: async (input: { sessionID: string }) => {
+        requests.push(input.sessionID)
+        return []
+      },
+    } as unknown as SessionApi
+    const store = createServerSession(client, sessionApi, {} as MessageApi, {
       protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })

@@ -58,6 +58,7 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
 import { TerminalProvider, useTerminal } from "@/context/terminal"
+import { runServerSessionMutation } from "@/utils/session-mutation"
 import { PromptInput } from "@/components/prompt-input"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
@@ -404,7 +405,18 @@ export default function Page() {
 
   const followupState = createSessionFollowupState({
     sessionID: () => params.id,
-    api: () => sdk().api.session,
+    api: () => sdk().currentApi.session,
+    mutate: (sessionID, task) => {
+      const target = sdk()
+      return runServerSessionMutation({
+        protocol: target.protocol,
+        api: target.api,
+        currentApi: target.currentApi,
+        sessionMutations: target.sessionMutations,
+        sessionID,
+        run: task,
+      })
+    },
     enabled: () => serverSDK().protocolKind() === "v2",
   })
   const [followupEdit, setFollowupEdit] = createStore<Record<string, SessionFollowupEdit | undefined>>({})
@@ -1766,16 +1778,9 @@ export default function Page() {
     setFollowupEdit(id, undefined)
   }
 
-  const halt = (sessionID: string) =>
-    busy(sessionID)
-      ? sdk()
-          .api.session.interrupt({ sessionID })
-          .catch(() => {})
-      : Promise.resolve()
-
   const revertMutation = useMutation(() => ({
     mutationFn: async (input: { sessionID: string; messageID: string }) => {
-      const session = sdk().api.session
+      const sdkTarget = sdk()
       const target = sync()
       const last = target.session.get(input.sessionID)?.revert
       const value = draft(input.messageID)
@@ -1785,7 +1790,18 @@ export default function Page() {
           roll(input.sessionID, { messageID: input.messageID }, target)
           prompt.set(value)
         },
-        request: () => halt(input.sessionID).then(() => session.revert.stage(input)),
+        request: () =>
+          runServerSessionMutation({
+            protocol: sdkTarget.protocol,
+            api: sdkTarget.api,
+            currentApi: sdkTarget.currentApi,
+            sessionMutations: sdkTarget.sessionMutations,
+            sessionID: input.sessionID,
+            run: async (api) => {
+              if (busy(input.sessionID)) await api.interrupt({ sessionID: input.sessionID }).catch(() => {})
+              return api.revert.stage(input)
+            },
+          }),
         complete: () => undefined,
         rollback: () => roll(input.sessionID, last, target),
         fail,
@@ -1798,7 +1814,7 @@ export default function Page() {
       const sessionID = params.id
       if (!sessionID) return
 
-      const session = sdk().api.session
+      const sdkTarget = sdk()
       const target = sync()
       const next = userMessages().find((item) => item.id > id)
       const last = target.session.get(sessionID)?.revert
@@ -1814,9 +1830,21 @@ export default function Page() {
           promptSession.reset()
         },
         request: () =>
-          !next
-            ? halt(sessionID).then(() => session.revert.clear({ sessionID }))
-            : halt(sessionID).then(() => session.revert.stage({ sessionID, messageID: next.id }).then(() => undefined)),
+          runServerSessionMutation({
+            protocol: sdkTarget.protocol,
+            api: sdkTarget.api,
+            currentApi: sdkTarget.currentApi,
+            sessionMutations: sdkTarget.sessionMutations,
+            sessionID,
+            run: async (api) => {
+              if (busy(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
+              if (!next) {
+                await api.revert.clear({ sessionID })
+                return
+              }
+              await api.revert.stage({ sessionID, messageID: next.id })
+            },
+          }),
         complete: () => undefined,
         rollback: () => roll(sessionID, last, target),
         fail,

@@ -1,3 +1,9 @@
+import type { ServerApi } from "./server"
+import type { CompatibleApi } from "./server-compat"
+import type { ServerProtocol } from "./server-protocol"
+
+export type ServerSessionApi = CompatibleApi["session"] | ServerApi["session"]
+
 export function createSessionMutationQueue() {
   const pending = new Map<string, Promise<unknown>>()
 
@@ -12,4 +18,23 @@ export function createSessionMutationQueue() {
   }
 
   return { run }
+}
+
+export function resolveServerSessionApi(input: {
+  protocol: Promise<ServerProtocol>
+  api: CompatibleApi
+  currentApi: ServerApi
+}): Promise<ServerSessionApi> {
+  return input.protocol.then((protocol) => (protocol === "v1" ? input.api.session : input.currentApi.session))
+}
+
+export function runServerSessionMutation<T>(input: {
+  protocol: Promise<ServerProtocol>
+  api: CompatibleApi
+  currentApi: ServerApi
+  sessionMutations: ReturnType<typeof createSessionMutationQueue>
+  sessionID: string
+  run: (api: ServerSessionApi) => Promise<T>
+}) {
+  return input.sessionMutations.run(input.sessionID, async () => input.run(await resolveServerSessionApi(input)))
 }

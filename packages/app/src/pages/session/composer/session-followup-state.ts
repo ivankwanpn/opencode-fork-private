@@ -1,12 +1,12 @@
 import { createStore } from "solid-js/store"
 import type { FilePartSource } from "@opencode-ai/sdk/v2/client"
-import type { DirectorySDK } from "@/context/sdk"
+import type { ServerApi } from "@/utils/server"
 import { decodeFilePath, stripQueryAndHash } from "@/context/file/path"
 import type { ContextItem, FileAttachmentPart, Prompt } from "@/context/prompt"
 import { readCommentMetadata } from "@/utils/comment-note"
 
 type SessionFollowupApi = Pick<
-  DirectorySDK["api"]["session"],
+  ServerApi["session"],
   "inputList" | "inputGet" | "inputPromote" | "inputCancel"
 >
 
@@ -21,6 +21,7 @@ export type SessionFollowupEdit = {
 export function createSessionFollowupState(input: {
   sessionID: () => string | undefined
   api: () => SessionFollowupApi
+  mutate?: (sessionID: string, task: (api: SessionFollowupApi) => Promise<unknown>) => Promise<unknown>
   enabled?: () => boolean
 }) {
   const [store, setStore] = createStore({
@@ -82,7 +83,8 @@ export function createSessionFollowupState(input: {
     const api = input.api()
     setStore("sending", inputID)
     try {
-      await api.inputPromote({ sessionID, inputID })
+      if (input.mutate) await input.mutate(sessionID, (current) => current.inputPromote({ sessionID, inputID }))
+      else await api.inputPromote({ sessionID, inputID })
       await refresh()
       return true
     } catch (error) {
@@ -102,7 +104,8 @@ export function createSessionFollowupState(input: {
     const api = input.api()
     setStore("sending", inputID)
     try {
-      await api.inputCancel({ sessionID, inputID })
+      if (input.mutate) await input.mutate(sessionID, (current) => current.inputCancel({ sessionID, inputID }))
+      else await api.inputCancel({ sessionID, inputID })
       await refresh()
       return true
     } finally {

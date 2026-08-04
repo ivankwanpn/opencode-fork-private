@@ -219,6 +219,11 @@ beforeAll(async () => {
         directory: "/repo/main",
         client: rootClient,
         api: rootClient.api,
+        currentApi: rootClient.api,
+        protocol: Promise.resolve("v2" as const),
+        sessionMutations: {
+          run: (_sessionID: string, task: () => Promise<unknown>) => task(),
+        },
         url: "http://localhost:4096",
         createClient(opts: any) {
           return clientFor(opts.directory)

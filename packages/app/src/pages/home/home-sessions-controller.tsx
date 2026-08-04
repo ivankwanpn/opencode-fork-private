@@ -21,6 +21,7 @@ import { displayName, errorMessage, projectForSession } from "@/pages/layout/hel
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { pathKey } from "@/utils/path-key"
 import { showToast } from "@/utils/toast"
+import { runServerSessionMutation } from "@/context/server-sdk"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { archiveHomeSession } from "../home-session-archive"
 import type { HomeController } from "./home-controller"
@@ -223,7 +224,15 @@ export function createHomeSessionsController(home: HomeController) {
         await archiveHomeSession({
           server: ServerConnection.key(conn),
           session,
-          archive: (sessionID) => ctx.sdk.api.session.archive({ sessionID, directory: session.directory }),
+          archive: (sessionID) =>
+            runServerSessionMutation({
+              protocol: ctx.sdk.protocol,
+              api: ctx.sdk.api,
+              currentApi: ctx.sdk.currentApi,
+              sessionMutations: ctx.sdk.sessionMutations,
+              sessionID,
+              run: (api) => api.archive({ sessionID, directory: session.directory }),
+            }),
           remove: () => {
             ctx.sync.session.evict(session.id)
             setStore(

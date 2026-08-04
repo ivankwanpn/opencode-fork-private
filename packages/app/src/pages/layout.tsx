@@ -35,7 +35,7 @@ import type { DragEvent } from "@thisbeyond/solid-dnd"
 import { useProviders } from "@/hooks/use-providers"
 import { toaster } from "@opencode-ai/ui/toast"
 import { setV2Toast, showToast, ToastRegion } from "@/utils/toast"
-import { useServerSDK } from "@/context/server-sdk"
+import { runServerSessionMutation, useServerSDK } from "@/context/server-sdk"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
 import { clearWorkspaceTerminals } from "@/context/terminal"
 import { pickSessionCacheEvictions } from "@/context/global-sync/session-cache"
@@ -866,7 +866,15 @@ export default function LegacyLayout(props: ParentProps) {
     const index = sessions.findIndex((s) => s.id === session.id)
     const nextSession = sessions[index + 1] ?? sessions[index - 1]
 
-    await serverSDK().api.session.archive({ sessionID: session.id, directory: session.directory })
+    const target = serverSDK()
+    await runServerSessionMutation({
+      protocol: target.protocol,
+      api: target.api,
+      currentApi: target.currentApi,
+      sessionMutations: target.sessionMutations,
+      sessionID: session.id,
+      run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
+    })
     setStore(
       produce((draft) => {
         const match = Binary.search(draft.session, session.id, (s) => s.id)
@@ -1473,11 +1481,17 @@ export default function LegacyLayout(props: ParentProps) {
     await Promise.all(
       sessions
         .filter((session) => session.time.archived === undefined)
-        .map((session) =>
-          serverSDK()
-            .api.session.archive({ sessionID: session.id, directory: session.directory })
-            .catch(() => undefined),
-        ),
+        .map((session) => {
+          const target = serverSDK()
+          return runServerSessionMutation({
+            protocol: target.protocol,
+            api: target.api,
+            currentApi: target.currentApi,
+            sessionMutations: target.sessionMutations,
+            sessionID: session.id,
+            run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
+          }).catch(() => undefined)
+        }),
     )
 
     setBusy(directory, false)

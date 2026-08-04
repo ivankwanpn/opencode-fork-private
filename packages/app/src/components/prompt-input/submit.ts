@@ -11,7 +11,7 @@ import { useLayout } from "@/context/layout"
 import { useLocal, type ModelSelection } from "@/context/local"
 import { usePermission } from "@/context/permission"
 import { type ContextItem, type ImageAttachmentPart, type Prompt, type usePrompt } from "@/context/prompt"
-import { useSDK, type DirectorySDK } from "@/context/sdk"
+import { useSDK } from "@/context/sdk"
 import { useSync, type DirectorySync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
 import { Worktree as WorktreeState } from "@/utils/worktree"
@@ -23,6 +23,11 @@ import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
+import {
+  resolveServerSessionApi,
+  runServerSessionMutation,
+  type ServerSessionApi,
+} from "@/utils/session-mutation"
 
 type PendingPrompt = {
   abort: AbortController
@@ -44,7 +49,7 @@ export type FollowupDraft = {
 }
 
 type FollowupSendInput = {
-  api: DirectorySDK["api"]["session"]
+  api: ServerSessionApi
   serverSync: ServerSync
   sync: DirectorySync
   draft: FollowupDraft
@@ -296,9 +301,15 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       pending.delete(key)
       return Promise.resolve()
     }
-    return sdk()
-      .api.session.interrupt({ sessionID })
-      .catch(() => {})
+    const target = sdk()
+    return runServerSessionMutation({
+      protocol: target.protocol,
+      api: target.api,
+      currentApi: target.currentApi,
+      sessionMutations: target.sessionMutations,
+      sessionID,
+      run: (api) => api.interrupt({ sessionID }).catch(() => {}),
+    })
   }
 
   const restoreCommentItems = (
@@ -382,6 +393,11 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     const submissionSDK = sdk()
     const submissionServerSync = serverSync()
+    const submissionSessionApi = await resolveServerSessionApi({
+      protocol: submissionSDK.protocol,
+      api: submissionSDK.api,
+      currentApi: submissionSDK.currentApi,
+    })
     const projectDirectory = submissionSDK.directory
     const permissionState = permission.currentServerState()
     const isNewSession = !params.id
@@ -426,8 +442,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     let session = input.info()
     if (!session && isNewSession) {
-      const created = await submissionSDK
-        .api.session.create({
+      const created = await submissionSessionApi
+        .create({
           agent: currentAgent.name,
           model: { id: currentModel.id, providerID: currentModel.provider.id, variant, protocol },
           location: { directory: sessionDirectory },
@@ -520,7 +536,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     if (mode === "shell") {
       clearInput()
       const eventID = Event.ID.create()
-      submissionSDK.api.session.shell({
+      submissionSessionApi.shell({
           sessionID: session.id,
           id: eventID,
           command: text,
@@ -544,8 +560,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (customCommand) {
         clearInput()
         submissionServerSync.session.set("session_status", session.id, { type: "busy" })
-        submissionSDK
-          .api.session.command({
+        submissionSessionApi
+          .command({
             sessionID: session.id,
             id: messageID,
             command: commandName,
@@ -647,7 +663,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
 
     void sendFollowupDraft({
-      api: submissionSDK.api.session,
+      api: submissionSessionApi,
       sync: sync(),
       serverSync: submissionServerSync,
       draft,

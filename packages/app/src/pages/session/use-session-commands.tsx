@@ -19,6 +19,7 @@ import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionOwnership } from "./session-ownership"
 import { useLocal } from "@/context/local"
+import { runServerSessionMutation } from "@/utils/session-mutation"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
@@ -193,8 +194,15 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    const url = await sdk()
-      .api.session.share({ sessionID })
+    const target = sdk()
+    const url = await runServerSessionMutation({
+      protocol: target.protocol,
+      api: target.api,
+      currentApi: target.currentApi,
+      sessionMutations: target.sessionMutations,
+      sessionID,
+      run: (api) => api.share({ sessionID }),
+    })
       .then((res) => res.url)
       .catch(() => undefined)
     if (!url) {
@@ -213,8 +221,15 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const sessionID = params.id
     if (!sessionID) return
 
-    await sdk()
-      .api.session.unshare({ sessionID })
+    const target = sdk()
+    await runServerSessionMutation({
+      protocol: target.protocol,
+      api: target.api,
+      currentApi: target.currentApi,
+      sessionMutations: target.sessionMutations,
+      sessionID,
+      run: (api) => api.unshare({ sessionID }),
+    })
       .then(() =>
         showToast({
           title: language.t("toast.session.unshare.success.title"),
@@ -306,8 +321,8 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const sessionID = params.id
     if (!sessionID) return
     const owner = sessionOwnership.capture()
-    const session = sdk().api.session
-    const directory = sdk().directory
+    const target = sdk()
+    const directory = target.directory
     const promptSession = prompt.capture()
     const revert = info()?.revert?.messageID
     const messages = userMessages()
@@ -315,14 +330,21 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     if (!message) return
     const parts = sync().data.part[message.id]
 
-    if (sync().data.session_working(sessionID)) {
-      await session.interrupt({ sessionID }).catch(() => {})
-    }
-
     await runCommand({
       owner,
       prompt: promptSession,
-      request: () => session.revert.stage({ sessionID, messageID: message.id }),
+      request: () =>
+        runServerSessionMutation({
+          protocol: target.protocol,
+          api: target.api,
+          currentApi: target.currentApi,
+          sessionMutations: target.sessionMutations,
+          sessionID,
+          run: async (api) => {
+            if (sync().data.session_working(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
+            return api.revert.stage({ sessionID, messageID: message.id })
+          },
+        }),
       updatePrompt: (promptSession) => {
         if (parts) promptSession.set(extractPromptFromParts(parts, { directory }))
       },
@@ -334,7 +356,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const sessionID = params.id
     if (!sessionID) return
     const owner = sessionOwnership.capture()
-    const session = sdk().api.session
+    const target = sdk()
     const messages = userMessages()
     const promptSession = prompt.capture()
 
@@ -346,7 +368,15 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       await runCommand({
         owner,
         prompt: promptSession,
-        request: () => session.revert.clear({ sessionID }),
+        request: () =>
+          runServerSessionMutation({
+            protocol: target.protocol,
+            api: target.api,
+            currentApi: target.currentApi,
+            sessionMutations: target.sessionMutations,
+            sessionID,
+            run: (api) => api.revert.clear({ sessionID }),
+          }),
         updatePrompt: (promptSession) => promptSession.reset(),
         updateViewport: () => setActiveMessage(findLast(messages, (x) => x.id >= revertMessageID)),
       })
@@ -356,7 +386,15 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     await runCommand({
       owner,
       prompt: promptSession,
-      request: () => session.revert.stage({ sessionID, messageID: next.id }),
+      request: () =>
+        runServerSessionMutation({
+          protocol: target.protocol,
+          api: target.api,
+          currentApi: target.currentApi,
+          sessionMutations: target.sessionMutations,
+          sessionID,
+          run: (api) => api.revert.stage({ sessionID, messageID: next.id }),
+        }),
       updatePrompt: () => undefined,
       updateViewport: () => setActiveMessage(findLast(messages, (x) => x.id < next.id)),
     })
@@ -375,9 +413,18 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await sdk().api.session.compact({
+    const target = sdk()
+    await runServerSessionMutation({
+      protocol: target.protocol,
+      api: target.api,
+      currentApi: target.currentApi,
+      sessionMutations: target.sessionMutations,
       sessionID,
-      model: { providerID: model.provider.id, modelID: model.id },
+      run: (api) =>
+        api.compact({
+          sessionID,
+          model: { providerID: model.provider.id, modelID: model.id },
+        }),
     })
   }
 

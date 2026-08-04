@@ -70,8 +70,7 @@ export function createHomeSessionsController(home: HomeController) {
       if (!ctx) return { sessions: [], eventSequence: 0 }
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
-      const protocol = await ctx.sdk.protocolForGeneration()
-      const api = await ctx.sdk.apiForGeneration()
+      const { protocol, api } = await ctx.sdk.generationFor()
       const sessionList = (
         input: Parameters<typeof ctx.sdk.api.session.list>[0],
         options?: Parameters<typeof ctx.sdk.api.session.list>[1],

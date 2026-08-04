@@ -83,6 +83,10 @@ type CompatibleInput = {
 }
 
 export type CompatibleImplementation = CompatibleApi | ServerApi
+export type ServerGeneration = {
+  protocol: ServerProtocol
+  api: CompatibleImplementation
+}
 const compatibleResolvers = new WeakMap<object, (protocol: ServerProtocol) => CompatibleImplementation>()
 
 function mime(uri: string) {
@@ -148,6 +152,10 @@ export function createV2OnlyApi(input: Pick<CompatibleInput, "protocol" | "curre
 
 export function resolveCompatibleApi(api: CompatibleApi, protocol: ServerProtocol): CompatibleImplementation {
   return compatibleResolvers.get(api)?.(protocol) ?? api
+}
+
+export function resolveCompatibleGeneration(api: CompatibleApi, protocol: ServerProtocol): ServerGeneration {
+  return { protocol, api: resolveCompatibleApi(api, protocol) }
 }
 
 export function resolveCompatibleApiForProtocol(

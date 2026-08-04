@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { ServerApi } from "./server"
-import { createCompatibleApi, createV2OnlyApi, resolveCompatibleApiForProtocol } from "./server-compat"
+import {
+  createCompatibleApi,
+  createV2OnlyApi,
+  resolveCompatibleApiForProtocol,
+  resolveCompatibleGeneration,
+} from "./server-compat"
 
 function currentApi(calls: string[]) {
   const current = {
@@ -236,6 +241,23 @@ describe("server compatibility API", () => {
     protocol = "v1"
 
     await expect(selected.session.inputList({ sessionID: "ses_1", delivery: "queue" })).resolves.toEqual([])
+    expect(calls).toEqual(["inputList"])
+  })
+
+  test("keeps the protocol and API selected from the same generation", async () => {
+    const calls: string[] = []
+    const api = createCompatibleApi({
+      protocol: Promise.resolve("v2"),
+      current: currentApi(calls),
+      legacy: () => {
+        throw new Error("legacy client should not be used")
+      },
+    })
+
+    const selected = resolveCompatibleGeneration(api, "v2")
+
+    await expect(selected.api.session.inputList({ sessionID: "ses_1", delivery: "queue" })).resolves.toEqual([])
+    expect(selected.protocol).toBe("v2")
     expect(calls).toEqual(["inputList"])
   })
 })

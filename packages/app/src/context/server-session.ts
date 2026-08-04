@@ -32,7 +32,12 @@ import { createV2SessionReducer, type V2SessionReduction } from "./server-sessio
 import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 import { extractArray } from "@/utils/response-helpers"
 import type { ServerApi } from "@/utils/server"
-import { resolveCompatibleApi, type CompatibleApi, type CompatibleImplementation } from "@/utils/server-compat"
+import {
+  resolveCompatibleApi,
+  type CompatibleApi,
+  type CompatibleImplementation,
+  type ServerGeneration,
+} from "@/utils/server-compat"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
@@ -198,6 +203,7 @@ type ServerSessionOptions = {
   protocol?: ServerProtocolResolver
   api?: CompatibleApi
   apiForGeneration?: () => Promise<CompatibleImplementation>
+  generationFor?: () => Promise<ServerGeneration>
   currentSession?: Pick<ServerApi["session"], "todo">
 }
 
@@ -569,13 +575,16 @@ export function createServerSession(
     )
 
   const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
-    const protocol = messageApi ? await resolveServerProtocol(options?.protocol) : undefined
+    const generation = options?.generationFor ? await options.generationFor() : undefined
+    const protocol = messageApi ? (generation?.protocol ?? (await resolveServerProtocol(options?.protocol))) : undefined
     if (messageApi && protocol !== "v1") {
-      const currentMessageApi = options?.apiForGeneration
-        ? (await options.apiForGeneration()).message
-        : options?.api && protocol
-          ? resolveCompatibleApi(options.api, protocol).message
-          : messageApi
+      const currentMessageApi =
+        generation?.api.message ??
+        (options?.apiForGeneration
+          ? (await options.apiForGeneration()).message
+          : options?.api && protocol
+            ? resolveCompatibleApi(options.api, protocol).message
+            : messageApi)
       const pageLimit = Math.min(limit, messageApiPageSize)
       const request = (cursor?: string) =>
         (options?.retry ?? retry)(() => {
@@ -627,13 +636,16 @@ export function createServerSession(
   }
 
   const fetchMessage = async (sessionID: string, messageID: string, onAttempt?: () => void) => {
-    const protocol = sessionApi ? await resolveServerProtocol(options?.protocol) : undefined
+    const generation = options?.generationFor ? await options.generationFor() : undefined
+    const protocol = sessionApi ? (generation?.protocol ?? (await resolveServerProtocol(options?.protocol))) : undefined
     if (sessionApi && protocol !== "v1") {
-      const currentSessionApi = options?.apiForGeneration
-        ? (await options.apiForGeneration()).session
-        : options?.api && protocol
-          ? resolveCompatibleApi(options.api, protocol).session
-          : sessionApi
+      const currentSessionApi =
+        generation?.api.session ??
+        (options?.apiForGeneration
+          ? (await options.apiForGeneration()).session
+          : options?.api && protocol
+            ? resolveCompatibleApi(options.api, protocol).session
+            : sessionApi)
       const response = await (options?.retry ?? retry)(() => {
         onAttempt?.()
         return currentSessionApi.message({ sessionID, messageID })
@@ -897,16 +909,19 @@ export function createServerSession(
   }
 
   const refreshContext = (sessionID: string) => {
-    if ((!sessionApi && !options?.api && !options?.apiForGeneration) || !options?.protocol)
+    if ((!sessionApi && !options?.api && !options?.apiForGeneration && !options?.generationFor) || !options?.protocol)
       return Promise.resolve()
     return runInflight(contextLoads, sessionID, async () => {
-      const protocol = await resolveServerProtocol(options.protocol)
+      const selected = options.generationFor ? await options.generationFor() : undefined
+      const protocol = selected?.protocol ?? (await resolveServerProtocol(options.protocol))
       if (protocol === "v1") return
-      const currentSessionApi = options.apiForGeneration
-        ? (await options.apiForGeneration()).session
-        : options.api && protocol
-          ? resolveCompatibleApi(options.api, protocol).session
-          : sessionApi
+      const currentSessionApi =
+        selected?.api.session ??
+        (options.apiForGeneration
+          ? (await options.apiForGeneration()).session
+          : options.api && protocol
+            ? resolveCompatibleApi(options.api, protocol).session
+            : sessionApi)
       if (!currentSessionApi) return
       const active = generation(sessionID)
       const result = await (options.retry ?? retry)(() => currentSessionApi.context({ sessionID }))
@@ -992,15 +1007,19 @@ export function createServerSession(
   }
 
   const hydrateV2Message = (sessionID: string, messageID: string) => {
-    const currentSessionApi = options?.apiForGeneration
-      ? options.apiForGeneration().then((api) => api.session)
+    const currentSessionApi = options?.generationFor
+      ? options
+          .generationFor()
+          .then((generation) => (generation.protocol === "v1" ? undefined : generation.api.session))
       : options?.api
         ? resolveServerProtocol(options.protocol).then((protocol) => {
             if (protocol === "v1") return
             return resolveCompatibleApi(options.api!, "v2").session
           })
-        : Promise.resolve(sessionApi)
-    if (!options?.apiForGeneration && !options?.api && !sessionApi) return
+        : options?.apiForGeneration
+          ? options.apiForGeneration().then((api) => api.session)
+          : Promise.resolve(sessionApi)
+    if (!options?.generationFor && !options?.apiForGeneration && !options?.api && !sessionApi) return
     const active = generation(sessionID)
     void currentSessionApi
       .then((api) => api?.message({ sessionID, messageID }))
@@ -1534,14 +1553,16 @@ export function createServerSession(
     async todo(sessionID: string, request?: { force?: boolean }) {
       touch(sessionID)
       if (data.todo[sessionID] !== undefined && !request?.force) return
-      const protocol = await resolveServerProtocol(options?.protocol)
+      const selected = options?.generationFor ? await options.generationFor() : undefined
+      const protocol = selected?.protocol ?? (await resolveServerProtocol(options?.protocol))
       const currentSession =
         protocol === "v2"
-          ? options?.apiForGeneration
-            ? (await options.apiForGeneration()).session
-            : options?.api
-              ? resolveCompatibleApi(options.api, protocol).session
-            : options?.currentSession
+          ? (selected?.api.session ??
+            (options?.apiForGeneration
+              ? (await options.apiForGeneration()).session
+              : options?.api
+                ? resolveCompatibleApi(options.api, protocol).session
+                : options?.currentSession))
           : undefined
       if (protocol === "v2" && currentSession) {
         return runInflight(inflightTodo, sessionID, async () => {

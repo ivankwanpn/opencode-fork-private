@@ -54,7 +54,7 @@ import { normalizeSessionInfo } from "@/utils/session"
 import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 import { extractArray } from "@/utils/response-helpers"
 import type { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
-import type { CompatibleImplementation } from "@/utils/server-compat"
+import type { CompatibleImplementation, ServerGeneration } from "@/utils/server-compat"
 
 type GlobalStore = {
   ready: boolean
@@ -191,6 +191,7 @@ export async function bootstrapGlobal(input: {
       readonly project: ProjectApi
     }
   apiForGeneration?: () => Promise<CompatibleImplementation>
+  generationFor?: () => Promise<ServerGeneration>
   protocol?: ServerProtocolResolver
   scope: ServerScope
   requestFailedTitle: string
@@ -199,28 +200,32 @@ export async function bootstrapGlobal(input: {
   setGlobalStore: SetStoreFunction<GlobalStore>
   queryClient: QueryClient
 }) {
-  const resolveApi = () => input.apiForGeneration?.() ?? Promise.resolve(input.serverAPI)
+  const generationFor = input.generationFor
+  const apiForGeneration = generationFor
+    ? () => generationFor().then((generation) => generation.api)
+    : input.apiForGeneration
+  const resolveApi = () => apiForGeneration?.() ?? Promise.resolve(input.serverAPI)
   const slow = [
     () =>
       input.protocol
         ? resolveApi().then((api) =>
-            input.queryClient.fetchQuery(loadCompatibleConfigQuery(input.scope, api.config, input.apiForGeneration)),
+            input.queryClient.fetchQuery(loadCompatibleConfigQuery(input.scope, api.config, apiForGeneration)),
           )
         : input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.serverSDK)),
     () =>
       resolveApi().then((api) =>
         input.queryClient.fetchQuery(
-          loadProvidersQuery(input.scope, null, api, input.serverSDK, input.protocol, input.apiForGeneration),
+          loadProvidersQuery(input.scope, null, api, input.serverSDK, input.protocol, apiForGeneration, generationFor),
         ),
       ),
     () =>
       resolveApi().then((api) =>
-        input.queryClient.fetchQuery(loadPathQuery(input.scope, null, api.path, input.apiForGeneration)),
+        input.queryClient.fetchQuery(loadPathQuery(input.scope, null, api.path, apiForGeneration)),
       ),
     () =>
       resolveApi()
         .then((api) =>
-          input.queryClient.fetchQuery(loadProjectsQuery(input.scope, api.project, input.apiForGeneration)),
+          input.queryClient.fetchQuery(loadProjectsQuery(input.scope, api.project, apiForGeneration)),
         )
         .then((data) => input.setGlobalStore("project", data)),
   ]
@@ -286,16 +291,18 @@ export const loadProvidersQuery = (
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
   apiForGeneration?: () => Promise<CompatibleImplementation>,
+  generationFor?: () => Promise<ServerGeneration>,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "providers"],
     queryFn: () =>
       retry(async () => {
-        const serverProtocol = await resolveServerProtocol(protocol)
+        const generation = await generationFor?.()
+        const serverProtocol = generation?.protocol ?? (await resolveServerProtocol(protocol))
         if (serverProtocol === "v1" && legacy)
           return legacy.provider.list().then((result) => normalizeProviderList(result.data!))
         const location = directory ? { location: { directory } } : undefined
-        const current = (await apiForGeneration?.())?.providers ?? sdk.providers
+        const current = generation?.api.providers ?? (await apiForGeneration?.())?.providers ?? sdk.providers
         return current.catalog(location).then((result) => normalizeProviderList(result.data))
       }),
   })
@@ -319,14 +326,16 @@ export const loadAgentsQuery = (
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
   apiForGeneration?: () => Promise<CompatibleImplementation>,
+  generationFor?: () => Promise<ServerGeneration>,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "agents"],
     queryFn: () =>
       retry(async () => {
-        if ((await resolveServerProtocol(protocol)) === "v1" && legacy)
+        const generation = await generationFor?.()
+        if ((generation?.protocol ?? (await resolveServerProtocol(protocol))) === "v1" && legacy)
           return normalizeAgentList((await legacy.app.agents()).data ?? [])
-        const current = (await apiForGeneration?.())?.agent ?? sdk
+        const current = generation?.api.agent ?? (await apiForGeneration?.())?.agent ?? sdk
         return current.list({ location: { directory } }).then((result) => normalizeAgentList(extractArray(result)))
       }),
   })
@@ -337,9 +346,11 @@ export const loadCommands = (
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
   apiForGeneration?: () => Promise<CompatibleImplementation>,
+  generationFor?: () => Promise<ServerGeneration>,
 ): Promise<CommandInfo[]> =>
   retry(async () => {
-    if ((await resolveServerProtocol(protocol)) === "v1" && legacy) {
+    const generation = await generationFor?.()
+    if ((generation?.protocol ?? (await resolveServerProtocol(protocol))) === "v1" && legacy) {
       return ((await legacy.command.list()).data ?? []).map((command) => {
         const [providerID, id] = command.model?.split("/") ?? []
         return {
@@ -353,7 +364,7 @@ export const loadCommands = (
         }
       })
     }
-    const current = (await apiForGeneration?.())?.command ?? api
+    const current = generation?.api.command ?? (await apiForGeneration?.())?.command ?? api
     return current.list({ location: { directory } }).then((result) => extractArray(result))
   })
 
@@ -379,14 +390,16 @@ export const loadReferencesQuery = (
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
   apiForGeneration?: () => Promise<CompatibleImplementation>,
+  generationFor?: () => Promise<ServerGeneration>,
 ) =>
   queryOptions<ReferenceInfo[]>({
     queryKey: [scope, directory, "references"] as const,
     queryFn: () =>
       retry(async () => {
-        if ((await resolveServerProtocol(protocol)) === "v1" && legacy)
+        const generation = await generationFor?.()
+        if ((generation?.protocol ?? (await resolveServerProtocol(protocol))) === "v1" && legacy)
           return (await legacy.v2.reference.list()).data?.data ?? []
-        const current = (await apiForGeneration?.())?.reference ?? api
+        const current = generation?.api.reference ?? (await apiForGeneration?.())?.reference ?? api
         return current.list({ location: { directory } }).then((result) => extractArray(result))
       }).catch(() => []),
     placeholderData: [],
@@ -417,6 +430,7 @@ export async function bootstrapDirectory(input: {
       readonly vcs: VcsApi
     }
   apiForGeneration?: () => Promise<CompatibleImplementation>
+  generationFor?: () => Promise<ServerGeneration>
   store: Store<State>
   setStore: SetStoreFunction<State>
   vcsCache: VcsCache
@@ -437,7 +451,11 @@ export async function bootstrapDirectory(input: {
     question: () => number
   }
 }) {
-  const resolveApi = () => input.apiForGeneration?.() ?? Promise.resolve(input.api)
+  const generationFor = input.generationFor
+  const apiForGeneration = generationFor
+    ? () => generationFor().then((generation) => generation.api)
+    : input.apiForGeneration
+  const resolveApi = () => apiForGeneration?.() ?? Promise.resolve(input.api)
   const loading = input.store.status !== "complete"
   const seededProject = projectID(input.directory, input.global.project)
   const seededPath = input.global.path.directory === input.directory ? input.global.path : undefined
@@ -458,7 +476,15 @@ export async function bootstrapDirectory(input: {
         resolveApi()
           .then((api) =>
             input.queryClient.ensureQueryData(
-              loadAgentsQuery(input.scope, input.directory, api.agent, input.sdk, input.protocol, input.apiForGeneration),
+              loadAgentsQuery(
+                input.scope,
+                input.directory,
+                api.agent,
+                input.sdk,
+                input.protocol,
+                apiForGeneration,
+                generationFor,
+              ),
             ),
           )
           .then((data) => input.setStore("agent", data)),
@@ -471,7 +497,9 @@ export async function bootstrapDirectory(input: {
       () =>
         retry(() =>
           (async () => {
-            const protocol = await resolveServerProtocol(input.protocol)
+            const protocol = generationFor
+              ? (await generationFor()).protocol
+              : await resolveServerProtocol(input.protocol)
             const snapshot =
               protocol === "v1"
                 ? ((await input.sdk.session.status()).data ?? {})
@@ -516,7 +544,7 @@ export async function bootstrapDirectory(input: {
           resolveApi()
             .then((api) =>
               input.queryClient.ensureQueryData(
-                loadPathQuery(input.scope, input.directory, api.path, input.apiForGeneration),
+                loadPathQuery(input.scope, input.directory, api.path, apiForGeneration),
               ),
             )
             .then((data) => {
@@ -537,7 +565,7 @@ export async function bootstrapDirectory(input: {
         (() =>
           resolveApi()
             .then((api) =>
-              loadCommands(input.directory, api.command, input.sdk, input.protocol, input.apiForGeneration),
+              loadCommands(input.directory, api.command, input.sdk, input.protocol, apiForGeneration, generationFor),
             )
             .then((commands) => input.setStore("command", commands))),
       () =>
@@ -549,7 +577,8 @@ export async function bootstrapDirectory(input: {
               api.reference,
               input.sdk,
               input.protocol,
-              input.apiForGeneration,
+              apiForGeneration,
+              generationFor,
             ),
           ),
         ),
@@ -629,13 +658,13 @@ export async function bootstrapDirectory(input: {
       input.mcp &&
         (() =>
           resolveApi().then((api) =>
-            input.queryClient.fetchQuery(loadMcpQuery(input.scope, input.directory, api.mcp, input.apiForGeneration)),
+            input.queryClient.fetchQuery(loadMcpQuery(input.scope, input.directory, api.mcp, apiForGeneration)),
           )),
       input.mcp &&
         (() =>
           resolveApi().then((api) =>
             input.queryClient.fetchQuery(
-              loadMcpResourcesQuery(input.scope, input.directory, api.mcp, input.apiForGeneration),
+              loadMcpResourcesQuery(input.scope, input.directory, api.mcp, apiForGeneration),
             ),
           )),
       () =>
@@ -648,7 +677,8 @@ export async function bootstrapDirectory(input: {
                 api,
                 input.sdk,
                 input.protocol,
-                input.apiForGeneration,
+                apiForGeneration,
+                generationFor,
               ),
             ),
           )

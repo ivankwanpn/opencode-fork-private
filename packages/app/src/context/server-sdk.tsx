@@ -15,9 +15,10 @@ import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protoc
 import {
   createCompatibleApi,
   createV2OnlyApi,
-  resolveCompatibleApiForProtocol,
+  resolveCompatibleGeneration,
   type CompatibleApi,
   type CompatibleImplementation,
+  type ServerGeneration,
 } from "@/utils/server-compat"
 import { createSessionMutationQueue } from "@/utils/session-mutation"
 export { resolveServerSessionApi, runServerSessionMutation } from "@/utils/session-mutation"
@@ -211,6 +212,7 @@ type ServerSDKBase = {
   protocolForGeneration: () => Promise<ServerProtocol>
   protocolGeneration: () => number
   eventGeneration: () => number
+  generationFor: () => Promise<ServerGeneration>
   diagnostics: () => ServerGenerationDiagnostics
   apiForGeneration: () => Promise<CompatibleImplementation>
   protocolKind: Accessor<ServerProtocol | undefined>
@@ -431,7 +433,8 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     server.type === "sidecar"
       ? createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
       : createCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
-  const apiForGeneration = () => resolveCompatibleApiForProtocol(api, protocolForGeneration)
+  const generationFor = () => protocolForGeneration().then((value) => resolveCompatibleGeneration(api, value))
+  const apiForGeneration = () => generationFor().then((value) => value.api)
 
   return {
     server,
@@ -442,6 +445,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     protocolForGeneration,
     protocolGeneration: () => protocolGeneration,
     eventGeneration: () => eventGeneration,
+    generationFor,
     apiForGeneration,
     diagnostics: () => ({
       protocol: protocolKind(),
@@ -532,7 +536,9 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
           legacy: (next) => serverSDK.createClient({ directory: next ?? directory, throwOnError: true }),
           directory,
         })
-  const apiForGeneration = () => resolveCompatibleApiForProtocol(api, serverSDK.protocolForGeneration)
+  const generationFor = () =>
+    serverSDK.protocolForGeneration().then((protocol) => resolveCompatibleGeneration(api, protocol))
+  const apiForGeneration = () => generationFor().then((value) => value.api)
 
   return {
     scope: serverSDK.scope,
@@ -542,6 +548,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     protocolForGeneration: serverSDK.protocolForGeneration,
     protocolGeneration: serverSDK.protocolGeneration,
     eventGeneration: serverSDK.eventGeneration,
+    generationFor,
     apiForGeneration,
     diagnostics: serverSDK.diagnostics,
     directory,

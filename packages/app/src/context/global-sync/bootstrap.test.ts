@@ -365,6 +365,39 @@ describe("query keys", () => {
     expect(result.all.has("anthropic")).toBe(true)
   })
 
+  test("keeps the provider branch paired with its selected API generation", async () => {
+    const calls: string[] = []
+    const current = {
+      providers: {
+        catalog: async () => {
+          calls.push("catalog")
+          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as Parameters<typeof loadProvidersQuery>[2]
+    const legacy = {
+      provider: {
+        list: async () => {
+          calls.push("legacy")
+          return { data: { all: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as OpencodeClient
+    const query = loadProvidersQuery(
+      ServerScope.local,
+      "/repo",
+      current,
+      legacy,
+      Promise.resolve("v2"),
+      async () => current as unknown as CompatibleImplementation,
+      async () => ({ protocol: "v1" as const, api: current as unknown as CompatibleImplementation }),
+    )
+
+    await new QueryClient().fetchQuery(query)
+
+    expect(calls).toEqual(["legacy"])
+  })
+
   test("re-evaluates the protocol resolver for a later query generation", async () => {
     const calls: string[] = []
     let protocol: "v1" | "v2" = "v2"

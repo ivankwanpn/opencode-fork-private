@@ -17,6 +17,7 @@ import type { LocalPTY } from "@/context/terminal"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
 import { terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
+import type { ServerGeneration } from "@/utils/server-compat"
 
 const TOGGLE_TERMINAL_ID = "terminal.toggle"
 const DEFAULT_TOGGLE_TERMINAL_KEYBIND = "ctrl+`"
@@ -525,8 +526,8 @@ export const Terminal = (props: TerminalProps) => {
         local.onConnectError?.(err)
       }
 
-      const gone = async (target: ReturnType<typeof sdk>, protocol: "v1" | "v2") => {
-        if (protocol === "v1") {
+      const gone = async (target: ReturnType<typeof sdk>, generation: ServerGeneration) => {
+        if (generation.protocol === "v1") {
           return target.client.pty
             .get({ ptyID: id }, { throwOnError: false })
             .then((result) => result.response.status === 404)
@@ -535,8 +536,8 @@ export const Terminal = (props: TerminalProps) => {
               return false
             })
         }
-        return target.apiForGeneration()
-          .then((api) => api.pty.get({ ptyID: id, location: { directory } }))
+        return generation.api.pty
+          .get({ ptyID: id, location: { directory } })
           .then((result) => result.data.status === "exited")
           .catch((err) => {
             if (err && typeof err === "object" && "_tag" in err && err._tag === "PtyNotFoundError") return true
@@ -545,8 +546,8 @@ export const Terminal = (props: TerminalProps) => {
           })
       }
 
-      const connectToken = async (target: ReturnType<typeof sdk>, protocol: "v1" | "v2") => {
-        if (protocol === "v1") {
+      const connectToken = async (target: ReturnType<typeof sdk>, generation: ServerGeneration) => {
+        if (generation.protocol === "v1") {
           const result = await target.client.pty
             .connectToken(
               { ptyID: id, directory },
@@ -566,14 +567,12 @@ export const Terminal = (props: TerminalProps) => {
             throw new Error("PTY connect ticket rejected by origin or CSRF checks. Check the server CORS config.")
           throw new Error(`PTY connect ticket failed with ${result.response.status}`)
         }
-        return target.apiForGeneration()
-          .then((api) =>
-            api.pty.connectToken({
-              ptyID: id,
-              location: { directory },
-              "x-opencode-ticket": "1",
-            }),
-          )
+        return generation.api.pty
+          .connectToken({
+            ptyID: id,
+            location: { directory },
+            "x-opencode-ticket": "1",
+          })
           .then((result) => result.data.ticket)
           .catch((err: unknown) => {
             if (err && typeof err === "object" && "_tag" in err && err._tag === "ForbiddenError") {
@@ -592,8 +591,8 @@ export const Terminal = (props: TerminalProps) => {
           reconn = undefined
           if (disposed) return
           const target = sdk()
-          const protocol = await target.protocolForGeneration()
-          if (await gone(target, protocol)) {
+          const generation = await target.generationFor()
+          if (await gone(target, generation)) {
             if (disposed) return
             fail(err)
             return
@@ -609,18 +608,18 @@ export const Terminal = (props: TerminalProps) => {
         drop?.()
 
         const target = sdk()
-        const protocol = await target.protocolForGeneration()
-        const ticket = await connectToken(target, protocol).catch((err) => {
+        const generation = await target.generationFor()
+        const ticket = await connectToken(target, generation).catch((err) => {
           fail(err)
           return undefined
         })
-        if (protocol === "v2" && !ticket) return
+        if (generation.protocol === "v2" && !ticket) return
         if (once.value) return
         if (disposed) return
 
         const socket = new WebSocket(
           terminalWebSocketURL({
-            protocol,
+            protocol: generation.protocol,
             url,
             id,
             directory,

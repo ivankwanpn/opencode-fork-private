@@ -128,10 +128,18 @@ function currentConfig(value: unknown): Config {
   return value as Config
 }
 
-export const loadCompatibleConfigQuery = (scope: ServerScope, api: ConfigApi) =>
+export const loadCompatibleConfigQuery = (
+  scope: ServerScope,
+  api: ConfigApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
+) =>
   queryOptions({
     queryKey: [scope, "config"],
-    queryFn: () => retry(() => api.get().then((result) => currentConfig(result.data))),
+    queryFn: () =>
+      retry(async () => {
+        const current = (await apiForGeneration?.())?.config ?? api
+        return current.get().then((result) => currentConfig(result.data))
+      }),
   })
 
 type ProjectApi = {
@@ -151,20 +159,25 @@ type ProviderCatalogApi = {
   }
 }
 
-export const loadProjectsQuery = (scope: ServerScope, api: ProjectApi) =>
+export const loadProjectsQuery = (
+  scope: ServerScope,
+  api: ProjectApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
+) =>
   queryOptions({
     queryKey: [scope, "project"],
     queryFn: () =>
-      retry(() =>
-        api.list().then((projects) => {
+      retry(async () => {
+        const current = (await apiForGeneration?.())?.project ?? api
+        return current.list().then((projects) => {
           return projects
             .filter((p) => !!p?.id)
             .filter((p) => !!p.worktree && !p.worktree.includes("opencode-test"))
             .map(normalizeProjectInfo)
             .slice()
             .sort((a, b) => cmp(a.id, b.id))
-        }),
-      ),
+        })
+      }),
   })
 
 export async function bootstrapGlobal(input: {
@@ -261,6 +274,7 @@ export const loadProvidersQuery = (
   sdk: ProviderCatalogApi,
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "providers"],
@@ -270,7 +284,8 @@ export const loadProvidersQuery = (
         if (serverProtocol === "v1" && legacy)
           return legacy.provider.list().then((result) => normalizeProviderList(result.data!))
         const location = directory ? { location: { directory } } : undefined
-        return sdk.providers.catalog(location).then((result) => normalizeProviderList(result.data))
+        const current = (await apiForGeneration?.())?.providers ?? sdk.providers
+        return current.catalog(location).then((result) => normalizeProviderList(result.data))
       }),
   })
 
@@ -292,6 +307,7 @@ export const loadAgentsQuery = (
   sdk: AgentListApi,
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "agents"],
@@ -299,7 +315,8 @@ export const loadAgentsQuery = (
       retry(async () => {
         if ((await resolveServerProtocol(protocol)) === "v1" && legacy)
           return normalizeAgentList((await legacy.app.agents()).data ?? [])
-        return sdk.list({ location: { directory } }).then((result) => normalizeAgentList(extractArray(result)))
+        const current = (await apiForGeneration?.())?.agent ?? sdk
+        return current.list({ location: { directory } }).then((result) => normalizeAgentList(extractArray(result)))
       }),
   })
 
@@ -327,10 +344,19 @@ export const loadCommands = (
     return api.list({ location: { directory } }).then((result) => extractArray(result))
   })
 
-export const loadPathQuery = (scope: ServerScope, directory: string | null, api: PathApi) =>
+export const loadPathQuery = (
+  scope: ServerScope,
+  directory: string | null,
+  api: PathApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
+) =>
   queryOptions<Path>({
     queryKey: [scope, directory, "path"],
-    queryFn: () => retry(() => api.get(directory ? { location: { directory } } : undefined)),
+    queryFn: () =>
+      retry(async () => {
+        const current = (await apiForGeneration?.())?.path ?? api
+        return current.get(directory ? { location: { directory } } : undefined)
+      }),
   })
 
 export const loadReferencesQuery = (
@@ -339,6 +365,7 @@ export const loadReferencesQuery = (
   api: ReferenceListApi,
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ) =>
   queryOptions<ReferenceInfo[]>({
     queryKey: [scope, directory, "references"] as const,
@@ -346,7 +373,8 @@ export const loadReferencesQuery = (
       retry(async () => {
         if ((await resolveServerProtocol(protocol)) === "v1" && legacy)
           return (await legacy.v2.reference.list()).data?.data ?? []
-        return api.list({ location: { directory } }).then((result) => extractArray(result))
+        const current = (await apiForGeneration?.())?.reference ?? api
+        return current.list({ location: { directory } }).then((result) => extractArray(result))
       }).catch(() => []),
     placeholderData: [],
   })

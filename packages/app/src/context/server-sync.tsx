@@ -50,6 +50,7 @@ import { createHomeSessionIndexCache } from "./global-sync/home-session-index"
 import { persisted } from "@/utils/persist"
 import type { ServerApi } from "@/utils/server"
 import { resolveCompatibleApi } from "@/utils/server-compat"
+import type { CompatibleImplementation } from "@/utils/server-compat"
 import type {
   McpListInput,
   McpListOutput,
@@ -110,6 +111,7 @@ export const loadMcpQuery = (
   scope: ServerScope,
   directory: string,
   api: McpListApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ): ApiQueryOptions<Record<string, McpServer["status"]>, readonly [ServerScope, string, "mcp"]> =>
   queryOptions<
     Record<string, McpServer["status"]>,
@@ -118,7 +120,10 @@ export const loadMcpQuery = (
     readonly [ServerScope, string, "mcp"]
   >({
     queryKey: [scope, directory, "mcp"] as const,
-    queryFn: () =>
+    queryFn: async () =>
+      (await apiForGeneration?.())
+        ?.mcp.list({ location: { directory } })
+        .then((result) => Object.fromEntries(extractArray(result).map((server) => [server.name, server.status]))) ??
       api
         .list({ location: { directory } })
         .then((result) => Object.fromEntries(extractArray(result).map((server) => [server.name, server.status]))),
@@ -128,6 +133,7 @@ export const loadMcpResourcesQuery = (
   scope: ServerScope,
   directory: string,
   api: McpResourceApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ): ApiQueryOptions<Record<string, McpResource>, readonly [ServerScope, string, "mcpResources"]> =>
   queryOptions<
     Record<string, McpResource>,
@@ -136,7 +142,15 @@ export const loadMcpResourcesQuery = (
     readonly [ServerScope, string, "mcpResources"]
   >({
     queryKey: [scope, directory, "mcpResources"] as const,
-    queryFn: () =>
+    queryFn: async () =>
+      (await apiForGeneration?.())
+        ?.mcp.resource
+        .catalog({ location: { directory } })
+        .then((result) =>
+          Object.fromEntries(
+            extractMcpResources(result).map((resource) => [`${resource.server}:${resource.uri}`, resource]),
+          ),
+        ) ??
       api.resource
         .catalog({ location: { directory } })
         .then((result) =>
@@ -153,12 +167,17 @@ export const loadLspQuery = (
   sdk: OpencodeClient,
   api: ServerApi["lsp"],
   protocol: ServerProtocolResolver,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "lsp"] as const,
     queryFn: async () => {
       if ((await resolveServerProtocol(protocol)) === "v1") return (await sdk.lsp.status()).data ?? []
-      return (await api.status({ location: { directory } })).data.slice()
+      return (
+        await (apiForGeneration?.()?.then((value) => value.lsp) ?? Promise.resolve(api)).then((value) =>
+          value.status({ location: { directory } }),
+        )
+      ).data.slice()
     },
   })
 
@@ -249,19 +268,30 @@ function makeQueryOptionsApi(
   serverAPI: ServerApi,
   sdkFor: (dir: PathKey) => OpencodeClient,
   protocol: ServerProtocolResolver,
+  apiForGeneration: () => Promise<CompatibleImplementation>,
 ) {
   return {
-    globalConfig: () => loadCompatibleConfigQuery(scope, serverAPI.config),
-    projects: () => loadProjectsQuery(scope, serverAPI.project),
+    globalConfig: () => loadCompatibleConfigQuery(scope, serverAPI.config, apiForGeneration),
+    projects: () => loadProjectsQuery(scope, serverAPI.project, apiForGeneration),
     providers: (directory: PathKey | null) =>
-      loadProvidersQuery(scope, directory, serverAPI, directory ? sdkFor(directory) : serverSDK(), protocol),
-    path: (directory: PathKey | null) => loadPathQuery(scope, directory, serverAPI.path),
-    agents: (directory: PathKey) => loadAgentsQuery(scope, directory, serverAPI.agent, sdkFor(directory), protocol),
+      loadProvidersQuery(
+        scope,
+        directory,
+        serverAPI,
+        directory ? sdkFor(directory) : serverSDK(),
+        protocol,
+        apiForGeneration,
+      ),
+    path: (directory: PathKey | null) => loadPathQuery(scope, directory, serverAPI.path, apiForGeneration),
+    agents: (directory: PathKey) =>
+      loadAgentsQuery(scope, directory, serverAPI.agent, sdkFor(directory), protocol, apiForGeneration),
     references: (directory: PathKey) =>
-      loadReferencesQuery(scope, directory, serverAPI.reference, sdkFor(directory), protocol),
-    mcp: (directory: PathKey) => loadMcpQuery(scope, directory, serverAPI.mcp),
-    mcpResources: (directory: PathKey) => loadMcpResourcesQuery(scope, directory, serverAPI.mcp),
-    lsp: (directory: PathKey) => loadLspQuery(scope, directory, sdkFor(directory), serverAPI.lsp, protocol),
+      loadReferencesQuery(scope, directory, serverAPI.reference, sdkFor(directory), protocol, apiForGeneration),
+    mcp: (directory: PathKey) => loadMcpQuery(scope, directory, serverAPI.mcp, apiForGeneration),
+    mcpResources: (directory: PathKey) =>
+      loadMcpResourcesQuery(scope, directory, serverAPI.mcp, apiForGeneration),
+    lsp: (directory: PathKey) =>
+      loadLspQuery(scope, directory, sdkFor(directory), serverAPI.lsp, protocol, apiForGeneration),
     sessions: (directory: PathKey) => ({ queryKey: [scope, directory, "loadSessions"] as const }),
   }
 }
@@ -320,6 +350,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     serverSDK.api,
     sdkFor,
     serverSDK.protocolForGeneration,
+    serverSDK.apiForGeneration,
   )
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({

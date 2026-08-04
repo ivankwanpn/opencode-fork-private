@@ -58,7 +58,18 @@ const commandLayer = Layer.succeed(
     create: () => Effect.die("unused"),
     plan: () => Effect.die("unused"),
     synthetic: () => Effect.die("unused"),
-    admitSynthetic: () => Effect.die("unused"),
+    admitSynthetic: (input) =>
+      Effect.gen(function* () {
+        return SessionInput.Admitted.make({
+          admittedSeq: 0,
+          id: input.id ?? SessionMessage.ID.create(),
+          sessionID: input.sessionID,
+          prompt: { text: input.text },
+          synthetic: { description: input.description },
+          delivery: input.delivery ?? "steer",
+          timeCreated: yield* DateTime.now,
+        })
+      }),
     switchAgent: () => Effect.die("unused"),
     switchModel: () => Effect.die("unused"),
     admit: () => Effect.die("unused"),
@@ -453,8 +464,10 @@ describe("SessionExecution recovery", () => {
         outcome: "completed",
         resultText: "recovered result",
       })
-      expect(runnerCalls.count).toBe(0)
-      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      expect(runnerCalls.count).toBe(1)
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toMatchObject([
+        { status: "woken" },
+      ])
     }),
   )
 
@@ -501,7 +514,7 @@ describe("SessionExecution recovery", () => {
       const runnerCalls = { count: 0 }
       yield* startRecovery(runnerCalls)
 
-      expect(runnerCalls.count).toBe(0)
+      expect(runnerCalls.count).toBe(1)
       expect(
         yield* db.select().from(SessionAttemptTable).where(eq(SessionAttemptTable.session_id, childSessionID)).get(),
       ).toMatchObject({

@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { ToolFailure } from "@opencode-ai/llm"
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Config } from "@opencode-ai/core/config"
@@ -402,6 +402,8 @@ const taskSubmissionLayer = Layer.succeed(
 const taskNotificationLayer = Layer.succeed(
   TaskNotification.Service,
   TaskNotification.Service.of({
+    signal: () => Effect.void,
+    subscribe: () => Stream.empty,
     drain: (input) =>
       Effect.gen(function* () {
         const completed = Array.from(taskSubmissions.values()).filter(
@@ -488,6 +490,8 @@ const promotionPostCommitFailure = testEffect(
       Layer.succeed(
         TaskNotification.Service,
         TaskNotification.Service.of({
+          signal: () => Effect.void,
+          subscribe: () => Stream.empty,
           drain: () => {
             if (notificationDrainFailure) {
               notificationDrainFailure = false

@@ -14,6 +14,7 @@ import {
   TaskNotificationOutboxTable,
   TaskSubmissionTable,
 } from "./sql"
+import { TaskNotification } from "./task-notification"
 import { TaskSubmission } from "./task-submission"
 
 export type CancelHooks = {
@@ -42,6 +43,7 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const { db } = yield* Database.Service
+    const notifications = yield* TaskNotification.Service
 
     const cancelTree: Interface["cancelTree"] = Effect.fn("TaskCancellation.cancelTree")(function* (input) {
       const now = yield* Clock.currentTimeMillis
@@ -198,6 +200,7 @@ const layer = Layer.effect(
           }),
         )
 
+      if (cancelled.submissionIDs.length > 0) yield* notifications.signal()
       yield* Effect.forEach(cancelled.sessionIDs, input.interrupt, { discard: true })
       yield* Effect.forEach(cancelled.sessionIDs, input.wait, { discard: true })
       yield* db
@@ -221,5 +224,5 @@ const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Database.node, TaskSubmission.node],
+  deps: [Database.node, TaskNotification.node, TaskSubmission.node],
 })

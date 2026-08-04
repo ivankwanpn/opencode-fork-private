@@ -2,6 +2,12 @@ import type { ServerConnection } from "@/context/server"
 import { authTokenFromCredentials } from "./server"
 
 export type ServerProtocol = "v1" | "v2"
+export type ServerProtocolResolver = Promise<ServerProtocol> | (() => Promise<ServerProtocol>)
+
+export function resolveServerProtocol(protocol?: ServerProtocolResolver) {
+  if (!protocol) return Promise.resolve<ServerProtocol | undefined>(undefined)
+  return typeof protocol === "function" ? protocol() : protocol
+}
 
 export type DetectServerProtocolOptions = {
   v2Only?: boolean

@@ -144,7 +144,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
   }
 
   const available = async () => {
-    if ((await serverSDK().protocol) === "v2") return true
+    if ((await serverSDK().protocolForGeneration()) === "v2") return true
     setDiscovery("saveError", language.t("provider.custom.unavailable"))
     return false
   }

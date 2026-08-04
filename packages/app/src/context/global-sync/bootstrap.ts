@@ -49,7 +49,7 @@ import { loadMcpQuery, loadMcpResourcesQuery } from "../server-sync"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import { ScopedKey, type ServerScope } from "@/utils/server-scope"
 import { normalizeSessionInfo } from "@/utils/session"
-import type { ServerProtocol } from "@/utils/server-protocol"
+import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 import { extractArray } from "@/utils/response-helpers"
 import type { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
 
@@ -180,7 +180,7 @@ export async function bootstrapGlobal(input: {
       readonly path: PathApi
       readonly project: ProjectApi
     }
-  protocol?: Promise<ServerProtocol>
+  protocol?: ServerProtocolResolver
   scope: ServerScope
   requestFailedTitle: string
   translate: (key: string, vars?: Record<string, string | number>) => string
@@ -265,13 +265,13 @@ export const loadProvidersQuery = (
   directory: string | null,
   sdk: ProviderCatalogApi,
   legacy?: OpencodeClient,
-  protocol?: Promise<ServerProtocol>,
+  protocol?: ServerProtocolResolver,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "providers"],
     queryFn: () =>
       retry(async () => {
-        const serverProtocol = await protocol
+        const serverProtocol = await resolveServerProtocol(protocol)
         if (serverProtocol === "v1" && legacy)
           return legacy.provider.list().then((result) => normalizeProviderList(result.data!))
         const location = directory ? { location: { directory } } : undefined
@@ -296,13 +296,14 @@ export const loadAgentsQuery = (
   directory: string,
   sdk: AgentListApi,
   legacy?: OpencodeClient,
-  protocol?: Promise<ServerProtocol>,
+  protocol?: ServerProtocolResolver,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "agents"],
     queryFn: () =>
       retry(async () => {
-        if ((await protocol) === "v1" && legacy) return normalizeAgentList((await legacy.app.agents()).data ?? [])
+        if ((await resolveServerProtocol(protocol)) === "v1" && legacy)
+          return normalizeAgentList((await legacy.app.agents()).data ?? [])
         return sdk.list({ location: { directory } }).then((result) => normalizeAgentList(extractArray(result)))
       }),
   })
@@ -311,10 +312,10 @@ export const loadCommands = (
   directory: string,
   api: CommandListApi,
   legacy?: OpencodeClient,
-  protocol?: Promise<ServerProtocol>,
+  protocol?: ServerProtocolResolver,
 ): Promise<CommandInfo[]> =>
   retry(async () => {
-    if ((await protocol) === "v1" && legacy) {
+    if ((await resolveServerProtocol(protocol)) === "v1" && legacy) {
       return ((await legacy.command.list()).data ?? []).map((command) => {
         const [providerID, id] = command.model?.split("/") ?? []
         return {
@@ -342,13 +343,14 @@ export const loadReferencesQuery = (
   directory: string,
   api: ReferenceListApi,
   legacy?: OpencodeClient,
-  protocol?: Promise<ServerProtocol>,
+  protocol?: ServerProtocolResolver,
 ) =>
   queryOptions<ReferenceInfo[]>({
     queryKey: [scope, directory, "references"] as const,
     queryFn: () =>
       retry(async () => {
-        if ((await protocol) === "v1" && legacy) return (await legacy.v2.reference.list()).data?.data ?? []
+        if ((await resolveServerProtocol(protocol)) === "v1" && legacy)
+          return (await legacy.v2.reference.list()).data?.data ?? []
         return api.list({ location: { directory } }).then((result) => extractArray(result))
       }).catch(() => []),
     placeholderData: [],
@@ -386,7 +388,7 @@ export async function bootstrapDirectory(input: {
   }
   queryClient: QueryClient
   session?: ServerSession
-  protocol?: Promise<ServerProtocol>
+  protocol?: ServerProtocolResolver
   pendingRequestRevision?: {
     permission: () => number
     question: () => number
@@ -422,7 +424,7 @@ export async function bootstrapDirectory(input: {
       () =>
         retry(() =>
           (async () => {
-            if ((await input.protocol) !== "v1") return
+            if ((await resolveServerProtocol(input.protocol)) !== "v1") return
             const x = await input.sdk.session.status()
             if (!input.session) {
               input.setStore("session_status", x.data!)

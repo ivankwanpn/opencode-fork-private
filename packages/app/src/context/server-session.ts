@@ -29,6 +29,7 @@ import { normalizeSessionInfo } from "@/utils/session"
 import { normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
+import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
@@ -189,7 +190,7 @@ function reconcileFetched<T extends { id: string }>(
   return [...result.values()].sort((a, b) => cmp(a.id, b.id))
 }
 
-type ServerSessionOptions = { retry?: typeof retry; protocol?: Promise<"v1" | "v2"> }
+type ServerSessionOptions = { retry?: typeof retry; protocol?: ServerProtocolResolver }
 
 export function createServerSession(
   client: OpencodeClient,
@@ -547,7 +548,7 @@ export function createServerSession(
     )
 
   const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
-    if (messageApi && (await options?.protocol) !== "v1") {
+    if (messageApi && (await resolveServerProtocol(options?.protocol)) !== "v1") {
       const pageLimit = Math.min(limit, messageApiPageSize)
       const request = (cursor?: string) =>
         (options?.retry ?? retry)(() => {
@@ -599,7 +600,7 @@ export function createServerSession(
   }
 
   const fetchMessage = async (sessionID: string, messageID: string, onAttempt?: () => void) => {
-    if (sessionApi && (await options?.protocol) !== "v1") {
+    if (sessionApi && (await resolveServerProtocol(options?.protocol)) !== "v1") {
       const response = await (options?.retry ?? retry)(() => {
         onAttempt?.()
         return sessionApi.message({ sessionID, messageID })
@@ -865,7 +866,7 @@ export function createServerSession(
   const refreshContext = (sessionID: string) => {
     if (!options?.protocol) return Promise.resolve()
     return runInflight(contextLoads, sessionID, async () => {
-      if ((await options.protocol) === "v1") return
+      if ((await resolveServerProtocol(options.protocol)) === "v1") return
       const active = generation(sessionID)
       const result = await (options.retry ?? retry)(() => client.v2.session.context({ sessionID }))
       if (generations.get(sessionID) !== active) return
@@ -1479,7 +1480,7 @@ export function createServerSession(
     async todo(sessionID: string, request?: { force?: boolean }) {
       touch(sessionID)
       if (data.todo[sessionID] !== undefined && !request?.force) return
-      if ((await options?.protocol) === "v2") {
+      if ((await resolveServerProtocol(options?.protocol)) === "v2") {
         setData("todo", sessionID, [])
         return
       }

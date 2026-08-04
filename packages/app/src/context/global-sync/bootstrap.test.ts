@@ -325,6 +325,36 @@ describe("query keys", () => {
     expect(result.all.has("anthropic")).toBe(true)
   })
 
+  test("re-evaluates the protocol resolver for a later query generation", async () => {
+    const calls: string[] = []
+    let protocol: "v1" | "v2" = "v2"
+    const current = {
+      providers: {
+        catalog: async () => {
+          calls.push("catalog")
+          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as Parameters<typeof loadProvidersQuery>[2]
+    const legacy = {
+      provider: {
+        list: async () => {
+          calls.push("legacy")
+          return { data: { all: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as OpencodeClient
+    const query = loadProvidersQuery(ServerScope.local, "/repo", current, legacy, () => Promise.resolve(protocol))
+    const queryClient = new QueryClient()
+
+    await queryClient.fetchQuery(query)
+    protocol = "v1"
+    await queryClient.invalidateQueries({ queryKey: query.queryKey })
+    await queryClient.fetchQuery(query)
+
+    expect(calls).toEqual(["catalog", "legacy"])
+  })
+
   test("loads agents from the current location-scoped endpoint", async () => {
     const calls: unknown[] = []
     const api = {

@@ -380,12 +380,20 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       throwOnError: true,
       directory,
     })
-  const api = createCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
+  // The bundled sidecar has a fail-closed V2 contract. Keep the compatibility
+  // adapter at the external-server boundary so normal Desktop calls cannot
+  // silently drift into legacy execution routes.
+  const api =
+    server.type === "sidecar"
+      ? currentApi
+      : createCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
 
   return {
     server,
     scope,
-    protocol,
+    get protocol() {
+      return protocolForGeneration()
+    },
     protocolForGeneration,
     protocolKind,
     url: server.http.url,
@@ -457,17 +465,24 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
   })
   onCleanup(unsub)
 
+  const api =
+    serverSDK.server.type === "sidecar"
+      ? serverSDK.currentApi
+      : createCompatibleApi({
+          protocol: serverSDK.protocolForGeneration,
+          current: serverSDK.currentApi,
+          legacy: (next) => serverSDK.createClient({ directory: next ?? directory, throwOnError: true }),
+          directory,
+        })
+
   return {
     scope: serverSDK.scope,
-    protocol: serverSDK.protocol,
+    get protocol() {
+      return serverSDK.protocolForGeneration()
+    },
     directory,
     client,
-    api: createCompatibleApi({
-      protocol: serverSDK.protocolForGeneration,
-      current: serverSDK.currentApi,
-      legacy: (next) => serverSDK.createClient({ directory: next ?? directory, throwOnError: true }),
-      directory,
-    }),
+    api,
     event: emitter,
     get url() {
       return serverSDK.url

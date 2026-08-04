@@ -45,6 +45,7 @@ import { useGlobal } from "./global"
 import { ServerConnection, useServer } from "./server"
 import { retry } from "@opencode-ai/core/util/retry"
 import type { ServerScope } from "@/utils/server-scope"
+import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 import { createHomeSessionIndexCache } from "./global-sync/home-session-index"
 import { persisted } from "@/utils/persist"
 import type { ServerApi } from "@/utils/server"
@@ -145,12 +146,12 @@ export const loadLspQuery = (
   directory: string,
   sdk: OpencodeClient,
   api: ServerApi["lsp"],
-  protocol: Promise<"v1" | "v2">,
+  protocol: ServerProtocolResolver,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "lsp"] as const,
     queryFn: async () => {
-      if ((await protocol) === "v1") return (await sdk.lsp.status()).data ?? []
+      if ((await resolveServerProtocol(protocol)) === "v1") return (await sdk.lsp.status()).data ?? []
       return (await api.status({ location: { directory } })).data.slice()
     },
   })
@@ -241,7 +242,7 @@ function makeQueryOptionsApi(
   serverSDK: () => OpencodeClient,
   serverAPI: ServerApi,
   sdkFor: (dir: PathKey) => OpencodeClient,
-  protocol: Promise<"v1" | "v2">,
+  protocol: ServerProtocolResolver,
 ) {
   return {
     globalConfig: () => loadCompatibleConfigQuery(scope, serverAPI.config),
@@ -304,14 +305,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   }
 
   const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
-    protocol: serverSDK.protocol,
+    protocol: serverSDK.protocolForGeneration,
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
     () => serverSDK.client,
     serverSDK.api,
     sdkFor,
-    serverSDK.protocol,
+    serverSDK.protocolForGeneration,
   )
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
@@ -386,7 +387,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       await bootstrapGlobal({
         serverSDK: serverSDK.client,
         serverAPI: serverSDK.api,
-        protocol: serverSDK.protocol,
+        protocol: serverSDK.protocolForGeneration,
         scope: serverSDK.scope,
         requestFailedTitle: language.t("common.requestFailed"),
         translate: language.t,
@@ -426,7 +427,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       void bootstrapInstance(directory)
     },
     onMcp: (directory, setStore) => {
-      void loadCommands(directory, serverSDK.api.command, sdkFor(directory), serverSDK.protocol)
+      void loadCommands(directory, serverSDK.api.command, sdkFor(directory), serverSDK.protocolForGeneration)
         .then((commands) => setStore("command", commands))
         .catch((err) => {
           showToast({
@@ -479,9 +480,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const promise = queryClient
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
-        queryFn: () =>
-          serverSDK.protocol
-            .then((protocol) =>
+          queryFn: () =>
+            resolveServerProtocol(serverSDK.protocolForGeneration).then((protocol) =>
               protocol === "v1"
                 ? loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
                 : loadRootSessions({ api: serverSDK.api.session, directory, limit }),
@@ -563,7 +563,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         translate: language.t,
         queryClient,
         session,
-        protocol: serverSDK.protocol,
+        protocol: serverSDK.protocolForGeneration,
         pendingRequestRevision: pendingRequestRevision(directory),
       })
     })

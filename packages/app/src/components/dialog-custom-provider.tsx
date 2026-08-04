@@ -15,7 +15,6 @@ import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { showToast } from "@/utils/toast"
-import { resolveCompatibleApi } from "@/utils/server-compat"
 import {
   canDiscoverModels,
   customProviderFormState,
@@ -146,8 +145,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
 
   const available = async () => {
     const target = serverSDK()
-    const protocol = await target.protocolForGeneration()
-    if (protocol === "v2") return resolveCompatibleApi(target.api, protocol)
+    if ((await target.protocolForGeneration()) === "v2") return target.apiForGeneration()
     setDiscovery("saveError", language.t("provider.custom.unavailable"))
   }
 

@@ -49,7 +49,6 @@ import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/serv
 import { createHomeSessionIndexCache } from "./global-sync/home-session-index"
 import { persisted } from "@/utils/persist"
 import type { ServerApi } from "@/utils/server"
-import { resolveCompatibleApi } from "@/utils/server-compat"
 import type { CompatibleImplementation } from "@/utils/server-compat"
 import type {
   McpListInput,
@@ -343,6 +342,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
     protocol: serverSDK.protocolForGeneration,
     api: serverSDK.api,
+    apiForGeneration: serverSDK.apiForGeneration,
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
@@ -525,7 +525,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           serverSDK.protocolForGeneration()
             .then(async (protocol) => {
               if (protocol === "v1") return loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
-              const api = resolveCompatibleApi(serverSDK.api, protocol)
+              const api = await serverSDK.apiForGeneration()
               return loadRootSessions({ api: api.session, directory, limit })
             })
             .then((x) => {

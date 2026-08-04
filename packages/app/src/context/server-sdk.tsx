@@ -539,6 +539,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     get protocol() {
       return serverSDK.protocolForGeneration()
     },
+    protocolForGeneration: serverSDK.protocolForGeneration,
     protocolGeneration: serverSDK.protocolGeneration,
     eventGeneration: serverSDK.eventGeneration,
     apiForGeneration,

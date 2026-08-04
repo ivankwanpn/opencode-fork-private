@@ -13,7 +13,7 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useServerSDK } from "@/context/server-sdk"
 import { ScopedKey } from "@/utils/server-scope"
-import { resolveCompatibleApiForProtocol } from "@/utils/server-compat"
+import { runServerMutation } from "@/utils/session-mutation"
 
 const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
 
@@ -226,9 +226,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const replyMutation = useMutation(() => ({
     mutationFn: (answers: QuestionAnswer[]) => {
       const target = sdk()
-      return resolveCompatibleApiForProtocol(target.api, target.protocol).then((api) =>
-        api.question.reply({ sessionID: props.request.sessionID, requestID: props.request.id, answers }),
-      )
+      return runServerMutation({
+        sessionMutations: target.sessionMutations,
+        sessionID: props.request.sessionID,
+        apiForGeneration: target.apiForGeneration,
+        run: (api) => api.question.reply({ sessionID: props.request.sessionID, requestID: props.request.id, answers }),
+      })
     },
     onMutate: () => {
       props.onSubmit()
@@ -243,9 +246,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const rejectMutation = useMutation(() => ({
     mutationFn: () => {
       const target = sdk()
-      return resolveCompatibleApiForProtocol(target.api, target.protocol).then((api) =>
-        api.question.reject({ sessionID: props.request.sessionID, requestID: props.request.id }),
-      )
+      return runServerMutation({
+        sessionMutations: target.sessionMutations,
+        sessionID: props.request.sessionID,
+        apiForGeneration: target.apiForGeneration,
+        run: (api) => api.question.reject({ sessionID: props.request.sessionID, requestID: props.request.id }),
+      })
     },
     onMutate: () => {
       props.onSubmit()

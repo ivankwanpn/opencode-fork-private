@@ -22,7 +22,6 @@ import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { pathKey } from "@/utils/path-key"
 import { showToast } from "@/utils/toast"
 import { runServerSessionMutation } from "@/context/server-sdk"
-import { resolveCompatibleApi } from "@/utils/server-compat"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { archiveHomeSession } from "../home-session-archive"
 import type { HomeController } from "./home-controller"
@@ -71,8 +70,8 @@ export function createHomeSessionsController(home: HomeController) {
       if (!ctx) return { sessions: [], eventSequence: 0 }
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
-      const protocol = await ctx.sdk.protocol
-      const api = resolveCompatibleApi(ctx.sdk.api, protocol)
+      const protocol = await ctx.sdk.protocolForGeneration()
+      const api = await ctx.sdk.apiForGeneration()
       const sessionList = (
         input: Parameters<typeof ctx.sdk.api.session.list>[0],
         options?: Parameters<typeof ctx.sdk.api.session.list>[1],

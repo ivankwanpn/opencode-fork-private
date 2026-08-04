@@ -22,7 +22,7 @@ import {
   sessionAutoAccept,
 } from "./permission-auto-respond"
 import { extractArray } from "@/utils/response-helpers"
-import { resolveCompatibleApiForProtocol } from "@/utils/server-compat"
+import { runServerMutation } from "@/utils/session-mutation"
 
 type PermissionRespondFn = (input: {
   sessionID: string
@@ -247,22 +247,25 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
 
   const respond: PermissionRespondFn = (request) => {
     if (meta.disposed) return
-    void resolveCompatibleApiForProtocol(input.sdk.api, input.sdk.protocol)
-      .then((api) =>
+    void runServerMutation({
+      sessionMutations: input.sdk.sessionMutations,
+      sessionID: request.sessionID,
+      apiForGeneration: input.sdk.apiForGeneration,
+      run: (api) =>
         api.permission.reply({
           sessionID: request.sessionID,
           requestID: request.permissionID,
           reply: request.response,
           location: request.directory ? { directory: request.directory } : undefined,
         }),
-      )
+    })
       .catch(() => {
         responded.delete(request.permissionID)
       })
   }
 
   const list = (directory: string) =>
-    resolveCompatibleApiForProtocol(input.sdk.api, input.sdk.protocol)
+    input.sdk.apiForGeneration()
       .then((api) => api.permission.request.list({ location: { directory } }))
       .then((result) => extractArray(result).map(normalizePermissionRequest))
 

@@ -17,7 +17,6 @@ import type { LocalPTY } from "@/context/terminal"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
 import { terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
-import { resolveCompatibleApi } from "@/utils/server-compat"
 
 const TOGGLE_TERMINAL_ID = "terminal.toggle"
 const DEFAULT_TOGGLE_TERMINAL_KEYBIND = "ctrl+`"
@@ -243,9 +242,9 @@ export const Terminal = (props: TerminalProps) => {
 
   const pushSize = async (cols: number, rows: number) => {
     const target = sdk()
-    return target.protocol
-      .then((protocol) =>
-        resolveCompatibleApi(target.api, protocol).pty.update({
+    return target.apiForGeneration()
+      .then((api) =>
+        api.pty.update({
           ptyID: id,
           location: { directory },
           size: { cols, rows },
@@ -526,9 +525,7 @@ export const Terminal = (props: TerminalProps) => {
         local.onConnectError?.(err)
       }
 
-      const gone = async () => {
-        const target = sdk()
-        const protocol = await target.protocol
+      const gone = async (target: ReturnType<typeof sdk>, protocol: "v1" | "v2") => {
         if (protocol === "v1") {
           return target.client.pty
             .get({ ptyID: id }, { throwOnError: false })
@@ -538,8 +535,8 @@ export const Terminal = (props: TerminalProps) => {
               return false
             })
         }
-        return resolveCompatibleApi(target.api, protocol)
-          .pty.get({ ptyID: id, location: { directory } })
+        return target.apiForGeneration()
+          .then((api) => api.pty.get({ ptyID: id, location: { directory } }))
           .then((result) => result.data.status === "exited")
           .catch((err) => {
             if (err && typeof err === "object" && "_tag" in err && err._tag === "PtyNotFoundError") return true
@@ -548,9 +545,7 @@ export const Terminal = (props: TerminalProps) => {
           })
       }
 
-      const connectToken = async () => {
-        const target = sdk()
-        const protocol = await target.protocol
+      const connectToken = async (target: ReturnType<typeof sdk>, protocol: "v1" | "v2") => {
         if (protocol === "v1") {
           const result = await target.client.pty
             .connectToken(
@@ -571,12 +566,14 @@ export const Terminal = (props: TerminalProps) => {
             throw new Error("PTY connect ticket rejected by origin or CSRF checks. Check the server CORS config.")
           throw new Error(`PTY connect ticket failed with ${result.response.status}`)
         }
-        return resolveCompatibleApi(target.api, protocol)
-          .pty.connectToken({
-            ptyID: id,
-            location: { directory },
-            "x-opencode-ticket": "1",
-          })
+        return target.apiForGeneration()
+          .then((api) =>
+            api.pty.connectToken({
+              ptyID: id,
+              location: { directory },
+              "x-opencode-ticket": "1",
+            }),
+          )
           .then((result) => result.data.ticket)
           .catch((err: unknown) => {
             if (err && typeof err === "object" && "_tag" in err && err._tag === "ForbiddenError") {
@@ -594,7 +591,9 @@ export const Terminal = (props: TerminalProps) => {
         reconn = setTimeout(async () => {
           reconn = undefined
           if (disposed) return
-          if (await gone()) {
+          const target = sdk()
+          const protocol = await target.protocolForGeneration()
+          if (await gone(target, protocol)) {
             if (disposed) return
             fail(err)
             return
@@ -609,11 +608,12 @@ export const Terminal = (props: TerminalProps) => {
         if (disposed) return
         drop?.()
 
-        const ticket = await connectToken().catch((err) => {
+        const target = sdk()
+        const protocol = await target.protocolForGeneration()
+        const ticket = await connectToken(target, protocol).catch((err) => {
           fail(err)
           return undefined
         })
-        const protocol = await sdk().protocol
         if (protocol === "v2" && !ticket) return
         if (once.value) return
         if (disposed) return

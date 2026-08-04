@@ -16,6 +16,23 @@ export function requireServerKey(segment: string | undefined) {
   return ServerConnection.Key.make(key)
 }
 
+export function activeSessionIDForRoute(
+  params: { serverKey?: string; dir?: string; id?: string },
+  targetServer: ServerConnection.Key,
+  activeServer: ServerConnection.Key,
+) {
+  if (!params.id || targetServer !== activeServer) return
+  if (params.serverKey) {
+    try {
+      if (requireServerKey(params.serverKey) === targetServer) return params.id
+    } catch {
+      return
+    }
+    return
+  }
+  if (params.dir) return params.id
+}
+
 export function legacySessionServer(
   tabs: readonly { type: "session"; server: ServerConnection.Key; sessionId: string }[],
   sessionID: string,

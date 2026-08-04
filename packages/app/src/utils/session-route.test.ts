@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { ServerConnection } from "@/context/server"
-import { legacySessionHref, legacySessionServer, requireServerKey, rootSession, sessionHref } from "./session-route"
+import {
+  activeSessionIDForRoute,
+  legacySessionHref,
+  legacySessionServer,
+  requireServerKey,
+  rootSession,
+  sessionHref,
+} from "./session-route"
 
 describe("session routes", () => {
   test("uses the unique persisted server for a legacy session route", () => {
@@ -36,6 +43,21 @@ describe("session routes", () => {
 
   test("rejects malformed server keys", () => {
     expect(() => requireServerKey("not-base64")).toThrow("Invalid server route")
+  })
+
+  test("recognizes the active session on a server-scoped route", () => {
+    const server = ServerConnection.Key.make("https://example.com:4096")
+    const params = { serverKey: "aHR0cHM6Ly9leGFtcGxlLmNvbTo0MDk2", id: "session-1" }
+
+    expect(activeSessionIDForRoute(params, server, server)).toBe("session-1")
+    expect(activeSessionIDForRoute(params, ServerConnection.Key.make("other"), server)).toBeUndefined()
+  })
+
+  test("ignores malformed or unrelated session routes", () => {
+    const server = ServerConnection.Key.make("server")
+
+    expect(activeSessionIDForRoute({ serverKey: "invalid", id: "session-1" }, server, server)).toBeUndefined()
+    expect(activeSessionIDForRoute({ dir: "directory", id: "session-1" }, server, ServerConnection.Key.make("other"))).toBeUndefined()
   })
 
   test("builds the legacy directory-keyed route", () => {

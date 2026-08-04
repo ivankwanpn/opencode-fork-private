@@ -183,13 +183,14 @@ function lazyApi<T extends object>(implementation: LazyImplementation<T>, shape:
       if (sample === null || typeof sample !== "object") return sample
       if (cache.has(property)) return cache.get(property)
       const nested = lazyApi(
-        () => resolveImplementation(implementation).then((value) => {
-          const result = Reflect.get(value, property)
-          if (result === null || typeof result !== "object") {
-            throw new Error(`API namespace unavailable: ${String(property)}`)
-          }
-          return result
-        }),
+        () =>
+          resolveImplementation(implementation).then((value) => {
+            const result = Reflect.get(value, property)
+            if (result === null || typeof result !== "object") {
+              throw new Error(`API namespace unavailable: ${String(property)}`)
+            }
+            return result
+          }),
         sample,
       )
       cache.set(property, nested)
@@ -528,10 +529,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       ...input.current.config,
       async get(value?: Parameters<ServerApi["config"]["get"]>[0]) {
         const result = await legacy(value?.location).global.config.get()
-        return located(
-          (result.data ?? {}) as Awaited<ReturnType<ServerApi["config"]["get"]>>["data"],
-          value?.location,
-        )
+        return located((result.data ?? {}) as Awaited<ReturnType<ServerApi["config"]["get"]>>["data"], value?.location)
       },
       async update(value: Parameters<ServerApi["config"]["update"]>[0]) {
         const result = await legacy().global.config.update({
@@ -584,11 +582,10 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async get(value: Parameters<ServerApi["integration"]["get"]>[0]) {
         const client = legacy(value.location)
         const results = await Promise.all([client.provider.auth(), client.provider.list()])
-        const methods = (results[0].data?.[value.integrationID] ?? []).map(
-          (method, index) =>
-            method.type === "api"
-              ? { type: "key" as const, label: method.label }
-              : { type: "oauth" as const, id: String(index), label: method.label, prompts: method.prompts },
+        const methods = (results[0].data?.[value.integrationID] ?? []).map((method, index) =>
+          method.type === "api"
+            ? { type: "key" as const, label: method.label }
+            : { type: "oauth" as const, id: String(index), label: method.label, prompts: method.prompts },
         )
         const connected = results[1].data?.connected.includes(value.integrationID) ?? false
         return located(
@@ -650,6 +647,9 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
             value.location,
           )
         },
+        // V1 has no cancellable OAuth attempt. Cleanup is local because the
+        // legacy authorize endpoint does not expose a matching operation.
+        cancel: async () => undefined,
       },
     },
     credential: {
@@ -741,10 +741,9 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         ...input.current.question.request,
         async list(value?: Parameters<ServerApi["question"]["request"]["list"]>[0]) {
           const result = await legacy(value?.location).question.list()
-          return located(
-            result.data ?? [],
-            value?.location,
-          ) as Awaited<ReturnType<ServerApi["question"]["request"]["list"]>>
+          return located(result.data ?? [], value?.location) as Awaited<
+            ReturnType<ServerApi["question"]["request"]["list"]>
+          >
         },
       },
       async reply(value: Parameters<ServerApi["question"]["reply"]>[0]) {

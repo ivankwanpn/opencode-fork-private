@@ -12,7 +12,13 @@ import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
-import { createCompatibleApi, createV2OnlyApi, type CompatibleApi } from "@/utils/server-compat"
+import {
+  createCompatibleApi,
+  createV2OnlyApi,
+  resolveCompatibleApiForProtocol,
+  type CompatibleApi,
+  type CompatibleImplementation,
+} from "@/utils/server-compat"
 import { createSessionMutationQueue } from "@/utils/session-mutation"
 export { resolveServerSessionApi, runServerSessionMutation } from "@/utils/session-mutation"
 
@@ -206,6 +212,7 @@ type ServerSDKBase = {
   protocolGeneration: () => number
   eventGeneration: () => number
   diagnostics: () => ServerGenerationDiagnostics
+  apiForGeneration: () => Promise<CompatibleImplementation>
   protocolKind: Accessor<ServerProtocol | undefined>
   url: string
   client: ReturnType<typeof createSdkForServer>
@@ -424,6 +431,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     server.type === "sidecar"
       ? createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
       : createCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
+  const apiForGeneration = () => resolveCompatibleApiForProtocol(api, protocolForGeneration)
 
   return {
     server,
@@ -434,6 +442,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     protocolForGeneration,
     protocolGeneration: () => protocolGeneration,
     eventGeneration: () => eventGeneration,
+    apiForGeneration,
     diagnostics: () => ({
       protocol: protocolKind(),
       protocolGeneration,
@@ -523,6 +532,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
           legacy: (next) => serverSDK.createClient({ directory: next ?? directory, throwOnError: true }),
           directory,
         })
+  const apiForGeneration = () => resolveCompatibleApiForProtocol(api, serverSDK.protocolForGeneration)
 
   return {
     scope: serverSDK.scope,
@@ -531,6 +541,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     },
     protocolGeneration: serverSDK.protocolGeneration,
     eventGeneration: serverSDK.eventGeneration,
+    apiForGeneration,
     diagnostics: serverSDK.diagnostics,
     directory,
     client,

@@ -126,8 +126,8 @@ export const SettingsGeneral: Component = () => {
   const [shells] = createResource(
     async () => {
       return serverSdk()
-        .api.pty
-        .shells()
+        .apiForGeneration()
+        .then((api) => api.pty.shells())
         .then((result) => result.data)
         .catch(() => [])
     },

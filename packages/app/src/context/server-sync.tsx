@@ -12,7 +12,7 @@ import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
-import { resolveServerSessionApi, ServerSDK } from "./server-sdk"
+import { ServerSDK } from "./server-sdk"
 import {
   bootstrapDirectory,
   bootstrapGlobal,
@@ -49,6 +49,7 @@ import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/serv
 import { createHomeSessionIndexCache } from "./global-sync/home-session-index"
 import { persisted } from "@/utils/persist"
 import type { ServerApi } from "@/utils/server"
+import { resolveCompatibleApi } from "@/utils/server-compat"
 import type {
   McpListInput,
   McpListOutput,
@@ -327,10 +328,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const activeSessionsQuery = useQuery(() =>
     loadActiveSessionsQuery(serverSDK.scope, {
       active: async () => {
-        const active = await resolveServerSessionApi({
-          protocol: serverSDK.protocol,
-          api: serverSDK.api,
-        }).then((api) => api.active())
+        const active = await serverSDK.apiForGeneration().then((api) => api.session.active())
         seedActiveSessionStatuses(session, active)
         for (const sessionID of Object.keys(active)) {
           void session.resolve(sessionID).catch(() => undefined)
@@ -396,6 +394,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       await bootstrapGlobal({
         serverSDK: serverSDK.client,
         serverAPI: serverSDK.api,
+        apiForGeneration: serverSDK.apiForGeneration,
         protocol: serverSDK.protocolForGeneration,
         scope: serverSDK.scope,
         requestFailedTitle: language.t("common.requestFailed"),
@@ -436,7 +435,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       void bootstrapInstance(directory)
     },
     onMcp: (directory, setStore) => {
-      void loadCommands(directory, serverSDK.api.command, sdkFor(directory), serverSDK.protocolForGeneration)
+      void serverSDK
+        .apiForGeneration()
+        .then((api) => loadCommands(directory, api.command, sdkFor(directory), serverSDK.protocolForGeneration))
         .then((commands) => setStore("command", commands))
         .catch((err) => {
           showToast({
@@ -490,14 +491,11 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
         queryFn: () =>
-          resolveServerProtocol(serverSDK.protocolForGeneration)
+          serverSDK.protocolForGeneration()
             .then(async (protocol) => {
               if (protocol === "v1") return loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
-              const api = await resolveServerSessionApi({
-                protocol: serverSDK.protocol,
-                api: serverSDK.api,
-              })
-              return loadRootSessions({ api, directory, limit })
+              const api = resolveCompatibleApi(serverSDK.api, protocol)
+              return loadRootSessions({ api: api.session, directory, limit })
             })
             .then((x) => {
               const nonArchived = (x.data ?? [])
@@ -569,6 +567,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         },
         sdk,
         api: serverSDK.api,
+        apiForGeneration: serverSDK.apiForGeneration,
         store: child[0],
         setStore: child[1],
         vcsCache: cache,
@@ -775,10 +774,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   }
 
   const updateConfigMutation = useMutation(() => ({
-    mutationFn: (config: Config) =>
-      serverSDK.api.config.update({
+    mutationFn: async (config: Config) => {
+      const api = await serverSDK.apiForGeneration()
+      return api.config.update({
         config: config as unknown as Parameters<ServerApi["config"]["update"]>[0]["config"],
-      }),
+      })
+    },
     onSuccess: refreshProviders,
   }))
 
@@ -806,12 +807,13 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         const key = directoryKey(directory)
         const status = children.child(key, { bootstrap: false })[0].mcp[name]?.status
         if (!status) return
+        const api = await serverSDK.apiForGeneration()
         await toggleMcp({
           status,
-          connect: () => serverSDK.api.mcp.connect({ server: name, location: { directory: key } }),
-          disconnect: () => serverSDK.api.mcp.disconnect({ server: name, location: { directory: key } }),
+          connect: () => api.mcp.connect({ server: name, location: { directory: key } }),
+          disconnect: () => api.mcp.disconnect({ server: name, location: { directory: key } }),
           authenticate: async () => {
-            await serverSDK.api.mcp.authenticate({ name, location: { directory: key } })
+            await api.mcp.authenticate({ name, location: { directory: key } })
           },
           refresh: async () => {
             await queryClient.refetchQueries(queryOptionsApi.mcp(key))

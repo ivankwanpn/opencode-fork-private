@@ -69,7 +69,11 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
   const missingBase = createMemo(() => !(sync.data.path.home || sync.data.path.directory))
   const [fallbackPath] = createResource(
     () => (missingBase() ? true : undefined),
-    () => sdk.api.path.get().catch(() => undefined),
+    () =>
+      sdk
+        .apiForGeneration()
+        .then((api) => api.path.get())
+        .catch(() => undefined),
     { initialValue: undefined },
   )
   const home = createMemo(() => sync.data.path.home || fallbackPath()?.home || "")
@@ -91,13 +95,16 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
     if (!policy.includeFiles) return { query: value, items: directories.slice(0, 5) }
     const base = pickerRoot(cleaned) || root() || start()
     if (!base) return { query: value, items: directories.slice(0, 5) }
-    const files = await sdk.api.file
-      .find({
-        location: { directory: base },
-        query: pickerFileSearchQuery(base, value, home()),
-        type: "file",
-        limit: 20,
-      })
+    const files = await sdk
+      .apiForGeneration()
+      .then((api) =>
+        api.file.find({
+          location: { directory: base },
+          query: pickerFileSearchQuery(base, value, home()),
+          type: "file",
+          limit: 20,
+        }),
+      )
       .then((result) => extractArray(result))
       .catch(() => [])
     const results = [
@@ -121,8 +128,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
       existing ??
       loads.schedule(`${generation}:${key}`, eager ? "background" : "user", () => {
         if (!activeTreeNavigation(generation, navigation)) return Promise.resolve(undefined)
-        return sdk.api.file
-          .list({ location: { directory: absolute } })
+        return sdk
+          .apiForGeneration()
+          .then((api) => api.file.list({ location: { directory: absolute } }))
           .then((result) =>
             extractArray(result).map((entry) => ({
               name: getFilename(entry.path.replace(/[\\/]+$/, "")),

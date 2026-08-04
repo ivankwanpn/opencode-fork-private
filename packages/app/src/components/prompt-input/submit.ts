@@ -23,11 +23,7 @@ import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
-import {
-  resolveServerSessionApi,
-  runServerSessionMutation,
-  type ServerSessionApi,
-} from "@/utils/session-mutation"
+import { runServerSessionMutation, type ServerSessionApi } from "@/utils/session-mutation"
 
 type PendingPrompt = {
   abort: AbortController
@@ -392,10 +388,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     const submissionSDK = sdk()
     const submissionServerSync = serverSync()
-    const submissionSessionApi = await resolveServerSessionApi({
-      protocol: submissionSDK.protocol,
-      api: submissionSDK.api,
-    })
+    const submissionApi = await submissionSDK.apiForGeneration()
+    const submissionSessionApi = submissionApi.session
     const projectDirectory = submissionSDK.directory
     const permissionState = permission.currentServerState()
     const isNewSession = !params.id
@@ -406,8 +400,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     if (isNewSession) {
       if (worktreeSelection === "create") {
-        const createdWorktree = await submissionSDK
-          .api.worktree.create({ location: { directory: projectDirectory } })
+        const createdWorktree = await submissionApi.worktree
+          .create({ location: { directory: projectDirectory } })
           .catch((err) => {
             showToast({
               title: language.t("prompt.toast.worktreeCreateFailed.title"),
@@ -534,7 +528,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     if (mode === "shell") {
       clearInput()
       const eventID = Event.ID.create()
-      submissionSessionApi.shell({
+      submissionSessionApi
+        .shell({
           sessionID: session.id,
           id: eventID,
           command: text,

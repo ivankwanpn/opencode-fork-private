@@ -17,6 +17,7 @@ import type { LocalPTY } from "@/context/terminal"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
 import { terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
+import { resolveCompatibleApi } from "@/utils/server-compat"
 
 const TOGGLE_TERMINAL_ID = "terminal.toggle"
 const DEFAULT_TOGGLE_TERMINAL_KEYBIND = "ctrl+`"
@@ -241,12 +242,15 @@ export const Terminal = (props: TerminalProps) => {
   }
 
   const pushSize = async (cols: number, rows: number) => {
-    return sdk()
-      .api.pty.update({
-        ptyID: id,
-        location: { directory },
-        size: { cols, rows },
-      })
+    const target = sdk()
+    return target.protocol
+      .then((protocol) =>
+        resolveCompatibleApi(target.api, protocol).pty.update({
+          ptyID: id,
+          location: { directory },
+          size: { cols, rows },
+        }),
+      )
       .catch((err) => {
         debugTerminal("failed to sync terminal size", err)
       })
@@ -523,17 +527,19 @@ export const Terminal = (props: TerminalProps) => {
       }
 
       const gone = async () => {
-        if ((await sdk().protocol) === "v1") {
-          return sdk()
-            .client.pty.get({ ptyID: id }, { throwOnError: false })
+        const target = sdk()
+        const protocol = await target.protocol
+        if (protocol === "v1") {
+          return target.client.pty
+            .get({ ptyID: id }, { throwOnError: false })
             .then((result) => result.response.status === 404)
             .catch((err) => {
               debugTerminal("failed to inspect terminal session", err)
               return false
             })
         }
-        return sdk()
-          .api.pty.get({ ptyID: id, location: { directory } })
+        return resolveCompatibleApi(target.api, protocol)
+          .pty.get({ ptyID: id, location: { directory } })
           .then((result) => result.data.status === "exited")
           .catch((err) => {
             if (err && typeof err === "object" && "_tag" in err && err._tag === "PtyNotFoundError") return true
@@ -543,9 +549,11 @@ export const Terminal = (props: TerminalProps) => {
       }
 
       const connectToken = async () => {
-        if ((await sdk().protocol) === "v1") {
-          const result = await sdk()
-            .client.pty.connectToken(
+        const target = sdk()
+        const protocol = await target.protocol
+        if (protocol === "v1") {
+          const result = await target.client.pty
+            .connectToken(
               { ptyID: id, directory },
               {
                 throwOnError: false,
@@ -563,8 +571,8 @@ export const Terminal = (props: TerminalProps) => {
             throw new Error("PTY connect ticket rejected by origin or CSRF checks. Check the server CORS config.")
           throw new Error(`PTY connect ticket failed with ${result.response.status}`)
         }
-        return sdk()
-          .api.pty.connectToken({
+        return resolveCompatibleApi(target.api, protocol)
+          .pty.connectToken({
             ptyID: id,
             location: { directory },
             "x-opencode-ticket": "1",

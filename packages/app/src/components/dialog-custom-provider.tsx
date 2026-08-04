@@ -15,6 +15,7 @@ import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { showToast } from "@/utils/toast"
+import { resolveCompatibleApi } from "@/utils/server-compat"
 import {
   canDiscoverModels,
   customProviderFormState,
@@ -144,15 +145,17 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
   }
 
   const available = async () => {
-    if ((await serverSDK().protocolForGeneration()) === "v2") return true
+    const target = serverSDK()
+    const protocol = await target.protocolForGeneration()
+    if (protocol === "v2") return resolveCompatibleApi(target.api, protocol)
     setDiscovery("saveError", language.t("provider.custom.unavailable"))
-    return false
   }
 
   const discoverMutation = useMutation(() => ({
     mutationFn: async () => {
-      if (!(await available())) return
-      return serverSDK().api.providers.discoverCustom({
+      const api = await available()
+      if (!api) return
+      return api.providers.discoverCustom({
         baseURL: form.baseURL.trim(),
         apiKey: form.apiKey.trim() || undefined,
         headers: headers(),
@@ -219,8 +222,9 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
 
   const saveMutation = useMutation(() => ({
     mutationFn: async (result: CustomProvider.ConfigureInput) => {
-      if (!(await available())) return
-      const configured = await serverSDK().api.providers.configureCustom({
+      const api = await available()
+      if (!api) return
+      const configured = await api.providers.configureCustom({
         ...result,
         location: location(),
       })

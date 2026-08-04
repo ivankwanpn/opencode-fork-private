@@ -5,10 +5,7 @@ import { decodeFilePath, stripQueryAndHash } from "@/context/file/path"
 import type { ContextItem, FileAttachmentPart, Prompt } from "@/context/prompt"
 import { readCommentMetadata } from "@/utils/comment-note"
 
-type SessionFollowupApi = Pick<
-  ServerApi["session"],
-  "inputList" | "inputGet" | "inputPromote" | "inputCancel"
->
+type SessionFollowupApi = Pick<ServerApi["session"], "inputList" | "inputGet" | "inputPromote" | "inputCancel">
 
 export type SessionFollowupItem = Awaited<ReturnType<SessionFollowupApi["inputList"]>>[number]
 
@@ -21,6 +18,7 @@ export type SessionFollowupEdit = {
 export function createSessionFollowupState(input: {
   sessionID: () => string | undefined
   api: () => SessionFollowupApi
+  resolveApi?: () => Promise<SessionFollowupApi>
   mutate?: (sessionID: string, task: (api: SessionFollowupApi) => Promise<unknown>) => Promise<unknown>
   enabled?: () => boolean
 }) {
@@ -33,13 +31,11 @@ export function createSessionFollowupState(input: {
 
   const currentSession = () => input.sessionID()
   const enabled = () => input.enabled?.() ?? true
+  const resolveApi = () => input.resolveApi?.() ?? Promise.resolve(input.api())
 
   const pending = (sessionID: string, items: readonly SessionFollowupItem[]) =>
     items
-      .filter(
-        (item) =>
-          item.sessionID === sessionID && item.delivery === "queue" && item.promotedSeq === undefined,
-      )
+      .filter((item) => item.sessionID === sessionID && item.delivery === "queue" && item.promotedSeq === undefined)
       .slice()
       .sort((left, right) => left.admittedSeq - right.admittedSeq)
 
@@ -53,10 +49,10 @@ export function createSessionFollowupState(input: {
     }
 
     const ticket = ++request
-    const api = input.api()
     setStore("items", [])
     setStore("loading", true)
     try {
+      const api = await resolveApi()
       const items = await api.inputList({ sessionID, delivery: "queue" })
       if (ticket !== request || currentSession() !== sessionID) return
       setStore("items", pending(sessionID, items))
@@ -69,7 +65,8 @@ export function createSessionFollowupState(input: {
     const sessionID = currentSession()
     if (!sessionID || !enabled()) return
 
-    const item = await input.api().inputGet({ sessionID, inputID })
+    const api = await resolveApi()
+    const item = await api.inputGet({ sessionID, inputID })
     if (currentSession() !== sessionID) return item
 
     setStore("items", (items) => pending(sessionID, [...items.filter((entry) => entry.id !== item.id), item]))
@@ -80,7 +77,7 @@ export function createSessionFollowupState(input: {
     const sessionID = currentSession()
     if (!sessionID || !enabled() || store.sending) return false
 
-    const api = input.api()
+    const api = await resolveApi()
     setStore("sending", inputID)
     try {
       if (input.mutate) await input.mutate(sessionID, (current) => current.inputPromote({ sessionID, inputID }))
@@ -101,7 +98,7 @@ export function createSessionFollowupState(input: {
     const sessionID = currentSession()
     if (!sessionID || !enabled() || store.sending) return false
 
-    const api = input.api()
+    const api = await resolveApi()
     setStore("sending", inputID)
     try {
       if (input.mutate) await input.mutate(sessionID, (current) => current.inputCancel({ sessionID, inputID }))

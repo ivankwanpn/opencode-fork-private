@@ -21,7 +21,8 @@ import { displayName, errorMessage, projectForSession } from "@/pages/layout/hel
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { pathKey } from "@/utils/path-key"
 import { showToast } from "@/utils/toast"
-import { resolveServerSessionApi, runServerSessionMutation } from "@/context/server-sdk"
+import { runServerSessionMutation } from "@/context/server-sdk"
+import { resolveCompatibleApi } from "@/utils/server-compat"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { archiveHomeSession } from "../home-session-archive"
 import type { HomeController } from "./home-controller"
@@ -71,11 +72,11 @@ export function createHomeSessionsController(home: HomeController) {
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
       const protocol = await ctx.sdk.protocol
-      const sessionList = (input: Parameters<typeof ctx.sdk.api.session.list>[0], options?: Parameters<typeof ctx.sdk.api.session.list>[1]) =>
-        resolveServerSessionApi({
-          protocol: ctx.sdk.protocol,
-          api: ctx.sdk.api,
-        }).then((api) => api.list(input, options))
+      const api = resolveCompatibleApi(ctx.sdk.api, protocol)
+      const sessionList = (
+        input: Parameters<typeof ctx.sdk.api.session.list>[0],
+        options?: Parameters<typeof ctx.sdk.api.session.list>[1],
+      ) => api.session.list(input, options)
       const index =
         protocol === "v1"
           ? await loadLegacyHomeSessionIndex(projectDirectories(), sessionList, eventSequence, signal)

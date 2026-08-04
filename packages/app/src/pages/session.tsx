@@ -406,6 +406,10 @@ export default function Page() {
   const followupState = createSessionFollowupState({
     sessionID: () => params.id,
     api: () => sdk().api.session,
+    resolveApi: () =>
+      sdk()
+        .apiForGeneration()
+        .then((api) => api.session),
     mutate: (sessionID, task) => {
       const target = sdk()
       return runServerSessionMutation({
@@ -863,7 +867,10 @@ export default function Page() {
   }
 
   const gitMutation = useMutation(() => ({
-    mutationFn: () => sdk().api.project.initGit({ location: { directory: sdk().directory } }),
+    mutationFn: () => {
+      const target = sdk()
+      return target.apiForGeneration().then((api) => api.project.initGit({ location: { directory: target.directory } }))
+    },
     onSuccess: (x) => {
       upsert(x)
     },

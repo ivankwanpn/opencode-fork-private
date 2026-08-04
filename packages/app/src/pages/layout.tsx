@@ -35,7 +35,7 @@ import type { DragEvent } from "@thisbeyond/solid-dnd"
 import { useProviders } from "@/hooks/use-providers"
 import { toaster } from "@opencode-ai/ui/toast"
 import { setV2Toast, showToast, ToastRegion } from "@/utils/toast"
-import { resolveServerSessionApi, runServerSessionMutation, useServerSDK } from "@/context/server-sdk"
+import { runServerSessionMutation, useServerSDK } from "@/context/server-sdk"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
 import { clearWorkspaceTerminals } from "@/context/terminal"
 import { pickSessionCacheEvictions } from "@/context/global-sync/session-cache"
@@ -90,7 +90,7 @@ export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
   const resolveSessionApi = () => {
     const target = serverSDK()
-    return resolveServerSessionApi({ protocol: target.protocol, api: target.api })
+    return target.apiForGeneration().then((api) => api.session)
   }
   const [store, setStore, , ready] = persisted(
     Persist.serverGlobal(serverSDK().scope, "layout.page", ["layout.page.v1"]),
@@ -1187,11 +1187,10 @@ export default function LegacyLayout(props: ParentProps) {
     }
     const refreshDirs = async (target?: string) => {
       if (!target || target === root || canOpen(target)) return canOpen(target)
-      const listed = await Promise.resolve(
-        project?.id ?? serverSDK().api.project.current({ location: { directory: root } }),
-      )
+      const api = await serverSDK().apiForGeneration()
+      const listed = await Promise.resolve(project?.id ?? api.project.current({ location: { directory: root } }))
         .then((value) => (typeof value === "string" ? value : value.id))
-        .then((projectID) => serverSDK().api.project.directories({ projectID, location: { directory: root } }))
+        .then((projectID) => api.project.directories({ projectID, location: { directory: root } }))
         .then((items) => items.map((item) => item.directory).filter((item) => pathKey(item) !== pathKey(root)))
         .catch(() => [] as string[])
       dirs = effectiveWorkspaceOrder(root, [root, ...listed], store.workspaceOrder[root])
@@ -1302,7 +1301,10 @@ export default function LegacyLayout(props: ParentProps) {
     const name = next === getFilename(project.worktree) ? "" : next
 
     if (project.id && project.id !== "global") {
-      const result = await serverSDK().api.project.update({ projectID: project.id, name })
+      const projectID = project.id
+      const result = await serverSDK()
+        .apiForGeneration()
+        .then((api) => api.project.update({ projectID, name }))
       serverSync().set("project", (items) =>
         items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
       )
@@ -1399,7 +1401,8 @@ export default function LegacyLayout(props: ParentProps) {
     setBusy(directory, true)
 
     const result = await serverSDK()
-      .api.worktree.remove({ location: { directory: root }, directory })
+      .apiForGeneration()
+      .then((api) => api.worktree.remove({ location: { directory: root }, directory }))
       .catch((err) => {
         showToast({
           title: language.t("workspace.delete.failed.title"),
@@ -1465,19 +1468,27 @@ export default function LegacyLayout(props: ParentProps) {
       platform,
       serverSDK().scope,
     )
-    await serverSDK()
-      .api.location.dispose({ location: { directory } })
-      .catch(() => undefined)
-
-    const result = await serverSDK()
-      .api.worktree.reset({ location: { directory: root }, directory })
-      .catch((err) => {
-        showToast({
-          title: language.t("workspace.reset.failed.title"),
-          description: errorMessage(err, language.t("common.requestFailed")),
-        })
-        return false
+    const target = serverSDK()
+    const api = await target.apiForGeneration().catch((err) => {
+      setBusy(directory, false)
+      dismiss()
+      showToast({
+        title: language.t("common.requestFailed"),
+        description: errorMessage(err, language.t("common.requestFailed")),
       })
+      return undefined
+    })
+    if (!api) return
+
+    await api.location.dispose({ location: { directory } }).catch(() => undefined)
+
+    const result = await api.worktree.reset({ location: { directory: root }, directory }).catch((err) => {
+      showToast({
+        title: language.t("workspace.reset.failed.title"),
+        description: errorMessage(err, language.t("common.requestFailed")),
+      })
+      return false
+    })
 
     if (!result) {
       setBusy(directory, false)
@@ -1532,7 +1543,8 @@ export default function LegacyLayout(props: ParentProps) {
 
     onMount(() => {
       serverSDK()
-        .api.vcs.status({ location: { directory: props.directory } })
+        .apiForGeneration()
+        .then((api) => api.vcs.status({ location: { directory: props.directory } }))
         .then((result) => {
           const files = result.data
           const dirty = files.length > 0
@@ -1599,7 +1611,8 @@ export default function LegacyLayout(props: ParentProps) {
 
     onMount(() => {
       serverSDK()
-        .api.vcs.status({ location: { directory: props.directory } })
+        .apiForGeneration()
+        .then((api) => api.vcs.status({ location: { directory: props.directory } }))
         .then((result) => {
           const files = result.data
           const dirty = files.length > 0
@@ -1830,7 +1843,8 @@ export default function LegacyLayout(props: ParentProps) {
   const createWorkspace = async (project: LocalProject) => {
     clearSidebarHoverState()
     const created = await serverSDK()
-      .api.worktree.create({ location: { directory: project.worktree } })
+      .apiForGeneration()
+      .then((api) => api.worktree.create({ location: { directory: project.worktree } }))
       .catch((err) => {
         showToast({
           title: language.t("workspace.create.failed.title"),

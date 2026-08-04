@@ -248,7 +248,8 @@ function createWorkspaceTerminalSession(
       setStore("all", index, (item) => ({ ...item, ...pty }))
     }
     const doUpdate = async () => {
-      await sdk.api.pty.update({
+      const api = await sdk.apiForGeneration()
+      await api.pty.update({
         ptyID: pty.id,
         location,
         title: pty.title,
@@ -268,11 +269,14 @@ function createWorkspaceTerminalSession(
     const index = store.all.findIndex((x) => x.id === id)
     const pty = store.all[index]
     if (!pty) return
-    const data = await sdk.api.pty
-      .create({
-        location,
-        title: pty.title,
-      })
+    const data = await sdk
+      .apiForGeneration()
+      .then((api) =>
+        api.pty.create({
+          location,
+          title: pty.title,
+        }),
+      )
       .then((result) => result.data)
       .catch((error: unknown) => {
         console.error("Failed to clone terminal", error)
@@ -314,7 +318,8 @@ function createWorkspaceTerminalSession(
       const focusRequest = options?.focus ? requestFocus(undefined, true) : undefined
 
       const doCreate = async () => {
-        return (await sdk.api.pty.create({ location, title: defaultTitle(nextNumber) })).data
+        const api = await sdk.apiForGeneration()
+        return (await api.pty.create({ location, title: defaultTitle(nextNumber) })).data
       }
       doCreate()
         .then((data) => {
@@ -418,9 +423,12 @@ function createWorkspaceTerminalSession(
         })
       }
 
-      await sdk.api.pty.remove({ ptyID: id, location }).catch((error: unknown) => {
-        console.error("Failed to close terminal", error)
-      })
+      await sdk
+        .apiForGeneration()
+        .then((api) => api.pty.remove({ ptyID: id, location }))
+        .catch((error: unknown) => {
+          console.error("Failed to close terminal", error)
+        })
     },
     move(id: string, to: number) {
       const index = store.all.findIndex((f) => f.id === id)

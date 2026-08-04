@@ -254,8 +254,7 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
               },
               ({ route, sdk }) =>
                 resolveServerSessionApi({
-                  protocol: sdk.protocol,
-                  api: sdk.api,
+                  apiForGeneration: sdk.apiForGeneration,
                 })
                   .then((api) => api.get({ sessionID: route.sessionId }))
                   .then(normalizeSessionInfo)
@@ -322,8 +321,7 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
               if (sessionTabs.length === 0) return
 
               void resolveServerSessionApi({
-                protocol: target.protocol,
-                api: target.api,
+                apiForGeneration: target.apiForGeneration,
               })
                 .then((api) =>
                   Promise.all(

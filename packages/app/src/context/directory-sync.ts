@@ -136,8 +136,7 @@ export const createDirSyncContext = (
         const [store, setStore] = current()
         setStore("limit", (value) => value + count)
         const response = await resolveServerSessionApi({
-          protocol: serverSDK.protocol,
-          api: serverSDK.api,
+          apiForGeneration: serverSDK.apiForGeneration,
         }).then((api) => api.list({ directory, limit: store.limit, order: "desc" }))
         const sessions = response.data
           .map(normalizeSessionInfo)

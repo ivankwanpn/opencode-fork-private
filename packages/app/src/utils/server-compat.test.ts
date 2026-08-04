@@ -48,7 +48,14 @@ function currentApi(calls: string[]) {
         return { location: {}, data: { status: "connected" } }
       },
     },
-    integration: { connect: {}, oauth: {} },
+    integration: {
+      connect: {},
+      oauth: {
+        cancel: async () => {
+          calls.push("integration.oauth.cancel")
+        },
+      },
+    },
     credential: {},
     pty: {},
     plugins: {
@@ -179,6 +186,20 @@ describe("server compatibility API", () => {
       data: { status: "connected" },
     })
     expect(calls).toEqual([["/repo", { name: "demo" }]])
+  })
+
+  test("does not send V1 OAuth cleanup through the current API", async () => {
+    const calls: string[] = []
+    const api = createCompatibleApi({
+      protocol: Promise.resolve("v1"),
+      current: currentApi(calls),
+      legacy: () => {
+        throw new Error("legacy client should not be used")
+      },
+    })
+
+    await expect(api.integration.oauth.cancel({ integrationID: "demo", attemptID: "demo:0" })).resolves.toBeUndefined()
+    expect(calls).not.toContain("integration.oauth.cancel")
   })
 
   test("re-evaluates the protocol resolver for a new connection generation", async () => {

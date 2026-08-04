@@ -343,8 +343,9 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string
     const key = trimPickerPath(directory)
     const existing = cache.get(key)
     if (existing) return existing
-    const request = args.sdk.api.file
-      .list({ location: { directory: key } })
+    const request = args.sdk
+      .apiForGeneration()
+      .then((api) => api.file.list({ location: { directory: key } }))
       .then((result) => extractArray(result))
       .catch(() => [])
       .then((nodes) =>
@@ -375,8 +376,9 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string
     const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
     const query = normalizePickerDrive(input.path)
     if (!pathInput) {
-      const results = await args.sdk.api.file
-        .find({ location: { directory: input.directory }, query, type: "directory", limit: 50 })
+      const results = await args.sdk
+        .apiForGeneration()
+        .then((api) => api.file.find({ location: { directory: input.directory }, query, type: "directory", limit: 50 }))
         .then((result) => extractArray(result).map((entry) => entry.path))
         .catch(() => [])
       if (!active()) return []

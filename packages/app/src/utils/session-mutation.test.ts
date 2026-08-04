@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ServerApi } from "./server"
 import { createV2OnlyApi } from "./server-compat"
-import { createSessionMutationQueue, resolveServerSessionApi, runServerSessionMutation } from "./session-mutation"
+import { createSessionMutationQueue, resolveServerSessionApi, runServerMutation, runServerSessionMutation } from "./session-mutation"
 
 describe("session mutation queue", () => {
   test("serializes mutations for one session while allowing other sessions to proceed", async () => {
@@ -120,5 +120,37 @@ describe("session mutation queue", () => {
       }),
     ).resolves.toBe(true)
     expect(calls).toEqual(["inputList"])
+  })
+
+  test("serializes permission responses with other mutations for the same session", async () => {
+    const queue = createSessionMutationQueue()
+    const pending = Promise.withResolvers<void>()
+    const events: string[] = []
+    const current = {
+      permission: {
+        reply: async (input: { requestID: string }) => {
+          events.push(`${input.requestID}:start`)
+          if (input.requestID === "first") await pending.promise
+          events.push(`${input.requestID}:end`)
+        },
+      },
+    } as unknown as ServerApi
+
+    const run = (requestID: string) =>
+      runServerMutation({
+        apiForGeneration: () => Promise.resolve(current),
+        sessionMutations: queue,
+        sessionID: "ses_1",
+        run: (api) => api.permission.reply({ sessionID: "ses_1", requestID, reply: "once" }),
+      })
+
+    const first = run("first")
+    const second = run("second")
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(events).toEqual(["first:start"])
+
+    pending.resolve()
+    await Promise.all([first, second])
+    expect(events).toEqual(["first:start", "first:end", "second:start", "second:end"])
   })
 })

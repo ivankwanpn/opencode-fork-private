@@ -1853,6 +1853,32 @@ describe("server session", () => {
     expect(requests).toEqual(["child", "child", "child"])
   })
 
+  test("keeps compaction busy until the terminal status event", () => {
+    const ctx = setup({})
+    ctx.store.remember(session("child"))
+
+    const status = (value: "busy" | "idle") =>
+      ctx.store.apply({ type: "session.status", properties: { sessionID: "child", status: { type: value } } })
+    const marker = (type: string) => ctx.store.apply({ type, properties: { sessionID: "child" } })
+
+    status("busy")
+    marker("session.next.compaction.started")
+    marker("session.next.compaction.ended")
+    expect(ctx.store.data.session_status.child).toEqual({ type: "busy" })
+    expect(ctx.store.data.session_working("child")).toBe(true)
+
+    status("idle")
+    marker("session.idle")
+    expect(ctx.store.data.session_status.child).toEqual({ type: "idle" })
+    expect(ctx.store.data.session_working("child")).toBe(false)
+
+    status("busy")
+    marker("session.next.compaction.started")
+    marker("session.next.compaction.failed")
+    status("idle")
+    expect(ctx.store.data.session_status.child).toEqual({ type: "idle" })
+  })
+
   test("loads the canonical V2 todo projection instead of returning an empty placeholder", async () => {
     const todos = [{ content: "finish migration", status: "pending", priority: "high" }] as Todo[]
     const currentSession = {

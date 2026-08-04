@@ -91,9 +91,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const tree = createFileTreeStore({
       scope,
       normalizeDir: path.normalizeDir,
-      list: (dir) =>
-        sdk()
-          .api.file.list({ location: { directory: scope() }, path: dir })
+      list: (dir) => {
+        const target = sdk()
+        const directory = scope()
+        return target
+          .apiForGeneration()
+          .then((api) => api.file.list({ location: { directory }, path: dir }))
           .then((x) =>
             (x.data ?? []).map((node) =>
               isFileNode(node)
@@ -106,7 +109,8 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
                     ignored: false,
                   },
             ),
-          ),
+          )
+      },
       onError: (message) => {
         showToast({
           variant: "error",
@@ -204,8 +208,10 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
       setLoading(file)
 
-      const promise = sdk()
-        .api.file.read({ location: { directory }, path: file })
+      const target = sdk()
+      const promise = target
+        .apiForGeneration()
+        .then((api) => api.file.read({ location: { directory }, path: file }))
         .then((x) => {
           if (scope() !== directory) return
           const content = x.data
@@ -227,16 +233,21 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       return promise
     }
 
-    const search = (query: string, dirs: "true" | "false", options?: { limit?: number; signal?: AbortSignal }) =>
-      serverSDK()
-        .api.file.find(
-          {
-            location: { directory: sdk().directory },
-            query,
-            type: dirs === "true" ? "directory" : "file",
-            limit: options?.limit,
-          },
-          { signal: options?.signal },
+    const search = (query: string, dirs: "true" | "false", options?: { limit?: number; signal?: AbortSignal }) => {
+      const target = serverSDK()
+      const directory = sdk().directory
+      return target
+        .apiForGeneration()
+        .then((api) =>
+          api.file.find(
+            {
+              location: { directory },
+              query,
+              type: dirs === "true" ? "directory" : "file",
+              limit: options?.limit,
+            },
+            { signal: options?.signal },
+          ),
         )
         .then(
           (x) => extractArray(x).map((entry) => path.normalize(entry.path)),
@@ -245,6 +256,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
             return []
           },
         )
+    }
 
     const stop = sdk().event.listen((e) => {
       invalidateFromWatcher(e.details, {

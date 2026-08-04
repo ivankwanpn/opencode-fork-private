@@ -708,14 +708,23 @@ export default function Page() {
       queryKey: [...vcsKey(), mode] as const,
       enabled,
       queryFn: mode
-        ? () =>
-            sdk()
-              .api.vcs.diff({ location: { directory: sdk().directory }, mode: mode === "git" ? "working" : mode })
+        ? () => {
+            const target = sdk()
+            const directory = target.directory
+            return target
+              .apiForGeneration()
+              .then((api) =>
+                api.vcs.diff({
+                  location: { directory },
+                  mode: mode === "git" ? "working" : mode,
+                }),
+              )
               .then((result) => result.data)
               .catch((error) => {
                 console.debug("[session-review] failed to load vcs diff", { mode, error })
                 return []
               })
+          }
         : skipToken,
     }
   })
@@ -756,14 +765,19 @@ export default function Page() {
           queryKey: [serverSDK().scope, ...vcsKey(), mode, "directory", scope, context, version] as const,
           staleTime: Number.POSITIVE_INFINITY,
           retry: 2,
-          queryFn: () =>
-            sdk()
-              .api.vcs.diff({
-                location: { directory: scope },
-                mode: mode === "git" ? "working" : mode,
-                context,
-              })
-              .then((result) => result.data),
+          queryFn: () => {
+            const target = sdk()
+            return target
+              .apiForGeneration()
+              .then((api) =>
+                api.vcs.diff({
+                  location: { directory: scope },
+                  mode: mode === "git" ? "working" : mode,
+                  context,
+                }),
+              )
+              .then((result) => result.data)
+          },
         })
         .then((diffs) => diffs.find((diff) => diff.file === file))
 

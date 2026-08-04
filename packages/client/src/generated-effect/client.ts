@@ -821,11 +821,22 @@ const Endpoint14_3 = (raw: RawClient["server.mcp"]) => (input: Endpoint14_3Input
     Effect.mapError(mapClientError),
   )
 
+type Endpoint14_4Request = Parameters<RawClient["server.mcp"]["mcp.authenticate"]>[0]
+type Endpoint14_4Input = {
+  readonly name: Endpoint14_4Request["params"]["name"]
+  readonly location?: Endpoint14_4Request["query"]["location"]
+}
+const Endpoint14_4 = (raw: RawClient["server.mcp"]) => (input: Endpoint14_4Input) =>
+  raw["mcp.authenticate"]({ params: { name: input["name"] }, query: { location: input["location"] } }).pipe(
+    Effect.mapError(mapClientError),
+  )
+
 const adaptGroup14 = (raw: RawClient["server.mcp"]) => ({
   status: Endpoint14_0(raw),
   resources: Endpoint14_1(raw),
   connect: Endpoint14_2(raw),
   disconnect: Endpoint14_3(raw),
+  authenticate: Endpoint14_4(raw),
 })
 
 type Endpoint15_0Request = Parameters<RawClient["server.lsp"]["lsp.status"]>[0]

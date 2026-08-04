@@ -1,4 +1,4 @@
-import type { HealthGetOutput, LocationGetInput, LocationGetOutput, LocationDisposeInput, PathGetInput, PathGetOutput, AgentsListInput, AgentsListOutput, SessionsListInput, SessionsListOutput, SessionsCreateInput, SessionsGetInput, SessionsChildrenInput, SessionsTodoInput, SessionsForkInput, SessionsUpdateInput, SessionsRemoveInput, SessionsShareInput, SessionsUnshareInput, SessionsSwitchAgentInput, SessionsSwitchModelInput, SessionsPromptInput, SessionsDiffInput, SessionsInputListInput, SessionsInputGetInput, SessionsInputPromoteInput, SessionsInputCancelInput, SessionsBackgroundInput, SessionsCommandInput, SessionsShellInput, SessionsCompactInput, SessionsWaitInput, SessionsStageInput, SessionsClearInput, SessionsCommitInput, SessionsContextInput, SessionsHistoryInput, SessionsHistoryOutput, SessionsEventsInput, SessionsEventsOutput, SessionsInterruptInput, SessionsMessageInput, MessagesListInput, MessagesListOutput, ModelsListInput, ModelsListOutput, ProvidersCatalogInput, ProvidersCatalogOutput, ProvidersListInput, ProvidersListOutput, ProvidersGetInput, ProvidersGetOutput, ProvidersDiscoverCustomInput, ProvidersDiscoverCustomOutput, ProvidersConfigureCustomInput, ProvidersConfigureCustomOutput, IntegrationsListInput, IntegrationsListOutput, IntegrationsGetInput, IntegrationsGetOutput, IntegrationsConnectKeyInput, IntegrationsConnectOauthInput, IntegrationsConnectOauthOutput, IntegrationsAttemptStatusInput, IntegrationsAttemptStatusOutput, IntegrationsAttemptCompleteInput, IntegrationsAttemptCancelInput, CredentialsUpdateInput, CredentialsRemoveInput, PermissionsListRequestsInput, PermissionsListRequestsOutput, PermissionsListSavedInput, PermissionsRemoveSavedInput, PermissionsCreateInput, PermissionsListInput, PermissionsGetInput, PermissionsReplyInput, FilesReadInput, FilesReadOutput, FilesListInput, FilesListOutput, FilesFindInput, FilesFindOutput, CommandsListInput, CommandsListOutput, SkillsListInput, SkillsListOutput, McpsStatusInput, McpsStatusOutput, McpsResourcesInput, McpsResourcesOutput, McpsConnectInput, McpsDisconnectInput, LspStatusInput, LspStatusOutput, ProjectsListOutput, ProjectsInitGitInput, ProjectsInitGitOutput, ProjectsCurrentInput, ProjectsCurrentOutput, ProjectsUpdateInput, ProjectsUpdateOutput, ProjectsDirectoriesInput, ProjectsDirectoriesOutput, WorktreesCreateInput, WorktreesCreateOutput, WorktreesRemoveInput, WorktreesResetInput, CapabilitiesGetOutput, VcsGetInput, VcsGetOutput, VcsStatusInput, VcsStatusOutput, VcsDiffInput, VcsDiffOutput, FormattersStatusInput, FormattersStatusOutput, ConsoleGetInput, ConsoleGetOutput, ConsoleListOrgsInput, ConsoleListOrgsOutput, ConsoleSwitchOrgInput, ConsoleSwitchOrgOutput, ConfigGetInput, ConfigGetOutput, ConfigUpdateInput, ConfigUpdateOutput, WorkspacesListAdaptersInput, WorkspacesListAdaptersOutput, WorkspacesListInput, WorkspacesListOutput, WorkspacesCreateInput, WorkspacesCreateOutput, WorkspacesRemoveInput, WorkspacesRemoveOutput, WorkspacesStatusInput, WorkspacesStatusOutput, WorkspacesSyncListInput, WorkspacesStartInput, WorkspacesWarpInput, ControlPlaneMoveSessionInput, ServerPluginsListOutput, ServerPluginsAddInput, ServerPluginsAddOutput, ServerPluginsRefreshInput, ServerPluginsRefreshOutput, ServerPluginsRemoveInput, ServerPluginsRemoveOutput, ServerPluginsInstallInput, ServerPluginsInstallOutput, ServerPluginsUninstallInput, ServerPluginsUninstallOutput, ServerPluginsEnableInput, ServerPluginsEnableOutput, ServerPluginsDisableInput, ServerPluginsDisableOutput, PtysShellsInput, PtysShellsOutput, PtysListInput, PtysListOutput, PtysCreateInput, PtysCreateOutput, PtysGetInput, PtysGetOutput, PtysUpdateInput, PtysUpdateOutput, PtysRemoveInput, QuestionsListRequestsInput, QuestionsListRequestsOutput, QuestionsListInput, QuestionsReplyInput, QuestionsRejectInput, ReferencesListInput, ReferencesListOutput, ProjectCopiesGenerateNameInput, ProjectCopiesGenerateNameOutput, ProjectCopiesCreateInput, ProjectCopiesCreateOutput, ProjectCopiesRemoveInput, ProjectCopiesRefreshInput } from "./types";
+import type { HealthGetOutput, LocationGetInput, LocationGetOutput, LocationDisposeInput, PathGetInput, PathGetOutput, AgentsListInput, AgentsListOutput, SessionsListInput, SessionsListOutput, SessionsCreateInput, SessionsGetInput, SessionsChildrenInput, SessionsTodoInput, SessionsForkInput, SessionsUpdateInput, SessionsRemoveInput, SessionsShareInput, SessionsUnshareInput, SessionsSwitchAgentInput, SessionsSwitchModelInput, SessionsPromptInput, SessionsDiffInput, SessionsInputListInput, SessionsInputGetInput, SessionsInputPromoteInput, SessionsInputCancelInput, SessionsBackgroundInput, SessionsCommandInput, SessionsShellInput, SessionsCompactInput, SessionsWaitInput, SessionsStageInput, SessionsClearInput, SessionsCommitInput, SessionsContextInput, SessionsHistoryInput, SessionsHistoryOutput, SessionsEventsInput, SessionsEventsOutput, SessionsInterruptInput, SessionsMessageInput, MessagesListInput, MessagesListOutput, ModelsListInput, ModelsListOutput, ProvidersCatalogInput, ProvidersCatalogOutput, ProvidersListInput, ProvidersListOutput, ProvidersGetInput, ProvidersGetOutput, ProvidersDiscoverCustomInput, ProvidersDiscoverCustomOutput, ProvidersConfigureCustomInput, ProvidersConfigureCustomOutput, IntegrationsListInput, IntegrationsListOutput, IntegrationsGetInput, IntegrationsGetOutput, IntegrationsConnectKeyInput, IntegrationsConnectOauthInput, IntegrationsConnectOauthOutput, IntegrationsAttemptStatusInput, IntegrationsAttemptStatusOutput, IntegrationsAttemptCompleteInput, IntegrationsAttemptCancelInput, CredentialsUpdateInput, CredentialsRemoveInput, PermissionsListRequestsInput, PermissionsListRequestsOutput, PermissionsListSavedInput, PermissionsRemoveSavedInput, PermissionsCreateInput, PermissionsListInput, PermissionsGetInput, PermissionsReplyInput, FilesReadInput, FilesReadOutput, FilesListInput, FilesListOutput, FilesFindInput, FilesFindOutput, CommandsListInput, CommandsListOutput, SkillsListInput, SkillsListOutput, McpsStatusInput, McpsStatusOutput, McpsResourcesInput, McpsResourcesOutput, McpsConnectInput, McpsDisconnectInput, McpsAuthenticateInput, McpsAuthenticateOutput, LspStatusInput, LspStatusOutput, ProjectsListOutput, ProjectsInitGitInput, ProjectsInitGitOutput, ProjectsCurrentInput, ProjectsCurrentOutput, ProjectsUpdateInput, ProjectsUpdateOutput, ProjectsDirectoriesInput, ProjectsDirectoriesOutput, WorktreesCreateInput, WorktreesCreateOutput, WorktreesRemoveInput, WorktreesResetInput, CapabilitiesGetOutput, VcsGetInput, VcsGetOutput, VcsStatusInput, VcsStatusOutput, VcsDiffInput, VcsDiffOutput, FormattersStatusInput, FormattersStatusOutput, ConsoleGetInput, ConsoleGetOutput, ConsoleListOrgsInput, ConsoleListOrgsOutput, ConsoleSwitchOrgInput, ConsoleSwitchOrgOutput, ConfigGetInput, ConfigGetOutput, ConfigUpdateInput, ConfigUpdateOutput, WorkspacesListAdaptersInput, WorkspacesListAdaptersOutput, WorkspacesListInput, WorkspacesListOutput, WorkspacesCreateInput, WorkspacesCreateOutput, WorkspacesRemoveInput, WorkspacesRemoveOutput, WorkspacesStatusInput, WorkspacesStatusOutput, WorkspacesSyncListInput, WorkspacesStartInput, WorkspacesWarpInput, ControlPlaneMoveSessionInput, ServerPluginsListOutput, ServerPluginsAddInput, ServerPluginsAddOutput, ServerPluginsRefreshInput, ServerPluginsRefreshOutput, ServerPluginsRemoveInput, ServerPluginsRemoveOutput, ServerPluginsInstallInput, ServerPluginsInstallOutput, ServerPluginsUninstallInput, ServerPluginsUninstallOutput, ServerPluginsEnableInput, ServerPluginsEnableOutput, ServerPluginsDisableInput, ServerPluginsDisableOutput, PtysShellsInput, PtysShellsOutput, PtysListInput, PtysListOutput, PtysCreateInput, PtysCreateOutput, PtysGetInput, PtysGetOutput, PtysUpdateInput, PtysUpdateOutput, PtysRemoveInput, QuestionsListRequestsInput, QuestionsListRequestsOutput, QuestionsListInput, QuestionsReplyInput, QuestionsRejectInput, ReferencesListInput, ReferencesListOutput, ProjectCopiesGenerateNameInput, ProjectCopiesGenerateNameOutput, ProjectCopiesCreateInput, ProjectCopiesCreateOutput, ProjectCopiesRemoveInput, ProjectCopiesRefreshInput } from "./types";
 export interface ClientOptions {
     readonly baseUrl: string;
     readonly fetch?: typeof globalThis.fetch;
@@ -1562,6 +1562,7 @@ export declare function make(options: ClientOptions): {
         resources: (input?: McpsResourcesInput | undefined, requestOptions?: RequestOptions | undefined) => Promise<McpsResourcesOutput>;
         connect: (input: McpsConnectInput, requestOptions?: RequestOptions | undefined) => Promise<void>;
         disconnect: (input: McpsDisconnectInput, requestOptions?: RequestOptions | undefined) => Promise<void>;
+        authenticate: (input: McpsAuthenticateInput, requestOptions?: RequestOptions | undefined) => Promise<McpsAuthenticateOutput>;
     };
     lsp: {
         status: (input?: LspStatusInput | undefined, requestOptions?: RequestOptions | undefined) => Promise<LspStatusOutput>;
@@ -1627,27 +1628,6 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "command.executed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly name: string;
-                readonly sessionID: string;
-                readonly arguments: string;
-                readonly messageID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "models-dev.refreshed";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -1659,133 +1639,6 @@ export declare function make(options: ClientOptions): {
                 readonly workspaceID?: string | undefined;
             } | undefined;
             readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "project.directories.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly projectID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.idle";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly status: {
-                    readonly type: "idle";
-                } | {
-                    readonly type: "retry";
-                    readonly attempt: number;
-                    readonly message: string;
-                    readonly action?: {
-                        readonly reason: string;
-                        readonly provider: string;
-                        readonly title: string;
-                        readonly message: string;
-                        readonly label: string;
-                        readonly link?: string | undefined;
-                    } | undefined;
-                    readonly next: number;
-                } | {
-                    readonly type: "busy";
-                };
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.failed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly message: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.ready";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly name: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly workspaceID: string;
-                readonly status: "connected" | "connecting" | "disconnected" | "error";
-            };
         } | {
             readonly id: string;
             readonly metadata?: {
@@ -2958,6 +2811,23 @@ export declare function make(options: ClientOptions): {
                         readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
                     };
                     readonly content: readonly ({
+                        readonly type: "text";
+                        readonly id: string;
+                        readonly text: string;
+                    } | {
+                        readonly type: "reasoning";
+                        readonly id: string;
+                        readonly text: string;
+                        readonly providerMetadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                        readonly time?: {
+                            readonly created: number;
+                            readonly completed?: number | undefined;
+                        } | undefined;
+                    } | {
                         readonly type: "tool";
                         readonly id: string;
                         readonly name: string;
@@ -3165,23 +3035,6 @@ export declare function make(options: ClientOptions): {
                             readonly completed?: number | undefined;
                             readonly pruned?: number | undefined;
                         };
-                    } | {
-                        readonly type: "text";
-                        readonly id: string;
-                        readonly text: string;
-                    } | {
-                        readonly type: "reasoning";
-                        readonly id: string;
-                        readonly text: string;
-                        readonly providerMetadata?: {
-                            readonly [x: string]: {
-                                readonly [x: string]: unknown;
-                            };
-                        } | undefined;
-                        readonly time?: {
-                            readonly created: number;
-                            readonly completed?: number | undefined;
-                        } | undefined;
                     })[];
                     readonly snapshot?: {
                         readonly start?: string | undefined;
@@ -4324,6 +4177,24 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "project.directories.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly projectID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "file.watcher.updated";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4706,6 +4577,27 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "command.executed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly name: string;
+                readonly sessionID: string;
+                readonly arguments: string;
+                readonly messageID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "project.updated";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4735,6 +4627,60 @@ export declare function make(options: ClientOptions): {
                     readonly initialized?: number | undefined;
                 };
                 readonly sandboxes: readonly string[];
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.idle";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string;
+                readonly status: {
+                    readonly type: "idle";
+                } | {
+                    readonly type: "retry";
+                    readonly attempt: number;
+                    readonly message: string;
+                    readonly action?: {
+                        readonly reason: string;
+                        readonly provider: string;
+                        readonly title: string;
+                        readonly message: string;
+                        readonly label: string;
+                        readonly link?: string | undefined;
+                    } | undefined;
+                    readonly next: number;
+                } | {
+                    readonly type: "busy";
+                };
             };
         } | {
             readonly id: string;
@@ -4843,6 +4789,61 @@ export declare function make(options: ClientOptions): {
             } | undefined;
             readonly data: {
                 readonly branch?: string | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.failed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly message: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.ready";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly name: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly workspaceID: string;
+                readonly status: "connected" | "connecting" | "disconnected" | "error";
             };
         } | {
             readonly id: string;

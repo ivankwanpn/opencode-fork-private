@@ -806,7 +806,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     mcp: {
       toggle: async (directory: string, name: string) => {
         const key = directoryKey(directory)
-        const sdk = sdkFor(key)
         const status = children.child(key, { bootstrap: false })[0].mcp[name]?.status
         if (!status) return
         await toggleMcp({
@@ -814,7 +813,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           connect: () => serverSDK.api.mcp.connect({ server: name, location: { directory: key } }),
           disconnect: () => serverSDK.api.mcp.disconnect({ server: name, location: { directory: key } }),
           authenticate: async () => {
-            await sdk.mcp.auth.authenticate({ name })
+            await serverSDK.api.mcp.authenticate({ name, location: { directory: key } })
           },
           refresh: async () => {
             await queryClient.refetchQueries(queryOptionsApi.mcp(key))

@@ -5407,6 +5407,27 @@ export type McpsDisconnectInput = {
 
 export type McpsDisconnectOutput = void
 
+export type McpsAuthenticateInput = {
+  readonly name: { readonly name: string }["name"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type McpsAuthenticateOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data:
+    | { readonly status: "connected" }
+    | { readonly status: "disabled" }
+    | { readonly status: "failed"; readonly error: string }
+    | { readonly status: "needs_auth" }
+    | { readonly status: "needs_client_registration"; readonly error: string }
+}
+
 export type LspStatusInput = {
   readonly location?: {
     readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined

@@ -526,6 +526,11 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async disconnect(value: Parameters<ServerApi["mcp"]["disconnect"]>[0]) {
         await legacy(value.location).mcp.disconnect({ name: value.server })
       },
+      async authenticate(value: Parameters<ServerApi["mcp"]["authenticate"]>[0]) {
+        const result = await legacy(value.location).mcp.auth.authenticate({ name: value.name })
+        if (!result.data) throw new Error(`Failed to authenticate MCP server: ${value.name}`)
+        return located(result.data, value.location)
+      },
       resource: {
         ...input.current.mcp.resource,
         async catalog(value?: Parameters<ServerApi["mcp"]["resource"]["catalog"]>[0]) {

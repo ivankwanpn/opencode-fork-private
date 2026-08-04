@@ -201,16 +201,25 @@ export async function bootstrapGlobal(input: {
   const slow = [
     () =>
       input.protocol
-        ? resolveApi().then((api) => input.queryClient.fetchQuery(loadCompatibleConfigQuery(input.scope, api.config)))
+        ? resolveApi().then((api) =>
+            input.queryClient.fetchQuery(loadCompatibleConfigQuery(input.scope, api.config, input.apiForGeneration)),
+          )
         : input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.serverSDK)),
     () =>
       resolveApi().then((api) =>
-        input.queryClient.fetchQuery(loadProvidersQuery(input.scope, null, api, input.serverSDK, input.protocol)),
+        input.queryClient.fetchQuery(
+          loadProvidersQuery(input.scope, null, api, input.serverSDK, input.protocol, input.apiForGeneration),
+        ),
       ),
-    () => resolveApi().then((api) => input.queryClient.fetchQuery(loadPathQuery(input.scope, null, api.path))),
+    () =>
+      resolveApi().then((api) =>
+        input.queryClient.fetchQuery(loadPathQuery(input.scope, null, api.path, input.apiForGeneration)),
+      ),
     () =>
       resolveApi()
-        .then((api) => input.queryClient.fetchQuery(loadProjectsQuery(input.scope, api.project)))
+        .then((api) =>
+          input.queryClient.fetchQuery(loadProjectsQuery(input.scope, api.project, input.apiForGeneration)),
+        )
         .then((data) => input.setGlobalStore("project", data)),
   ]
   await runAll(slow)
@@ -325,6 +334,7 @@ export const loadCommands = (
   api: CommandListApi,
   legacy?: OpencodeClient,
   protocol?: ServerProtocolResolver,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ): Promise<CommandInfo[]> =>
   retry(async () => {
     if ((await resolveServerProtocol(protocol)) === "v1" && legacy) {
@@ -341,7 +351,8 @@ export const loadCommands = (
         }
       })
     }
-    return api.list({ location: { directory } }).then((result) => extractArray(result))
+    const current = (await apiForGeneration?.())?.command ?? api
+    return current.list({ location: { directory } }).then((result) => extractArray(result))
   })
 
 export const loadPathQuery = (
@@ -439,7 +450,7 @@ export async function bootstrapDirectory(input: {
         resolveApi()
           .then((api) =>
             input.queryClient.ensureQueryData(
-              loadAgentsQuery(input.scope, input.directory, api.agent, input.sdk, input.protocol),
+              loadAgentsQuery(input.scope, input.directory, api.agent, input.sdk, input.protocol, input.apiForGeneration),
             ),
           )
           .then((data) => input.setStore("agent", data)),
@@ -486,7 +497,11 @@ export async function bootstrapDirectory(input: {
       !seededPath &&
         (() =>
           resolveApi()
-            .then((api) => input.queryClient.ensureQueryData(loadPathQuery(input.scope, input.directory, api.path)))
+            .then((api) =>
+              input.queryClient.ensureQueryData(
+                loadPathQuery(input.scope, input.directory, api.path, input.apiForGeneration),
+              ),
+            )
             .then((data) => {
               const next = projectID(data.directory ?? input.directory, input.global.project)
               if (next) input.setStore("project", next)
@@ -504,12 +519,21 @@ export async function bootstrapDirectory(input: {
       input.mcp &&
         (() =>
           resolveApi()
-            .then((api) => loadCommands(input.directory, api.command, input.sdk, input.protocol))
+            .then((api) =>
+              loadCommands(input.directory, api.command, input.sdk, input.protocol, input.apiForGeneration),
+            )
             .then((commands) => input.setStore("command", commands))),
       () =>
         resolveApi().then((api) =>
           input.queryClient.fetchQuery(
-            loadReferencesQuery(input.scope, input.directory, api.reference, input.sdk, input.protocol),
+            loadReferencesQuery(
+              input.scope,
+              input.directory,
+              api.reference,
+              input.sdk,
+              input.protocol,
+              input.apiForGeneration,
+            ),
           ),
         ),
       () =>
@@ -588,18 +612,27 @@ export async function bootstrapDirectory(input: {
       input.mcp &&
         (() =>
           resolveApi().then((api) =>
-            input.queryClient.fetchQuery(loadMcpQuery(input.scope, input.directory, api.mcp)),
+            input.queryClient.fetchQuery(loadMcpQuery(input.scope, input.directory, api.mcp, input.apiForGeneration)),
           )),
       input.mcp &&
         (() =>
           resolveApi().then((api) =>
-            input.queryClient.fetchQuery(loadMcpResourcesQuery(input.scope, input.directory, api.mcp)),
+            input.queryClient.fetchQuery(
+              loadMcpResourcesQuery(input.scope, input.directory, api.mcp, input.apiForGeneration),
+            ),
           )),
       () =>
         resolveApi()
           .then((api) =>
             input.queryClient.fetchQuery(
-              loadProvidersQuery(input.scope, input.directory, api, input.sdk, input.protocol),
+              loadProvidersQuery(
+                input.scope,
+                input.directory,
+                api,
+                input.sdk,
+                input.protocol,
+                input.apiForGeneration,
+              ),
             ),
           )
           .catch((err) => {

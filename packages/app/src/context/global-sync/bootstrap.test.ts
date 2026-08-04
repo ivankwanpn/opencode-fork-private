@@ -16,6 +16,7 @@ import {
 import type { State, VcsCache } from "./types"
 import { ServerScope } from "@/utils/server-scope"
 import type { ServerApi } from "@/utils/server"
+import type { CompatibleImplementation } from "@/utils/server-compat"
 
 const provider = { all: new Map(), connected: [], default: {} } satisfies NormalizedProviderListResponse
 const api = {
@@ -386,6 +387,32 @@ describe("query keys", () => {
 
     expect(calls).toEqual([{ location: { directory: "/repo" } }])
     expect(result).toEqual([{ name: "review", template: "Review files", source: "command" }])
+  })
+
+  test("loads commands from the current protocol generation", async () => {
+    const calls: string[] = []
+    const stale = {
+      list: async () => {
+        calls.push("stale")
+        return { location: {}, data: [] }
+      },
+    } as unknown as CommandApi
+    const current = {
+      command: {
+        list: async (input: unknown) => {
+          calls.push(JSON.stringify(input))
+          return {
+            location: {},
+            data: [{ name: "review", template: "Current command", source: "command" as const }],
+          }
+        },
+      },
+    } as unknown as CompatibleImplementation
+
+    const result = await loadCommands("/repo", stale, undefined, undefined, async () => current)
+
+    expect(calls).toEqual(['{"location":{"directory":"/repo"}}'])
+    expect(result).toEqual([{ name: "review", template: "Current command", source: "command" }])
   })
 
   test("loads projects from the current endpoint", async () => {

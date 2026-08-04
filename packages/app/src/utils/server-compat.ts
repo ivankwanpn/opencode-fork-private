@@ -42,7 +42,7 @@ type CompatibleSessionApi = Omit<
     input: CompatibleCommandInput,
     requestOptions?: Parameters<ServerApi["session"]["command"]>[1],
   ) => Promise<SessionCommandOutput>
-  shell: (input: SessionShellInput & LegacyPrompt) => Promise<SessionShellOutput>
+  shell: (input: SessionShellInput & LegacyPrompt & { resume?: boolean }) => Promise<SessionShellOutput>
   compact: (input: SessionCompactInput & { model?: LegacyPrompt["model"] }) => Promise<SessionCompactOutput>
   rename: (
     input: Parameters<ServerApi["session"]["rename"]>[0] & LegacyLocation,
@@ -69,7 +69,11 @@ type LegacyPrompt = {
   variant?: string
   legacyParts?: (TextPartInput | FilePartInput | AgentPartInput)[]
 }
-type CompatiblePromptInput = SessionPromptInput & LegacyPrompt & { context?: Prompt["context"] }
+type CompatiblePromptInput = SessionPromptInput &
+  LegacyPrompt & {
+    context?: Prompt["context"]
+    expectedActiveAttemptID?: string
+  }
 type LegacyLocation = { directory?: string }
 type CompatibleInput = {
   protocol: Promise<ServerProtocol>

@@ -163,11 +163,16 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
               draft,
               mutable<SessionMessage>({
                 id: event.data.messageID,
-                type: "user",
+                type: event.data.synthetic ? "synthetic" : "user",
+                ...(event.data.synthetic ? { sessionID: event.data.sessionID, description: event.data.synthetic.description } : {}),
                 text: event.data.prompt.text,
-                context: event.data.prompt.context,
-                files: event.data.prompt.files,
-                agents: event.data.prompt.agents,
+                ...(!event.data.synthetic
+                  ? {
+                      context: event.data.prompt.context,
+                      files: event.data.prompt.files,
+                      agents: event.data.prompt.agents,
+                    }
+                  : {}),
                 time: { created: event.data.timestamp },
               }),
             )

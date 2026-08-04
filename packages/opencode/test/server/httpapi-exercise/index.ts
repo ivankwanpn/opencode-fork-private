@@ -663,6 +663,10 @@ const scenarios: Scenario[] = [
     check(body.healthy === true, "v2 server should report healthy")
     check(Number.isInteger(body.pid), "v2 server should report its process ID")
   }),
+  http.protected.get("/api/capability", "v2.capability.get").json(200, (body) => {
+    object(body)
+    check(body.backgroundSubagents === true, "V2 background subagents should be enabled by default")
+  }),
   http.protected.get("/api/location", "v2.location.get").json(200, object),
   http.protected.get("/api/agent", "v2.agent.list").json(200, locationData(array)),
   http.protected.get("/api/model", "v2.model.list").json(200, locationData(array)),
@@ -745,9 +749,9 @@ const scenarios: Scenario[] = [
       "status",
     ),
   http.protected
-    .get("/api/fs/read/*", "v2.fs.read")
+    .get("/api/fs/read", "v2.fs.read")
     .seeded((ctx) => ctx.file("hello.txt", "hello\n"))
-    .at((ctx) => ({ path: "/api/fs/read/hello.txt", headers: ctx.headers() }))
+    .at((ctx) => ({ path: "/api/fs/read?path=hello.txt", headers: ctx.headers() }))
     .status(
       200,
       (_ctx, result) =>
@@ -1152,6 +1156,379 @@ const scenarios: Scenario[] = [
       headers: ctx.headers(),
     }))
     .status(404, undefined, "status"),
+  http.protected
+    .delete("/api/location", "v2.location.dispose")
+    .mutating()
+    .at((ctx) => ({ path: "/api/location", headers: ctx.headers() }))
+    .status(204, undefined, "status"),
+  http.protected
+    .delete("/api/plugins/marketplace", "v2.plugins.marketplace.remove")
+    .at((ctx) => ({
+      path: "/api/plugins/marketplace",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "httpapi_missing_marketplace" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .delete("/api/session/{sessionID}", "v2.session.remove")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}", { sessionID: "ses_httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .delete("/api/session/{sessionID}/input/{inputID}", "v2.session.input.cancel")
+    .seeded((ctx) => ctx.session({ title: "Input cancel owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/input/{inputID}", {
+        sessionID: ctx.state.id,
+        inputID: "msg_httpapi_missing",
+      }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .delete("/api/session/{sessionID}/share", "v2.session.unshare")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/share", { sessionID: "ses_httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .delete("/api/workspace/{workspaceID}", "v2.workspace.remove")
+    .at((ctx) => ({
+      path: route("/api/workspace/{workspaceID}", { workspaceID: "wrk_httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .delete("/api/worktree", "v2.worktree.remove")
+    .inProject({ git: false })
+    .mutating()
+    .at((ctx) => ({
+      path: "/api/worktree",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { directory: ctx.directory },
+    }))
+    .status(400, undefined, "status"),
+  http.protected.get("/api/config", "v2.config.get").json(200, locationData(object)),
+  http.protected.get("/api/console", "v2.console.get").json(200, locationData(object)),
+  http.protected.get("/api/console/org", "v2.console.org.list").json(200, locationData(array)),
+  http.protected.get("/api/formatter", "v2.formatter.status").json(200, locationData(array)),
+  http.protected.get("/api/lsp", "v2.lsp.status").json(200, locationData(array)),
+  http.protected.get("/api/mcp", "v2.mcp.status").json(200, locationData(object)),
+  http.protected.get("/api/mcp/resource", "v2.mcp.resources").json(200, locationData(object)),
+  http.protected.get("/api/path", "v2.path.get").json(200, object),
+  http.protected.get("/api/plugins", "v2.plugins.list").json(200, (body) => {
+    object(body)
+    array(body.marketplaces)
+    array(body.plugins)
+  }),
+  http.protected.get("/api/project", "v2.project.list").json(200, array),
+  http.protected.get("/api/project/current", "v2.project.current").json(200, object),
+  http.protected
+    .get("/api/project/{projectID}/directory", "v2.project.directories")
+    .seeded((ctx) => ctx.project())
+    .at((ctx) => ({
+      path: route("/api/project/{projectID}/directory", { projectID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, locationData(array)),
+  http.protected
+    .get("/api/session/{sessionID}/children", "v2.session.children")
+    .seeded((ctx) => ctx.session({ title: "V2 children owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/children", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, data(array)),
+  http.protected
+    .get("/api/session/{sessionID}/diff", "v2.session.diff")
+    .seeded((ctx) => ctx.session({ title: "V2 diff owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/diff", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, data(array)),
+  http.protected
+    .get("/api/session/{sessionID}/input", "v2.session.input.list")
+    .seeded((ctx) => ctx.session({ title: "Input list owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/input", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, data(array)),
+  http.protected
+    .get("/api/session/{sessionID}/input/{inputID}", "v2.session.input.get")
+    .seeded((ctx) => ctx.session({ title: "Input get owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/input/{inputID}", {
+        sessionID: ctx.state.id,
+        inputID: "msg_httpapi_missing",
+      }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .get("/api/session/{sessionID}/todo", "v2.session.todo")
+    .seeded((ctx) => ctx.session({ title: "V2 todo owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/todo", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, data(array)),
+  http.protected.get("/api/vcs", "v2.vcs.get").json(200, locationData(object)),
+  http.protected
+    .get("/api/vcs/diff", "v2.vcs.diff")
+    .at((ctx) => ({ path: "/api/vcs/diff?mode=git", headers: ctx.headers() }))
+    .json(200, locationData(array)),
+  http.protected.get("/api/vcs/status", "v2.vcs.status").json(200, locationData(array)),
+  http.protected.get("/api/workspace", "v2.workspace.list").json(200, locationData(array)),
+  http.protected.get("/api/workspace/adapter", "v2.workspace.adapter.list").json(200, locationData(array)),
+  http.protected.get("/api/workspace/status", "v2.workspace.status").json(200, locationData(array)),
+  http.protected
+    .patch("/api/config", "v2.config.update")
+    .mutating()
+    .at((ctx) => ({
+      path: "/api/config",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { config: { username: "httpapi-v2" } },
+    }))
+    .json(200, locationData(object)),
+  http.protected
+    .patch("/api/project/{projectID}", "v2.project.update")
+    .seeded((ctx) => ctx.project())
+    .mutating()
+    .at((ctx) => ({
+      path: route("/api/project/{projectID}", { projectID: ctx.state.id }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "HTTP API V2 Project" },
+    }))
+    .json(200, object),
+  http.protected
+    .patch("/api/session/{sessionID}", "v2.session.update")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}", { sessionID: "ses_httpapi_missing" }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { title: "Missing session" },
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/console/org", "v2.console.org.switch")
+    .at((ctx) => ({
+      path: "/api/console/org",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { accountID: "account_httpapi", orgID: "org_httpapi" },
+    }))
+    .json(200, locationData(boolean)),
+  http.protected
+    .post("/api/control-plane/session/move", "v2.controlPlane.moveSession")
+    .at((ctx) => ({
+      path: "/api/control-plane/session/move",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: {
+        sessionID: "ses_httpapi_missing",
+        destination: { directory: ctx.directory },
+        moveChanges: false,
+      },
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/mcp/{name}/connect", "v2.mcp.connect")
+    .at((ctx) => ({
+      path: route("/api/mcp/{name}/connect", { name: "httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/mcp/{name}/disconnect", "v2.mcp.disconnect")
+    .at((ctx) => ({
+      path: route("/api/mcp/{name}/disconnect", { name: "httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/plugins/disable", "v2.plugins.disable")
+    .at((ctx) => ({
+      path: "/api/plugins/disable",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "missing@missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/enable", "v2.plugins.enable")
+    .at((ctx) => ({
+      path: "/api/plugins/enable",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "missing@missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/install", "v2.plugins.install")
+    .at((ctx) => ({
+      path: "/api/plugins/install",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "missing@missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/marketplace", "v2.plugins.marketplace.add")
+    .at((ctx) => ({
+      path: "/api/plugins/marketplace",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { source: "httpapi_missing_marketplace" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/marketplace/refresh", "v2.plugins.marketplace.refresh")
+    .at((ctx) => ({
+      path: "/api/plugins/marketplace/refresh",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "httpapi_missing_marketplace" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/uninstall", "v2.plugins.uninstall")
+    .at((ctx) => ({
+      path: "/api/plugins/uninstall",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "missing@missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/project/git/init", "v2.project.initGit")
+    .inProject({ git: false })
+    .mutating()
+    .at((ctx) => ({ path: "/api/project/git/init", headers: ctx.headers() }))
+    .json(200, object),
+  http.protected
+    .post("/api/provider/custom/configure", "v2.provider.custom.configure")
+    .at((ctx) => ({
+      path: "/api/provider/custom/configure",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: {
+        providerID: "httpapi-custom",
+        name: "HTTP API Custom",
+        baseURL: "not-a-url",
+        headers: [],
+        models: [],
+      },
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/provider/custom/discover", "v2.provider.custom.discover")
+    .at((ctx) => ({
+      path: "/api/provider/custom/discover",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { baseURL: "not-a-url", headers: [] },
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/session/{sessionID}/background", "v2.session.background")
+    .seeded((ctx) => ctx.session({ title: "Background owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/background", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, boolean),
+  http.protected
+    .post("/api/session/{sessionID}/command", "v2.session.command")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/command", { sessionID: "ses_httpapi_missing" }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { command: "missing", arguments: "" },
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/session/{sessionID}/fork", "v2.session.fork")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/fork", { sessionID: "ses_httpapi_missing" }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: {},
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/session/{sessionID}/input/{inputID}/promote", "v2.session.input.promote")
+    .seeded((ctx) => ctx.session({ title: "Input promote owner" }))
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/input/{inputID}/promote", {
+        sessionID: ctx.state.id,
+        inputID: "msg_httpapi_missing",
+      }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/session/{sessionID}/share", "v2.session.share")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/share", { sessionID: "ses_httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/session/{sessionID}/shell", "v2.session.shell")
+    .at((ctx) => ({
+      path: route("/api/session/{sessionID}/shell", { sessionID: "ses_httpapi_missing" }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { command: "echo httpapi", resume: false },
+    }))
+    .status(404, undefined, "status"),
+  http.protected
+    .post("/api/workspace", "v2.workspace.create")
+    .at((ctx) => ({
+      path: "/api/workspace",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { type: "httpapi", branch: null, extra: null },
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/workspace/start", "v2.workspace.start")
+    .at((ctx) => ({ path: "/api/workspace/start", headers: ctx.headers() }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/workspace/sync", "v2.workspace.syncList")
+    .at((ctx) => ({ path: "/api/workspace/sync", headers: ctx.headers() }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/workspace/warp", "v2.workspace.warp")
+    .at((ctx) => ({
+      path: "/api/workspace/warp",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { workspaceID: null, sessionID: "ses_httpapi_missing", copyChanges: false },
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/worktree", "v2.worktree.create")
+    .inProject({ git: false })
+    .mutating()
+    .at((ctx) => ({
+      path: "/api/worktree",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: {},
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/api/worktree/reset", "v2.worktree.reset")
+    .inProject({ git: false })
+    .mutating()
+    .at((ctx) => ({
+      path: "/api/worktree/reset",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { directory: ctx.directory },
+    }))
+    .status(400, undefined, "status"),
+  http.protected
+    .post("/experimental/project/{projectID}/copy/name", "v2.projectCopy.generateName")
+    .seeded((ctx) => ctx.project())
+    .at((ctx) => ({
+      path: route("/experimental/project/{projectID}/copy/name", { projectID: ctx.state.id }),
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: {},
+    }))
+    .json(200, (body) => {
+      object(body)
+      check(typeof body.name === "string" && body.name.length > 0, "generated V2 copy name should be non-empty")
+    }),
   http.protected
     .get("/session", "session.list")
     .seeded((ctx) => ctx.session({ title: "List me" }))

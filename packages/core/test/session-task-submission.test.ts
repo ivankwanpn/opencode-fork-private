@@ -4,8 +4,10 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
+import { TestClock } from "effect/testing"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Project } from "@opencode-ai/core/project"
@@ -27,7 +29,9 @@ import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
-  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node])),
+  AppNodeBuilder.build(
+    LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node, BackgroundJob.node]),
+  ),
 )
 
 const invocation = {
@@ -35,6 +39,7 @@ const invocation = {
   assistantMessageID: SessionMessage.ID.make("msg_task_assistant"),
   toolCallID: "call_task_1",
   prompt: Prompt.make({ text: "inspect the lifecycle" }),
+  completionDelivery: "parent" as const,
 }
 
 const childSessionID = SessionSchema.ID.make("ses_task_child")
@@ -225,7 +230,66 @@ describe("TaskSubmission", () => {
         agentPath: "/root/researcher",
       })
       const recovered = yield* submissions.get(info.id)
-      expect(recovered?.agentPath).toBe("/root/researcher")
+      expect(recovered).toMatchObject({ agentPath: "/root/researcher", completionDelivery: "parent" })
+    }),
+  )
+
+  it.effect("returns the latest child submission within the owning parent", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const otherParentID = SessionSchema.ID.make("ses_task_other_parent")
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: otherParentID,
+          project_id: Project.ID.global,
+          slug: "task-other-parent",
+          directory: "/project",
+          title: "task other parent",
+          version: "test",
+        })
+        .run()
+        .pipe(Effect.orDie)
+
+      const older = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Older child invocation",
+        agent: "general",
+      })
+      yield* TestClock.adjust(1)
+      const newer = yield* submissions.submit({
+        ...invocation,
+        assistantMessageID: SessionMessage.ID.make("msg_task_assistant_newer"),
+        toolCallID: "call_task_newer",
+        childSessionID,
+        description: "Newer child invocation",
+        agent: "general",
+      })
+      yield* TestClock.adjust(1)
+      const otherParent = yield* submissions.submit({
+        ...invocation,
+        parentSessionID: otherParentID,
+        assistantMessageID: SessionMessage.ID.make("msg_task_assistant_other_parent"),
+        toolCallID: "call_task_other_parent",
+        childSessionID,
+        description: "Other parent invocation",
+        agent: "general",
+      })
+
+      expect(older.timeCreated).toBeLessThan(newer.timeCreated)
+      expect(yield* submissions.latestByChild({ parentSessionID: invocation.parentSessionID, childSessionID })).toEqual(
+        newer,
+      )
+      expect(yield* submissions.latestByChild({ parentSessionID: otherParentID, childSessionID })).toEqual(otherParent)
+      expect(
+        yield* submissions.latestByChild({
+          parentSessionID: SessionSchema.ID.make("ses_task_unknown_parent"),
+          childSessionID,
+        }),
+      ).toBeUndefined()
     }),
   )
 
@@ -247,6 +311,7 @@ describe("TaskSubmission", () => {
         agent: "general",
       })
 
+      expect(first.completionDelivery).toBe("parent")
       expect(retry).toEqual(first)
       const terminal = yield* submissions.terminalize({
         submissionID: first.id,
@@ -260,7 +325,7 @@ describe("TaskSubmission", () => {
         error: { message: "late failure" },
       })
 
-      expect(terminal).toMatchObject({ status: "completed", resultText: "done" })
+      expect(terminal).toMatchObject({ status: "completed", resultText: "done", completionDelivery: "parent" })
       expect(duplicate).toEqual(terminal)
       const inputRow = (yield* db.select().from(SessionInputTable).all())[0]
       expect(inputRow).toMatchObject({
@@ -269,7 +334,173 @@ describe("TaskSubmission", () => {
         terminal_error: null,
       })
       expect(typeof inputRow?.terminal_seq).toBe("number")
+      const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0]?.payload).toMatchObject({ taskID: childSessionID })
+    }),
+  )
+
+  it.effect("does not enqueue parent delivery for a terminal tool-owned submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Foreground task",
+        agent: "general",
+        completionDelivery: "tool",
+      })
+
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "foreground result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(0)
+    }),
+  )
+
+  it.effect("enqueues one parent delivery for a terminal parent-owned submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Background task",
+        agent: "general",
+      })
+
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "background result",
+      })
+
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("enqueues one parent delivery when a running tool-owned submission is promoted before terminalization", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Promoted running task",
+        agent: "general",
+        completionDelivery: "tool",
+      })
+      yield* submissions.claim(submitted.id)
+
+      expect(yield* submissions.promoteDelivery(submitted.id)).toMatchObject({
+        status: "running",
+        completionDelivery: "parent",
+      })
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "promoted result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("enqueues one parent delivery when a terminal tool-owned submission is promoted repeatedly", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Late promoted task",
+        agent: "general",
+        completionDelivery: "tool",
+      })
+      const terminal = yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "late promoted result",
+      })
+
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(0)
+      const promoted = yield* submissions.promoteDelivery(submitted.id)
+      const duplicate = yield* submissions.promoteDelivery(submitted.id)
+
+      expect(promoted).toMatchObject({ status: "completed", completionDelivery: "parent" })
+      expect(duplicate).toEqual(promoted)
+      expect(terminal).toMatchObject({ status: "completed", completionDelivery: "tool" })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("adopts the original tool-owned invocation after promotion", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Promoted retry task",
+        agent: "general",
+        completionDelivery: "tool" as const,
+      }
+      const submitted = yield* submissions.submit(input)
+
+      yield* submissions.promoteDelivery(submitted.id)
+
+      expect(yield* submissions.submit(input)).toMatchObject({
+        id: submitted.id,
+        completionDelivery: "parent",
+      })
+    }),
+  )
+
+  it.effect("keeps durable parent ownership when post-commit promotion work fails", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const jobs = yield* BackgroundJob.Service
+      const { db } = yield* Database.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Post-commit promotion task",
+        agent: "general",
+        completionDelivery: "tool" as const,
+      }
+      const submitted = yield* submissions.submit(input)
+
+      yield* jobs.start({
+        id: childSessionID,
+        type: "task",
+        metadata: { sessionID: childSessionID },
+        onPromote: Effect.gen(function* () {
+          const promoted = yield* submissions.promoteDelivery(submitted.id)
+          if (!promoted) return yield* Effect.die("submission disappeared during promotion")
+          yield* Effect.fail(new Error("post-commit advisory failure")).pipe(Effect.ignore)
+        }),
+        run: Effect.never,
+      })
+
+      expect(yield* jobs.promote(childSessionID)).toMatchObject({ metadata: { background: true } })
+      expect(yield* submissions.get(submitted.id)).toMatchObject({ completionDelivery: "parent" })
+
+      yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultText: "post-commit result",
+      })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      yield* jobs.cancel(childSessionID)
     }),
   )
 
@@ -312,6 +543,26 @@ describe("TaskSubmission", () => {
           ...input,
           description: "Different lifecycle",
         })
+        .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
+
+      expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
+    }),
+  )
+
+  it.effect("rejects a retry that changes completion delivery ownership", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const input = {
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      }
+      yield* submissions.submit(input)
+
+      const conflict = yield* submissions
+        .submit({ ...input, completionDelivery: "tool" })
         .pipe(Effect.catchTag("TaskSubmission.InvocationConflict", (error) => Effect.succeed(error)))
 
       expect(conflict).toBeInstanceOf(TaskSubmission.InvocationConflict)
@@ -440,6 +691,7 @@ describe("TaskSubmission", () => {
 
       expect(first.acquired).toBe(true)
       expect(first.info.status).toBe("running")
+      expect(first.info.completionDelivery).toBe("parent")
       expect(second.acquired).toBe(false)
       expect(second.info).toEqual(first.info)
     }),
@@ -494,6 +746,7 @@ describe("TaskSubmission", () => {
       expect(yield* submissions.get(submitted.id)).toMatchObject({
         outcome: "completed",
         resultText: "recovered result",
+        completionDelivery: "parent",
       })
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
     }),

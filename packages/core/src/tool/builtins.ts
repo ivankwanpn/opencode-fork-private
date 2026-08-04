@@ -8,6 +8,7 @@ import { ApplyPatchTool } from "./apply-patch"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
+import { GetTaskOutputTool } from "./get-task-output"
 import { LSPTool } from "./lsp"
 import { PlanExitTool } from "./plan-exit"
 import { QuestionTool } from "./question"
@@ -47,6 +48,7 @@ export const node = makeLocationNode({
     ReadTool.node,
     SkillTool.node,
     TaskTool.node,
+    GetTaskOutputTool.node,
     TodoWriteTool.node,
     WebFetchTool.node,
     WebSearchTool.node,

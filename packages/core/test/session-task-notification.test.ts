@@ -27,6 +27,7 @@ import { testEffect } from "./lib/effect"
 
 const parentSessionID = SessionSchema.ID.make("ses_notification_parent")
 const childSessionID = SessionSchema.ID.make("ses_notification_child")
+const legacyChildSessionID = SessionSchema.ID.make("ses_notification_legacy_child")
 const assistantMessageID = SessionMessage.ID.make("msg_notification_assistant")
 const invocation = {
   parentSessionID,
@@ -36,6 +37,7 @@ const invocation = {
   description: "Inspect notifications",
   agent: "general",
   prompt: Prompt.make({ text: "inspect notifications" }),
+  completionDelivery: "parent" as const,
 }
 
 const admissions: TaskNotification.Admission[] = []
@@ -131,6 +133,7 @@ describe("TaskNotification", () => {
         sessionID: parentSessionID,
         delivery: "steer",
       })
+      expect(admissions[0]?.text).toContain(`<task id="${childSessionID}" state="completed">`)
       expect(wakes).toEqual([parentSessionID])
       expect((yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.status).toBe("woken")
       expect(typeof (yield* db.select().from(TaskNotificationOutboxTable).all())[0]?.time_delivered).toBe("number")
@@ -138,6 +141,65 @@ describe("TaskNotification", () => {
         yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.session_id, parentSessionID)).all(),
       ).toHaveLength(1)
       expect(yield* notifications.drain(input)).toBe(0)
+    }),
+  )
+
+  it.effect("recovers a child task identity when delivering a legacy payload", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const commands = yield* SessionCommand.Service
+      const execution = yield* SessionExecution.Service
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: legacyChildSessionID,
+          project_id: Project.ID.global,
+          parent_id: parentSessionID,
+          slug: "notification-legacy-child",
+          directory: "/project",
+          title: "notification legacy child",
+          version: "test",
+        })
+        .run()
+        .pipe(Effect.orDie)
+      const legacy = yield* submissions.submit({
+        ...invocation,
+        childSessionID: legacyChildSessionID,
+        toolCallID: "call_notification_legacy",
+        completionDelivery: "tool",
+      })
+      yield* submissions.terminalize({ submissionID: legacy.id, outcome: "completed", resultText: "legacy complete" })
+      yield* db
+        .insert(TaskNotificationOutboxTable)
+        .values({
+          id: "outbox_notification_legacy",
+          submission_id: legacy.id,
+          parent_session_id: parentSessionID,
+          message_id: SessionMessage.ID.make("msg_notification_legacy"),
+          payload: {
+            state: "completed",
+            description: legacy.description,
+            text: "legacy complete",
+          },
+          status: "pending",
+          time_created: 1,
+        })
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(
+        yield* notifications.drain({
+          admit: admitAndRecord(commands),
+          wake: execution.wake,
+        }),
+      ).toBe(2)
+      expect(admissions).toHaveLength(2)
+      expect(admissions.find((admission) => admission.id === SessionMessage.ID.make("msg_notification_legacy"))?.text).toContain(
+        `<task id="${legacyChildSessionID}" state="completed">`,
+      )
     }),
   )
 

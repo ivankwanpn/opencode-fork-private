@@ -271,6 +271,8 @@ export default {
           \`agent\` text NOT NULL,
           \`agent_path\` text,
           \`model\` text,
+          \`requested_completion_delivery\` text DEFAULT 'parent' NOT NULL,
+          \`completion_delivery\` text DEFAULT 'parent' NOT NULL,
           \`status\` text NOT NULL,
           \`outcome\` text,
           \`result_message_id\` text,

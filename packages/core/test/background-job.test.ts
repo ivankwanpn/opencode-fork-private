@@ -79,6 +79,64 @@ describe("BackgroundJob", () => {
     }).pipe(Effect.provide(jobsLayer)),
   )
 
+  it.live("does not publish promotion before the serialized callback completes", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const callbackStarted = yield* Deferred.make<void>()
+      const releaseCallback = yield* Deferred.make<void>()
+      const releaseJob = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        type: "test",
+        onPromote: Deferred.succeed(callbackStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCallback)),
+        ),
+        run: Deferred.await(releaseJob).pipe(Effect.as("done")),
+      })
+      const waiting = yield* jobs.waitForPromotion(job.id).pipe(Effect.forkChild)
+      const promoting = yield* jobs.promote(job.id).pipe(Effect.forkChild)
+
+      yield* Deferred.await(callbackStarted)
+      yield* Effect.yieldNow
+      const waitingBeforeCallback = waiting.pollUnsafe()
+      const promotingBeforeCallback = promoting.pollUnsafe()
+      yield* Deferred.succeed(releaseCallback, undefined)
+      const promoted = yield* Fiber.join(promoting)
+      const observed = yield* Fiber.join(waiting)
+      yield* Deferred.succeed(releaseJob, undefined)
+      yield* jobs.wait({ id: job.id })
+
+      expect(waitingBeforeCallback).toBeUndefined()
+      expect(promotingBeforeCallback).toBeUndefined()
+      expect(promoted).toMatchObject({ metadata: { background: true } })
+      expect(observed).toEqual(promoted)
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
+  it.live("retains foreground state and retries after a promotion callback failure", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      let attempts = 0
+      const job = yield* jobs.start({
+        type: "test",
+        onPromote: Effect.gen(function* () {
+          attempts++
+          if (attempts === 1) return yield* Effect.fail(new Error("promotion failed"))
+        }),
+        run: Effect.never,
+      })
+
+      const first = yield* jobs.promote(job.id).pipe(Effect.exit)
+      const afterFailure = yield* jobs.get(job.id)
+      const second = yield* jobs.promote(job.id)
+
+      expect(Exit.isFailure(first)).toBe(true)
+      expect(afterFailure?.metadata?.background).not.toBe(true)
+      expect(attempts).toBe(2)
+      expect(second).toMatchObject({ metadata: { background: true } })
+      yield* jobs.cancel(job.id)
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
   it.live("tracks process-local work through explicit observation", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service

@@ -167,7 +167,11 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
           job.metadata?.parentSessionId === ctx.params.sessionID &&
           job.metadata.background !== true,
       )
-      const promoted = yield* Effect.forEach(jobs, (job) => background.promote(job.id), { concurrency: "unbounded" })
+      const promoted = yield* Effect.forEach(
+        jobs,
+        (job) => background.promote(job.id).pipe(Effect.mapError(() => new HttpApiError.BadRequest({}))),
+        { concurrency: "unbounded" },
+      )
       return promoted.some((job) => job !== undefined)
     })
 

@@ -6,9 +6,10 @@ import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { TaskNotificationOutboxTable } from "./sql"
+import { TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
 
 const NotificationPayload = Schema.Struct({
+  taskID: Schema.optional(Schema.String),
   state: Schema.Literals(["completed", "error", "cancelled", "recovery-required"]),
   description: Schema.String,
   text: Schema.String,
@@ -126,10 +127,19 @@ const layer = Layer.effect(
       if (!claimed) return false
 
       const payload = Schema.decodeUnknownSync(NotificationPayload)(row.payload)
+      const taskID =
+        payload.taskID ||
+        (yield* db
+          .select({ childSessionID: TaskSubmissionTable.child_session_id })
+          .from(TaskSubmissionTable)
+          .where(eq(TaskSubmissionTable.id, row.submission_id))
+          .get()
+          .pipe(Effect.orDie))?.childSessionID
+      if (!taskID) return yield* Effect.die(`Task submission not found: ${row.submission_id}`)
       yield* input.admit({
         id: SessionMessage.ID.make(row.message_id),
         sessionID: SessionSchema.ID.make(row.parent_session_id),
-        text: renderPayload(payload),
+        text: renderPayload(payload, taskID),
         description: payload.description,
         delivery: "steer",
       })
@@ -214,10 +224,10 @@ export const node = makeGlobalNode({
   deps: [Database.node],
 })
 
-function renderPayload(payload: typeof NotificationPayload.Type) {
+function renderPayload(payload: typeof NotificationPayload.Type, taskID: string) {
   const tag = payload.state === "error" ? "task_error" : "task_result"
   return [
-    `<task state="${payload.state}">`,
+    `<task id="${taskID}" state="${payload.state}">`,
     `<summary>${payload.description}</summary>`,
     `<${tag}>`,
     payload.text,

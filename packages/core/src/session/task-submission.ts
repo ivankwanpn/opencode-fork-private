@@ -1,6 +1,6 @@
 export * as TaskSubmission from "./task-submission"
 
-import { and, eq, isNull, or, sql } from "drizzle-orm"
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -20,12 +20,15 @@ export type Identity = {
   readonly prompt: Prompt
 }
 
+export type CompletionDelivery = "tool" | "parent"
+
 export type Invocation = Identity & {
   readonly childSessionID: SessionSchema.ID
   readonly description: string
   readonly agent: string
   readonly agentPath?: string
   readonly model?: unknown
+  readonly completionDelivery: CompletionDelivery
 }
 
 export type Outcome = "completed" | "error" | "cancelled" | "recovery-required"
@@ -42,6 +45,7 @@ export type Info = {
   readonly agent: string
   readonly agentPath?: string
   readonly model?: unknown
+  readonly completionDelivery: CompletionDelivery
   readonly status: "accepted" | "running" | "completed" | "error" | "cancelled" | "recovery-required"
   readonly outcome?: Outcome
   readonly resultMessageID?: SessionMessage.ID
@@ -97,8 +101,13 @@ export type RecoveryRequiredInput = {
 export interface Interface {
   readonly submit: (input: Invocation) => Effect.Effect<Info, InvocationConflict | Cancelled>
   readonly get: (id: string) => Effect.Effect<Info | undefined>
+  readonly latestByChild: (input: {
+    readonly parentSessionID: SessionSchema.ID
+    readonly childSessionID: SessionSchema.ID
+  }) => Effect.Effect<Info | undefined>
   readonly claim: (id: string) => Effect.Effect<ClaimResult, Missing>
   readonly terminalize: (input: TerminalizeInput) => Effect.Effect<Info | undefined>
+  readonly promoteDelivery: (submissionID: string) => Effect.Effect<Info | undefined>
   readonly recoverSession: (input: RecoveryInput) => Effect.Effect<number>
   readonly recoverCompleted: (input: SessionRecoveryInput) => Effect.Effect<number>
   readonly markRecoveryRequired: (input: RecoveryRequiredInput) => Effect.Effect<number>
@@ -126,6 +135,7 @@ const toInfo = (row: typeof TaskSubmissionTable.$inferSelect): Info => ({
   agent: row.agent,
   ...(row.agent_path === null ? {} : { agentPath: row.agent_path }),
   ...(row.model === null ? {} : { model: row.model }),
+  completionDelivery: row.completion_delivery,
   status: row.status,
   ...(row.outcome === null ? {} : { outcome: row.outcome }),
   ...(row.result_message_id === null ? {} : { resultMessageID: SessionMessage.ID.make(row.result_message_id) }),
@@ -197,6 +207,23 @@ const layer = Layer.effect(
       return row === undefined ? undefined : toInfo(row)
     })
 
+    const latestByChild: Interface["latestByChild"] = Effect.fn("TaskSubmission.latestByChild")(function* (input) {
+      const row = yield* db
+        .select()
+        .from(TaskSubmissionTable)
+        .where(
+          and(
+            eq(TaskSubmissionTable.parent_session_id, input.parentSessionID),
+            eq(TaskSubmissionTable.child_session_id, input.childSessionID),
+          ),
+        )
+        .orderBy(desc(TaskSubmissionTable.time_created), desc(TaskSubmissionTable.id))
+        .limit(1)
+        .get()
+        .pipe(Effect.orDie)
+      return row === undefined ? undefined : toInfo(row)
+    })
+
     const claim: Interface["claim"] = Effect.fn("TaskSubmission.claim")(function* (id) {
       const row = yield* db
         .select()
@@ -219,7 +246,7 @@ const layer = Layer.effect(
     const submit: Interface["submit"] = Effect.fn("TaskSubmission.submit")(function* (input) {
       const existing = yield* findInvocation(input)
       if (existing) {
-        if (!matches(toInfo(existing), input))
+        if (!matches(toInfo(existing), input, existing.requested_completion_delivery))
           return yield* new InvocationConflict({
             parentSessionID: input.parentSessionID,
             assistantMessageID: input.assistantMessageID,
@@ -251,6 +278,8 @@ const layer = Layer.effect(
               agent: input.agent,
               agent_path: input.agentPath,
               model: input.model,
+              requested_completion_delivery: input.completionDelivery,
+              completion_delivery: input.completionDelivery,
               status: "accepted",
               time_created: timeCreated,
             })
@@ -277,7 +306,7 @@ const layer = Layer.effect(
 
       const row = yield* findInvocation(input)
       if (row) {
-        if (!matches(toInfo(row), input))
+        if (!matches(toInfo(row), input, row.requested_completion_delivery))
           return yield* new InvocationConflict({
             parentSessionID: input.parentSessionID,
             assistantMessageID: input.assistantMessageID,
@@ -288,7 +317,7 @@ const layer = Layer.effect(
 
       yield* commit(admitted.admittedSeq)
       const recovered = yield* findInvocation(input)
-      if (recovered && !matches(toInfo(recovered), input))
+      if (recovered && !matches(toInfo(recovered), input, recovered.requested_completion_delivery))
         return yield* new InvocationConflict({
           parentSessionID: input.parentSessionID,
           assistantMessageID: input.assistantMessageID,
@@ -296,6 +325,30 @@ const layer = Layer.effect(
         })
       if (!recovered) return yield* Effect.die("Task submission commit did not create a submission")
       return toInfo(recovered)
+    })
+
+    const enqueueNotification = Effect.fn("TaskSubmission.enqueueNotification")(function* (
+      row: typeof TaskSubmissionTable.$inferSelect,
+      timeCreated: number,
+    ) {
+      if (row.outcome === null) return
+      const text =
+        row.result_text ??
+        (typeof row.error === "object" && row.error !== null && "message" in row.error ? String(row.error.message) : "")
+      yield* db
+        .insert(TaskNotificationOutboxTable)
+        .values({
+          id: Identifier.create("outbox", "ascending"),
+          submission_id: row.id,
+          parent_session_id: row.parent_session_id,
+          message_id: notificationID(row.id),
+          payload: { taskID: row.child_session_id, state: row.outcome, description: row.description, text },
+          status: "pending",
+          time_created: timeCreated,
+        })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
     })
 
     const terminalize: Interface["terminalize"] = Effect.fn("TaskSubmission.terminalize")(function* (input) {
@@ -353,26 +406,54 @@ const layer = Layer.effect(
               .pipe(Effect.orDie)
             if (!projected) return yield* Effect.die(`Task input was not pending: ${updated.child_input_id}`)
 
-            const text =
-              input.resultText ??
-              (typeof input.error === "object" && input.error !== null && "message" in input.error
-                ? String(input.error.message)
-                : "")
-            yield* db
-              .insert(TaskNotificationOutboxTable)
-              .values({
-                id: Identifier.create("outbox", "ascending"),
-                submission_id: updated.id,
-                parent_session_id: updated.parent_session_id,
-                message_id: notificationID(updated.id),
-                payload: { state: input.outcome, description: updated.description, text },
-                status: "pending",
-                time_created: now,
-              })
-              .onConflictDoNothing()
-              .run()
-              .pipe(Effect.orDie)
+            if (updated.completion_delivery === "parent") yield* enqueueNotification(updated, now)
             return toInfo(updated)
+          }),
+        )
+        .pipe(Effect.orDie)
+    })
+
+    const promoteDelivery: Interface["promoteDelivery"] = Effect.fn("TaskSubmission.promoteDelivery")(function* (
+      submissionID,
+    ) {
+      const now = yield* Clock.currentTimeMillis
+      return yield* db
+        .transaction(() =>
+          Effect.gen(function* () {
+            const row = yield* db
+              .select()
+              .from(TaskSubmissionTable)
+              .where(eq(TaskSubmissionTable.id, submissionID))
+              .get()
+              .pipe(Effect.orDie)
+            if (!row) return undefined
+
+            const updated =
+              row.completion_delivery === "tool"
+                ? yield* db
+                    .update(TaskSubmissionTable)
+                    .set({ completion_delivery: "parent" })
+                    .where(
+                      and(
+                        eq(TaskSubmissionTable.id, submissionID),
+                        eq(TaskSubmissionTable.completion_delivery, "tool"),
+                      ),
+                    )
+                    .returning()
+                    .get()
+                    .pipe(Effect.orDie)
+                : row
+            const current =
+              updated ??
+              (yield* db
+                .select()
+                .from(TaskSubmissionTable)
+                .where(eq(TaskSubmissionTable.id, submissionID))
+                .get()
+                .pipe(Effect.orDie))
+            if (!current) return undefined
+            if (current.outcome !== null) yield* enqueueNotification(current, now)
+            return toInfo(current)
           }),
         )
         .pipe(Effect.orDie)
@@ -507,19 +588,30 @@ const layer = Layer.effect(
       },
     )
 
-    return Service.of({ submit, get, claim, terminalize, recoverSession, recoverCompleted, markRecoveryRequired })
+    return Service.of({
+      submit,
+      get,
+      latestByChild,
+      claim,
+      terminalize,
+      promoteDelivery,
+      recoverSession,
+      recoverCompleted,
+      markRecoveryRequired,
+    })
   }),
 )
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node, EventV2.node] })
 
-function matches(existing: Info, input: Invocation) {
+function matches(existing: Info, input: Invocation, requestedCompletionDelivery = existing.completionDelivery) {
   return (
     existing.childSessionID === input.childSessionID &&
     existing.description === input.description &&
     existing.agent === input.agent &&
     existing.agentPath === input.agentPath &&
     serializedModel(existing.model) === serializedModel(input.model) &&
+    requestedCompletionDelivery === input.completionDelivery &&
     SessionInput.samePrompt(existing.prompt, input.prompt)
   )
 }

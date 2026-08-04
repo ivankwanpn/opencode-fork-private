@@ -82,7 +82,7 @@ describe("v2 session reducer", () => {
           timestamp: 1,
           sessionID: "ses_1",
           messageID: "msg_background_result",
-          prompt: { text: "<task_result>complete</task_result>" },
+          prompt: { text: '<task id="ses_child" state="completed">\n<task_result>complete</task_result>\n</task>' },
           synthetic: { description: "Background task completed: inspect flow" },
           delivery: "steer",
         },
@@ -93,10 +93,13 @@ describe("v2 session reducer", () => {
       expect.objectContaining({
         id: "msg_background_result",
         type: "synthetic",
-        text: "<task_result>complete</task_result>",
+        text: '<task id="ses_child" state="completed">\n<task_result>complete</task_result>\n</task>',
         description: "Background task completed: inspect flow",
       }),
     ])
+    const synthetic = result?.messages[0]
+    expect(synthetic?.type).toBe("synthetic")
+    if (synthetic?.type === "synthetic") expect(synthetic.text).toContain('<task id="ses_child"')
     expect(result?.messages.some((message) => message.type === "user")).toBe(false)
   })
 

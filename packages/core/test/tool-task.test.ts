@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Deferred, Effect, Fiber, Layer } from "effect"
+import { ToolFailure } from "@opencode-ai/llm"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Config } from "@opencode-ai/core/config"
@@ -50,6 +51,12 @@ let childSequence = 0
 let createCount = 0
 let notificationSignal: Deferred.Deferred<void> | undefined
 let interruptedSignal: Deferred.Deferred<void> | undefined
+let terminalizedSignal: Deferred.Deferred<void> | undefined
+let terminalizeRelease: Deferred.Deferred<void> | undefined
+let promotionSignal: Deferred.Deferred<void> | undefined
+let promotionRelease: Deferred.Deferred<void> | undefined
+let promoteDeliveryMissing = false
+let notificationDrainFailure = false
 let resumeHandler: SessionExecution.Interface["resume"]
 
 const info = (input: {
@@ -129,6 +136,12 @@ const reset = () => {
   createCount = 0
   notificationSignal = undefined
   interruptedSignal = undefined
+  terminalizedSignal = undefined
+  terminalizeRelease = undefined
+  promotionSignal = undefined
+  promotionRelease = undefined
+  promoteDeliveryMissing = false
+  notificationDrainFailure = false
   sessions.set(rootID, info({ id: rootID, agent: AgentV2.ID.make("build"), model }))
   sessions.set(parentID, info({ id: parentID, agent: AgentV2.ID.make("build"), model }))
   agents.set(
@@ -313,6 +326,7 @@ const taskSubmissionLayer = Layer.succeed(
           prompt: input.prompt,
           agent: input.agent,
           model: input.model,
+          completionDelivery: input.completionDelivery,
           status: "accepted",
           timeCreated: 0,
         }
@@ -330,6 +344,27 @@ const taskSubmissionLayer = Layer.succeed(
         return info
       }),
     get: (id) => Effect.succeed(taskSubmissions.get(id)),
+    latestByChild: (input) =>
+      Effect.succeed(
+        Array.from(taskSubmissions.values())
+          .filter(
+            (submission) =>
+              submission.parentSessionID === input.parentSessionID &&
+              submission.childSessionID === input.childSessionID,
+          )
+          .toSorted((a, b) => b.timeCreated - a.timeCreated || b.id.localeCompare(a.id))[0],
+      ),
+    promoteDelivery: (id) =>
+      Effect.gen(function* () {
+        if (promotionSignal) yield* Deferred.succeed(promotionSignal, undefined).pipe(Effect.ignore)
+        if (promotionRelease) yield* Deferred.await(promotionRelease)
+        if (promoteDeliveryMissing) return undefined
+        const info = taskSubmissions.get(id)
+        if (!info) return undefined
+        const promoted = { ...info, completionDelivery: "parent" as const }
+        taskSubmissions.set(id, promoted)
+        return promoted
+      }),
     claim: (id) =>
       Effect.gen(function* () {
         const info = taskSubmissions.get(id)
@@ -340,7 +375,7 @@ const taskSubmissionLayer = Layer.succeed(
         return { acquired: true, info: claimed }
       }),
     terminalize: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const info = taskSubmissions.get(input.submissionID)
         if (!info) return undefined
         if (info.outcome) return info
@@ -354,6 +389,8 @@ const taskSubmissionLayer = Layer.succeed(
           timeCompleted: 1,
         }
         taskSubmissions.set(input.submissionID, settled)
+        if (terminalizedSignal) yield* Deferred.succeed(terminalizedSignal, undefined).pipe(Effect.ignore)
+        if (terminalizeRelease) yield* Deferred.await(terminalizeRelease)
         return settled
       }),
     recoverSession: () => Effect.succeed(0),
@@ -365,31 +402,37 @@ const taskSubmissionLayer = Layer.succeed(
 const taskNotificationLayer = Layer.succeed(
   TaskNotification.Service,
   TaskNotification.Service.of({
-    drain: (_input) =>
+    drain: (input) =>
       Effect.gen(function* () {
         const completed = Array.from(taskSubmissions.values()).filter(
-          (submission) => submission.outcome && !deliveredTaskSubmissions.has(submission.id),
+          (submission) =>
+            submission.completionDelivery === "parent" &&
+            submission.outcome &&
+            !deliveredTaskSubmissions.has(submission.id),
         )
-        completed.forEach((submission) => {
-          deliveredTaskSubmissions.add(submission.id)
-          const state = submission.outcome === "error" ? "error" : "completed"
-          const text = submission.resultText ?? String(submission.error ?? "")
-          syntheticAdmissions.push({
-            id: TaskSubmission.notificationID(submission.id),
-            sessionID: submission.parentSessionID,
-            text: renderTaskResult({
-              sessionID: submission.childSessionID,
-              state,
-              summary: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
-              text,
+        yield* Effect.forEach(
+          completed,
+          (submission) =>
+            Effect.gen(function* () {
+              deliveredTaskSubmissions.add(submission.id)
+              const state = submission.outcome === "error" ? "error" : "completed"
+              const text = submission.resultText ?? String(submission.error ?? "")
+              yield* input.admit({
+                id: TaskSubmission.notificationID(submission.id),
+                sessionID: submission.parentSessionID,
+                text: renderTaskResult({
+                  sessionID: submission.childSessionID,
+                  state,
+                  summary: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
+                  text,
+                }),
+                description: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
+                delivery: "steer",
+              })
+              yield* input.wake(submission.parentSessionID)
             }),
-            description: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
-            delivery: "steer",
-          })
-          woken.push(submission.parentSessionID)
-        })
-        if (completed.length > 0 && notificationSignal)
-          yield* Deferred.succeed(notificationSignal, undefined).pipe(Effect.ignore)
+          { discard: true },
+        ).pipe(Effect.catchCause((cause) => Effect.die(Cause.squash(cause))))
         return completed.length
       }),
   }),
@@ -414,8 +457,8 @@ const progressLayer = Layer.succeed(
   }),
 )
 
-const makeLayer = (background: boolean, replacements: LayerNode.Replacements = []) => {
-  const taskNode = TaskTool.nodeWithOptions({ background })
+const makeLayer = (background?: boolean, replacements: LayerNode.Replacements = []) => {
+  const taskNode = background === undefined ? TaskTool.node : TaskTool.nodeWithOptions({ background })
   return AppNodeBuilder.build(
     LayerNode.group([BackgroundJob.node, ToolRegistry.node, ToolRegistry.toolsNode, taskNode]),
     [
@@ -435,8 +478,28 @@ const makeLayer = (background: boolean, replacements: LayerNode.Replacements = [
   )
 }
 
+const defaultCapability = testEffect(makeLayer())
 const foreground = testEffect(makeLayer(false))
 const background = testEffect(makeLayer(true))
+const promotionPostCommitFailure = testEffect(
+  makeLayer(undefined, [
+    [
+      TaskNotification.node,
+      Layer.succeed(
+        TaskNotification.Service,
+        TaskNotification.Service.of({
+          drain: () => {
+            if (notificationDrainFailure) {
+              notificationDrainFailure = false
+              return Effect.die(new Error("post-commit notification failure"))
+            }
+            return Effect.succeed(0)
+          },
+        }),
+      ),
+    ],
+  ]),
+)
 const foregroundLimited = testEffect(makeLayer(false, [[Config.node, makeConfigLayer(2)]]))
 const foregroundFastCompletion = testEffect(
   makeLayer(false, [
@@ -542,6 +605,16 @@ const input = {
 }
 
 describe("TaskTool", () => {
+  defaultCapability.effect("exposes background mode to the model by default", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+      const definition = (yield* toolDefinitions(registry))[0]
+
+      expect((definition?.inputSchema.properties as Record<string, unknown> | undefined)?.background).toBeDefined()
+    }),
+  )
+
   foreground.effect("hides background mode from the model when the experiment is disabled", () =>
     Effect.gen(function* () {
       reset()
@@ -570,6 +643,142 @@ describe("TaskTool", () => {
     }),
   )
 
+  defaultCapability.effect("runs in the background by default", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "default background result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(registry, call(input, "call-default-background")).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+
+      expect(settledBeforeRelease).toBeDefined()
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining('state="running"') },
+        output: { structured: { metadata: { background: true } } },
+      })
+    }),
+  )
+
+  defaultCapability.effect("runs in the background when explicitly requested", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "explicit background result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(
+        registry,
+        call({ ...input, background: true }, "call-explicit-background"),
+      ).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+
+      expect(settledBeforeRelease).toBeDefined()
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining('state="running"') },
+        output: { structured: { metadata: { background: true } } },
+      })
+    }),
+  )
+
+  defaultCapability.effect("waits for an explicitly foreground task without notifying the parent", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "explicit foreground result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(
+        registry,
+        call({ ...input, background: false }, "call-explicit-foreground"),
+      ).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+
+      expect(settledBeforeRelease).toBeUndefined()
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining("explicit foreground result") },
+      })
+      expect(settled.output?.structured).not.toHaveProperty("metadata.background")
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "tool" }])
+      expect(syntheticAdmissions).toHaveLength(0)
+      expect(woken).toHaveLength(0)
+    }),
+  )
+
+  foreground.effect("keeps omitted background foreground-only and rejects explicit background", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "capability-disabled foreground result"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const running = yield* settleTool(registry, call(input, "call-capability-disabled-default")).pipe(
+        Effect.forkScoped,
+      )
+      yield* Deferred.await(started)
+      yield* Effect.yieldNow
+      const settledBeforeRelease = running.pollUnsafe()
+      yield* Deferred.succeed(release, undefined)
+      const settled = yield* Fiber.join(running)
+      const rejected = yield* executeTool(
+        registry,
+        call({ ...input, background: true }, "call-capability-disabled-background"),
+      )
+
+      expect(settledBeforeRelease).toBeUndefined()
+      expect(settled.result).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("capability-disabled foreground result"),
+      })
+      expect(rejected).toEqual({
+        type: "error",
+        value: "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
+      })
+      expect(createCount).toBe(1)
+    }),
+  )
+
   foreground.effect("creates and executes a durable foreground child session", () =>
     Effect.gen(function* () {
       reset()
@@ -584,6 +793,7 @@ describe("TaskTool", () => {
 
       expect(child).toMatchObject({ parentID, agent: "general", model })
       expect(admissions).toMatchObject([{ sessionID: childID, prompt: { text: input.prompt }, delivery: "steer" }])
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "tool" }])
       expect(resumed).toEqual([childID])
       expect(assertions).toMatchObject([
         {
@@ -716,6 +926,7 @@ describe("TaskTool", () => {
         value: expect.stringContaining(`id="${childID}" state="running"`),
       })
       expect((yield* jobs.get(childID))?.status).toBe("running")
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "parent" }])
 
       yield* Deferred.succeed(release, undefined)
       yield* Deferred.await(notificationSignal)
@@ -735,6 +946,39 @@ describe("TaskTool", () => {
       ])
       expect(admissions.some((item) => item.sessionID === parentID)).toBe(false)
       expect(woken).toContain(parentID)
+    }),
+  )
+
+  background.effect("promotes an explicit foreground continuation of a running background task", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "background continuation"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const first = yield* executeTool(registry, call({ ...input, background: true }, "call-existing-background"))
+      expect(first).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      const childID = Array.from(taskSubmissions.values())[0]!.childSessionID
+      yield* Deferred.await(started)
+
+      const foreground = yield* executeTool(
+        registry,
+        call({ ...input, background: false, task_id: childID }, "call-explicit-foreground"),
+      )
+
+      expect(foreground).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      expect(Array.from(taskSubmissions.values()).find((submission) => submission.toolCallID === "call-explicit-foreground"))
+        .toMatchObject({ completionDelivery: "parent" })
+
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
     }),
   )
 
@@ -773,7 +1017,6 @@ describe("TaskTool", () => {
       reset()
       const release = yield* Deferred.make<void>()
       const started = yield* Deferred.make<void>()
-      notificationSignal = yield* Deferred.make<void>()
       resumeHandler = (sessionID) =>
         Effect.gen(function* () {
           resumed.push(sessionID)
@@ -784,7 +1027,10 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(registry, call(input, "call-promote")).pipe(Effect.forkScoped)
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-promote"),
+      ).pipe(Effect.forkScoped)
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* jobs.promote(childID)
@@ -794,8 +1040,156 @@ describe("TaskTool", () => {
         value: expect.stringContaining('state="running"'),
       })
       yield* Deferred.succeed(release, undefined)
-      yield* Deferred.await(notificationSignal)
       expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
+    }),
+  )
+
+  promotionPostCommitFailure.effect("keeps background ownership after advisory promotion work fails", () =>
+    Effect.gen(function* () {
+      reset()
+      notificationDrainFailure = true
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "post-commit result"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-post-commit-promotion"),
+      ).pipe(Effect.forkScoped)
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* Deferred.await(started)
+
+      expect(yield* jobs.promote(childID)).toMatchObject({ metadata: { background: true } })
+      expect(Array.from(taskSubmissions.values()).find((submission) => submission.childSessionID === childID)).toMatchObject({
+        completionDelivery: "parent",
+      })
+      expect(yield* Fiber.join(running)).toMatchObject({
+        type: "text",
+        value: expect.stringContaining('state="running"'),
+      })
+
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
+    }),
+  )
+
+  background.effect("delivers exactly once when foreground completion wins the promotion race", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const releaseCompletion = yield* Deferred.make<void>()
+      terminalizedSignal = yield* Deferred.make<void>()
+      terminalizeRelease = yield* Deferred.make<void>()
+      promotionSignal = yield* Deferred.make<void>()
+      promotionRelease = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(releaseCompletion)
+          contexts.set(sessionID, childContext(sessionID, "terminal before promotion"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-terminal-promote"),
+      ).pipe(Effect.forkScoped)
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* Deferred.await(started)
+      yield* Deferred.succeed(releaseCompletion, undefined)
+      yield* Deferred.await(terminalizedSignal)
+
+      const terminalSubmissions = Array.from(taskSubmissions.values())
+      const terminalAdmissions = [...syntheticAdmissions]
+
+      const promoting = yield* jobs.promote(childID).pipe(Effect.forkScoped)
+      yield* Deferred.await(promotionSignal)
+      yield* Effect.yieldNow
+      const runningBeforePromotion = running.pollUnsafe()
+      const checkpointsBeforePromotion = progressUpdates.length
+      yield* Deferred.succeed(promotionRelease, undefined)
+      yield* Fiber.join(promoting)
+      const runningResult = yield* Fiber.join(running)
+      const promotedSubmissions = Array.from(taskSubmissions.values())
+      const promotedAdmissions = [...syntheticAdmissions]
+      const promotedWakes = [...woken]
+      yield* Deferred.succeed(terminalizeRelease, undefined)
+      const completed = yield* jobs.wait({ id: childID })
+
+      expect(terminalSubmissions).toMatchObject([{ status: "completed", completionDelivery: "tool" }])
+      expect(terminalAdmissions).toHaveLength(0)
+      expect(runningBeforePromotion).toBeUndefined()
+      expect(checkpointsBeforePromotion).toBe(1)
+      expect(runningResult).toMatchObject({
+        type: "text",
+        value: expect.stringContaining('state="running"'),
+      })
+      expect(promotedSubmissions).toMatchObject([
+        { status: "completed", completionDelivery: "parent" },
+      ])
+      expect(promotedAdmissions).toHaveLength(1)
+      expect(promotedWakes).toEqual([parentID])
+      expect(completed.info?.status).toBe("completed")
+      expect(syntheticAdmissions).toHaveLength(1)
+      expect(woken).toEqual([parentID])
+    }),
+  )
+
+  background.effect("keeps foreground promotion retryable when its durable submission is missing", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          resumed.push(sessionID)
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "retried promotion"))
+        })
+      promoteDeliveryMissing = true
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-missing-promotion"),
+      ).pipe(Effect.forkScoped)
+      const childID = SessionSchema.ID.make("ses_task_child_1")
+      yield* Deferred.await(started)
+      const first = yield* jobs.promote(childID).pipe(Effect.exit)
+      yield* Effect.yieldNow
+      const afterFailure = yield* jobs.get(childID)
+      const runningAfterFailure = running.pollUnsafe()
+      const checkpointsAfterFailure = progressUpdates.length
+
+      promoteDeliveryMissing = false
+      const second = yield* jobs.promote(childID)
+      const runningResult = yield* Fiber.join(running)
+      yield* Deferred.succeed(release, undefined)
+      const completed = yield* jobs.wait({ id: childID })
+
+      expect(Exit.isFailure(first)).toBe(true)
+      if (Exit.isFailure(first)) {
+        expect(Cause.squash(first.cause)).toBeInstanceOf(ToolFailure)
+        expect(String(Cause.squash(first.cause))).toContain("Task submission disappeared")
+      }
+      expect(afterFailure?.metadata?.background).not.toBe(true)
+      expect(runningAfterFailure).toBeUndefined()
+      expect(checkpointsAfterFailure).toBe(1)
+      expect(second).toMatchObject({ metadata: { background: true } })
+      expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "parent" }])
+      expect(runningResult).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      expect(completed.info?.status).toBe("completed")
     }),
   )
 
@@ -847,7 +1241,10 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(registry, call(input, "call-cancel")).pipe(Effect.forkScoped)
+      const running = yield* executeTool(
+        registry,
+        call({ ...input, background: false }, "call-cancel"),
+      ).pipe(Effect.forkScoped)
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* Fiber.interrupt(running).pipe(Effect.forkScoped)

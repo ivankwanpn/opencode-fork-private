@@ -229,6 +229,7 @@ export const TaskTool = Tool.define(
         prompt: Prompt.make({ text: params.prompt }),
         agent: next.name,
         model,
+        completionDelivery: runInBackground ? "parent" : "tool",
       })
 
       const admitNotification = (input: TaskNotification.Admission) =>
@@ -317,12 +318,19 @@ export const TaskTool = Tool.define(
         type: id,
         title: params.description,
         metadata,
-        onPromote: Effect.all([
-          ctx.metadata({
-            title: params.description,
-            metadata: { ...metadata, background: true, jobId: nextSession.id },
+        onPromote: Effect.uninterruptible(
+          Effect.gen(function* () {
+            const promoted = yield* submissions.promoteDelivery(submission.id)
+            if (!promoted) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
+            yield* drainNotifications().pipe(Effect.catchCause(() => Effect.void))
+            yield* ctx
+              .metadata({
+                title: params.description,
+                metadata: { ...metadata, background: true, jobId: nextSession.id },
+              })
+              .pipe(Effect.catchCause(() => Effect.void))
           }),
-        ]),
+        ),
         run: runTask,
       })
       function backgroundResult(mode: "started" | "updated") {
@@ -347,6 +355,8 @@ export const TaskTool = Tool.define(
       }
 
       if (info.metadata?.background === true) {
+        const promoted = yield* submissions.promoteDelivery(submission.id)
+        if (!promoted) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
         return backgroundResult("updated")
       }
 

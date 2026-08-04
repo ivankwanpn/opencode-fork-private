@@ -23,15 +23,15 @@ import { ToolProgress } from "./progress"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
-import { Flag } from "../flag/flag"
 
 export const name = "task"
 
 const BACKGROUND_DESCRIPTION = [
-  "Background mode: background=true launches the subagent asynchronously and returns immediately.",
-  "Foreground is the default; use it when you need the result before continuing.",
-  "Use background only for independent work that can run while you continue elsewhere.",
-  "You will be notified automatically when it finishes.",
+  "Tasks run asynchronously by default and return a handle immediately.",
+  "The parent session is automatically notified and woken when a task finishes.",
+  "Use background=false only when the next reasoning step has an immediate hard dependency on the result.",
+  "Never batch multiple foreground task calls in one assistant message.",
+  "Do not repeatedly poll task status; continue useful work and rely on the completion input or a deliberate bounded get_task_output call.",
 ].join(" ")
 
 const BACKGROUND_STARTED = [
@@ -48,6 +48,8 @@ const BACKGROUND_UPDATED = [
 export const description = `Launch a new agent to handle complex, multistep tasks autonomously.
 
 Use task_id only to continue an existing child session. Each fresh invocation otherwise creates a durable child session.
+
+When asynchronous delegation is available, it is the default and the parent is automatically notified and woken on completion. Use background=false only for an immediate hard dependency, never batch multiple foreground task calls, and never repeatedly poll task status.
 
 Do not delegate a specific file read or a narrow symbol search; use direct read, glob, or grep tools instead. Clearly state whether the subagent should write code or only research, and include enough context for it to work autonomously.`
 
@@ -143,7 +145,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       const cancellation = yield* TaskCancellation.Service
       const submissions = yield* TaskSubmission.Service
       const tools = yield* Tools.Service
-      const allowBackground = options.background ?? Flag.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+      const allowBackground = options.background ?? true
 
       const computeAgentPath = Effect.fn("TaskTool.computeAgentPath")(function* (session: SessionSchema.Info) {
         const chain = [session]
@@ -164,11 +166,12 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       })
 
       const execute = Effect.fn("TaskTool.execute")(function* (input: typeof Input.Type, context: Tool.Context) {
-        const runInBackground = input.background === true
-        if (runInBackground && !allowBackground)
+        const requestedBackground = input.background === true
+        if (requestedBackground && !allowBackground)
           return yield* new ToolFailure({
             message: "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
           })
+        const runInBackground = allowBackground ? input.background !== false : false
 
         const parent = yield* sessions.get(context.sessionID)
         if (!parent) return yield* new ToolFailure({ message: `Session not found: ${context.sessionID}` })
@@ -341,7 +344,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           jobId: child.id,
         }
 
-        const info = yield* Effect.ensuring(
+        const started = yield* Effect.ensuring(
           Effect.gen(function* () {
             yield* checkpoint(metadata)
 
@@ -358,6 +361,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
                 agent: agent.id,
                 agentPath,
                 model,
+                completionDelivery: runInBackground ? "parent" : "tool",
               })
               .pipe(
                 Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>
@@ -370,18 +374,32 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               type: name,
               title: input.description,
               metadata,
-              onPromote: checkpoint(backgroundMetadata),
+              onPromote: Effect.uninterruptible(
+                Effect.gen(function* () {
+                  const promoted = yield* submissions.promoteDelivery(submission.id)
+                  if (!promoted)
+                    return yield* new ToolFailure({ message: `Task submission disappeared: ${submission.id}` })
+                  yield* notifications
+                    .drain({
+                      admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+                      wake: execution.wake,
+                    })
+                    .pipe(Effect.catchCause(() => Effect.void))
+                  yield* checkpoint(backgroundMetadata).pipe(Effect.catchCause(() => Effect.void))
+                }),
+              ),
               onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
               onRelease: permits.release(child.id),
               run: runTask(submission),
             })
             yield* Ref.set(ownedByJob, true)
-            return started
+            return { info: started, submissionID: submission.id }
           }),
           Effect.flatMap(Ref.get(ownedByJob), (owned) =>
             owned ? Effect.void : permits.release(child.id),
           ),
         )
+        const info = started.info
 
         const runningResult = (mode: "started" | "updated") => {
           const output = renderOutput({
@@ -400,6 +418,11 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         }
 
         if (info.metadata?.background === true) {
+          if (!runInBackground) {
+            const promoted = yield* submissions.promoteDelivery(started.submissionID)
+            if (!promoted)
+              return yield* new ToolFailure({ message: `Task submission disappeared: ${started.submissionID}` })
+          }
           const result = runningResult("updated")
           yield* checkpoint(result.metadata, result.output)
           return result

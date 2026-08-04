@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { eq } from "drizzle-orm"
-import { Deferred, Effect, Fiber } from "effect"
+import { Deferred, Effect, Fiber, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -92,6 +92,7 @@ const setup = Effect.gen(function* () {
     description: "cancel child",
     prompt,
     agent: "general",
+    completionDelivery: "parent",
   })
   yield* submissions.submit({
     parentSessionID: child,
@@ -101,6 +102,7 @@ const setup = Effect.gen(function* () {
     description: "cancel grandchild",
     prompt,
     agent: "general",
+    completionDelivery: "parent",
   })
 })
 
@@ -195,7 +197,20 @@ describe("TaskCancellation", () => {
         EventV2.latestSequence(db, sessionID),
       )
       expect(terminalInputs.map((input) => input.terminal_seq).toSorted()).toEqual(expectedTerminalSeqs.toSorted())
-      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(2)
+      const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
+      expect(outbox).toHaveLength(2)
+      const cancelledSubmissions = yield* db
+        .select({ id: TaskSubmissionTable.id, childSessionID: TaskSubmissionTable.child_session_id })
+        .from(TaskSubmissionTable)
+        .where(eq(TaskSubmissionTable.outcome, "cancelled"))
+        .all()
+      cancelledSubmissions.forEach((submission) => {
+        const row = outbox.find((row) => row.submission_id === submission.id)
+        expect(row).toBeDefined()
+        expect(Schema.decodeUnknownSync(Schema.Struct({ taskID: Schema.String }))(row?.payload).taskID).toBe(
+          submission.childSessionID,
+        )
+      })
 
       const escaped = yield* submissions
         .submit({
@@ -206,6 +221,7 @@ describe("TaskCancellation", () => {
           description: "escape",
           prompt,
           agent: "general",
+          completionDelivery: "parent",
         })
         .pipe(Effect.flip)
       expect(escaped._tag).toBe("TaskSubmission.Cancelled")
@@ -226,6 +242,7 @@ describe("TaskCancellation", () => {
           description: "race",
           prompt,
           agent: "general",
+          completionDelivery: "parent",
         })
         .pipe(Effect.catchTag("TaskSubmission.Cancelled", (error) => Effect.succeed(error)))
       const [, submitted] = yield* Effect.all(
@@ -237,6 +254,45 @@ describe("TaskCancellation", () => {
       )
       if ("_tag" in submitted && submitted._tag === "TaskSubmission.Cancelled") return
       if ("outcome" in submitted) expect(submitted.outcome).toBe("cancelled")
+    }),
+  )
+
+  it.effect("does not enqueue parent cancellation delivery for a tool-owned submission", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const cancellation = yield* TaskCancellation.Service
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const toolOwned = yield* submissions.submit({
+        parentSessionID: root,
+        assistantMessageID: SessionMessage.ID.make("msg_cancel_tool_assistant"),
+        toolCallID: "call_cancel_tool_child",
+        childSessionID: child,
+        description: "foreground cancellation",
+        prompt,
+        agent: "general",
+        completionDelivery: "tool",
+      })
+
+      yield* cancellation.cancelTree({
+        rootSessionID: root,
+        interrupt: () => Effect.void,
+        wait: () => Effect.void,
+      })
+
+      expect(
+        yield* db
+          .select({ id: TaskNotificationOutboxTable.submission_id })
+          .from(TaskNotificationOutboxTable)
+          .all(),
+      ).not.toContainEqual({ id: toolOwned.id })
+      expect(
+        yield* db
+          .select({ id: TaskSubmissionTable.id, delivery: TaskSubmissionTable.completion_delivery })
+          .from(TaskSubmissionTable)
+          .where(eq(TaskSubmissionTable.id, toolOwned.id))
+          .get(),
+      ).toEqual({ id: toolOwned.id, delivery: "tool" })
     }),
   )
 
@@ -261,6 +317,7 @@ describe("TaskCancellation", () => {
           description: "target cancelled child",
           prompt,
           agent: "general",
+          completionDelivery: "parent",
         })
         .pipe(Effect.flip)
 

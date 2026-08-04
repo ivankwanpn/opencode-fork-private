@@ -82,6 +82,9 @@ type CompatibleInput = {
   directory?: string
 }
 
+type CompatibleImplementation = CompatibleApi | ServerApi
+const compatibleResolvers = new WeakMap<object, (protocol: ServerProtocol) => CompatibleImplementation>()
+
 function mime(uri: string) {
   const match = /^data:([^;,]+)/.exec(uri)
   return match?.[1] ?? "application/octet-stream"
@@ -127,18 +130,24 @@ function unsupportedV1(operation: string): never {
 
 export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
   const v1 = createV1Api(input)
-  return lazyApi(() => resolveProtocol(input.protocol).then((protocol) => (protocol === "v1" ? v1 : input.current)), input.current)
+  const select = (protocol: ServerProtocol) => (protocol === "v1" ? v1 : input.current)
+  const api = lazyApi(() => resolveProtocol(input.protocol).then(select), input.current)
+  compatibleResolvers.set(api, select)
+  return api
 }
 
 export function createV2OnlyApi(input: Pick<CompatibleInput, "protocol" | "current">): CompatibleApi {
-  return lazyApi(
-    () =>
-      resolveProtocol(input.protocol).then((protocol) => {
-        if (protocol !== "v2") throw new Error("V2 server protocol unavailable")
-        return input.current
-      }),
-    input.current,
-  )
+  const select = (protocol: ServerProtocol) => {
+    if (protocol !== "v2") throw new Error("V2 server protocol unavailable")
+    return input.current
+  }
+  const api = lazyApi(() => resolveProtocol(input.protocol).then(select), input.current)
+  compatibleResolvers.set(api, select)
+  return api
+}
+
+export function resolveCompatibleApi(api: CompatibleApi, protocol: ServerProtocol): CompatibleImplementation {
+  return compatibleResolvers.get(api)?.(protocol) ?? api
 }
 
 function resolveProtocol(input: CompatibleInput["protocol"]) {
@@ -195,6 +204,10 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
 
   return {
     ...input.current,
+    message: {
+      ...input.current.message,
+      list: async () => unsupportedV1("V2 message history"),
+    },
     plugins: {
       list: async () => unsupportedV1("Plugin management"),
       add: async () => unsupportedV1("Plugin management"),

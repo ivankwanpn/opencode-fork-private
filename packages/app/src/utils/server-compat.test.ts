@@ -28,6 +28,12 @@ function currentApi(calls: string[]) {
         },
       },
     },
+    message: {
+      list: async () => {
+        calls.push("message.list")
+        return { data: [], cursor: {} }
+      },
+    },
     project: {},
     worktree: {},
     location: {},
@@ -102,6 +108,22 @@ describe("server compatibility API", () => {
       "V2 session revert commit is unavailable on a V1 server",
     )
     await expect(api.plugins.list()).rejects.toThrow("Plugin management is unavailable on a V1 server")
+    expect(calls).toEqual([])
+  })
+
+  test("does not expose V2 message history to V1 connections", async () => {
+    const calls: string[] = []
+    const api = createCompatibleApi({
+      protocol: Promise.resolve("v1"),
+      current: currentApi(calls),
+      legacy: () => {
+        throw new Error("legacy client should not be used")
+      },
+    })
+
+    await expect(api.message.list({ sessionID: "ses_1", limit: 20, order: "desc" })).rejects.toThrow(
+      "V2 message history is unavailable on a V1 server",
+    )
     expect(calls).toEqual([])
   })
 

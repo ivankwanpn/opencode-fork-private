@@ -32,6 +32,7 @@ import { createV2SessionReducer, type V2SessionReduction } from "./server-sessio
 import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 import { extractArray } from "@/utils/response-helpers"
 import type { ServerApi } from "@/utils/server"
+import { resolveCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
@@ -195,6 +196,7 @@ function reconcileFetched<T extends { id: string }>(
 type ServerSessionOptions = {
   retry?: typeof retry
   protocol?: ServerProtocolResolver
+  api?: CompatibleApi
   currentSession?: Pick<ServerApi["session"], "todo">
 }
 
@@ -316,18 +318,28 @@ export function createServerSession(
     return session
   }
 
-  const resolve = (sessionID: string, options?: { force?: boolean }) => {
+  const resolve = (sessionID: string, requestOptions?: { force?: boolean }) => {
     const cached = data.info[sessionID]
-    if (cached && !options?.force) return Promise.resolve(cached)
+    if (cached && !requestOptions?.force) return Promise.resolve(cached)
     const pending = requests.get(sessionID)
     if (pending) return pending
     const active = generation(sessionID)
-    const request = sessionApi
-      ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
-      : client.session.get({ sessionID }).then((result) => {
-          if (!result.data) throw sessionNotFoundError(sessionID)
-          return result.data
+    const request = options?.api
+      ? resolveServerProtocol(options.protocol).then((protocol) => {
+          if (protocol)
+            return resolveCompatibleApi(options.api!, protocol).session.get({ sessionID }).then(normalizeSessionInfo)
+          if (sessionApi) return sessionApi.get({ sessionID }).then(normalizeSessionInfo)
+          return client.session.get({ sessionID }).then((result) => {
+            if (!result.data) throw sessionNotFoundError(sessionID)
+            return result.data
+          })
         })
+      : sessionApi
+        ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
+        : client.session.get({ sessionID }).then((result) => {
+            if (!result.data) throw sessionNotFoundError(sessionID)
+            return result.data
+          })
     const resolved = request.then((result) => {
       if (generations.get(sessionID) !== active) return result
       return remember(result)
@@ -554,12 +566,15 @@ export function createServerSession(
     )
 
   const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
-    if (messageApi && (await resolveServerProtocol(options?.protocol)) !== "v1") {
+    const protocol = messageApi ? await resolveServerProtocol(options?.protocol) : undefined
+    if (messageApi && protocol !== "v1") {
+      const api = options?.api && protocol ? resolveCompatibleApi(options.api, protocol) : undefined
+      const currentMessageApi = api?.message ?? messageApi
       const pageLimit = Math.min(limit, messageApiPageSize)
       const request = (cursor?: string) =>
         (options?.retry ?? retry)(() => {
           onAttempt?.()
-          return messageApi.list(
+          return currentMessageApi.list(
             cursor
               ? { sessionID, limit: pageLimit, cursor }
               : { sessionID, limit: pageLimit, order: "desc" },
@@ -606,10 +621,13 @@ export function createServerSession(
   }
 
   const fetchMessage = async (sessionID: string, messageID: string, onAttempt?: () => void) => {
-    if (sessionApi && (await resolveServerProtocol(options?.protocol)) !== "v1") {
+    const protocol = sessionApi ? await resolveServerProtocol(options?.protocol) : undefined
+    if (sessionApi && protocol !== "v1") {
+      const api = options?.api && protocol ? resolveCompatibleApi(options.api, protocol) : undefined
+      const currentSessionApi = api?.session ?? sessionApi
       const response = await (options?.retry ?? retry)(() => {
         onAttempt?.()
-        return sessionApi.message({ sessionID, messageID })
+        return currentSessionApi.message({ sessionID, messageID })
       })
       const normalized = normalizeSessionMessages(sessionID, [response])
       const message = normalized.messages[0]
@@ -870,11 +888,15 @@ export function createServerSession(
   }
 
   const refreshContext = (sessionID: string) => {
-    if (!sessionApi || !options?.protocol) return Promise.resolve()
+    if ((!sessionApi && !options?.api) || !options?.protocol) return Promise.resolve()
     return runInflight(contextLoads, sessionID, async () => {
-      if ((await resolveServerProtocol(options.protocol)) === "v1") return
+      const protocol = await resolveServerProtocol(options.protocol)
+      if (protocol === "v1") return
+      const api = options.api && protocol ? resolveCompatibleApi(options.api, protocol) : undefined
+      const currentSessionApi = api?.session ?? sessionApi
+      if (!currentSessionApi) return
       const active = generation(sessionID)
-      const result = await (options.retry ?? retry)(() => sessionApi.context({ sessionID }))
+      const result = await (options.retry ?? retry)(() => currentSessionApi.context({ sessionID }))
       if (generations.get(sessionID) !== active) return
       // The injected current API returns the V2 protocol shape; the shared
       // legacy client type predates the V2 content identifiers.
@@ -957,8 +979,9 @@ export function createServerSession(
   }
 
   const hydrateV2Message = (sessionID: string, messageID: string) => {
-    if (!sessionApi) return
-    void sessionApi
+    const currentSessionApi = options?.api ? resolveCompatibleApi(options.api, "v2").session : sessionApi
+    if (!currentSessionApi) return
+    void currentSessionApi
       .message({ sessionID, messageID })
       .then((message) => {
         const current = data.session_message[sessionID] ?? []
@@ -1489,7 +1512,12 @@ export function createServerSession(
       touch(sessionID)
       if (data.todo[sessionID] !== undefined && !request?.force) return
       const protocol = await resolveServerProtocol(options?.protocol)
-      const currentSession = options?.currentSession
+      const currentSession =
+        protocol === "v2"
+          ? options?.api
+            ? resolveCompatibleApi(options.api, protocol).session
+            : options?.currentSession
+          : undefined
       if (protocol === "v2" && currentSession) {
         return runInflight(inflightTodo, sessionID, async () => {
           const active = generation(sessionID)

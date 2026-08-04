@@ -3,6 +3,7 @@ import type { retry } from "@opencode-ai/core/util/retry"
 import type { MessageApi, OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
 import type { Message, OpencodeClient, Part, Session, Todo, V2Event } from "@opencode-ai/sdk/v2/client"
 import type { ServerApi } from "@/utils/server"
+import { createV2OnlyApi } from "@/utils/server-compat"
 import { createServerSession } from "./server-session"
 
 const session = (id: string, parentID?: string): Session => ({
@@ -346,6 +347,36 @@ describe("server session", () => {
 
     expect(requests).toEqual([{ sessionID: "root", limit: 20, order: "desc" }])
     expect(store.data.session_message.root.map((message) => message.id)).toEqual([user.id, assistant.id])
+  })
+
+  test("keeps a V2 history read on its selected protocol generation", async () => {
+    let protocol: "v1" | "v2" = "v2"
+    const readProtocol = (): "v1" | "v2" => protocol
+    const resolveProtocol = (): Promise<"v1" | "v2"> => Promise.resolve(readProtocol())
+    const api = createV2OnlyApi({
+      protocol: resolveProtocol,
+      current: {
+        session: {
+          get: async () => session("root"),
+        },
+        message: {
+          list: async () => {
+            protocol = "v1"
+            return { data: [], cursor: { previous: null, next: null } }
+          },
+        },
+      } as unknown as ServerApi,
+    })
+    const store = createServerSession({} as OpencodeClient, api.session, api.message, {
+      protocol: resolveProtocol,
+      api,
+    })
+    store.remember(session("root"))
+
+    await store.sync("root")
+
+    expect(store.data.message.root).toEqual([])
+    expect(readProtocol()).toBe("v1")
   })
 
   test("caps refresh page size when the cached history is larger than one API page", async () => {

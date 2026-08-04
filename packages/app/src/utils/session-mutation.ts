@@ -1,5 +1,5 @@
 import type { ServerApi } from "./server"
-import type { CompatibleApi } from "./server-compat"
+import { resolveCompatibleApi, type CompatibleApi } from "./server-compat"
 
 export type ServerSessionApi = CompatibleApi["session"] | ServerApi["session"]
 
@@ -23,7 +23,7 @@ export function resolveServerSessionApi(input: {
   protocol: Promise<"v1" | "v2">
   api: CompatibleApi
 }): Promise<ServerSessionApi> {
-  return input.protocol.then(() => input.api.session)
+  return input.protocol.then((protocol) => resolveCompatibleApi(input.api, protocol).session)
 }
 
 export function runServerSessionMutation<T>(input: {

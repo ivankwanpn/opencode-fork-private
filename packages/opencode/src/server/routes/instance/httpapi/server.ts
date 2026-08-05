@@ -296,6 +296,13 @@ const app = LayerNode.group([
   PtyTicket.node,
 ])
 
+function buildV2SessionServices(locationServiceMap: typeof locationServiceMapV2Layer) {
+  return AppNodeBuilderV1.build(LayerNode.group([SessionV2.node, SessionExecutionLocal.node]), [
+    [LocationServiceMap.node, locationServiceMap],
+    [SessionExecution.node, SessionExecutionLocal.node],
+  ])
+}
+
 export function createRoutes(
   corsOptions?: CorsOptions,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
@@ -323,12 +330,7 @@ export function createRoutes(
     Layer.provide(sessionLocationLayer),
     Layer.provide(NativeLocation.layer),
     Layer.provide(PtyEnvironment.layer),
-    Layer.provide(
-      AppNodeBuilderV1.build(SessionV2.node, [
-        [LocationServiceMap.node, locationServiceMapV2],
-        [SessionExecution.node, SessionExecutionLocal.node],
-      ]),
-    ),
+    Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
 
     Layer.provide(AppNodeBuilderV1.build(app, [[LocationServiceMap.node, locationServiceMapV2]])),
@@ -361,12 +363,7 @@ export function createNativeRoutes(
     Layer.provide(sessionLocationLayer),
     Layer.provide(NativeLocation.layer),
     Layer.provide(PtyEnvironment.layer),
-    Layer.provide(
-      AppNodeBuilderV1.build(SessionV2.node, [
-        [LocationServiceMap.node, locationServiceMapV2],
-        [SessionExecution.node, SessionExecutionLocal.node],
-      ]),
-    ),
+    Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
     Layer.provide(AppNodeBuilderV1.build(app, [[LocationServiceMap.node, locationServiceMapV2]])),
     Layer.provideMerge(Observability.layer),

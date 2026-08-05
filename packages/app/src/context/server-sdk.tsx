@@ -572,11 +572,6 @@ type SDKEventMap = {
 }
 
 function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
-  const legacyClient = serverSDK.createLegacyClient({
-    directory,
-    throwOnError: true,
-  })
-
   const emitter = createGlobalEmitter<SDKEventMap>()
 
   const unsub = serverSDK.event.on(directory, (event) => {
@@ -609,7 +604,6 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     apiForGeneration,
     diagnostics: serverSDK.diagnostics,
     directory,
-    legacyClient,
     api,
     currentApi: serverSDK.currentApi,
     sessionMutations: serverSDK.sessionMutations,

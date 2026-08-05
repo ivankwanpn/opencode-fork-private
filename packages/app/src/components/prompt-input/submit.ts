@@ -387,10 +387,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     const submissionSDK = sdk()
     const submissionServerSync = serverSync()
+    const permissionState = permission.currentServerState()
     const submissionApi = await submissionSDK.apiForGeneration()
     const submissionSessionApi = submissionApi.session
     const projectDirectory = submissionSDK.directory
-    const permissionState = permission.currentServerState()
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && input.autoAccept()
     const worktreeSelection = input.newSessionWorktree?.() || "main"

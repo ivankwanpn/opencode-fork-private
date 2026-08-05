@@ -47,6 +47,7 @@ beforeAll(async () => {
   mock.module("@/context/server", () => ({
     ServerConnection: {
       key: (value: { key: string }) => value.key,
+      Key: { make: (value: string) => value },
     },
     useServer: () => ({
       key: "server-a",

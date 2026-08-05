@@ -661,6 +661,40 @@ async function run() {
     assert(admitted.data?.id === messageID && admitted.data?.sessionID === sessionID, "prompt was not durably admitted")
     await events.waitFor((event) => event.type === "session.next.prompt.admitted" && event.data?.sessionID === sessionID)
 
+    const retried = await json(
+      request(base, `/api/session/${sessionID}/prompt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: messageID, prompt: { text: "packaged sidecar smoke admission" }, resume: false }),
+      }),
+      "session.prompt.retry",
+    )
+    assert(retried.data?.id === messageID && retried.data?.sessionID === sessionID, "exact prompt retry was not idempotent")
+
+    const cancelledMessageID = `msg_smoke_cancelled_${Date.now()}`
+    const queued = await json(
+      request(base, `/api/session/${sessionID}/prompt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: cancelledMessageID,
+          prompt: { text: "packaged sidecar smoke cancellation" },
+          delivery: "queue",
+          resume: false,
+        }),
+      }),
+      "session.prompt.queue",
+    )
+    assert(queued.data?.id === cancelledMessageID && queued.data?.delivery === "queue", "queue prompt was not admitted")
+
+    const cancelled = await request(base, `/api/session/${sessionID}/input/${cancelledMessageID}`, { method: "DELETE" })
+    assert(cancelled.status === 204, `session.input.cancel returned ${cancelled.status}`)
+    const afterCancel = await json(request(base, `/api/session/${sessionID}/input`), "session.input.after-cancel")
+    assert(
+      !afterCancel.data?.some((input) => input.id === cancelledMessageID),
+      "cancelled queue input remained pending",
+    )
+
     const pending = await json(request(base, `/api/session/${sessionID}/input`), "session.input.list")
     assert(pending.data?.some((input) => input.id === messageID), "admitted prompt was not recoverable from input state")
 
@@ -709,6 +743,9 @@ async function run() {
           "session.prompt.execution",
           "session.compaction",
           "session.prompt",
+          "session.prompt.retry",
+          "session.prompt.queue",
+          "session.input.cancel",
           "interrupt",
           "reconnect",
           "session.compaction.reconnect",

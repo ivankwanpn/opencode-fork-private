@@ -79,7 +79,7 @@ Record the exact sidecar build commit, channel, version, health response, route 
 - `packages/desktop/package.json` and the packaged `app.asar` metadata report version `999.0.9`.
 - `bun run package:win` completed with `OPENCODE_CHANNEL=prod` and produced `packages/desktop/dist/win-unpacked/resources/app.asar`.
 - Static archive inspection found `out/main/sidecar.js`, `out/renderer/index.html`, one bundled server chunk, `/api/health`, `/api/capability`, and `backgroundSubagents` in the archive.
-- The live packaged smoke report at `C:\Users\inkik\AppData\Local\Temp\opencode-packaged-sidecar-smoke.json` confirms the actual `app.asar/out/main/sidecar.js` selected V2 and passed health, capability, `/doc` OpenAPI, SSE, session admission, provider execution, compaction, permission, question, MCP, plugin catalog, PTY, interrupt, and reconnect checks.
+- The live packaged smoke report at `C:\Users\inkik\AppData\Local\Temp\opencode-packaged-sidecar-smoke.json` confirms the actual `app.asar/out/main/sidecar.js` selected V2 and passed health, capability, `/doc` OpenAPI, SSE, session admission, exact prompt retry, queued input admission/cancellation, provider execution, compaction, permission, question, MCP, plugin catalog, PTY, interrupt, and reconnect checks.
 - The smoke test keeps a separate `resume: false` prompt for durable-admission/reconnect coverage and uses a second `resume: true` session with `test/test-model` to verify provider execution, `session.next.compaction.started`, `session.next.compaction.delta`, `session.next.compaction.ended`, and inactive state after reconnect.
 
 ## Phase 1: Make the Desktop-Owned Connection V2-First
@@ -106,6 +106,17 @@ Required invariants:
 ## Phase 2: Migrate Desktop Session Workflows
 
 Migrate one workflow at a time. Each workflow must have a V2 path, an integration test, and a user-visible rollback decision before the next workflow is changed.
+
+### 999.0.9 progress
+
+- [x] Session reads and mutations resolve one generation-pinned API before issuing a request.
+- [x] Project close uses normalized identity and removes a missing project without a stale Solid read or persistence rollback.
+- [x] Restored session tabs render persisted metadata first and stage inactive message hydration through a serial idle queue.
+- [x] Packaged-sidecar smoke covers reconnect/restore, permissions, questions, MCP, plugins, marketplaces, PTY, prompt execution, and compaction.
+- [x] Development in-process V2 lifecycle contract passes through both `Server.Default()` (Desktop sidecar `listen()` path) and `Server.Native()` (TUI/CLI native path) for the generated Desktop/CLI client adapter and native TUI client adapter: session create, durable admission, exact retry, input list/get/cancel, event replay, restore, and interrupt.
+- [x] The external V1 adapter/protocol focused suite passes, and the legacy HTTP session compatibility suite passes all 40 scenarios (225 assertions) against the in-process V1 route surface.
+- [x] The shared V2 lifecycle evidence covers the generated Desktop/CLI adapter and native TUI adapter through development `Server.Default()`/`Server.Native()`, the real `opencode serve` process, and the packaged `resources/app.asar` sidecar smoke. The same admission/retry/queue-cancel/event-replay/restore/interrupt contract is asserted at each boundary.
+- [x] A full old external-server process run passes against the isolated official `1.18.10` server. `packages/app/src/utils/external-v1-process.test.ts` exercises session, project, path, VCS, LSP, file, MCP, permission, question, PTY, and legacy prompt routing; the run also verifies that the V1 PTY token includes the required ticket header.
 
 ### Prompt and continuation
 
@@ -157,8 +168,10 @@ After Phase 2 is green, audit the remaining V1 surfaces instead of deleting them
 - [x] Renamed the compatibility factory to `createExternalCompatibleApi` so its external-server boundary is explicit.
 - [x] Confirmed bundled sidecars construct `createV2OnlyApi` in both global and directory-scoped SDK contexts.
 - [x] Renamed the retained generated client to `legacyClient`/`createLegacyClient`; V1 PTY, history, bootstrap, and catalog fallbacks now declare their boundary at the call site.
-- [x] Removed an unused directory-sync legacy client allocation; V2 directory sync does not construct a compatibility client merely by opening a directory.
+- [x] Removed the eager directory-scoped legacy client property; V1 PTY fallback now creates a legacy client only after a V1 generation is selected.
 - [x] Recorded the V1 adapter methods, event branch, and non-adapter fallbacks in `docs/superpowers/plans/2026-08-05-v1-compatibility-inventory.md`.
+- [x] Added an external V1 session create/prompt regression covering the directory-scoped legacy client and legacy `promptAsync` payload.
+- [x] Added an opt-in previous-release SQLite restore run (`OPENCODE_PREVIOUS_RELEASE_DB`) and verified a stored session from the isolated official `1.18.10` database can be listed, loaded, history-read, input-read, and interrupted by the current V2 server.
 - [ ] Satisfy the removal gate and delete V1 code from the normal Desktop path.
 
 ### Removal gate

@@ -7,9 +7,17 @@ import {
   resolveCompatibleGeneration,
 } from "./server-compat"
 
-function currentApi(calls: string[]) {
+function currentApi(
+  calls: string[],
+  onPrompt?: (input: Parameters<ServerApi["session"]["prompt"]>[0]) => void,
+) {
   const current = {
     session: {
+      create: async () => undefined,
+      prompt: async (input: Parameters<ServerApi["session"]["prompt"]>[0]) => {
+        onPrompt?.(input)
+        return undefined
+      },
       inputList: async () => {
         calls.push("inputList")
         return []
@@ -231,6 +239,71 @@ describe("server compatibility API", () => {
     expect(calls).toEqual(["todo:ses_1", "lsp"])
   })
 
+  test("keeps external V1 session creation and prompts on the directory-scoped legacy client", async () => {
+    const calls: Array<{ method: string; input: unknown }> = []
+    const api = createExternalCompatibleApi({
+      protocol: Promise.resolve("v1"),
+      directory: "/repo",
+      current: currentApi([]),
+      legacy: () =>
+        ({
+          session: {
+            create: async (input: unknown) => {
+              calls.push({ method: "create", input })
+              return {
+                data: {
+                  id: "ses_1",
+                  projectID: "project_1",
+                  agent: "build",
+                  model: { id: "model_1", providerID: "provider_1" },
+                  cost: 0,
+                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                  time: { created: 1, updated: 1 },
+                  title: "session",
+                  directory: "/repo",
+                },
+              }
+            },
+            promptAsync: async (input: unknown) => {
+              calls.push({ method: "promptAsync", input })
+              return { data: undefined }
+            },
+          },
+        }) as never,
+    })
+
+    await expect(api.session.create({ location: { directory: "/repo" } })).resolves.toMatchObject({
+      id: "ses_1",
+      location: { directory: "/repo" },
+    })
+
+    await api.session.prompt({
+      sessionID: "ses_1",
+      id: "msg_1",
+      text: "hello",
+      agent: "build",
+      model: { providerID: "provider_1", modelID: "model_1" },
+      delivery: "queue",
+      resume: true,
+      legacyParts: [{ type: "text", text: "hello" }],
+    })
+
+    expect(calls).toEqual([
+      { method: "create", input: { directory: "/repo" } },
+      {
+        method: "promptAsync",
+        input: {
+          sessionID: "ses_1",
+          messageID: "msg_1",
+          agent: "build",
+          model: { providerID: "provider_1", modelID: "model_1" },
+          variant: undefined,
+          parts: [{ type: "text", text: "hello" }],
+        },
+      },
+    ])
+  })
+
   test("does not send V1 OAuth cleanup through the current API", async () => {
     const calls: string[] = []
     const api = createExternalCompatibleApi({
@@ -280,6 +353,39 @@ describe("server compatibility API", () => {
 
     await expect(selected.session.inputList({ sessionID: "ses_1", delivery: "queue" })).resolves.toEqual([])
     expect(calls).toEqual(["inputList"])
+  })
+
+  test("does not downgrade an admitted V2 prompt to V1 after reconnect", async () => {
+    const calls: string[] = []
+    let protocol: "v1" | "v2" = "v2"
+    const current = currentApi(calls, (input) => {
+      calls.push(`v2:${input.id}:${input.delivery}:${input.resume}`)
+    })
+    const api = createExternalCompatibleApi({
+      protocol: () => Promise.resolve(protocol),
+      current,
+      legacy: () => ({
+        session: {
+          promptAsync: async () => {
+            calls.push("v1:promptAsync")
+            throw new Error("V1 downgrade must not happen")
+          },
+        },
+      }) as never,
+    })
+
+    const selected = await resolveCompatibleApiForProtocol(api, () => Promise.resolve(protocol))
+    protocol = "v1"
+
+    await selected.session.prompt({
+      sessionID: "ses_1",
+      id: "msg_admitted",
+      text: "already admitted",
+      delivery: "queue",
+      resume: false,
+    })
+
+    expect(calls).toEqual(["v2:msg_admitted:queue:false"])
   })
 
   test("keeps the protocol and API selected from the same generation", async () => {

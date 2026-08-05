@@ -10,6 +10,7 @@ Production code has two API construction sites in `packages/app/src/context/serv
 
 - `createServerSdkContextBase`: a bundled Desktop sidecar uses `createV2OnlyApi`; an external HTTP or SSH-backed server uses `createExternalCompatibleApi`.
 - `createDirSdkContext`: follows the same sidecar versus external-server split for directory-scoped APIs.
+- Directory-scoped SDKs no longer eagerly expose or construct a `legacyClient`; V1-only PTY operations request one through `createLegacyClient` after the selected generation is known.
 - The generated SDK retained for old-server calls is exposed as `legacyClient`/`createLegacyClient`; normal V2 code resolves `apiForGeneration()` instead of using an ambiguously named `client`.
 
 The old generic `createCompatibleApi` name was removed so a new caller has to state that it is constructing the external compatibility boundary. `createV2OnlyApi` rejects a V1 generation before invoking the current API.
@@ -70,8 +71,20 @@ These paths are intentionally outside `createV1Api` and must remain explicit:
 - `packages/app/src/context/global-sync/session-load.ts`: `loadRootSessionsV1` retries the root session list without `limit` for older servers that reject the limited request.
 - `packages/app/src/context/server-session.ts`: V1 message history and single-message hydration use `client.session.messages` and `client.session.message` only when the selected generation is V1. V2 uses the projected message API.
 - `packages/app/src/context/server-session.ts`: the legacy todo fallback is used only when no selected V2 API is available and the resolved protocol is V1.
-- `packages/app/src/components/terminal.tsx`: V1 PTY existence checks and connect-token requests use the legacy client and preserve the old 404/405 behavior. V2 uses the generation-pinned PTY API.
+- `packages/app/src/components/terminal.tsx`: V1 PTY existence checks and connect-token requests create the legacy client lazily after the generation is confirmed as V1, preserving the old 404/405 behavior; V2 uses the generation-pinned PTY API.
 - `packages/app/src/context/global-sync/bootstrap.ts`: legacy command, reference, provider, and related catalog reads are selected only for an explicitly detected V1 generation.
+
+## 999.0.9 Compatibility Evidence
+
+- `server-compat.test.ts` covers V2-only fail-closed behavior, generation pinning, V1 unsupported operations, V2 admission no-downgrade behavior, and external V1 session creation plus prompt routing.
+- `external-v1-process.test.ts` is an opt-in process-level run against the isolated official `1.18.10` server. It passes the selected V1 adapter through session, project, path, VCS, LSP, file, MCP, permission, question, and PTY lifecycle operations, and verifies legacy `prompt_async` routing. The V1 PTY token path sends `x-opencode-ticket: 1`, matching the old server's CSRF boundary.
+- `v2-client-lifecycle.test.ts` passes through both development in-process V2 route graphs (`Server.Default()` for the Desktop sidecar `listen()` path and `Server.Native()` for TUI/CLI) for the generated SDK adapter used by Desktop/CLI and the native Promise client used by TUI. It covers durable admission, exact prompt-ID retry, input list/get/cancel, durable event replay, session restore, and interrupt-to-idle.
+- The native V2 route graph exposes one shared `SessionExecutionLocal` instance to both `SessionV2` and the `session.input` handlers; this fixes the missing-service path that only appeared when cancellation was exercised through the client contract.
+- The latest packaged prod smoke report for `999.0.9` repeats the same admission/retry/queue-cancel checks against `resources/app.asar/out/main/sidecar.js` and passes.
+- The focused app compatibility run passes, while `httpapi-session.test.ts` passes all 40 legacy HTTP session scenarios (225 assertions) against the in-process V1 route surface. The external process run above supplies the separately launched previous-release evidence that unit tests cannot provide.
+- `serve-process.test.ts` has an opt-in `OPENCODE_PREVIOUS_RELEASE_DB` scenario. It copies the previous release SQLite bundle, including any WAL/SHM companions, into the subprocess fixture and verifies the current V2 server restores a stored session without rewriting the source database.
+- `server-sdk.tsx` and `terminal.tsx` typecheck successfully after removing the eager directory-scoped legacy client.
+- The missing-project close and restored-session-tab Playwright regressions both pass against the development Desktop app.
 
 ## Residual Risk
 

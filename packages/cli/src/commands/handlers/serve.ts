@@ -3,11 +3,11 @@ import { Credential } from "@opencode-ai/core/credential"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionSaved } from "@opencode-ai/core/permission/saved"
-import { Context, Layer, Option } from "effect"
+import { Config as EffectConfig, Context, Layer, Option } from "effect"
 import * as Effect from "effect/Effect"
-import { HttpRouter, HttpServer } from "effect/unstable/http"
+import { HttpRouter, HttpServer, HttpServerError } from "effect/unstable/http"
 import { createServer } from "node:http"
-import { createRoutes } from "@opencode-ai/server/routes"
+import { context, createRoutes } from "@opencode-ai/server/routes"
 import { ConfigCapability } from "@opencode-ai/server/config-capability"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
@@ -37,7 +37,11 @@ function listen(hostname: string, port: Option.Option<number>, password: string)
   return next(4096)
 }
 
-function bind(hostname: string, port: number, password: string) {
+function bind(
+  hostname: string,
+  port: number,
+  password: string,
+): Effect.Effect<HttpServer.Address, EffectConfig.ConfigError | HttpServerError.ServeError, never> {
   return Layer.build(
     HttpRouter.serve(createRoutes(password), { disableListenLog: true, disableLogger: true }).pipe(
       Layer.provideMerge(NodeHttpServer.layer(() => createServer(), { port, host: hostname })),
@@ -45,6 +49,7 @@ function bind(hostname: string, port: number, password: string) {
     ),
   ).pipe(
     Effect.provide(ConfigCapability.layer),
+    Effect.provide(context),
     Effect.map((context) => Context.get(context, HttpServer.HttpServer).address),
   )
 }

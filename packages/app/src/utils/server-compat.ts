@@ -720,7 +720,11 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         await legacy(value.location).pty.remove({ ptyID: value.ptyID })
       },
       async connectToken(value: Parameters<ServerApi["pty"]["connectToken"]>[0]) {
-        const result = await legacy(value.location).pty.connectToken({ ptyID: value.ptyID })
+        // The legacy server applies its browser-side CSRF guard to this route too.
+        const result = await legacy(value.location).pty.connectToken(
+          { ptyID: value.ptyID, directory: value.location?.directory },
+          { throwOnError: false, headers: { "x-opencode-ticket": "1" } },
+        )
         if (!result.data) throw new Error(`Failed to connect terminal: ${value.ptyID}`)
         return located(result.data, value.location)
       },

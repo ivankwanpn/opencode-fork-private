@@ -144,6 +144,52 @@ describe("TaskNotification", () => {
     }),
   )
 
+  it.effect("renders cancelled and recovery-required notifications as task errors", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const notifications = yield* TaskNotification.Service
+      const commands = yield* SessionCommand.Service
+      const execution = yield* SessionExecution.Service
+      const submissions = yield* TaskSubmission.Service
+
+      const cancelled = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_notification_cancelled",
+      })
+      yield* submissions.terminalize({
+        submissionID: cancelled.id,
+        outcome: "cancelled",
+        error: { message: "Task cancelled by parent" },
+      })
+
+      const recovery = yield* submissions.submit({
+        ...invocation,
+        toolCallID: "call_notification_recovery",
+      })
+      yield* submissions.terminalize({
+        submissionID: recovery.id,
+        outcome: "recovery-required",
+        error: { message: "Provider attempt requires an explicit recovery decision" },
+      })
+
+      expect(
+        yield* notifications.drain({
+          admit: admitAndRecord(commands),
+          wake: execution.wake,
+        }),
+      ).toBe(3)
+
+      const cancelledText = admissions.find((item) => item.id === TaskSubmission.notificationID(cancelled.id))?.text
+      const recoveryText = admissions.find((item) => item.id === TaskSubmission.notificationID(recovery.id))?.text
+      expect(cancelledText).toContain('<task id="ses_notification_child" state="cancelled">')
+      expect(cancelledText).toContain("<task_error>")
+      expect(cancelledText).not.toContain("<task_result>")
+      expect(recoveryText).toContain('<task id="ses_notification_child" state="recovery-required">')
+      expect(recoveryText).toContain("<task_error>")
+      expect(recoveryText).not.toContain("<task_result>")
+    }),
+  )
+
   it.effect("recovers a child task identity when delivering a legacy payload", () =>
     Effect.gen(function* () {
       yield* setup

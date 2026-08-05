@@ -76,12 +76,15 @@ export interface MaterializationFeatures {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/ToolRegistry") {}
 
+const BUILTIN_TASK_AGENT_TYPES = ["general", "explore"] as const
+
 const registryLayer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const applications = yield* ApplicationTools.Service
     const resources = yield* ToolOutputStore.Service
     const plugins = yield* PluginRuntime.Service
+    const agents = yield* AgentV2.Service
     type Registration = { readonly identity: object; readonly tool: AnyTool }
     const local = new Map<string, Array<{ readonly token: object; readonly registration: Registration }>>()
 
@@ -197,8 +200,22 @@ const registryLayer = Layer.effect(
           if (whollyDisabled(permission(registration.tool, name), permissions)) continue
           const current = definition(name, registration.tool, permissions)
           if (!current) continue
+          const taskAgentTypes =
+            name === "task"
+              ? [
+                  ...new Set([
+                    ...BUILTIN_TASK_AGENT_TYPES,
+                    ...(yield* agents.all())
+                      .filter((agent) => agent.mode !== "primary" && !agent.hidden)
+                      .map((agent) => agent.id),
+                  ]),
+                ].toSorted()
+              : undefined
+          const taskDescription = taskAgentTypes
+            ? `\n\nAvailable task agent identifiers (use exact names): ${taskAgentTypes.map((agent) => `\`${agent}\``).join(", ")}`
+            : ""
           const value = PluginRuntime.mutable({
-            description: current.description,
+            description: `${current.description}${taskDescription}`,
             parameters: current.inputSchema as unknown,
           })
           yield* plugins.run(PluginRuntime.HookName.toolDefinition, {
@@ -296,11 +313,11 @@ function materializationFeatures(): MaterializationFeatures {
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [ApplicationTools.node, PluginRuntime.node, ToolOutputStore.node],
+  deps: [ApplicationTools.node, AgentV2.node, PluginRuntime.node, ToolOutputStore.node],
 })
 
 export const toolsNode = makeLocationNode({
   service: Tools.Service,
   layer,
-  deps: [ApplicationTools.node, PluginRuntime.node, ToolOutputStore.node],
+  deps: [ApplicationTools.node, AgentV2.node, PluginRuntime.node, ToolOutputStore.node],
 })

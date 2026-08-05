@@ -46,6 +46,35 @@
   color: var(--v2-text-text-base);
 }
 
+.settings-v2-tab-description {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-agent-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.settings-v2-agent-control {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.settings-v2-agent-control-label,
+.settings-v2-agent-control-value {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+}
+
 .settings-v2-tab-body {
   display: flex;
   flex-direction: column;

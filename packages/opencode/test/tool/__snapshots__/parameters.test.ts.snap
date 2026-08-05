@@ -318,7 +318,7 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "type": "string",
     },
     "subagent_type": {
-      "description": "The type of specialized agent to use for this task",
+      "description": "The agent identifier to use. Built-in task agents are \`build\`, \`plan\`, \`general\`, and \`explore\`; \`general-purpose\` is accepted as a compatibility alias for \`general\`. Use a configured agent name exactly as listed in the task description. Internal agents \`compaction\`, \`title\`, and \`summary\` are not task targets.",
       "type": "string",
     },
     "task_id": {

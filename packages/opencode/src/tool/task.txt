@@ -2,6 +2,8 @@ Launch a new agent to handle complex, multistep tasks autonomously.
 
 When using the Task tool, you must specify a subagent_type parameter to select which agent type to use.
 
+The subagent_type value must be an agent identifier. The built-in task agent identifiers are `general` and `explore`; configured task agents are listed in the task tool description and must be copied exactly. `general-purpose` is accepted as a compatibility alias for `general`. Do not infer an identifier from an agent description.
+
 When NOT to use the Task tool:
 - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly
 - If you are searching for a specific class definition like "class Foo", use the Grep tool instead, to find the match more quickly

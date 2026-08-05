@@ -1,6 +1,7 @@
 export * as ConfigAgentV1 from "./agent"
 
 import { Schema, SchemaGetter } from "effect"
+import { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { PositiveInt } from "../../schema"
 import { ConfigPermissionV1 } from "./permission"
 
@@ -11,8 +12,11 @@ const Color = Schema.Union([
 
 const AgentSchema = Schema.StructWithRest(
   Schema.Struct({
-    model: Schema.optional(Schema.String),
-    variant: Schema.optional(Schema.String).annotate({
+    model: Schema.optional(Schema.NullOr(Schema.String)),
+    protocol: Schema.optional(Schema.NullOr(CustomProvider.Protocol)).annotate({
+      description: "Protocol used by this agent's configured model",
+    }),
+    variant: Schema.optional(Schema.NullOr(Schema.String)).annotate({
       description: "Default model variant for this agent (applies only when using the agent's configured model).",
     }),
     temperature: Schema.optional(Schema.Finite),
@@ -43,6 +47,7 @@ const AgentSchema = Schema.StructWithRest(
 const KNOWN_KEYS = new Set([
   "name",
   "model",
+  "protocol",
   "variant",
   "prompt",
   "description",

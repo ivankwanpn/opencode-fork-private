@@ -619,6 +619,35 @@ describe("TaskTool", () => {
     }),
   )
 
+  defaultCapability.effect("documents exact task agent identifiers", () =>
+    Effect.gen(function* () {
+      reset()
+      agents.set(
+        AgentV2.ID.make("reviewer"),
+        AgentV2.Info.make({
+          id: AgentV2.ID.make("reviewer"),
+          request: { headers: {}, body: {} },
+          mode: "subagent",
+          hidden: false,
+          permissions: [{ action: "*", resource: "*", effect: "allow" }],
+        }),
+      )
+      const definition = (yield* toolDefinitions(yield* ToolRegistry.Service))[0]
+
+      expect(definition?.description).toContain("Available task agent identifiers (use exact names):")
+      expect(definition?.description).toContain("`general`")
+      expect(definition?.description).toContain("`explore`")
+      expect(definition?.description).toContain("`reviewer`")
+      expect(definition?.inputSchema).toMatchObject({
+        properties: {
+          subagent_type: {
+            description: expect.stringContaining("agent identifier"),
+          },
+        },
+      })
+    }),
+  )
+
   foreground.effect("hides background mode from the model when the experiment is disabled", () =>
     Effect.gen(function* () {
       reset()
@@ -816,6 +845,35 @@ describe("TaskTool", () => {
           structured: {
             title: input.description,
             metadata: { parentSessionId: parentID, sessionId: childID, agent: "general" },
+          },
+        },
+      })
+    }),
+  )
+
+  foreground.effect("accepts general-purpose as a compatibility alias for general", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+      const settled = yield* settleTool(
+        registry,
+        call({ ...input, subagent_type: "general-purpose" }, "call-general-purpose"),
+      )
+      const child = sessions.get(SessionSchema.ID.make("ses_task_child_1"))
+
+      expect(child).toMatchObject({ parentID, agent: "general", model })
+      expect(assertions).toMatchObject([
+        {
+          action: "task",
+          resources: ["general"],
+          metadata: { description: input.description, subagent_type: "general" },
+        },
+      ])
+      expect(settled).toMatchObject({
+        result: { type: "text", value: expect.stringContaining("subagent result") },
+        output: {
+          structured: {
+            metadata: { parentSessionId: parentID, sessionId: child?.id, agent: "general" },
           },
         },
       })

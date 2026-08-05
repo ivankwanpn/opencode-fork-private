@@ -149,6 +149,7 @@ describe("ConfigAgentPlugin.Plugin", () => {
                 agents: {
                   reviewer: {
                     model: "anthropic/claude-sonnet",
+                    protocol: "anthropic-messages",
                     system: "Review carefully.",
                     description: "Reviews changes",
                     mode: "subagent",
@@ -192,7 +193,12 @@ describe("ConfigAgentPlugin.Plugin", () => {
         hidden: true,
         color: "warning",
         steps: 12,
-        model: { providerID: "anthropic", id: "claude-sonnet", variant: undefined },
+        model: {
+          providerID: "anthropic",
+          id: "claude-sonnet",
+          variant: undefined,
+          protocol: "anthropic-messages",
+        },
       })
       expect(reviewer.request).toEqual({
         headers: { first: "one", shared: "last", second: "two" },
@@ -349,3 +355,32 @@ function loadHomePermissions(home: string) {
     return agent.permissions
   })
 }
+
+it.effect("keeps protocol and normalizes null v1 agent overrides during migration", () =>
+  Effect.sync(() => {
+    const migrated = ConfigMigrateV1.migrate({
+      agent: {
+        build: {
+          model: "openai/gpt-5",
+          protocol: "openai-responses",
+          variant: "high",
+        },
+        plan: {
+          model: null,
+          protocol: null,
+          variant: null,
+        },
+      },
+    })
+    const config = decode(migrated)
+
+    expect(config.agents?.build).toMatchObject({
+      model: "openai/gpt-5",
+      protocol: "openai-responses",
+      variant: "high",
+    })
+    expect(config.agents?.plan?.model).toBeUndefined()
+    expect(config.agents?.plan?.protocol).toBeUndefined()
+    expect(config.agents?.plan?.variant).toBeUndefined()
+  }),
+)

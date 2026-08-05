@@ -21,7 +21,7 @@ const env = {
 }
 const CHANNEL = resolveChannel(env.OPENCODE_CHANNEL)
 const IS_PREVIEW = false // Custom fork: never preview
-const VERSION = "999.0.9" // Custom fork: fixed version
+const VERSION = "999.0.10" // Custom fork: fixed version
 const bot = ["actions-user", "opencode", "opencode-agent[bot]"]
 const teamPath = path.resolve(import.meta.dir, "../../../.github/TEAM_MEMBERS")
 const team = [

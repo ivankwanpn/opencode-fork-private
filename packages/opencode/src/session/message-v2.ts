@@ -535,6 +535,7 @@ export function toLegacy(
     providerID: model?.providerID ?? ProviderV2.ID.make(""),
     modelID: model?.id ?? ModelV2.ID.make(""),
     ...(model?.variant === undefined || model.variant === "default" ? {} : { variant: model.variant }),
+    ...(model?.protocol === undefined ? {} : { protocol: model.protocol }),
   })
   const id = (messageID: SessionMessage.ID) => MessageID.ascending(messageID)
   const partID = (messageID: MessageID, type: string, index: number) =>
@@ -588,8 +589,7 @@ export function toLegacy(
     agent: input.agent,
     modelID: input.model.id,
     providerID: input.model.providerID,
-    variant:
-      input.model.variant === undefined || input.model.variant === "default" ? undefined : input.model.variant,
+    variant: input.model.variant === undefined || input.model.variant === "default" ? undefined : input.model.variant,
     path: { cwd: session.location.directory, root: session.location.directory },
     time: { created: input.created, completed: input.completed },
     cost: input.cost ?? 0,
@@ -604,18 +604,12 @@ export function toLegacy(
   const inputRecord = (value: string) => {
     try {
       const parsed = JSON.parse(value) as unknown
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {}
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
     } catch {
       return {}
     }
   }
-  const toolPart = (
-    messageID: MessageID,
-    item: SessionMessage.AssistantTool,
-    index: number,
-  ): SessionV1.ToolPart => {
+  const toolPart = (messageID: MessageID, item: SessionMessage.AssistantTool, index: number): SessionV1.ToolPart => {
     const base = {
       id: partID(messageID, "tool", index),
       sessionID,
@@ -841,9 +835,7 @@ export function toLegacy(
     }
     if (message.type === "shell") {
       const messageID = id(message.id)
-      const userID = message.userID
-        ? MessageID.ascending(message.userID)
-        : MessageID.ascending(`${message.id}_user`)
+      const userID = message.userID ? MessageID.ascending(message.userID) : MessageID.ascending(`${message.id}_user`)
       result.push(syntheticUser(userID, "The following tool was executed by the user", millis(message.time.created)))
       parentID = userID
       const completed = message.time.completed ?? message.time.created

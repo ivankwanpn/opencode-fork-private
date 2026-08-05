@@ -370,6 +370,8 @@ import type {
   V2LocationGetResponses,
   V2LspStatusErrors,
   V2LspStatusResponses,
+  V2McpAuthenticateErrors,
+  V2McpAuthenticateResponses,
   V2ModelListErrors,
   V2ModelListResponses,
   V2PathGetErrors,
@@ -7286,6 +7288,41 @@ export class Skill extends HeyApiClient {
   }
 }
 
+export class Mcp2 extends HeyApiClient {
+  /**
+   * Authenticate an MCP server
+   *
+   * Start the MCP OAuth flow and wait for the authorization callback.
+   */
+  public authenticate<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string
+      location?: {
+        directory?: string
+        workspace?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "name" },
+            { in: "query", key: "location" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<V2McpAuthenticateResponses, V2McpAuthenticateErrors, ThrowOnError>({
+      url: "/api/mcp/{name}/authenticate",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Lsp2 extends HeyApiClient {
   /**
    * Get LSP status
@@ -8164,6 +8201,11 @@ export class V2 extends HeyApiClient {
     return (this._skill ??= new Skill({ client: this.client }))
   }
 
+  private _mcp?: Mcp2
+  get mcp(): Mcp2 {
+    return (this._mcp ??= new Mcp2({ client: this.client }))
+  }
+
   private _lsp?: Lsp2
   get lsp(): Lsp2 {
     return (this._lsp ??= new Lsp2({ client: this.client }))
@@ -8215,7 +8257,7 @@ export class V2 extends HeyApiClient {
   }
 }
 
-export class Mcp2 extends HeyApiClient {
+export class Mcp3 extends HeyApiClient {
   public status<ThrowOnError extends boolean = false>(
     parameters?: {
       location?: {
@@ -8317,10 +8359,10 @@ export class Mcp2 extends HeyApiClient {
   }
 }
 
-export class Mcp3 extends HeyApiClient {
-  private _mcp?: Mcp2
-  get mcp(): Mcp2 {
-    return (this._mcp ??= new Mcp2({ client: this.client }))
+export class Mcp4 extends HeyApiClient {
+  private _mcp?: Mcp3
+  get mcp(): Mcp3 {
+    return (this._mcp ??= new Mcp3({ client: this.client }))
   }
 }
 
@@ -8999,9 +9041,9 @@ export class Plugins2 extends HeyApiClient {
 }
 
 export class Server extends HeyApiClient {
-  private _mcp?: Mcp3
-  get mcp(): Mcp3 {
-    return (this._mcp ??= new Mcp3({ client: this.client }))
+  private _mcp?: Mcp4
+  get mcp(): Mcp4 {
+    return (this._mcp ??= new Mcp4({ client: this.client }))
   }
 
   private _vcs?: Vcs3

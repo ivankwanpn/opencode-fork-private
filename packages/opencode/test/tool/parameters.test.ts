@@ -239,6 +239,13 @@ describe("tool parameters", () => {
       const parsed = parse(Task, { description: "d", prompt: "p", subagent_type: "general" })
       expect(parsed.subagent_type).toBe("general")
     })
+    test("documents exact built-in subagent identifiers", () => {
+      const schema = toJsonSchema(Task)
+      const description = schema.properties?.subagent_type
+      expect(description).toMatchObject({
+        description: expect.stringContaining("`build`, `plan`, `general`, and `explore`"),
+      })
+    })
     test("accepts optional background flag", () => {
       const parsed = parse(Task, { description: "d", prompt: "p", subagent_type: "general", background: true })
       expect(parsed.background).toBe(true)

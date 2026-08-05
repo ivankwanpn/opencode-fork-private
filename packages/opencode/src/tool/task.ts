@@ -55,7 +55,7 @@ const BaseParameterFields = {
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
   subagent_type: Schema.String.annotate({
     description:
-      "The agent identifier to use. Built-in task agents are `build`, `plan`, `general`, and `explore`; `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Internal agents `compaction`, `title`, and `summary` are not task targets.",
+      "The agent identifier to use. Built-in task agents are `general`, `explore`, `research`, and `worker`. Use `explore` for fast read-only navigation, `research` for deep read-only analysis, `worker` for strong implementation work, and `general` for broad mixed-scope work. The role uses its configured model; it does not select a model itself. `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Primary coordinator agents and internal agents `build`, `plan`, `compaction`, `title`, and `summary` are not task targets.",
   }),
   task_id: Schema.optional(Schema.String).annotate({
     description:
@@ -160,6 +160,9 @@ export const TaskTool = Tool.define(
       const next = yield* agent.get(subagentType)
       if (!next) {
         return yield* Effect.fail(new Error(`Unknown agent type: ${subagentType} is not a valid agent type`))
+      }
+      if (next.mode === "primary" || next.hidden === true) {
+        return yield* Effect.fail(new Error(`Agent "${subagentType}" cannot be used as a task target`))
       }
 
       const session = params.task_id

@@ -76,7 +76,7 @@ export interface MaterializationFeatures {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/ToolRegistry") {}
 
-const BUILTIN_TASK_AGENT_TYPES = ["general", "explore"] as const
+const BUILTIN_TASK_AGENT_TYPES = ["general", "explore", "research", "worker"] as const
 
 const registryLayer = Layer.effect(
   Service,

@@ -2,7 +2,7 @@ Launch a new agent to handle complex, multistep tasks autonomously.
 
 When using the Task tool, you must specify a subagent_type parameter to select which agent type to use.
 
-The subagent_type value must be an agent identifier. The built-in task agent identifiers are `general` and `explore`; configured task agents are listed in the task tool description and must be copied exactly. `general-purpose` is accepted as a compatibility alias for `general`. Do not infer an identifier from an agent description.
+The subagent_type value must be an agent identifier. Built-in task agents are `general`, `explore`, `research`, and `worker`. Use `explore` for fast read-only navigation, `research` for deep read-only analysis and evidence-based investigation, `worker` for strong implementation work such as code changes, bug fixes, tests, and verification, and `general` for broad mixed-scope work. The role uses its configured model; it does not select a model itself. Configured task agents are listed in the task tool description and must be copied exactly. Primary coordinator agents and internal agents `build`, `plan`, `compaction`, `title`, and `summary` are not task targets. `general-purpose` is accepted as a compatibility alias for `general`. Do not infer an identifier from an agent description.
 
 When NOT to use the Task tool:
 - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly

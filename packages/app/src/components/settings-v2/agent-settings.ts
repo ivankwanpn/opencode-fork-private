@@ -2,8 +2,19 @@ import type { Model } from "@opencode-ai/sdk/v2/client"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { modelVariantsForProtocol, resolveModelProtocol } from "@/pages/session/composer/model-protocol-variants"
 
-export const configurableAgentIDs = ["build", "plan", "general", "explore"] as const
+export const primaryAgentIDs = ["build", "plan"] as const
+export const subagentAgentIDs = ["general", "explore", "research", "worker"] as const
+export const configurableAgentIDs = [...primaryAgentIDs, ...subagentAgentIDs] as const
 export type ConfigurableAgentID = (typeof configurableAgentIDs)[number]
+
+export const agentRoleMetadata = {
+  build: { descriptionKey: "settings.agents.role.build" },
+  plan: { descriptionKey: "settings.agents.role.plan" },
+  general: { descriptionKey: "settings.agents.role.general" },
+  explore: { descriptionKey: "settings.agents.role.explore" },
+  research: { descriptionKey: "settings.agents.role.research" },
+  worker: { descriptionKey: "settings.agents.role.worker" },
+} as const
 
 const protocolByPackage: Readonly<Partial<Record<string, CustomProvider.Protocol>>> = {
   "@ai-sdk/openai": "openai-responses",

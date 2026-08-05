@@ -154,12 +154,25 @@ const packageByProtocol: Readonly<Record<ModelV2.Protocol, string>> = {
   "anthropic-messages": "@ai-sdk/anthropic",
 }
 
+const protocolByPackage: Readonly<Partial<Record<string, ModelV2.Protocol>>> = {
+  "@ai-sdk/openai": "openai-responses",
+  "@ai-sdk/openai-compatible": "openai-compatible",
+  "@ai-sdk/anthropic": "anthropic-messages",
+}
+
+const protocolsForModel = (model: ModelV2.Info): readonly ModelV2.Protocol[] => {
+  if (model.protocols !== undefined) return model.protocols
+  if (model.api.type !== "aisdk") return []
+  const protocol = protocolByPackage[model.api.package]
+  return protocol ? [protocol] : []
+}
+
 const withProtocol = (
   model: ModelV2.Info,
   protocol: ModelV2.Protocol | undefined,
 ): Effect.Effect<ModelV2.Info, UnsupportedApiError> => {
   if (protocol === undefined) return Effect.succeed(model)
-  if (!model.protocols?.includes(protocol)) {
+  if (!protocolsForModel(model).includes(protocol)) {
     return Effect.fail(
       new UnsupportedApiError({
         providerID: model.providerID,

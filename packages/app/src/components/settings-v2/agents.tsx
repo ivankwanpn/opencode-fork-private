@@ -1,5 +1,5 @@
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
-import { Show, For, createMemo, createSignal, type Component } from "solid-js"
+import { For, createMemo, createSignal, type Component } from "solid-js"
 import type { Config } from "@opencode-ai/sdk/v2/client"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { useLanguage } from "@/context/language"
@@ -9,6 +9,7 @@ import { showToast } from "@/utils/toast"
 import { modelVariantsForProtocol } from "@/pages/session/composer/model-protocol-variants"
 import {
   configurableAgentIDs,
+  agentModelProtocols,
   formatAgentModel,
   parseAgentModel,
   resolveAgentProtocol,
@@ -58,14 +59,28 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
     const configured = override().model
     const options = [
       { id: DEFAULT_MODEL_ID, label: language.t("common.default") },
-      ...models.list().map((model) => ({
-        id: formatAgentModel({ providerID: model.provider.id, modelID: model.id }),
-        label: `${model.provider.name} / ${model.name}`,
-        model,
-      })),
+      ...models
+        .list()
+        .filter((model) => models.visible({ providerID: model.provider.id, modelID: model.id }))
+        .map((model) => ({
+          id: formatAgentModel({ providerID: model.provider.id, modelID: model.id }),
+          label: `${model.provider.name} / ${model.name}`,
+          model,
+        })),
     ]
-    if (configured && !options.some((option) => option.id === configured)) {
-      options.push({ id: configured, label: configured })
+    const configuredKey = configured ? parseAgentModel(configured) : undefined
+    const configuredEntry = configuredKey ? models.find(configuredKey) : undefined
+    if (
+      configured &&
+      configuredEntry &&
+      models.visible({ providerID: configuredEntry.provider.id, modelID: configuredEntry.id }) &&
+      !options.some((option) => option.id === configured)
+    ) {
+      options.push({
+        id: configured,
+        label: `${configuredEntry.provider.name} / ${configuredEntry.name}`,
+        model: configuredEntry,
+      })
     }
     return options
   })
@@ -73,22 +88,15 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
     const configured = override().model
     return modelChoices().find((option) => option.id === configured) ?? modelChoices()[0]
   })
-  const protocols = createMemo(() => {
-    const available = [...(selectedModel()?.protocols ?? [])]
-    const saved = override().protocol
-    if (saved && !available.includes(saved)) available.push(saved)
-    return available
-  })
+  const protocols = createMemo(() => agentModelProtocols(selectedModel()))
   const currentProtocol = createMemo(() => resolveAgentProtocol(selectedModel(), override().protocol))
-  const variants = createMemo(() => {
-    const model = selectedModel()
+  const variantOptions = (model: ModelItem | undefined, protocol: CustomProvider.Protocol | undefined) => {
     if (!model) return []
-    return Array.from(
-      new Set([
-        ...Object.keys(model.variants ?? {}),
-        ...modelVariantsForProtocol(Object.keys(model.variants ?? {}), currentProtocol()),
-      ]),
-    )
+    const variants = Object.keys(model.variants ?? {})
+    return Array.from(new Set([...variants, ...modelVariantsForProtocol(variants, protocol)]))
+  }
+  const variants = createMemo(() => {
+    return variantOptions(selectedModel(), currentProtocol())
   })
   const variantChoices = createMemo(() => ["default", ...variants()])
   const currentVariant = createMemo(() => {
@@ -108,9 +116,12 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
     setSaving(true)
     serverSync().set("config", "agent", props.id, localNext)
     try {
-      await serverSync().updateConfig({
-        agent: { [props.id]: next } as unknown as NonNullable<Config["agent"]>,
-      })
+      await serverSync().updateConfig(
+        {
+          agent: { [props.id]: next } as unknown as NonNullable<Config["agent"]>,
+        },
+        { refreshProviders: false },
+      )
     } catch (error) {
       serverSync().set("config", "agent", props.id, before)
       showToast({
@@ -128,7 +139,8 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
         <div class="settings-v2-agent-control">
           <span class="settings-v2-agent-control-label">{language.t("settings.models.title")}</span>
           <SelectV2
-            appearance="inline"
+            appearance="base"
+            class="settings-v2-agent-select"
             options={modelChoices()}
             current={currentModelChoice()}
             value={(option) => option.id}
@@ -142,11 +154,16 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
                 void update({ model: null, protocol: null, variant: null })
                 return
               }
-              const protocol = resolveAgentProtocol(option.model, undefined)
+              const protocol = resolveAgentProtocol(option.model, override().protocol)
+              const configuredVariant = override().variant
+              const nextVariants = variantOptions(option.model, protocol)
               void update({
                 model: option.id,
                 protocol: protocol ?? null,
-                variant: null,
+                variant:
+                  configuredVariant && configuredVariant !== "default" && nextVariants.includes(configuredVariant)
+                    ? configuredVariant
+                    : null,
               })
             }}
           />
@@ -154,38 +171,44 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
 
         <div class="settings-v2-agent-control">
           <span class="settings-v2-agent-control-label">{language.t("provider.custom.protocol.label")}</span>
-          <Show when={protocols().length > 0} fallback={<span class="settings-v2-agent-control-value">Auto</span>}>
-            <SelectV2
-              appearance="inline"
-              options={protocols()}
-              current={currentProtocol()}
-              value={(option) => option}
-              label={(option) =>
-                option === "openai-responses"
-                  ? language.t("provider.custom.protocol.openaiResponses")
-                  : option === "openai-compatible"
-                    ? language.t("provider.custom.protocol.openaiCompatible")
-                    : language.t("provider.custom.protocol.anthropicMessages")
-              }
-              disabled={isSaving() || !selectedModel()}
-              fitViewport
-              onSelect={(option) => {
-                if (!option) return
-                const nextVariants = modelVariantsForProtocol(Object.keys(selectedModel()?.variants ?? {}), option)
-                const variant = currentVariant()
-                void update({
-                  protocol: option,
-                  variant: nextVariants.includes(variant) && variant !== "default" ? variant : null,
-                })
-              }}
-            />
-          </Show>
+          <SelectV2
+            appearance="base"
+            class="settings-v2-agent-select"
+            options={protocols()}
+            current={currentProtocol()}
+            value={(option) => option}
+            label={(option) =>
+              option === "openai-responses"
+                ? language.t("provider.custom.protocol.openaiResponses")
+                : option === "openai-compatible"
+                  ? language.t("provider.custom.protocol.openaiCompatible")
+                  : language.t("provider.custom.protocol.anthropicMessages")
+            }
+            disabled={isSaving() || !selectedModel() || protocols().length === 0}
+            placeholder={language.t("common.default")}
+            fitViewport
+            onSelect={(option) => {
+              if (!option) return
+              const model = selectedModel()
+              if (!model) return
+              const configuredVariant = override().variant
+              const nextVariants = variantOptions(model, option)
+              void update({
+                protocol: option,
+                variant:
+                  configuredVariant && configuredVariant !== "default" && nextVariants.includes(configuredVariant)
+                    ? configuredVariant
+                    : null,
+              })
+            }}
+          />
         </div>
 
         <div class="settings-v2-agent-control">
           <span class="settings-v2-agent-control-label">{language.t("model.tooltip.reasoning")}</span>
           <SelectV2
-            appearance="inline"
+            appearance="base"
+            class="settings-v2-agent-select"
             options={variantChoices()}
             current={currentVariant()}
             value={(option) => option}
@@ -208,12 +231,16 @@ export const SettingsAgentsV2: Component = () => {
         <h2 class="settings-v2-tab-title">{language.t("settings.agents.title")}</h2>
         <p class="settings-v2-tab-description">{language.t("settings.agents.description")}</p>
       </div>
-      <div class="settings-v2-tab-body">
+      <div class="settings-v2-tab-body settings-v2-agents">
         <div class="settings-v2-section">
           <h3 class="settings-v2-section-title">{language.t("settings.agents.title")}</h3>
-          <SettingsListV2>
-            <For each={configurableAgentIDs}>{(id) => <AgentSettingRow id={id} />}</For>
-          </SettingsListV2>
+          <For each={configurableAgentIDs}>
+            {(id) => (
+              <SettingsListV2>
+                <AgentSettingRow id={id} />
+              </SettingsListV2>
+            )}
+          </For>
         </div>
       </div>
     </>

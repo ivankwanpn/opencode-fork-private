@@ -34,13 +34,29 @@ const SESSION_CONTENT_EVENTS = new Set([
   "question.rejected",
 ])
 
+export function isAgentConfigDisposal(event: { type: string; properties?: unknown }) {
+  if (event.type !== "global.disposed") return false
+  if (!event.properties || typeof event.properties !== "object" || Array.isArray(event.properties)) return false
+  return (event.properties as Record<string, unknown>).reason === "agent-config"
+}
+
 export function applyGlobalEvent(input: {
   event: { type: string; properties?: unknown }
   project: Project[]
   setGlobalProject: (next: Project[] | ((draft: Project[]) => Project[])) => void
   refresh: () => void
+  refreshConfig?: () => void
 }) {
-  if (input.event.type === "global.disposed" || input.event.type === "server.connected") {
+  if (input.event.type === "global.disposed") {
+    if (isAgentConfigDisposal(input.event)) {
+      input.refreshConfig?.()
+      return
+    }
+    input.refresh()
+    return
+  }
+
+  if (input.event.type === "server.connected") {
     input.refresh()
     return
   }

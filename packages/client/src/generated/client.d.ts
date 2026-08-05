@@ -4897,7 +4897,9 @@ export declare function make(options: ClientOptions): {
                 readonly directory: string;
                 readonly workspaceID?: string | undefined;
             } | undefined;
-            readonly data: {};
+            readonly data: {
+                readonly reason?: "agent-config" | undefined;
+            };
         } | {
             readonly id: string;
             readonly metadata?: {

@@ -119,6 +119,25 @@ describe("applyGlobalEvent", () => {
     expect(refreshCount).toBe(1)
   })
 
+  test("does not bootstrap after an agent-only config disposal", () => {
+    let refreshCount = 0
+    let refreshConfigCount = 0
+    applyGlobalEvent({
+      event: { type: "global.disposed", properties: { reason: "agent-config" } },
+      project: [],
+      refresh: () => {
+        refreshCount += 1
+      },
+      refreshConfig: () => {
+        refreshConfigCount += 1
+      },
+      setGlobalProject() {},
+    })
+
+    expect(refreshCount).toBe(0)
+    expect(refreshConfigCount).toBe(1)
+  })
+
   test("handles server.connected by triggering refresh", () => {
     let refreshCount = 0
     applyGlobalEvent({

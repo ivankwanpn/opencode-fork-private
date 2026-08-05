@@ -18,7 +18,13 @@ export const layer = Layer.effect(
           const result = yield* config.updateGlobal(value as Config.Info)
           if (result.changed) {
             const bridge = yield* EffectBridge.make()
-            bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
+            const reason = Config.isAgentOnlyUpdate(value) ? "agent-config" : undefined
+            bridge.fork(
+              disposeAllInstancesAndEmitGlobalDisposed({
+                swallowErrors: true,
+                ...(reason ? { reason } : {}),
+              }),
+            )
           }
           return result.info as ConfigCapability.Value
         }),

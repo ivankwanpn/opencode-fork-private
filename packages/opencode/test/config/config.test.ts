@@ -44,6 +44,14 @@ import { AccountTest } from "../fake/account"
 import { AuthTest } from "../fake/auth"
 import { NpmTest } from "../fake/npm"
 
+describe("config update scope", () => {
+  test("recognizes agent-only patches without classifying unrelated config changes", () => {
+    expect(Config.isAgentOnlyUpdate({ agent: { build: { model: "openai/gpt-5" } } })).toBe(true)
+    expect(Config.isAgentOnlyUpdate({ agent: {}, shell: "powershell" })).toBe(false)
+    expect(Config.isAgentOnlyUpdate(null)).toBe(false)
+  })
+})
+
 const unexpectedHttp = HttpClient.make((request) =>
   Effect.die(`unexpected http request: ${request.method} ${request.url}`),
 )

@@ -5,6 +5,16 @@ import { modelVariantsForProtocol, resolveModelProtocol } from "@/pages/session/
 export const configurableAgentIDs = ["build", "plan", "general", "explore"] as const
 export type ConfigurableAgentID = (typeof configurableAgentIDs)[number]
 
+const protocolByPackage: Readonly<Partial<Record<string, CustomProvider.Protocol>>> = {
+  "@ai-sdk/openai": "openai-responses",
+  "@ai-sdk/openai-compatible": "openai-compatible",
+  "@ai-sdk/anthropic": "anthropic-messages",
+}
+
+type AgentModel = Pick<Model, "protocols"> & {
+  api?: Pick<Model["api"], "npm">
+}
+
 export function parseAgentModel(value: string | null | undefined) {
   if (!value) return
   const separator = value.indexOf("/")
@@ -16,11 +26,19 @@ export function formatAgentModel(model: { providerID: string; modelID: string })
   return `${model.providerID}/${model.modelID}`
 }
 
+export function agentModelProtocols(model: AgentModel | undefined) {
+  if (!model) return []
+  if (model.protocols !== undefined) return [...model.protocols]
+  if (!model.api) return []
+  const protocol = protocolByPackage[model.api.npm]
+  return protocol ? [protocol] : []
+}
+
 export function resolveAgentProtocol(
-  model: Pick<Model, "protocols"> | undefined,
+  model: AgentModel | undefined,
   selected: CustomProvider.Protocol | null | undefined,
 ) {
-  return resolveModelProtocol([...(model?.protocols ?? [])], undefined, selected ?? undefined)
+  return resolveModelProtocol(agentModelProtocols(model), undefined, selected ?? undefined)
 }
 
 export function agentReasoningOptions(

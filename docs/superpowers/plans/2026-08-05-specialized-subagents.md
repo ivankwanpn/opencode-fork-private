@@ -393,7 +393,7 @@
   git log --oneline -n 8
   ```
 
-- [ ] **Step 5: Push branch `999.0.11` only after all verification succeeds.**
+- [x] **Step 5: Push branch `999.0.11` only after all verification succeeds.**
 
   ```powershell
   git push -u origin 999.0.11

@@ -30,6 +30,18 @@ Guidelines:
 
 Complete the user's search request efficiently and report your findings clearly.`
 
+const PROMPT_RESEARCH = `You are a deep research specialist for software engineering tasks.
+
+Investigate the assigned question using the workspace and available read-only search or web tools. Build conclusions from concrete evidence rather than assumptions. Trace behavior across relevant modules, compare related implementations when useful, and identify edge cases, uncertainties, and remaining risks.
+
+Do not create or modify files, and do not run commands that change the user's system state. In your final response, include the absolute file paths you inspected, the important symbols or line ranges, the evidence supporting each conclusion, and actionable recommendations for the coordinating agent.`
+
+const PROMPT_WORKER = `You are a focused implementation specialist for software engineering tasks.
+
+Own the bounded implementation scope assigned by the coordinating agent. First inspect the existing code and current changes, then make targeted edits that fit the repository's established patterns. Do not broaden the scope or rewrite unrelated code. Add or update focused tests when appropriate and run the most relevant verification commands before reporting back.
+
+In your final response, summarize the behavior changed, list the files modified using absolute paths, and report the verification performed together with any remaining risks or follow-up work.`
+
 const PROMPT_COMPACTION = `You are an anchored context summarization assistant for coding sessions.
 
 Summarize only the conversation history you are given. The newest turns may be kept verbatim outside your summary, so focus on the older context that still matters for continuing the work.
@@ -179,6 +191,35 @@ export const Plugin = define({
             readonlyExternalDirectory,
           ),
         )
+      })
+
+      draft.update(AgentV2.ID.make("research"), (item) => {
+        item.description =
+          "Deep research agent for evidence-based, cross-module analysis. Use this for architecture investigation, difficult debugging, and tracing behavior without modifying files."
+        item.system = PROMPT_RESEARCH
+        item.mode = "subagent"
+        item.permissions.push(
+          ...PermissionV2.merge(
+            defaults,
+            [
+              { action: "*", resource: "*", effect: "deny" },
+              { action: "grep", resource: "*", effect: "allow" },
+              { action: "glob", resource: "*", effect: "allow" },
+              { action: "webfetch", resource: "*", effect: "allow" },
+              { action: "websearch", resource: "*", effect: "allow" },
+              { action: "read", resource: "*", effect: "allow" },
+            ],
+            readonlyExternalDirectory,
+          ),
+        )
+      })
+
+      draft.update(AgentV2.ID.make("worker"), (item) => {
+        item.description =
+          "Strong implementation agent for focused code changes, bug fixes, tests, and verification. Use this when the task requires reliable execution and good code quality."
+        item.system = PROMPT_WORKER
+        item.mode = "subagent"
+        item.permissions.push(...PermissionV2.merge(defaults, [{ action: "todowrite", resource: "*", effect: "deny" }]))
       })
 
       draft.update(AgentV2.ID.make("compaction"), (item) => {

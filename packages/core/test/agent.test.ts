@@ -3,6 +3,7 @@ import { Effect, Exit, Scope } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Location } from "@opencode-ai/core/location"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AgentPlugin } from "@opencode-ai/core/plugin/agent"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { location } from "./fixture/location"
@@ -120,12 +121,66 @@ describe("AgentV2", () => {
         "explore",
         "general",
         "plan",
+        "research",
         "summary",
         "title",
+        "worker",
       ])
       for (const item of agents) {
         expect(item.permissions.some((rule) => rule.action === "bash" && rule.effect !== "deny")).toBe(false)
       }
+    }),
+  )
+
+  it.effect("defines research as a read-only subagent", () =>
+    Effect.gen(function* () {
+      const agent = yield* AgentV2.Service
+      yield* AgentPlugin.Plugin.effect(
+        host({
+          agent: agentHost(agent),
+        }),
+      ).pipe(
+        Effect.provideService(
+          Location.Service,
+          Location.Service.of(location({ directory: AbsolutePath.make("/project") })),
+        ),
+      )
+
+      const research = yield* agent.get(AgentV2.ID.make("research"))
+      expect(research).toMatchObject({ id: "research", mode: "subagent" })
+      expect(research?.permissions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: "grep", effect: "allow" }),
+          expect.objectContaining({ action: "glob", effect: "allow" }),
+          expect.objectContaining({ action: "read", effect: "allow" }),
+          expect.objectContaining({ action: "webfetch", effect: "allow" }),
+          expect.objectContaining({ action: "websearch", effect: "allow" }),
+        ]),
+      )
+      expect(research?.permissions.some((rule) => rule.action === "edit" && rule.effect !== "deny")).toBe(false)
+    }),
+  )
+
+  it.effect("defines worker as a write-capable subagent", () =>
+    Effect.gen(function* () {
+      const agent = yield* AgentV2.Service
+      yield* AgentPlugin.Plugin.effect(
+        host({
+          agent: agentHost(agent),
+        }),
+      ).pipe(
+        Effect.provideService(
+          Location.Service,
+          Location.Service.of(location({ directory: AbsolutePath.make("/project") })),
+        ),
+      )
+
+      const worker = yield* agent.get(AgentV2.ID.make("worker"))
+      expect(worker).toMatchObject({ id: "worker", mode: "subagent" })
+      expect(PermissionV2.evaluate("edit", "*", worker?.permissions ?? []).effect).toBe("allow")
+      expect(worker?.permissions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ action: "todowrite", effect: "deny" })]),
+      )
     }),
   )
 })

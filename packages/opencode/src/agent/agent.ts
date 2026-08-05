@@ -13,8 +13,10 @@ import { ProviderTransform } from "@/provider/transform"
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
+import PROMPT_RESEARCH from "./prompt/research.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_WORKER from "./prompt/worker.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -214,6 +216,45 @@ const layer = Layer.effect(
             ),
             description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
             prompt: PROMPT_EXPLORE,
+            options: {},
+            mode: "subagent",
+            native: true,
+          },
+          research: {
+            name: "research",
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                "*": "deny",
+                grep: "allow",
+                glob: "allow",
+                list: "allow",
+                webfetch: "allow",
+                websearch: "allow",
+                read: "allow",
+                external_directory: readonlyExternalDirectory,
+              }),
+              user,
+            ),
+            description:
+              "Deep research agent for evidence-based, cross-module analysis. Use this for architecture investigation, difficult debugging, and tracing behavior without modifying files.",
+            prompt: PROMPT_RESEARCH,
+            options: {},
+            mode: "subagent",
+            native: true,
+          },
+          worker: {
+            name: "worker",
+            description:
+              "Strong implementation agent for focused code changes, bug fixes, tests, and verification. Use this when the task requires reliable execution and good code quality.",
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                todowrite: "deny",
+              }),
+              user,
+            ),
+            prompt: PROMPT_WORKER,
             options: {},
             mode: "subagent",
             native: true,

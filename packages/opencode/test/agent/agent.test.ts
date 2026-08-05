@@ -66,6 +66,8 @@ it.instance("returns default native agents when no config", () =>
     expect(names).toContain("plan")
     expect(names).toContain("general")
     expect(names).toContain("explore")
+    expect(names).toContain("research")
+    expect(names).toContain("worker")
     expect(names).toContain("compaction")
     expect(names).toContain("title")
     expect(names).toContain("summary")
@@ -131,6 +133,33 @@ it.instance("explore agent denies edit and write", () =>
     expect(evalPerm(explore, "edit")).toBe("deny")
     expect(evalPerm(explore, "write")).toBe("deny")
     expect(evalPerm(explore, "todowrite")).toBe("deny")
+  }),
+)
+
+it.instance("research agent is read-only", () =>
+  Effect.gen(function* () {
+    const research = yield* load((svc) => svc.get("research"))
+    expect(research).toBeDefined()
+    expect(research?.mode).toBe("subagent")
+    expect(evalPerm(research, "edit")).toBe("deny")
+    expect(evalPerm(research, "write")).toBe("deny")
+    expect(evalPerm(research, "bash")).toBe("deny")
+    expect(evalPerm(research, "read")).toBe("allow")
+    expect(evalPerm(research, "grep")).toBe("allow")
+    expect(evalPerm(research, "glob")).toBe("allow")
+    expect(evalPerm(research, "webfetch")).toBe("allow")
+    expect(evalPerm(research, "websearch")).toBe("allow")
+  }),
+)
+
+it.instance("worker agent can implement code without todo tools", () =>
+  Effect.gen(function* () {
+    const worker = yield* load((svc) => svc.get("worker"))
+    expect(worker).toBeDefined()
+    expect(worker?.mode).toBe("subagent")
+    expect(evalPerm(worker, "edit")).toBe("allow")
+    expect(evalPerm(worker, "write")).toBe("allow")
+    expect(evalPerm(worker, "todowrite")).toBe("deny")
   }),
 )
 

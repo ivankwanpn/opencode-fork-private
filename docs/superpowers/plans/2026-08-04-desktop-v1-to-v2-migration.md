@@ -1,8 +1,8 @@
 # Desktop V1 to V2 Migration Plan
 
-> Status: in progress for branch `999.0.8`.
+> Status: in progress for branch `999.0.9`.
 >
-> The first `999.0.8` slice hardens the Desktop connection boundary. It does not remove legacy routes or compatibility code by itself.
+> The first `999.0.9` slice hardens the Desktop connection boundary. It does not remove legacy routes or compatibility code by itself.
 
 ## Goal
 
@@ -37,14 +37,18 @@ The current source does not support the claim that Desktop is entirely V1. It al
 
 Before changing the client selection logic, record the current behavior for a packaged Desktop sidecar and a development server.
 
-### 999.0.8 progress
+### 999.0.9 progress
 
 - [x] V2 prompt forwards `delivery`, `resume`, and `expectedActiveAttemptID` without dropping them.
 - [x] V2 shell converts the Desktop model shape (`modelID`) into the V2 model reference (`id`).
 - [x] Sidecar protocol selection fails closed unless V2 health and capability contracts are present.
+- [x] Desktop health probing preserves the `/global/health` fallback for external V1 connections and validates both V2 sidecar responses.
 - [x] Protocol authentication and V1/V2 prompt/shell compatibility regressions are covered by app tests.
-- [ ] Packaged `resources/app.asar` sidecar smoke test is still pending.
-- [ ] Session restore, reconnect, compaction, permissions, questions, MCP, plugins, marketplaces, and PTY workflows remain pending migration coverage.
+- [x] Reconnect recovery refreshes active sessions, reconciles stale busy state, and force-syncs affected session projections when a valid snapshot is available.
+- [x] Packaged `resources/app.asar` sidecar smoke test passes against the bundled sidecar.
+- [x] Packaged reconnect/restore integration, permissions, questions, MCP, plugin catalog, and PTY lifecycle have V2 smoke coverage.
+- [x] Packaged provider-backed prompt execution and compaction lifecycle have smoke coverage through a local OpenAI-compatible fake provider.
+- [x] Packaged plugin install and marketplace mutation have smoke coverage through a local Claude marketplace fixture.
 
 ### Tests to add
 
@@ -70,6 +74,14 @@ Before changing the client selection logic, record the current behavior for a pa
 
 Record the exact sidecar build commit, channel, version, health response, route set, and database location used by the tests. This is required because Desktop can otherwise appear to use V2 while loading an older `opencode/dist/node.js` artifact.
 
+### 999.0.9 artifact evidence
+
+- `packages/desktop/package.json` and the packaged `app.asar` metadata report version `999.0.9`.
+- `bun run package:win` completed with `OPENCODE_CHANNEL=prod` and produced `packages/desktop/dist/win-unpacked/resources/app.asar`.
+- Static archive inspection found `out/main/sidecar.js`, `out/renderer/index.html`, one bundled server chunk, `/api/health`, `/api/capability`, and `backgroundSubagents` in the archive.
+- The live packaged smoke report at `C:\Users\inkik\AppData\Local\Temp\opencode-packaged-sidecar-smoke.json` confirms the actual `app.asar/out/main/sidecar.js` selected V2 and passed health, capability, `/doc` OpenAPI, SSE, session admission, exact prompt retry, queued input admission/cancellation, provider execution, compaction, permission, question, MCP, plugin catalog, PTY, interrupt, and reconnect checks.
+- The smoke test keeps a separate `resume: false` prompt for durable-admission/reconnect coverage and uses a second `resume: true` session with `test/test-model` to verify provider execution, `session.next.compaction.started`, `session.next.compaction.delta`, `session.next.compaction.ended`, and inactive state after reconnect.
+
 ## Phase 1: Make the Desktop-Owned Connection V2-First
 
 ### Connection boundary
@@ -82,7 +94,7 @@ Record the exact sidecar build commit, channel, version, health response, route 
 
 ### API boundary
 
-Refactor `createCompatibleApi` so its responsibility is limited to protocol adaptation. The normal Desktop path should consume a V2-shaped API directly. The adapter should not hide protocol differences from session execution code.
+Refactor `createExternalCompatibleApi` so its responsibility is limited to protocol adaptation. The normal Desktop path should consume a V2-shaped API directly. The adapter should not hide protocol differences from session execution code.
 
 Required invariants:
 
@@ -94,6 +106,17 @@ Required invariants:
 ## Phase 2: Migrate Desktop Session Workflows
 
 Migrate one workflow at a time. Each workflow must have a V2 path, an integration test, and a user-visible rollback decision before the next workflow is changed.
+
+### 999.0.9 progress
+
+- [x] Session reads and mutations resolve one generation-pinned API before issuing a request.
+- [x] Project close uses normalized identity and removes a missing project without a stale Solid read or persistence rollback.
+- [x] Restored session tabs render persisted metadata first and stage inactive message hydration through a serial idle queue.
+- [x] Packaged-sidecar smoke covers reconnect/restore, permissions, questions, MCP, plugins, marketplaces, PTY, prompt execution, and compaction.
+- [x] Development in-process V2 lifecycle contract passes through both `Server.Default()` (Desktop sidecar `listen()` path) and `Server.Native()` (TUI/CLI native path) for the generated Desktop/CLI client adapter and native TUI client adapter: session create, durable admission, exact retry, input list/get/cancel, event replay, restore, and interrupt.
+- [x] The external V1 adapter/protocol focused suite passes, and the legacy HTTP session compatibility suite passes all 40 scenarios (225 assertions) against the in-process V1 route surface.
+- [x] The shared V2 lifecycle evidence covers the generated Desktop/CLI adapter and native TUI adapter through development `Server.Default()`/`Server.Native()`, the real `opencode serve` process, and the packaged `resources/app.asar` sidecar smoke. The same admission/retry/queue-cancel/event-replay/restore/interrupt contract is asserted at each boundary.
+- [x] A full old external-server process run passes against the isolated official `1.18.10` server. `packages/app/src/utils/external-v1-process.test.ts` exercises session, project, path, VCS, LSP, file, MCP, permission, question, PTY, and legacy prompt routing; the run also verifies that the V1 PTY token includes the required ticket header.
 
 ### Prompt and continuation
 
@@ -134,11 +157,22 @@ After Phase 2 is green, audit the remaining V1 surfaces instead of deleting them
 
 ### Removal checklist
 
-- `packages/app/src/utils/server-compat.ts`: list every remaining V1 method and its caller. Each must be either removed from the normal Desktop path or explicitly documented as external-server fallback.
+- `packages/app/src/utils/server-compat.ts`: list every remaining V1 method and its caller. Each must be either removed from the normal Desktop path or explicitly documented as external-server fallback. The `createExternalCompatibleApi` factory is reserved for that boundary; bundled sidecars use `createV2OnlyApi`.
 - `packages/app/src/context/server-sdk.tsx`: retain one protocol-specific event implementation. Confirm V2 event adaptation does not pass legacy payloads through the V2 branch.
 - `packages/opencode/src/server/routes/instance/httpapi/server.ts`: identify routes needed only by old clients. Keep them until external compatibility is intentionally ended.
 - Legacy `packages/opencode` task and prompt handlers: do not remove until V1 clients, installed versions, and migration data are covered by the release policy.
 - Any V1 session projection used during restore: add a data migration or read-only adapter first; never reinterpret old rows in memory without a validation test.
+
+### 999.0.9 Phase 3 audit progress
+
+- [x] Renamed the compatibility factory to `createExternalCompatibleApi` so its external-server boundary is explicit.
+- [x] Confirmed bundled sidecars construct `createV2OnlyApi` in both global and directory-scoped SDK contexts.
+- [x] Renamed the retained generated client to `legacyClient`/`createLegacyClient`; V1 PTY, history, bootstrap, and catalog fallbacks now declare their boundary at the call site.
+- [x] Removed the eager directory-scoped legacy client property; V1 PTY fallback now creates a legacy client only after a V1 generation is selected.
+- [x] Recorded the V1 adapter methods, event branch, and non-adapter fallbacks in `docs/superpowers/plans/2026-08-05-v1-compatibility-inventory.md`.
+- [x] Added an external V1 session create/prompt regression covering the directory-scoped legacy client and legacy `promptAsync` payload.
+- [x] Added an opt-in previous-release SQLite restore run (`OPENCODE_PREVIOUS_RELEASE_DB`) and verified a stored session from the isolated official `1.18.10` database can be listed, loaded, history-read, input-read, and interrupted by the current V2 server.
+- [ ] Satisfy the removal gate and delete V1 code from the normal Desktop path.
 
 ### Removal gate
 
@@ -154,9 +188,17 @@ V1 code may be removed from the Desktop normal path only when:
 
 Use a small feature boundary instead of a broad flag scattered through UI components.
 
+### 999.0.9 progress
+
+- [x] Protocol diagnostics now expose the server type, explicit compatibility boundary, selected protocol, protocol/event generations, reconnect count, server version, sidecar PID, and capability result.
+- [x] Add the last durable aggregate and sequence to support diagnostics without logging prompt contents.
+- [x] Add and exercise the single connection-boundary protocol override. `VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL=auto|v1|v2` applies only to external server SDK creation; bundled sidecars remain V2-only.
+- [x] Unit-test the sidecar invariant: a global `v1` override cannot downgrade a bundled sidecar.
+- [x] Verify renderer build-time injection in both `v1` override and default `auto` builds; the bundle contains the selected value and no unresolved environment lookup.
+
 ### Recommended controls
 
-- `desktopServerProtocol`: `v2` for the bundled sidecar, `auto` for external servers, and `v1` only for emergency compatibility testing.
+- `desktopServerProtocol`: `v2` for the bundled sidecar, `auto` for external servers, and `v1` only for emergency compatibility testing. The current build-time input is `VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL`.
 - Diagnostic logging: selected protocol, server build/version, sidecar PID, health result, event stream generation, and last durable session sequence. Do not log prompt contents or credentials.
 - A single kill switch at connection creation that can force the legacy adapter for external servers. The switch must not change the durable database schema or delete session data.
 
@@ -189,6 +231,7 @@ bun run script/httpapi-exercise.ts --mode effect --fail-on-missing --fail-on-ski
 # packaged Desktop smoke test
 cd ../desktop
 bun run package:win
+bun run test:packaged-sidecar
 ```
 
 The packaged smoke test must verify the actual `resources/app.asar` sidecar, not only the source development server. Capture the protocol kind and version from diagnostics.

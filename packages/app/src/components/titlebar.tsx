@@ -21,14 +21,21 @@ import { applyPath, backPath, forwardPath } from "./titlebar-history"
 import { TitlebarTabStrip } from "@/components/titlebar-tab-strip"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
-import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/components/titlebar-session-events"
+import {
+  readSessionTabsReconcileDetail,
+  readSessionTabsRemovedDetail,
+  SESSION_TABS_RECONCILE_EVENT,
+  SESSION_TABS_REMOVED_EVENT,
+} from "@/components/titlebar-session-events"
 import { useGlobal } from "@/context/global"
 import { ServerConnection, useServer } from "@/context/server"
-import { tabKey, useTabs } from "@/context/tabs"
+import { resolveServerSessionApi } from "@/context/server-sdk"
+import { tabKey, type SessionTab, useTabs } from "@/context/tabs"
 import type { PromptSession } from "@/context/prompt"
 import "./titlebar.css"
 import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 import { normalizeSessionInfo } from "@/utils/session"
+import { isLocalSessionNotFoundError, isSessionNotFoundError } from "@/utils/server-errors"
 
 type TauriDesktopWindow = {
   startDragging?: () => Promise<void>
@@ -246,8 +253,10 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
                 return conn ? { route, sdk: global.ensureServerCtx(conn).sdk } : undefined
               },
               ({ route, sdk }) =>
-                sdk.api.session
-                  .get({ sessionID: route.sessionId })
+                resolveServerSessionApi({
+                  apiForGeneration: sdk.apiForGeneration,
+                })
+                  .then((api) => api.get({ sessionID: route.sessionId }))
                   .then(normalizeSessionInfo)
                   .catch(() => {}),
             )
@@ -298,6 +307,45 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
               const detail = readSessionTabsRemovedDetail(event)
               if (!detail) return
               tabsStoreActions.removeSessions(detail)
+            })
+
+            makeEventListener(window, SESSION_TABS_RECONCILE_EVENT, (event) => {
+              const detail = readSessionTabsReconcileDetail(event)
+              if (!detail) return
+              const conn = global.servers.list().find((item) => ServerConnection.key(item) === detail.server)
+              if (!conn) return
+              const target = global.ensureServerCtx(conn).sdk
+              const sessionTabs = tabsStore.filter(
+                (tab): tab is SessionTab => tab.type === "session" && tab.server === detail.server,
+              )
+              if (sessionTabs.length === 0) return
+
+              void resolveServerSessionApi({
+                apiForGeneration: target.apiForGeneration,
+              })
+                .then((api) =>
+                  Promise.all(
+                    sessionTabs.map(async (tab) => {
+                      try {
+                        const session = await api.get({ sessionID: tab.sessionId })
+                        return session.time.archived !== undefined ? tab.sessionId : undefined
+                      } catch (error) {
+                        if (
+                          isSessionNotFoundError(error, tab.sessionId) ||
+                          isLocalSessionNotFoundError(error, tab.sessionId)
+                        )
+                          return tab.sessionId
+                        return undefined
+                      }
+                    }),
+                  ),
+                )
+                .then((removed) => {
+                  const sessionIDs = removed.filter((sessionID): sessionID is string => !!sessionID)
+                  if (sessionIDs.length === 0) return
+                  tabsStoreActions.removeSessions({ server: detail.server, directory: "", sessionIDs })
+                })
+                .catch(() => undefined)
             })
 
             const openNewTab = () => {

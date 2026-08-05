@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, isNull, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { AgentV2 } from "./agent"
 import { WorkspaceV2 } from "./workspace"
@@ -41,6 +41,7 @@ import { Revert } from "@opencode-ai/schema/revert"
 import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 import { SessionV1 } from "./v1/session"
+import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 
 export const RevertState = Revert.State
 export type RevertState = Revert.State
@@ -61,6 +62,7 @@ const ListInputBase = {
   search: Schema.String.pipe(Schema.optional),
   limit: PositiveInt.pipe(Schema.optional),
   order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
+  parentID: Schema.NullOr(SessionSchema.ID).pipe(Schema.optional),
   anchor: ListAnchor.pipe(Schema.optional),
 }
 
@@ -469,6 +471,9 @@ const layer = Layer.effect(
         if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
         if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
         if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
+        if (input.parentID === null) conditions.push(isNull(SessionTable.parent_id))
+        if (input.parentID !== undefined && input.parentID !== null)
+          conditions.push(eq(SessionTable.parent_id, input.parentID))
         if (input.anchor) {
           conditions.push(
             order === "asc"
@@ -821,22 +826,41 @@ const layer = Layer.effect(
       compact: Effect.fn("V2Session.compact")(function* (input) {
         const session = yield* result.get(input.sessionID)
         let shouldContinue = false
-        const work = SessionCompaction.Service.use((compaction) =>
-          compaction.compact({
-            session,
-            prompt: input.prompt,
-            reason: input.reason ?? "manual",
-          }),
-        ).pipe(
-          Effect.provide(locations.get(session.location)),
-          Effect.orDie,
-          Effect.tap((outcome) =>
-            Effect.sync(() => {
-              shouldContinue = outcome.shouldContinue
-            }),
-          ),
-          Effect.asVoid,
-        )
+        const work = Effect.gen(function* () {
+          yield* events.publish(
+            SessionStatusEvent.Status,
+            { sessionID: session.id, status: { type: "busy" } },
+            { location: session.location },
+          )
+          yield* Effect.ensuring(
+            SessionCompaction.Service.use((compaction) =>
+              compaction.compact({
+                session,
+                prompt: input.prompt,
+                reason: input.reason ?? "manual",
+              }),
+            ).pipe(
+              Effect.provide(locations.get(session.location)),
+              Effect.orDie,
+              Effect.tap((outcome) =>
+                Effect.sync(() => {
+                  shouldContinue = outcome.shouldContinue
+                }),
+              ),
+              Effect.asVoid,
+            ),
+            events
+              .publish(
+                SessionStatusEvent.Status,
+                { sessionID: session.id, status: { type: "idle" } },
+                { location: session.location },
+              )
+              .pipe(
+                Effect.andThen(events.publish(SessionStatusEvent.Idle, { sessionID: session.id }, { location: session.location })),
+                Effect.asVoid,
+              ),
+          )
+        })
         yield* execution.exclusive(session.id, work)
         if (shouldContinue) yield* execution.resume(session.id).pipe(Effect.orDie)
       }),

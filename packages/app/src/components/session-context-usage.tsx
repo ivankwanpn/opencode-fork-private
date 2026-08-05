@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createMemo, type ComponentProps, type JSX } from "solid-js"
+import { Match, Show, Switch, createEffect, createMemo, on, type ComponentProps, type JSX } from "solid-js"
 import { ProgressCircle } from "@opencode-ai/ui/progress-circle"
 import { ProgressCircleV2 } from "@opencode-ai/ui/v2/progress-circle-v2"
 import { Button } from "@opencode-ai/ui/button"
@@ -12,7 +12,7 @@ import { useSync } from "@/context/sync"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
-import { getSessionContext } from "@/components/session/session-context-metrics"
+import { getSessionContext, getV2SessionContext } from "@/components/session/session-context-metrics"
 import { createSessionContextFormatter } from "@/components/session/session-context-format"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
@@ -64,6 +64,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
     fileBrowser: () => settings.general.newLayoutDesigns() && isDesktop() && !!params.id,
   })
   const messages = createMemo(() => (params.id ? (sync().data.message[params.id] ?? []) : []))
+  const contextMessages = createMemo(() => (params.id ? sync().session.context.get(params.id) : undefined))
   const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
 
   const usd = createMemo(
@@ -74,7 +75,11 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       }),
   )
 
-  const context = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const context = createMemo(() => {
+    const active = contextMessages()
+    if (active) return getV2SessionContext(active, [...providers.all().values()])
+    return getSessionContext(messages(), [...providers.all().values()])
+  })
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
   const cost = createMemo(() => {
     return usd().format(info()?.cost ?? 0)
@@ -87,6 +92,16 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
     tabs()
       .all()
       .some((tab) => tab !== "context" && tab !== "review"),
+  )
+
+  createEffect(
+    on(
+      () => params.id,
+      (sessionID) => {
+        if (sessionID) void sync().session.context.refresh(sessionID).catch(() => {})
+      },
+      { defer: true },
+    ),
   )
 
   const openContext = () => {

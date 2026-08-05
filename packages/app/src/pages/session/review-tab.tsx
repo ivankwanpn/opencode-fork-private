@@ -54,8 +54,11 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
   const layout = useLayout()
 
   const readFile = async (path: string) => {
-    return sdk()
-      .api.file.read({ location: { directory: sdk().directory }, path })
+    const target = sdk()
+    const directory = target.directory
+    return target
+      .apiForGeneration()
+      .then((api) => api.file.read({ location: { directory }, path }))
       .then((x) => x.data)
       .catch((error) => {
         console.debug("[session-review] failed to read file", { path, error })

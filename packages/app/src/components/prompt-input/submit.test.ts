@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
 import type { ModelSelection } from "@/context/local"
+import { ServerConnection } from "@/context/server"
 import type { FollowupDraft } from "./submit"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
@@ -150,6 +151,7 @@ beforeAll(async () => {
   mock.module("@opencode-ai/ui/toast", () => ({
     Toast: { Region: () => null },
     showToast: () => 0,
+    toaster: { dismiss: () => undefined },
   }))
 
   mock.module("@opencode-ai/core/util/encode", () => ({
@@ -184,6 +186,7 @@ beforeAll(async () => {
   })
 
   mock.module("@/context/server", () => ({
+    ServerConnection,
     useServer: () => ({ key: "server-key" }),
   }))
 
@@ -219,6 +222,12 @@ beforeAll(async () => {
         directory: "/repo/main",
         client: rootClient,
         api: rootClient.api,
+        currentApi: rootClient.api,
+        protocol: Promise.resolve("v2" as const),
+        apiForGeneration: async () => ({ ...rootClient.api, worktree: rootClient.worktree }),
+        sessionMutations: {
+          run: (_sessionID: string, task: () => Promise<unknown>) => task(),
+        },
         url: "http://localhost:4096",
         createClient(opts: any) {
           return clientFor(opts.directory)

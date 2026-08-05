@@ -1,5 +1,5 @@
 import type { ServerApi } from "./server"
-import type { ServerProtocol } from "./server-protocol"
+import type { ServerProtocol, ServerProtocolResolver } from "./server-protocol"
 import type { AgentPartInput, FilePartInput, OpencodeClient, Session, TextPartInput } from "@opencode-ai/sdk/v2/client"
 import type {
   Project,
@@ -31,7 +31,7 @@ type CompatibleCreateInput = Omit<SessionCreateInput, "model"> & { model?: Compa
 type CompatibleCommandInput = Omit<SessionCommandInput, "model"> & { model?: CompatibleModel | null }
 type CompatibleSessionApi = Omit<
   ServerApi["session"],
-  "create" | "prompt" | "command" | "shell" | "compact" | "rename" | "archive" | "remove"
+  "create" | "prompt" | "command" | "shell" | "compact" | "todo" | "rename" | "archive" | "remove"
 > & {
   create: (
     input?: CompatibleCreateInput,
@@ -44,6 +44,7 @@ type CompatibleSessionApi = Omit<
   ) => Promise<SessionCommandOutput>
   shell: (input: SessionShellInput & LegacyPrompt & { resume?: boolean }) => Promise<SessionShellOutput>
   compact: (input: SessionCompactInput & { model?: LegacyPrompt["model"] }) => Promise<SessionCompactOutput>
+  todo: (input: Parameters<ServerApi["session"]["todo"]>[0]) => ReturnType<ServerApi["session"]["todo"]>
   rename: (
     input: Parameters<ServerApi["session"]["rename"]>[0] & LegacyLocation,
   ) => ReturnType<ServerApi["session"]["rename"]>
@@ -76,11 +77,18 @@ type CompatiblePromptInput = SessionPromptInput &
   }
 type LegacyLocation = { directory?: string }
 type CompatibleInput = {
-  protocol: Promise<ServerProtocol>
+  protocol: Promise<ServerProtocol> | (() => Promise<ServerProtocol>)
   current: ServerApi
   legacy: LegacyFor
   directory?: string
 }
+
+export type CompatibleImplementation = CompatibleApi | ServerApi
+export type ServerGeneration = {
+  protocol: ServerProtocol
+  api: CompatibleImplementation
+}
+const compatibleResolvers = new WeakMap<object, (protocol: ServerProtocol) => CompatibleImplementation>()
 
 function mime(uri: string) {
   const match = /^data:([^;,]+)/.exec(uri)
@@ -121,22 +129,66 @@ function projectInfo(project: Project): Awaited<ReturnType<ServerApi["project"][
   }
 }
 
-export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
-  const v1 = createV1Api(input)
-  return lazyApi(
-    input.protocol.then((protocol) => (protocol === "v1" ? v1 : input.current)),
-    input.current,
-  )
+function unsupportedV1(operation: string): never {
+  throw new Error(`${operation} is unavailable on a V1 server`)
 }
 
-function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
+/**
+ * Creates the protocol adapter reserved for explicitly connected external servers.
+ * Bundled Desktop sidecars must use createV2OnlyApi so a protocol probe cannot
+ * silently redirect normal execution through legacy routes.
+ */
+export function createExternalCompatibleApi(input: CompatibleInput): CompatibleApi {
+  const v1 = createV1Api(input)
+  const select = (protocol: ServerProtocol) => (protocol === "v1" ? v1 : input.current)
+  const api = lazyApi(() => resolveProtocol(input.protocol).then(select), input.current)
+  compatibleResolvers.set(api, select)
+  return api
+}
+
+export function createV2OnlyApi(input: Pick<CompatibleInput, "protocol" | "current">): CompatibleApi {
+  const select = (protocol: ServerProtocol) => {
+    if (protocol !== "v2") throw new Error("V2 server protocol unavailable")
+    return input.current
+  }
+  const api = lazyApi(() => resolveProtocol(input.protocol).then(select), input.current)
+  compatibleResolvers.set(api, select)
+  return api
+}
+
+export function resolveCompatibleApi(api: CompatibleApi, protocol: ServerProtocol): CompatibleImplementation {
+  return compatibleResolvers.get(api)?.(protocol) ?? api
+}
+
+export function resolveCompatibleGeneration(api: CompatibleApi, protocol: ServerProtocol): ServerGeneration {
+  return { protocol, api: resolveCompatibleApi(api, protocol) }
+}
+
+export function resolveCompatibleApiForProtocol(
+  api: CompatibleApi,
+  protocol: ServerProtocolResolver,
+): Promise<CompatibleImplementation> {
+  return resolveProtocol(protocol).then((value) => resolveCompatibleApi(api, value))
+}
+
+function resolveProtocol(input: CompatibleInput["protocol"]) {
+  return typeof input === "function" ? input() : input
+}
+
+type LazyImplementation<T> = Promise<T> | (() => Promise<T>)
+
+function resolveImplementation<T>(implementation: LazyImplementation<T>) {
+  return typeof implementation === "function" ? implementation() : implementation
+}
+
+function lazyApi<T extends object>(implementation: LazyImplementation<T>, shape: T): T {
   const cache = new Map<PropertyKey, unknown>()
   return new Proxy(shape, {
     get(target, property, receiver) {
       const sample = Reflect.get(target, property, receiver)
       if (typeof sample === "function") {
         return (...args: unknown[]) =>
-          implementation.then((value) => {
+          resolveImplementation(implementation).then((value) => {
             const method = Reflect.get(value, property)
             if (typeof method !== "function") throw new Error(`API method unavailable: ${String(property)}`)
             return Reflect.apply(method, value, args)
@@ -145,13 +197,14 @@ function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
       if (sample === null || typeof sample !== "object") return sample
       if (cache.has(property)) return cache.get(property)
       const nested = lazyApi(
-        implementation.then((value) => {
-          const result = Reflect.get(value, property)
-          if (result === null || typeof result !== "object") {
-            throw new Error(`API namespace unavailable: ${String(property)}`)
-          }
-          return result
-        }),
+        () =>
+          resolveImplementation(implementation).then((value) => {
+            const result = Reflect.get(value, property)
+            if (result === null || typeof result !== "object") {
+              throw new Error(`API namespace unavailable: ${String(property)}`)
+            }
+            return result
+          }),
         sample,
       )
       cache.set(property, nested)
@@ -173,6 +226,20 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
 
   return {
     ...input.current,
+    message: {
+      ...input.current.message,
+      list: async () => unsupportedV1("V2 message history"),
+    },
+    plugins: {
+      list: async () => unsupportedV1("Plugin management"),
+      add: async () => unsupportedV1("Plugin management"),
+      refresh: async () => unsupportedV1("Plugin management"),
+      remove: async () => unsupportedV1("Plugin management"),
+      install: async () => unsupportedV1("Plugin management"),
+      uninstall: async () => unsupportedV1("Plugin management"),
+      enable: async () => unsupportedV1("Plugin management"),
+      disable: async () => unsupportedV1("Plugin management"),
+    } as ServerApi["plugins"],
     session: {
       ...input.current.session,
       async list(
@@ -218,6 +285,10 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           ),
         )
       },
+      async todo(value: Parameters<ServerApi["session"]["todo"]>[0]) {
+        const result = await legacy().session.todo({ sessionID: value.sessionID })
+        return result.data ?? []
+      },
       async rename(value: Parameters<ServerApi["session"]["rename"]>[0] & LegacyLocation) {
         await legacy(value).session.update({ sessionID: value.sessionID, title: value.title })
       },
@@ -244,6 +315,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async interrupt(value: Parameters<ServerApi["session"]["interrupt"]>[0]) {
         await legacy().session.abort(value)
       },
+      switchAgent: async () => unsupportedV1("Session agent switching"),
+      switchModel: async () => unsupportedV1("Session model switching"),
       async prompt(value: CompatiblePromptInput) {
         await legacy().session.promptAsync({
           sessionID: value.sessionID,
@@ -334,6 +407,13 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           type: "compaction",
         }
       },
+      inputList: async () => unsupportedV1("Durable session follow-up inputs"),
+      inputGet: async () => unsupportedV1("Durable session follow-up inputs"),
+      inputPromote: async () => unsupportedV1("Durable session follow-up inputs"),
+      inputCancel: async () => unsupportedV1("Durable session follow-up inputs"),
+      background: async () => unsupportedV1("Background session execution"),
+      wait: async () => unsupportedV1("Durable session waiting"),
+      context: async () => unsupportedV1("V2 session context"),
       revert: {
         stage: async (value: Parameters<ServerApi["session"]["revert"]["stage"]>[0]) => {
           await legacy().session.revert(value)
@@ -342,7 +422,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         clear: async (value: Parameters<ServerApi["session"]["revert"]["clear"]>[0]) => {
           await legacy().session.unrevert(value)
         },
-        commit: input.current.session.revert.commit,
+        commit: async () => unsupportedV1("V2 session revert commit"),
       },
     },
     project: {
@@ -413,6 +493,13 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         return result.data
       },
     },
+    lsp: {
+      ...input.current.lsp,
+      async status(value?: Parameters<ServerApi["lsp"]["status"]>[0]) {
+        const result = await legacy(value?.location).lsp.status()
+        return located(result.data ?? [], value?.location)
+      },
+    },
     vcs: {
       ...input.current.vcs,
       async get(value?: Parameters<ServerApi["vcs"]["get"]>[0]) {
@@ -467,10 +554,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       ...input.current.config,
       async get(value?: Parameters<ServerApi["config"]["get"]>[0]) {
         const result = await legacy(value?.location).global.config.get()
-        return located(
-          (result.data ?? {}) as Awaited<ReturnType<ServerApi["config"]["get"]>>["data"],
-          value?.location,
-        )
+        return located((result.data ?? {}) as Awaited<ReturnType<ServerApi["config"]["get"]>>["data"], value?.location)
       },
       async update(value: Parameters<ServerApi["config"]["update"]>[0]) {
         const result = await legacy().global.config.update({
@@ -496,6 +580,11 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async disconnect(value: Parameters<ServerApi["mcp"]["disconnect"]>[0]) {
         await legacy(value.location).mcp.disconnect({ name: value.server })
       },
+      async authenticate(value: Parameters<ServerApi["mcp"]["authenticate"]>[0]) {
+        const result = await legacy(value.location).mcp.auth.authenticate({ name: value.name })
+        if (!result.data) throw new Error(`Failed to authenticate MCP server: ${value.name}`)
+        return located(result.data, value.location)
+      },
       resource: {
         ...input.current.mcp.resource,
         async catalog(value?: Parameters<ServerApi["mcp"]["resource"]["catalog"]>[0]) {
@@ -518,11 +607,10 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       async get(value: Parameters<ServerApi["integration"]["get"]>[0]) {
         const client = legacy(value.location)
         const results = await Promise.all([client.provider.auth(), client.provider.list()])
-        const methods = (results[0].data?.[value.integrationID] ?? []).map(
-          (method, index) =>
-            method.type === "api"
-              ? { type: "key" as const, label: method.label }
-              : { type: "oauth" as const, id: String(index), label: method.label, prompts: method.prompts },
+        const methods = (results[0].data?.[value.integrationID] ?? []).map((method, index) =>
+          method.type === "api"
+            ? { type: "key" as const, label: method.label }
+            : { type: "oauth" as const, id: String(index), label: method.label, prompts: method.prompts },
         )
         const connected = results[1].data?.connected.includes(value.integrationID) ?? false
         return located(
@@ -584,6 +672,9 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
             value.location,
           )
         },
+        // V1 has no cancellable OAuth attempt. Cleanup is local because the
+        // legacy authorize endpoint does not expose a matching operation.
+        cancel: async () => undefined,
       },
     },
     credential: {
@@ -629,7 +720,11 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         await legacy(value.location).pty.remove({ ptyID: value.ptyID })
       },
       async connectToken(value: Parameters<ServerApi["pty"]["connectToken"]>[0]) {
-        const result = await legacy(value.location).pty.connectToken({ ptyID: value.ptyID })
+        // The legacy server applies its browser-side CSRF guard to this route too.
+        const result = await legacy(value.location).pty.connectToken(
+          { ptyID: value.ptyID, directory: value.location?.directory },
+          { throwOnError: false, headers: { "x-opencode-ticket": "1" } },
+        )
         if (!result.data) throw new Error(`Failed to connect terminal: ${value.ptyID}`)
         return located(result.data, value.location)
       },
@@ -675,10 +770,9 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         ...input.current.question.request,
         async list(value?: Parameters<ServerApi["question"]["request"]["list"]>[0]) {
           const result = await legacy(value?.location).question.list()
-          return located(
-            result.data ?? [],
-            value?.location,
-          ) as Awaited<ReturnType<ServerApi["question"]["request"]["list"]>>
+          return located(result.data ?? [], value?.location) as Awaited<
+            ReturnType<ServerApi["question"]["request"]["list"]>
+          >
         },
       },
       async reply(value: Parameters<ServerApi["question"]["reply"]>[0]) {

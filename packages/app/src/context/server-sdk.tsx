@@ -3,7 +3,7 @@ import type { Event, V2Event } from "@opencode-ai/sdk/v2/client"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { type Accessor, batch, createMemo, createResource, onCleanup, onMount } from "solid-js"
+import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
 import { usePlatform } from "./platform"
@@ -11,8 +11,22 @@ import { ServerConnection, useServer } from "./server"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
-import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
-import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
+import {
+  detectServerProtocolDetails,
+  resolveDesktopServerProtocolMode,
+  type ServerProtocol,
+  type ServerProtocolMode,
+} from "@/utils/server-protocol"
+import {
+  createExternalCompatibleApi,
+  createV2OnlyApi,
+  resolveCompatibleGeneration,
+  type CompatibleApi,
+  type CompatibleImplementation,
+  type ServerGeneration,
+} from "@/utils/server-compat"
+import { createSessionMutationQueue } from "@/utils/session-mutation"
+export { resolveServerSessionApi, runServerSessionMutation } from "@/utils/session-mutation"
 
 const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
@@ -181,27 +195,60 @@ function currentDeltaFragment(event: CurrentDelta) {
     : event.data.delta
 }
 
+function durableEventPosition(value: unknown) {
+  if (value === null || typeof value !== "object" || !("durable" in value)) return
+  const durable = value.durable
+  if (durable === null || typeof durable !== "object") return
+  if (!("aggregateID" in durable) || typeof durable.aggregateID !== "string") return
+  if (!("seq" in durable) || typeof durable.seq !== "number") return
+  return { aggregateID: durable.aggregateID, seq: durable.seq }
+}
+
 export function resumeStreamAfterPageShow(event: PageTransitionEvent, start: () => unknown) {
   if (!event.persisted) return
   start()
 }
 
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
+export type ServerGenerationDiagnostics = {
+  serverType: ServerConnection.Any["type"]
+  compatibility: "sidecar-v2-only" | "external-auto"
+  protocolMode: ServerProtocolMode
+  protocol: ServerProtocol | undefined
+  serverVersion?: string
+  serverPID?: number
+  backgroundSubagents?: boolean
+  lastDurableAggregateID?: string
+  lastDurableSequence?: number
+  protocolGeneration: number
+  eventGeneration: number
+  reconnects: number
+  started: boolean
+  lastConnectedAt?: number
+  lastEventAt?: number
+}
 type ServerSDKBase = {
   server: ServerConnection.Any
   scope: ServerScope
   protocol: Promise<ServerProtocol>
+  protocolForGeneration: () => Promise<ServerProtocol>
+  protocolGeneration: () => number
+  eventGeneration: () => number
+  generationFor: () => Promise<ServerGeneration>
+  diagnostics: () => ServerGenerationDiagnostics
+  apiForGeneration: () => Promise<CompatibleImplementation>
   protocolKind: Accessor<ServerProtocol | undefined>
   url: string
-  client: ReturnType<typeof createSdkForServer>
+  legacyClient: ReturnType<typeof createSdkForServer>
   api: CompatibleApi
   currentApi: ServerApi
+  sessionMutations: ReturnType<typeof createSessionMutationQueue>
   event: {
     on: ServerEventEmitter["on"]
     listen: ServerEventEmitter["listen"]
     start: () => Promise<void> | undefined
   }
-  createClient: (
+  createLegacyClient: (
     opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">,
   ) => ReturnType<typeof createSdkForServer>
 }
@@ -227,16 +274,44 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     fetch: eventFetch,
     server: server.http,
   })
-  const protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch, {
-    v2Only: server.type === "sidecar",
-  })
-  const [protocolKind] = createResource(
-    () => protocol,
-    (value) => value,
+  let serverVersion: string | undefined
+  let serverPID: number | undefined
+  let backgroundSubagents: boolean | undefined
+  let lastDurableAggregateID: string | undefined
+  let lastDurableSequence: number | undefined
+  const protocolMode: ServerProtocolMode = resolveDesktopServerProtocolMode(
+    server.type,
+    import.meta.env.VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL,
   )
+  const detect = () =>
+    detectServerProtocolDetails(server.http, platform.fetch ?? globalThis.fetch, {
+      mode: protocolMode,
+    }).then((details) => {
+      serverVersion = details.version
+      serverPID = details.pid
+      backgroundSubagents = details.backgroundSubagents
+      return details.protocol
+    })
+  let protocol = detect()
+  let protocolGeneration = 1
+  let eventGeneration = 0
+  let reconnects = 0
+  let lastConnectedAt: number | undefined
+  let lastEventAt: number | undefined
+  const [protocolSource, setProtocolSource] = createSignal(protocol)
+  const [protocolKind] = createResource(protocolSource, (value) => value)
+  const protocolForGeneration = () => protocol
+  const refreshProtocol = () => {
+    protocolGeneration += 1
+    reconnects += 1
+    protocol = detect()
+    setProtocolSource(protocol)
+    return protocol
+  }
   const emitter = createGlobalEmitter<{
     [key: string]: ServerEvent
   }>()
+  const sessionMutations = createSessionMutationQueue()
 
   type Queued = QueuedServerEvent
   const FLUSH_FRAME_MS = 16
@@ -287,25 +362,53 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     const active = ++generation
     const previous = run
     const current = (async () => {
-      if (previous) await previous
+      if (previous) {
+        await previous
+        flush()
+      }
+      let reconnect = false
       // oxlint-disable-next-line no-unmodified-loop-condition -- `started` is set to false by stop() which also aborts; both flags are checked to allow graceful exit
       while (!abort.signal.aborted && started && generation === active) {
+        const streamGeneration = ++eventGeneration
         attempt = new AbortController()
         const onAbort = () => {
           attempt?.abort()
         }
         abort.signal.addEventListener("abort", onAbort)
         try {
-          const kind = await protocol
+          if (reconnect) refreshProtocol()
+          const kind = await protocolForGeneration()
+          lastConnectedAt = Date.now()
+          console.debug("[global-sdk] event stream connected", {
+            protocol: kind,
+            serverType: server.type,
+            compatibility: server.type === "sidecar" ? "sidecar-v2-only" : "external-auto",
+            protocolMode,
+            serverVersion,
+            serverPID,
+            backgroundSubagents,
+            lastDurableAggregateID,
+            lastDurableSequence,
+            protocolGeneration,
+            eventGeneration: streamGeneration,
+            reconnects,
+          })
           const events =
             kind === "v1"
               ? (await eventSdk.global.event({ signal: attempt.signal })).stream
               : eventApi.event.subscribe({ signal: attempt.signal })
           let yielded = Date.now()
           for await (const event of events) {
+            if (abort.signal.aborted || !started || generation !== active || eventGeneration !== streamGeneration) break
             streamErrorLogged = false
+            lastEventAt = Date.now()
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
+            const position = legacy ? undefined : durableEventPosition(event)
+            if (position) {
+              lastDurableAggregateID = position.aggregateID
+              lastDurableSequence = position.seq
+            }
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
             const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
             if (enqueueServerEvent(queue, { directory, payload })) schedule()
@@ -329,6 +432,8 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         }
 
         if (abort.signal.aborted || !started || generation !== active) return
+        flush()
+        reconnect = true
         await wait(RECONNECT_DELAY_MS)
       }
     })().finally(() => {
@@ -357,7 +462,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     flush()
   })
 
-  const sdk = createSdkForServer({
+  const legacyClient = createSdkForServer({
     server: server.http,
     fetch: platform.fetch,
     throwOnError: true,
@@ -370,23 +475,56 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       throwOnError: true,
       directory,
     })
-  const api = createCompatibleApi({ protocol, current: currentApi, legacy })
+  // The bundled sidecar has a fail-closed V2 contract. Keep the compatibility
+  // adapter at the external-server boundary so normal Desktop calls cannot
+  // silently drift into legacy execution routes.
+  const api =
+    server.type === "sidecar"
+      ? createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
+      : createExternalCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
+  const generationFor = () => protocolForGeneration().then((value) => resolveCompatibleGeneration(api, value))
+  const apiForGeneration = () => generationFor().then((value) => value.api)
 
   return {
     server,
     scope,
-    protocol,
+    get protocol() {
+      return protocolForGeneration()
+    },
+    protocolForGeneration,
+    protocolGeneration: () => protocolGeneration,
+    eventGeneration: () => eventGeneration,
+    generationFor,
+    apiForGeneration,
+    diagnostics: () => ({
+      serverType: server.type,
+      compatibility: server.type === "sidecar" ? "sidecar-v2-only" : "external-auto",
+      protocolMode,
+      protocol: protocolKind(),
+      serverVersion,
+      serverPID,
+      backgroundSubagents,
+      lastDurableAggregateID,
+      lastDurableSequence,
+      protocolGeneration,
+      eventGeneration,
+      reconnects,
+      started,
+      lastConnectedAt,
+      lastEventAt,
+    }),
     protocolKind,
     url: server.http.url,
-    client: sdk,
+    legacyClient,
     api,
     currentApi,
+    sessionMutations,
     event: {
       on: emitter.on.bind(emitter),
       listen: emitter.listen.bind(emitter),
       start,
     },
-    createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
+    createLegacyClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
       return createSdkForServer({
         server: server.http,
         fetch: platform.fetch,
@@ -434,11 +572,6 @@ type SDKEventMap = {
 }
 
 function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
-  const client = serverSDK.createClient({
-    directory,
-    throwOnError: true,
-  })
-
   const emitter = createGlobalEmitter<SDKEventMap>()
 
   const unsub = serverSDK.event.on(directory, (event) => {
@@ -446,23 +579,40 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
   })
   onCleanup(unsub)
 
+  const api =
+    serverSDK.server.type === "sidecar"
+      ? serverSDK.api
+      : createExternalCompatibleApi({
+          protocol: serverSDK.protocolForGeneration,
+          current: serverSDK.currentApi,
+          legacy: (next) => serverSDK.createLegacyClient({ directory: next ?? directory, throwOnError: true }),
+          directory,
+        })
+  const generationFor = () =>
+    serverSDK.protocolForGeneration().then((protocol) => resolveCompatibleGeneration(api, protocol))
+  const apiForGeneration = () => generationFor().then((value) => value.api)
+
   return {
     scope: serverSDK.scope,
-    protocol: serverSDK.protocol,
+    get protocol() {
+      return serverSDK.protocolForGeneration()
+    },
+    protocolForGeneration: serverSDK.protocolForGeneration,
+    protocolGeneration: serverSDK.protocolGeneration,
+    eventGeneration: serverSDK.eventGeneration,
+    generationFor,
+    apiForGeneration,
+    diagnostics: serverSDK.diagnostics,
     directory,
-    client,
-    api: createCompatibleApi({
-      protocol: serverSDK.protocol,
-      current: serverSDK.currentApi,
-      legacy: (next) => serverSDK.createClient({ directory: next ?? directory, throwOnError: true }),
-      directory,
-    }),
+    api,
+    currentApi: serverSDK.currentApi,
+    sessionMutations: serverSDK.sessionMutations,
     event: emitter,
     get url() {
       return serverSDK.url
     },
-    createClient(opts: Parameters<typeof serverSDK.createClient>[0]) {
-      return serverSDK.createClient(opts)
+    createLegacyClient(opts: Parameters<typeof serverSDK.createLegacyClient>[0]) {
+      return serverSDK.createLegacyClient(opts)
     },
   }
 }

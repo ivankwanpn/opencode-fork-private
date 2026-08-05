@@ -8,6 +8,7 @@ import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTra
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
 import {
+  loadLegacyHomeSessionIndex,
   loadHomeSessionIndex,
   retainHomeSessions,
   type HomeSessionEvents,
@@ -20,6 +21,7 @@ import { displayName, errorMessage, projectForSession } from "@/pages/layout/hel
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { pathKey } from "@/utils/path-key"
 import { showToast } from "@/utils/toast"
+import { runServerSessionMutation } from "@/context/server-sdk"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { archiveHomeSession } from "../home-session-archive"
 import type { HomeController } from "./home-controller"
@@ -68,11 +70,15 @@ export function createHomeSessionsController(home: HomeController) {
       if (!ctx) return { sessions: [], eventSequence: 0 }
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
-      const index = await loadHomeSessionIndex(
-        (input, options) => ctx.sdk.client.v2.session.list(input, options),
-        eventSequence,
-        signal,
-      )
+      const { protocol, api } = await ctx.sdk.generationFor()
+      const sessionList = (
+        input: Parameters<typeof ctx.sdk.api.session.list>[0],
+        options?: Parameters<typeof ctx.sdk.api.session.list>[1],
+      ) => api.session.list(input, options)
+      const index =
+        protocol === "v1"
+          ? await loadLegacyHomeSessionIndex(projectDirectories(), sessionList, eventSequence, signal)
+          : await loadHomeSessionIndex(sessionList, eventSequence, signal)
       cache.complete(eventSequence)
       return index
     },
@@ -214,14 +220,22 @@ export function createHomeSessionsController(home: HomeController) {
         await archiveHomeSession({
           server: ServerConnection.key(conn),
           session,
-          archive: (sessionID) => ctx.sdk.api.session.archive({ sessionID, directory: session.directory }),
-          remove: () =>
+          archive: (sessionID) =>
+            runServerSessionMutation({
+              sessionMutations: ctx.sdk.sessionMutations,
+              sessionID,
+              apiForGeneration: ctx.sdk.apiForGeneration,
+              run: (api) => api.archive({ sessionID, directory: session.directory }),
+            }),
+          remove: () => {
+            ctx.sync.session.evict(session.id)
             setStore(
               produce((draft) => {
                 const match = Binary.search(draft.session, session.id, (item) => item.id)
                 if (match.found) draft.session.splice(match.index, 1)
               }),
-            ),
+            )
+          },
           onError: (cause) =>
             showToast({
               title: language.t("common.requestFailed"),

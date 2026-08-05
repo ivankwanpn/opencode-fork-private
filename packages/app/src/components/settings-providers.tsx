@@ -28,11 +28,7 @@ const PROVIDER_NOTES = [
   { match: (id: string) => id === "openrouter", key: "dialog.provider.openrouter.note" },
   { match: (id: string) => id === "vercel", key: "dialog.provider.vercel.note" },
 ] as const
-const CUSTOM_PROVIDER_PACKAGES = new Set([
-  "@ai-sdk/openai",
-  "@ai-sdk/openai-compatible",
-  "@ai-sdk/anthropic",
-])
+const CUSTOM_PROVIDER_PACKAGES = new Set(["@ai-sdk/openai", "@ai-sdk/openai-compatible", "@ai-sdk/anthropic"])
 
 export const SettingsProviders: Component<{ onBack?: () => void }> = (props) => {
   return (
@@ -126,12 +122,18 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
   }
 
   const disconnect = async (providerID: string, name: string) => {
+    const target = serverSDK()
     if (isConfigCustom(providerID)) {
-      await disconnectProviderCredentials(serverSDK().api, providerID).catch(() => undefined)
+      await target
+        .apiForGeneration()
+        .then((api) => disconnectProviderCredentials(api, providerID))
+        .catch(() => undefined)
       await disableProvider(providerID, name)
       return
     }
-    await disconnectProviderCredentials(serverSDK().api, providerID)
+    await target
+      .apiForGeneration()
+      .then((api) => disconnectProviderCredentials(api, providerID))
       .then(async () => {
         await serverSync().refreshProviders()
         showToast({
@@ -193,9 +195,9 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
                       <Show
                         when={canDisconnect(item)}
                         fallback={
-                        <span class="text-14-regular text-text-base opacity-0 group-hover:opacity-100 transition-opacity duration-200 pr-3 cursor-default">
-                          {language.t("settings.providers.connected.environmentDescription")}
-                        </span>
+                          <span class="text-14-regular text-text-base opacity-0 group-hover:opacity-100 transition-opacity duration-200 pr-3 cursor-default">
+                            {language.t("settings.providers.connected.environmentDescription")}
+                          </span>
                         }
                       >
                         <Button size="large" variant="ghost" onClick={() => void disconnect(item.id, item.name)}>

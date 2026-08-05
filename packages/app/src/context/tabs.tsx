@@ -8,7 +8,7 @@ import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { usePlatform } from "./platform"
 import { uuid } from "@/utils/uuid"
 import { SessionTabsRemovedDetail } from "@/components/titlebar-session-events"
-import { sessionHref } from "@/utils/session-route"
+import { activeSessionIDForRoute, sessionHref } from "@/utils/session-route"
 import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel } from "./prompt-state"
@@ -308,17 +308,10 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           setStore(
             produce((tabs) => {
               const sessionIDs = new Set(input.sessionIDs)
-              const currentHref =
-                targetServer === server.key && params.dir && params.id
-                  ? tabHref({
-                      type: "session",
-                      server: targetServer,
-                      sessionId: params.id,
-                    })
-                  : undefined
-              const currentIndex = currentHref
+              const currentSessionID = activeSessionIDForRoute(params, targetServer, server.key)
+              const currentIndex = currentSessionID
                 ? tabs.findIndex(
-                    (tab) => tab.type === "session" && tab.server === targetServer && tabHref(tab) === currentHref,
+                    (tab) => tab.type === "session" && tab.server === targetServer && tab.sessionId === currentSessionID,
                   )
                 : -1
               const currentTab = tabs[currentIndex]
@@ -326,6 +319,21 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
                 currentTab?.type === "session" &&
                 currentTab.server === targetServer &&
                 sessionIDs.has(currentTab.sessionId)
+
+              const nextTab = removedCurrent
+                ? tabs
+                    .slice(currentIndex + 1)
+                    .find(
+                      (tab) =>
+                        tab.type === "session" && tab.server === targetServer && !sessionIDs.has(tab.sessionId),
+                    ) ??
+                  tabs
+                    .slice(0, currentIndex)
+                    .findLast(
+                      (tab) =>
+                        tab.type === "session" && tab.server === targetServer && !sessionIDs.has(tab.sessionId),
+                    )
+                : undefined
 
               for (let i = tabs.length - 1; i >= 0; i--) {
                 const tab = tabs[i]
@@ -336,9 +344,6 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
               }
 
               if (!removedCurrent) return
-              const nextTab =
-                tabs.slice(currentIndex).find((tab) => tab.type === "session") ??
-                tabs.slice(0, currentIndex).findLast((tab) => tab.type === "session")
               if (nextTab) navigateTab(nextTab)
               else navigate("/")
             }),

@@ -177,6 +177,8 @@ export function createApiForServer(input: {
     current.mcps.connect({ name: value.server, location: value.location }, requestOptions)
   const disconnectMcp: OpenCodeClient["mcp"]["disconnect"] = (value, requestOptions) =>
     current.mcps.disconnect({ name: value.server, location: value.location }, requestOptions)
+  const authenticateMcp: CurrentClient["mcps"]["authenticate"] = (value, requestOptions) =>
+    current.mcps.authenticate(value, requestOptions)
   const catalogMcp: OpenCodeClient["mcp"]["resource"]["catalog"] = async (value, requestOptions) => {
     const result = await current.mcps.resources(value, requestOptions)
     return {
@@ -280,6 +282,7 @@ export function createApiForServer(input: {
       list: listMcp,
       connect: connectMcp,
       disconnect: disconnectMcp,
+      authenticate: authenticateMcp,
       resource: {
         catalog: catalogMcp,
       },
@@ -339,11 +342,18 @@ type CompatibleProjectApi = Omit<OpenCodeClient["project"], "list" | "update"> &
   ) => Promise<CompatibleProjectInfo>
 }
 type CompatibleLocationApi = OpenCodeClient["location"] & Pick<CurrentClient["location"], "dispose">
+type CompatibleMcpApi = OpenCodeClient["mcp"] & {
+  readonly authenticate: CurrentClient["mcps"]["authenticate"]
+}
 
 export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "project" | "worktree"> & {
   readonly session: OpenCodeClient["session"] &
-    Pick<CurrentClient["sessions"], "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel">
+    Pick<
+      CurrentClient["sessions"],
+      "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel" | "todo"
+    >
   readonly location: CompatibleLocationApi
+  readonly mcp: CompatibleMcpApi
   readonly project: CompatibleProjectApi
   readonly worktree: CurrentClient["worktrees"]
   readonly file: Omit<OpenCodeClient["file"], "read"> & {

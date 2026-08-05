@@ -17,6 +17,7 @@ import type { LocalPTY } from "@/context/terminal"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
 import { terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
+import type { ServerGeneration } from "@/utils/server-compat"
 
 const TOGGLE_TERMINAL_ID = "terminal.toggle"
 const DEFAULT_TOGGLE_TERMINAL_KEYBIND = "ctrl+`"
@@ -241,12 +242,15 @@ export const Terminal = (props: TerminalProps) => {
   }
 
   const pushSize = async (cols: number, rows: number) => {
-    return sdk()
-      .api.pty.update({
-        ptyID: id,
-        location: { directory },
-        size: { cols, rows },
-      })
+    const target = sdk()
+    return target.apiForGeneration()
+      .then((api) =>
+        api.pty.update({
+          ptyID: id,
+          location: { directory },
+          size: { cols, rows },
+        }),
+      )
       .catch((err) => {
         debugTerminal("failed to sync terminal size", err)
       })
@@ -522,18 +526,19 @@ export const Terminal = (props: TerminalProps) => {
         local.onConnectError?.(err)
       }
 
-      const gone = async () => {
-        if ((await sdk().protocol) === "v1") {
-          return sdk()
-            .client.pty.get({ ptyID: id }, { throwOnError: false })
+      const gone = async (target: ReturnType<typeof sdk>, generation: ServerGeneration) => {
+        if (generation.protocol === "v1") {
+          const legacyClient = target.createLegacyClient({ directory, throwOnError: true })
+          return legacyClient.pty
+            .get({ ptyID: id }, { throwOnError: false })
             .then((result) => result.response.status === 404)
             .catch((err) => {
               debugTerminal("failed to inspect terminal session", err)
               return false
             })
         }
-        return sdk()
-          .api.pty.get({ ptyID: id, location: { directory } })
+        return generation.api.pty
+          .get({ ptyID: id, location: { directory } })
           .then((result) => result.data.status === "exited")
           .catch((err) => {
             if (err && typeof err === "object" && "_tag" in err && err._tag === "PtyNotFoundError") return true
@@ -542,10 +547,11 @@ export const Terminal = (props: TerminalProps) => {
           })
       }
 
-      const connectToken = async () => {
-        if ((await sdk().protocol) === "v1") {
-          const result = await sdk()
-            .client.pty.connectToken(
+      const connectToken = async (target: ReturnType<typeof sdk>, generation: ServerGeneration) => {
+        if (generation.protocol === "v1") {
+          const legacyClient = target.createLegacyClient({ directory, throwOnError: true })
+          const result = await legacyClient.pty
+            .connectToken(
               { ptyID: id, directory },
               {
                 throwOnError: false,
@@ -563,8 +569,8 @@ export const Terminal = (props: TerminalProps) => {
             throw new Error("PTY connect ticket rejected by origin or CSRF checks. Check the server CORS config.")
           throw new Error(`PTY connect ticket failed with ${result.response.status}`)
         }
-        return sdk()
-          .api.pty.connectToken({
+        return generation.api.pty
+          .connectToken({
             ptyID: id,
             location: { directory },
             "x-opencode-ticket": "1",
@@ -586,7 +592,9 @@ export const Terminal = (props: TerminalProps) => {
         reconn = setTimeout(async () => {
           reconn = undefined
           if (disposed) return
-          if (await gone()) {
+          const target = sdk()
+          const generation = await target.generationFor()
+          if (await gone(target, generation)) {
             if (disposed) return
             fail(err)
             return
@@ -601,18 +609,19 @@ export const Terminal = (props: TerminalProps) => {
         if (disposed) return
         drop?.()
 
-        const ticket = await connectToken().catch((err) => {
+        const target = sdk()
+        const generation = await target.generationFor()
+        const ticket = await connectToken(target, generation).catch((err) => {
           fail(err)
           return undefined
         })
-        const protocol = await sdk().protocol
-        if (protocol === "v2" && !ticket) return
+        if (generation.protocol === "v2" && !ticket) return
         if (once.value) return
         if (disposed) return
 
         const socket = new WebSocket(
           terminalWebSocketURL({
-            protocol,
+            protocol: generation.protocol,
             url,
             id,
             directory,

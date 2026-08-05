@@ -16,6 +16,7 @@ import {
   loadMcpQuery,
   loadMcpResourcesQuery,
   isProviderCatalogEvent,
+  reconcileActiveSessionStatuses,
   refreshProviderQueries,
   seedActiveSessionStatuses,
 } from "./server-sync"
@@ -104,6 +105,21 @@ describe("active session query", () => {
       message: "retrying",
       next: 10,
     })
+  })
+
+  test("clears stale busy status and preserves retry state during reconnect recovery", () => {
+    const session = createServerSession({} as OpencodeClient)
+    session.set("session_status", "ses_done", { type: "busy" })
+    session.set("session_status", "ses_retry", { type: "retry", attempt: 2, message: "retrying", next: 10 })
+
+    const reload = reconcileActiveSessionStatuses(session, { ses_running: { type: "running" } })
+
+    expect(session.data.session_status).toEqual({
+      ses_done: { type: "idle" },
+      ses_retry: { type: "retry", attempt: 2, message: "retrying", next: 10 },
+      ses_running: { type: "busy" },
+    })
+    expect(reload.sort()).toEqual(["ses_done", "ses_retry", "ses_running"])
   })
 })
 

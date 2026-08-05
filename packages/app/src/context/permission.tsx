@@ -22,6 +22,7 @@ import {
   sessionAutoAccept,
 } from "./permission-auto-respond"
 import { extractArray } from "@/utils/response-helpers"
+import { runServerMutation } from "@/utils/session-mutation"
 
 type PermissionRespondFn = (input: {
   sessionID: string
@@ -246,21 +247,26 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
 
   const respond: PermissionRespondFn = (request) => {
     if (meta.disposed) return
-    input.sdk.api.permission
-      .reply({
-        sessionID: request.sessionID,
-        requestID: request.permissionID,
-        reply: request.response,
-        location: request.directory ? { directory: request.directory } : undefined,
-      })
+    void runServerMutation({
+      sessionMutations: input.sdk.sessionMutations,
+      sessionID: request.sessionID,
+      apiForGeneration: input.sdk.apiForGeneration,
+      run: (api) =>
+        api.permission.reply({
+          sessionID: request.sessionID,
+          requestID: request.permissionID,
+          reply: request.response,
+          location: request.directory ? { directory: request.directory } : undefined,
+        }),
+    })
       .catch(() => {
         responded.delete(request.permissionID)
       })
   }
 
   const list = (directory: string) =>
-    input.sdk.api.permission.request
-      .list({ location: { directory } })
+    input.sdk.apiForGeneration()
+      .then((api) => api.permission.request.list({ location: { directory } }))
       .then((result) => extractArray(result).map(normalizePermissionRequest))
 
   function respondOnce(permission: PermissionRequest, directory?: string) {

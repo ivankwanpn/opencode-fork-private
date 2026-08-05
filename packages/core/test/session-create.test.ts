@@ -118,6 +118,18 @@ describe("SessionV2.create", () => {
     }),
   )
 
+  it.effect("filters root and child sessions by parent identity", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const root = yield* session.create({ location })
+      const sibling = yield* session.create({ location })
+      const child = yield* session.create({ parentID: root.id, location })
+
+      expect((yield* session.list({ parentID: null })).map((item) => item.id)).toEqual([sibling.id, root.id])
+      expect((yield* session.list({ parentID: root.id })).map((item) => item.id)).toEqual([child.id])
+    }),
+  )
+
   it.effect("resolves the legacy plan path from durable session identity and project VCS", () =>
     Effect.gen(function* () {
       const session = yield* SessionV2.Service

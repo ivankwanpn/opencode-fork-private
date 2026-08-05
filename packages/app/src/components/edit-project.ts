@@ -71,12 +71,16 @@ export function createEditProjectModel(props: { project: LocalProject; server: S
       const start = store.startup.trim()
 
       if (props.project.id && props.project.id !== "global") {
-        const project = await serverCtx().sdk.api.project.update({
-          projectID: props.project.id,
-          name,
-          icon: { color: store.color || "", override: store.iconOverride || "" },
-          commands: { start },
-        })
+        const projectID = props.project.id
+        const target = serverCtx().sdk
+        const project = await target.apiForGeneration().then((api) =>
+          api.project.update({
+            projectID,
+            name,
+            icon: { color: store.color || "", override: store.iconOverride || "" },
+            commands: { start },
+          }),
+        )
         serverCtx().sync.set("project", (items) =>
           items.map((item) => (item.id === project.id ? normalizeProjectInfo(project) : item)),
         )

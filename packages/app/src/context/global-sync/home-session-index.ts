@@ -1,9 +1,14 @@
-import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
+import type { Event, Session, SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import type { SessionInfo } from "@opencode-ai/client/promise"
 import type { QueryClient } from "@tanstack/solid-query"
+import { normalizeSessionInfo } from "@/utils/session"
+import { extractArray } from "@/utils/response-helpers"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
 
 export const HOME_V2_SESSION_PAGE_LIMIT = 5_000
+
+type HomeSessionInfo = Omit<SessionV2Info, "revert">
 
 export type HomeSessionEvent = {
   type: "session.created" | "session.updated" | "session.deleted"
@@ -21,33 +26,70 @@ export type HomeSessionIndex = {
 export const homeSessionIndexKey = (server: string) => ["home", "session-index", server] as const
 export const homeSessionEventsKey = (server: string) => ["home", "session-events", server] as const
 
-type HomeSessionPage = { data?: V2SessionListResponse }
+type HomeSessionPage = {
+  data: ReadonlyArray<HomeSessionInfo>
+  cursor: { next?: string | null }
+}
+type LegacyHomeSessionList = (
+  input: { directory: string; parentID: null; limit: number; order: "desc" },
+  options: { signal?: AbortSignal },
+) => Promise<unknown>
 
 export async function loadHomeSessionIndex(
   list: (
-    input: { limit: number; order: "desc"; cursor?: string },
+    input: { parentID: null; limit: number; order: "desc"; cursor?: string },
     options: { signal?: AbortSignal },
   ) => Promise<HomeSessionPage>,
   eventSequence = 0,
   signal?: AbortSignal,
 ) {
-  const data: SessionV2Info[] = []
+  const data: HomeSessionInfo[] = []
   let cursor: string | undefined
 
   for (;;) {
     const response = await list(
       {
+        parentID: null,
         limit: HOME_V2_SESSION_PAGE_LIMIT,
         order: "desc",
         ...(cursor ? { cursor } : {}),
       },
       { signal },
     )
-    const page = response.data!
+    const page = response
     data.push(...page.data)
     if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
       return { sessions: parseHomeSessionIndex(data), eventSequence }
     cursor = page.cursor.next
+  }
+}
+
+export async function loadLegacyHomeSessionIndex(
+  directories: readonly string[],
+  list: LegacyHomeSessionList,
+  eventSequence = 0,
+  signal?: AbortSignal,
+) {
+  const uniqueDirectories = [...new Map(directories.map((directory) => [pathKey(directory), directory])).values()]
+  const sessions = (
+    await Promise.all(
+      uniqueDirectories.map(async (directory) => {
+        const result = await list(
+          { directory, parentID: null, limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" },
+          { signal },
+        )
+        return extractArray<SessionInfo | Session>(result).map(normalizeSessionInfo)
+      }),
+    )
+  ).flat()
+
+  return {
+    sessions: [...new Map(
+      sessions
+        .filter((session) => !session.parentID && typeof session.time.archived !== "number")
+        .map((session) => [session.id, session] as const),
+    ).values()],
+    eventSequence,
   }
 }
 
@@ -125,12 +167,10 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
   }
 }
 
-// TODO(v2): This deliberately dumb full-table scan is necessary because the
-// current V2 API orders by creation time and cannot filter roots, archives, or
-// multiple directories. A bounded page could omit an old session updated today.
-// Once released, use client.v2.project.list() and client.v2.session.list({
-// parentID: null, order: "desc" }), then remove this adapter and its V1 fields.
-export function parseHomeSessionIndex(sessions: SessionV2Info[]): Session[] {
+// Keep this projection local to the Home UI until its store is fully native.
+// The V2 request already filters root sessions; the checks below remain
+// defensive for older sidecars that return a broader page.
+export function parseHomeSessionIndex(sessions: ReadonlyArray<HomeSessionInfo>): Session[] {
   return sessions.flatMap((item) => {
     if (item.parentID || typeof item.time.archived === "number") return []
     return [toLegacySummary(item)]

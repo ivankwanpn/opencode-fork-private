@@ -4,6 +4,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { useGlobal } from "@/context/global"
+import { resolveServerSessionApi } from "@/context/server-sdk"
 import { useLanguage } from "@/context/language"
 import { ServerConnection, serverName } from "@/context/server"
 import { displayName, projectForSession } from "@/pages/layout/helpers"
@@ -120,7 +121,8 @@ export function TabNavItem(props: {
     const ctx = serverCtx()
     const session = props.session()
     if (!ctx || !session) return
-    await ctx.sdk.api.session.rename({ sessionID: session.id, title })
+    const api = await resolveServerSessionApi(ctx.sdk)
+    await api.rename({ sessionID: session.id, title })
   }
 
   const closeRename = async (save: boolean) => {

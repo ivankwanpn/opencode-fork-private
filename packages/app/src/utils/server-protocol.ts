@@ -2,9 +2,33 @@ import type { ServerConnection } from "@/context/server"
 import { authTokenFromCredentials } from "./server"
 
 export type ServerProtocol = "v1" | "v2"
+export type ServerProtocolMode = "auto" | ServerProtocol
+export type ServerProtocolResolver = Promise<ServerProtocol> | (() => Promise<ServerProtocol>)
+export type ServerProtocolDetails = {
+  protocol: ServerProtocol
+  version?: string
+  pid?: number
+  backgroundSubagents?: boolean
+}
+
+export function resolveServerProtocol(protocol?: ServerProtocolResolver) {
+  if (!protocol) return Promise.resolve<ServerProtocol | undefined>(undefined)
+  return typeof protocol === "function" ? protocol() : protocol
+}
+
+export function resolveServerProtocolMode(value: unknown): ServerProtocolMode {
+  if (value === "v1" || value === "v2") return value
+  return "auto"
+}
+
+export function resolveDesktopServerProtocolMode(serverType: ServerConnection.Any["type"], value: unknown) {
+  if (serverType === "sidecar") return "v2" as const
+  return resolveServerProtocolMode(value)
+}
 
 export type DetectServerProtocolOptions = {
   v2Only?: boolean
+  mode?: ServerProtocolMode
 }
 
 function headers(server: ServerConnection.HttpBase) {
@@ -25,24 +49,50 @@ async function probe(server: ServerConnection.HttpBase, fetch: typeof globalThis
   return value
 }
 
-function isV2Health(value: unknown) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "healthy" in value &&
-    value.healthy === true &&
-    "pid" in value &&
-    typeof value.pid === "number"
-  )
+function healthDetails(value: unknown) {
+  if (value === null || typeof value !== "object" || !("healthy" in value) || value.healthy !== true) return
+  return {
+    version: "version" in value && typeof value.version === "string" ? value.version : undefined,
+    pid: "pid" in value && typeof value.pid === "number" ? value.pid : undefined,
+  }
 }
 
-function isV2Capability(value: unknown) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "backgroundSubagents" in value &&
-    typeof value.backgroundSubagents === "boolean"
+function capabilityDetails(value: unknown) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("backgroundSubagents" in value) ||
+    typeof value.backgroundSubagents !== "boolean"
   )
+    return
+  return { backgroundSubagents: value.backgroundSubagents }
+}
+
+export async function detectServerProtocolDetails(
+  server: ServerConnection.HttpBase,
+  fetch: typeof globalThis.fetch,
+  options?: DetectServerProtocolOptions,
+): Promise<ServerProtocolDetails> {
+  const mode = options?.mode ?? (options?.v2Only ? "v2" : "auto")
+  if (mode === "v1") return { protocol: "v1" }
+
+  const current = await probe(server, fetch, "/api/health").catch(() => undefined)
+  const currentHealth = healthDetails(current)
+  if (currentHealth?.pid !== undefined) {
+    if (mode !== "v2") return { protocol: "v2", ...currentHealth }
+    const capability = await probe(server, fetch, "/api/capability").catch(() => undefined)
+    const currentCapability = capabilityDetails(capability)
+    if (currentCapability) return { protocol: "v2", ...currentHealth, ...currentCapability }
+    throw new Error("V2 server capability contract unavailable")
+  }
+
+  if (mode === "v2") throw new Error("V2 server health contract unavailable")
+
+  const legacy = await probe(server, fetch, "/global/health").catch(() => undefined)
+  const legacyHealth = healthDetails(legacy)
+  if (legacyHealth) return { protocol: "v1", version: legacyHealth.version ?? currentHealth?.version }
+  if (currentHealth) return { protocol: "v1", version: currentHealth.version }
+  return { protocol: "v2" }
 }
 
 export async function detectServerProtocol(
@@ -50,18 +100,5 @@ export async function detectServerProtocol(
   fetch: typeof globalThis.fetch,
   options?: DetectServerProtocolOptions,
 ): Promise<ServerProtocol> {
-  const current = await probe(server, fetch, "/api/health").catch(() => undefined)
-  if (isV2Health(current)) {
-    if (!options?.v2Only) return "v2"
-    const capability = await probe(server, fetch, "/api/capability").catch(() => undefined)
-    if (isV2Capability(capability)) return "v2"
-    throw new Error("V2 server capability contract unavailable")
-  }
-
-  if (options?.v2Only) throw new Error("V2 server health contract unavailable")
-
-  const legacy = await probe(server, fetch, "/global/health").catch(() => undefined)
-  if (legacy && "healthy" in legacy && legacy.healthy === true) return "v1"
-  if (current && "healthy" in current && current.healthy === true) return "v1"
-  return "v2"
+  return (await detectServerProtocolDetails(server, fetch, options)).protocol
 }

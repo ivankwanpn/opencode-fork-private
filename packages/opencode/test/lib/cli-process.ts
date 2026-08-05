@@ -123,7 +123,8 @@ export type ServeHandle = {
   readonly url: string
   readonly hostname: string
   readonly port: number
-  // Sends SIGTERM. The scope finalizer also calls this, so tests rarely need
+  // Sends SIGINT so the server can run its Effect/SQLite cleanup. The scope
+  // finalizer also calls this, so tests rarely need
   // to invoke it directly — useful for tests that assert exit behavior.
   readonly kill: () => void
   // Resolves with the exit code once the process exits. Bun returns a number.
@@ -379,7 +380,7 @@ export function withCliFixture<A, E>(
         hostname: match.hostname,
         port: match.port,
         kill: () => {
-          proc.kill()
+          proc.kill("SIGINT")
         },
         exited: proc.exited as Promise<number>,
       } satisfies ServeHandle

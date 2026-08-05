@@ -5,8 +5,11 @@ import type { Details } from "electron"
 import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
+import { checkHealth } from "./server-health"
 import type { SystemProxyState } from "./system-proxy"
 import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
+
+export { checkHealth } from "./server-health"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -155,7 +158,7 @@ export async function spawnLocalServer(
     const ready = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, password)) {
+        if (await checkHealth(url, password, { v2Only: true })) {
           healthy = true
           return
         }
@@ -188,33 +191,6 @@ export async function spawnLocalServer(
     },
     health: { wait },
   }
-}
-
-export async function checkHealth(url: string, password?: string | null): Promise<boolean> {
-  let healthUrls: URL[]
-  try {
-    healthUrls = [new URL("/api/health", url), new URL("/global/health", url)]
-  } catch {
-    return false
-  }
-
-  const headers = new Headers()
-  if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
-    headers.set("authorization", `Basic ${auth}`)
-  }
-
-  for (const healthUrl of healthUrls) {
-    try {
-      const res = await fetch(healthUrl, {
-        method: "GET",
-        headers,
-        signal: AbortSignal.timeout(3000),
-      })
-      if (res.ok) return true
-    } catch {}
-  }
-  return false
 }
 
 function createSidecarEnv(): Record<string, string> {

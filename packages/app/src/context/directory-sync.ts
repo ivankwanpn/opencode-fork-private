@@ -2,6 +2,7 @@ import { Binary } from "@opencode-ai/core/util/binary"
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client"
 import { createMemo } from "solid-js"
 import { produce, reconcile, type SetStoreFunction } from "solid-js/store"
+import { resolveServerSessionApi, runServerSessionMutation } from "./server-sdk"
 import type { createServerSdkContext } from "./server-sdk"
 import type { createServerSyncContextInner } from "./server-sync"
 import type { State } from "./global-sync/types"
@@ -26,7 +27,6 @@ export const createDirSyncContext = (
   serverSync: ReturnType<typeof createServerSyncContextInner>,
   serverSDK: ReturnType<typeof createServerSdkContext>,
 ) => {
-  const client = serverSDK.createClient({ directory, throwOnError: true })
   const current = createMemo(() => serverSync.child(directory, { mcp: true }))
   const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
   const data = new Proxy({} as State, {
@@ -116,6 +116,16 @@ export const createDirSyncContext = (
         await serverSync.session.sync(sessionID, options)
         index(sessionID)
       },
+      context: {
+        get(sessionID: string) {
+          const session = serverSync.session.get(sessionID)
+          if (session?.directory !== directory) return
+          return serverSync.session.context.get(sessionID)
+        },
+        refresh(sessionID: string) {
+          return serverSync.session.context.refresh(sessionID)
+        },
+      },
       todo: serverSync.session.todo,
       history: serverSync.session.history,
       evict(sessionID: string) {
@@ -124,7 +134,9 @@ export const createDirSyncContext = (
       fetch: async (count = 10) => {
         const [store, setStore] = current()
         setStore("limit", (value) => value + count)
-        const response = await serverSDK.api.session.list({ directory, limit: store.limit, order: "desc" })
+        const response = await resolveServerSessionApi({
+          apiForGeneration: serverSDK.apiForGeneration,
+        }).then((api) => api.list({ directory, limit: store.limit, order: "desc" }))
         const sessions = response.data
           .map(normalizeSessionInfo)
           .sort((a, b) => cmp(a.id, b.id))
@@ -134,7 +146,13 @@ export const createDirSyncContext = (
       },
       more: createMemo(() => current()[0].session.length >= current()[0].limit),
       archive: async (sessionID: string) => {
-        await serverSDK.api.session.archive({ sessionID, directory })
+        await runServerSessionMutation({
+          sessionMutations: serverSDK.sessionMutations,
+          sessionID,
+          apiForGeneration: serverSDK.apiForGeneration,
+          run: (api) => api.archive({ sessionID, directory }),
+        })
+        serverSync.session.evict(sessionID)
         current()[1](
           "session",
           produce((draft) => {

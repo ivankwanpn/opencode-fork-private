@@ -125,6 +125,26 @@ describe("session follow-up state", () => {
     expect(state.items()).toEqual([])
   })
 
+  test("does not call the V2 follow-up API when the connection is V1", async () => {
+    const fixture = createFixture([row({ id: "msg_v1", delivery: "queue" })])
+    const state = createSessionFollowupState({
+      sessionID: () => "ses_1",
+      api: () => fixture.api as never,
+      enabled: () => false,
+    })
+
+    await state.refresh()
+
+    expect(state.items()).toEqual([])
+    expect(fixture.calls.list).toEqual([])
+    expect(await state.reconcile("msg_v1")).toBeUndefined()
+    expect(await state.promote("msg_v1")).toBe(false)
+    expect(await state.remove("msg_v1")).toBe(false)
+    expect(fixture.calls.get).toEqual([])
+    expect(fixture.calls.promote).toEqual([])
+    expect(fixture.calls.cancel).toEqual([])
+  })
+
   test("restores the canonical prompt attachments for editing", () => {
     const edit = toSessionFollowupEdit({
       ...row({ id: "msg_edit_prompt", delivery: "queue" }),

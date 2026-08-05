@@ -144,15 +144,17 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
   }
 
   const available = async () => {
-    if ((await serverSDK().protocol) === "v2") return true
+    const target = serverSDK()
+    const generation = await target.generationFor()
+    if (generation.protocol === "v2") return generation.api
     setDiscovery("saveError", language.t("provider.custom.unavailable"))
-    return false
   }
 
   const discoverMutation = useMutation(() => ({
     mutationFn: async () => {
-      if (!(await available())) return
-      return serverSDK().currentApi.providers.discoverCustom({
+      const api = await available()
+      if (!api) return
+      return api.providers.discoverCustom({
         baseURL: form.baseURL.trim(),
         apiKey: form.apiKey.trim() || undefined,
         headers: headers(),
@@ -219,8 +221,9 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
 
   const saveMutation = useMutation(() => ({
     mutationFn: async (result: CustomProvider.ConfigureInput) => {
-      if (!(await available())) return
-      const configured = await serverSDK().currentApi.providers.configureCustom({
+      const api = await available()
+      if (!api) return
+      const configured = await api.providers.configureCustom({
         ...result,
         location: location(),
       })

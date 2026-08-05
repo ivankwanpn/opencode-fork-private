@@ -560,6 +560,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           setColors(worktree, color)
         }
         if (!project.id) continue
+        const projectID = project.id
 
         const requested = colorRequested.get(worktree)
         if (requested === color) continue
@@ -570,8 +571,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           continue
         }
 
-        void serverSdk()
-          .api.project.update({ projectID: project.id, icon: { color } })
+        const target = serverSdk()
+        void target
+          .apiForGeneration()
+          .then((api) => api.project.update({ projectID, icon: { color } }))
           .then((result) =>
             serverSync().set("project", (items) =>
               items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),

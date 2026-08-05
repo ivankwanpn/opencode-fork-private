@@ -396,11 +396,15 @@ function ProviderConnection(props: {
     return value ? { directory: value } : undefined
   }
   const oauth = createOAuthAttemptLifecycle<IntegrationOauthConnectOutput["data"]>((authorization) =>
-    serverSDK().api.integration.oauth.cancel({
-      integrationID: props.provider,
-      attemptID: authorization.attemptID,
-      location: location(),
-    }),
+    serverSDK()
+      .apiForGeneration()
+      .then((api) =>
+        api.integration.oauth.cancel({
+          integrationID: props.provider,
+          attemptID: authorization.attemptID,
+          location: location(),
+        }),
+      ),
   )
 
   const alive = { value: true }
@@ -427,10 +431,13 @@ function ProviderConnection(props: {
     () => ({ provider: props.provider, directory: directory() }),
     (input) =>
       serverSDK()
-        .api.integration.get({
-          integrationID: input.provider,
-          location: input.directory ? { directory: input.directory } : undefined,
-        })
+        .apiForGeneration()
+        .then((api) =>
+          api.integration.get({
+            integrationID: input.provider,
+            location: input.directory ? { directory: input.directory } : undefined,
+          }),
+        )
         .then((result) => result.data),
   )
   const loading = createMemo(() => integration.loading)
@@ -557,12 +564,15 @@ function ProviderConnection(props: {
       dispatch({ type: "auth.pending" })
       const generation = oauth.begin()
       await serverSDK()
-        .api.integration.oauth.connect({
-          integrationID: props.provider,
-          methodID: method.id,
-          inputs: inputs ?? {},
-          location: location(),
-        })
+        .apiForGeneration()
+        .then((api) =>
+          api.integration.oauth.connect({
+            integrationID: props.provider,
+            methodID: method.id,
+            inputs: inputs ?? {},
+            location: location(),
+          }),
+        )
         .then((x) => {
           if (!oauth.accept(generation, x.data)) return
           if (!alive.value) {
@@ -832,11 +842,15 @@ function ProviderConnection(props: {
       }
 
       setFormStore("error", undefined)
-      await serverSDK().api.integration.connect.key({
-        integrationID: props.provider,
-        location: location(),
-        key: apiKey,
-      })
+      await serverSDK()
+        .apiForGeneration()
+        .then((api) =>
+          api.integration.connect.key({
+            integrationID: props.provider,
+            location: location(),
+            key: apiKey,
+          }),
+        )
       await complete()
     }
 
@@ -962,12 +976,15 @@ function ProviderConnection(props: {
 
       setFormStore("error", undefined)
       const result = await serverSDK()
-        .api.integration.oauth.complete({
-          integrationID: props.provider,
-          attemptID: store.authorization!.attemptID,
-          location: location(),
-          code,
-        })
+        .apiForGeneration()
+        .then((api) =>
+          api.integration.oauth.complete({
+            integrationID: props.provider,
+            attemptID: store.authorization!.attemptID,
+            location: location(),
+            code,
+          }),
+        )
         .then(() => ({ ok: true as const }))
         .catch((error) => ({ ok: false as const, error }))
       if (result.ok) {
@@ -1059,11 +1076,14 @@ function ProviderConnection(props: {
         const authorization = store.authorization
         if (!authorization || !alive.value) return
         const result = await serverSDK()
-          .api.integration.oauth.status({
-            integrationID: props.provider,
-            attemptID: authorization.attemptID,
-            location: location(),
-          })
+          .apiForGeneration()
+          .then((api) =>
+            api.integration.oauth.status({
+              integrationID: props.provider,
+              attemptID: authorization.attemptID,
+              location: location(),
+            }),
+          )
           .then((value) => ({ ok: true as const, status: value.data }))
           .catch((error) => ({ ok: false as const, error }))
         if (!alive.value) return

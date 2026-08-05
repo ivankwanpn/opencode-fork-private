@@ -12173,6 +12173,10 @@ export type V2SessionListData = {
     limit?: number
     order?: "asc" | "desc"
     search?: string
+    /**
+     * Filter by parent session. Use null to return root sessions only.
+     */
+    parentID?: "null" | string
     directory?: string
     project?: string
     subpath?: string

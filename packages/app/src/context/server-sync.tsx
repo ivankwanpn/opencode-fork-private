@@ -45,9 +45,11 @@ import { useGlobal } from "./global"
 import { ServerConnection, useServer } from "./server"
 import { retry } from "@opencode-ai/core/util/retry"
 import type { ServerScope } from "@/utils/server-scope"
+import type { ServerProtocolResolver } from "@/utils/server-protocol"
 import { createHomeSessionIndexCache } from "./global-sync/home-session-index"
 import { persisted } from "@/utils/persist"
 import type { ServerApi } from "@/utils/server"
+import type { CompatibleImplementation, ServerGeneration } from "@/utils/server-compat"
 import type {
   McpListInput,
   McpListOutput,
@@ -60,6 +62,11 @@ import type {
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
 import { extractArray } from "@/utils/response-helpers"
+import {
+  notifySessionTabsReconcile,
+  notifySessionTabsRemoved,
+  sessionTabsRemovedFromServerEvent,
+} from "@/components/titlebar-session-events"
 
 type GlobalStore = {
   ready: boolean
@@ -103,6 +110,7 @@ export const loadMcpQuery = (
   scope: ServerScope,
   directory: string,
   api: McpListApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ): ApiQueryOptions<Record<string, McpServer["status"]>, readonly [ServerScope, string, "mcp"]> =>
   queryOptions<
     Record<string, McpServer["status"]>,
@@ -111,7 +119,10 @@ export const loadMcpQuery = (
     readonly [ServerScope, string, "mcp"]
   >({
     queryKey: [scope, directory, "mcp"] as const,
-    queryFn: () =>
+    queryFn: async () =>
+      (await apiForGeneration?.())
+        ?.mcp.list({ location: { directory } })
+        .then((result) => Object.fromEntries(extractArray(result).map((server) => [server.name, server.status]))) ??
       api
         .list({ location: { directory } })
         .then((result) => Object.fromEntries(extractArray(result).map((server) => [server.name, server.status]))),
@@ -121,6 +132,7 @@ export const loadMcpResourcesQuery = (
   scope: ServerScope,
   directory: string,
   api: McpResourceApi,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
 ): ApiQueryOptions<Record<string, McpResource>, readonly [ServerScope, string, "mcpResources"]> =>
   queryOptions<
     Record<string, McpResource>,
@@ -129,7 +141,15 @@ export const loadMcpResourcesQuery = (
     readonly [ServerScope, string, "mcpResources"]
   >({
     queryKey: [scope, directory, "mcpResources"] as const,
-    queryFn: () =>
+    queryFn: async () =>
+      (await apiForGeneration?.())
+        ?.mcp.resource
+        .catalog({ location: { directory } })
+        .then((result) =>
+          Object.fromEntries(
+            extractMcpResources(result).map((resource) => [`${resource.server}:${resource.uri}`, resource]),
+          ),
+        ) ??
       api.resource
         .catalog({ location: { directory } })
         .then((result) =>
@@ -143,15 +163,16 @@ export const loadMcpResourcesQuery = (
 export const loadLspQuery = (
   scope: ServerScope,
   directory: string,
-  sdk: OpencodeClient,
   api: ServerApi["lsp"],
-  protocol: Promise<"v1" | "v2">,
+  apiForGeneration?: () => Promise<CompatibleImplementation>,
+  generationFor?: () => Promise<ServerGeneration>,
 ) =>
   queryOptions({
     queryKey: [scope, directory, "lsp"] as const,
     queryFn: async () => {
-      if ((await protocol) === "v1") return (await sdk.lsp.status()).data ?? []
-      return (await api.status({ location: { directory } })).data.slice()
+      const generation = await generationFor?.()
+      const current = generation?.api.lsp ?? (await apiForGeneration?.())?.lsp ?? api
+      return (await current.status({ location: { directory } })).data.slice()
     },
   })
 
@@ -204,25 +225,86 @@ export function seedActiveSessionStatuses(
   }
 }
 
+export function reconcileActiveSessionStatuses(
+  session: Pick<ServerSession, "data" | "set">,
+  active: SessionActiveOutput | Record<string, SessionStatus>,
+) {
+  const reload = new Set([
+    ...Object.keys(active),
+    ...Object.entries(session.data.session_status)
+      .filter(([, status]) => status.type !== "idle")
+      .map(([sessionID]) => sessionID),
+  ])
+
+  session.set(
+    "session_status",
+    produce((draft) => {
+      for (const sessionID of Object.keys(draft)) {
+        const status = active[sessionID]
+        if (status) {
+          draft[sessionID] = status.type === "running" ? { type: "busy" } : status
+          continue
+        }
+        if (draft[sessionID]?.type === "busy") draft[sessionID] = { type: "idle" }
+      }
+
+      for (const [sessionID, status] of Object.entries(active)) {
+        draft[sessionID] = status.type === "running" ? { type: "busy" } : status
+      }
+    }),
+  )
+
+  return [...reload]
+}
+
 function makeQueryOptionsApi(
   scope: ServerScope,
-  serverSDK: () => OpencodeClient,
+  legacyClient: () => OpencodeClient,
   serverAPI: ServerApi,
-  sdkFor: (dir: PathKey) => OpencodeClient,
-  protocol: Promise<"v1" | "v2">,
+  legacyClientFor: (dir: PathKey) => OpencodeClient,
+  protocol: ServerProtocolResolver,
+  apiForGeneration: () => Promise<CompatibleImplementation>,
+  generationFor: () => Promise<ServerGeneration>,
 ) {
   return {
-    globalConfig: () => loadCompatibleConfigQuery(scope, serverAPI.config),
-    projects: () => loadProjectsQuery(scope, serverAPI.project),
+    globalConfig: () => loadCompatibleConfigQuery(scope, serverAPI.config, apiForGeneration),
+    projects: () => loadProjectsQuery(scope, serverAPI.project, apiForGeneration),
     providers: (directory: PathKey | null) =>
-      loadProvidersQuery(scope, directory, serverAPI, directory ? sdkFor(directory) : serverSDK(), protocol),
-    path: (directory: PathKey | null) => loadPathQuery(scope, directory, serverAPI.path),
-    agents: (directory: PathKey) => loadAgentsQuery(scope, directory, serverAPI.agent, sdkFor(directory), protocol),
+      loadProvidersQuery(
+        scope,
+        directory,
+        serverAPI,
+        directory ? legacyClientFor(directory) : legacyClient(),
+        protocol,
+        apiForGeneration,
+        generationFor,
+      ),
+    path: (directory: PathKey | null) => loadPathQuery(scope, directory, serverAPI.path, apiForGeneration),
+    agents: (directory: PathKey) =>
+      loadAgentsQuery(
+        scope,
+        directory,
+        serverAPI.agent,
+        legacyClientFor(directory),
+        protocol,
+        apiForGeneration,
+        generationFor,
+      ),
     references: (directory: PathKey) =>
-      loadReferencesQuery(scope, directory, serverAPI.reference, sdkFor(directory), protocol),
-    mcp: (directory: PathKey) => loadMcpQuery(scope, directory, serverAPI.mcp),
-    mcpResources: (directory: PathKey) => loadMcpResourcesQuery(scope, directory, serverAPI.mcp),
-    lsp: (directory: PathKey) => loadLspQuery(scope, directory, sdkFor(directory), serverAPI.lsp, protocol),
+      loadReferencesQuery(
+        scope,
+        directory,
+        serverAPI.reference,
+        legacyClientFor(directory),
+        protocol,
+        apiForGeneration,
+        generationFor,
+      ),
+    mcp: (directory: PathKey) => loadMcpQuery(scope, directory, serverAPI.mcp, apiForGeneration),
+    mcpResources: (directory: PathKey) =>
+      loadMcpResourcesQuery(scope, directory, serverAPI.mcp, apiForGeneration),
+    lsp: (directory: PathKey) =>
+      loadLspQuery(scope, directory, serverAPI.lsp, apiForGeneration, generationFor),
     sessions: (directory: PathKey) => ({ queryKey: [scope, directory, "loadSessions"] as const }),
   }
 }
@@ -233,32 +315,58 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const owner = getOwner()
   if (!owner) throw new Error("ServerSync must be created within owner")
 
-  const sdkCache = new Map<string, OpencodeClient>()
+  const legacyClientCache = new Map<string, OpencodeClient>()
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
   const sessionMeta = new Map<string, { limit: number }>()
+  const requestRevisions = new Map<string, { permission: number; question: number }>()
 
-  const sdkFor = (directory: string) => {
+  const pendingRequestRevision = (directory: string) => {
     const key = directoryKey(directory)
-    const cached = sdkCache.get(key)
+    const current = requestRevisions.get(key) ?? { permission: 0, question: 0 }
+    requestRevisions.set(key, current)
+    return {
+      permission: () => requestRevisions.get(key)?.permission ?? 0,
+      question: () => requestRevisions.get(key)?.question ?? 0,
+    }
+  }
+
+  const bumpPendingRequestRevision = (directory: string, type: string) => {
+    const key = directoryKey(directory)
+    const current = requestRevisions.get(key) ?? { permission: 0, question: 0 }
+    if (type.startsWith("permission.")) {
+      requestRevisions.set(key, { ...current, permission: current.permission + 1 })
+      return
+    }
+    if (type.startsWith("question.")) requestRevisions.set(key, { ...current, question: current.question + 1 })
+  }
+
+  const legacyClientFor = (directory: string) => {
+    const key = directoryKey(directory)
+    const cached = legacyClientCache.get(key)
     if (cached) return cached
-    const sdk = serverSDK.createClient({
+    const client = serverSDK.createLegacyClient({
       directory,
       throwOnError: true,
     })
-    sdkCache.set(key, sdk)
-    return sdk
+    legacyClientCache.set(key, client)
+    return client
   }
 
-  const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
-    protocol: serverSDK.protocol,
+  const session = createServerSession(serverSDK.legacyClient, serverSDK.api.session, serverSDK.api.message, {
+    protocol: serverSDK.protocolForGeneration,
+    api: serverSDK.api,
+    apiForGeneration: serverSDK.apiForGeneration,
+    generationFor: serverSDK.generationFor,
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
-    () => serverSDK.client,
+    () => serverSDK.legacyClient,
     serverSDK.api,
-    sdkFor,
-    serverSDK.protocol,
+    legacyClientFor,
+    serverSDK.protocolForGeneration,
+    serverSDK.apiForGeneration,
+    serverSDK.generationFor,
   )
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
@@ -267,7 +375,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const activeSessionsQuery = useQuery(() =>
     loadActiveSessionsQuery(serverSDK.scope, {
       active: async () => {
-        const active = await serverSDK.api.session.active()
+        const active = await serverSDK.apiForGeneration().then((api) => api.session.active())
         seedActiveSessionStatuses(session, active)
         for (const sessionID of Object.keys(active)) {
           void session.resolve(sessionID).catch(() => undefined)
@@ -331,9 +439,11 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     queryKey: [serverSDK.scope, "bootstrap"],
     queryFn: async () => {
       await bootstrapGlobal({
-        serverSDK: serverSDK.client,
+        legacyClient: serverSDK.legacyClient,
         serverAPI: serverSDK.api,
-        protocol: serverSDK.protocol,
+        apiForGeneration: serverSDK.apiForGeneration,
+        generationFor: serverSDK.generationFor,
+        protocol: serverSDK.protocolForGeneration,
         scope: serverSDK.scope,
         requestFailedTitle: language.t("common.requestFailed"),
         translate: language.t,
@@ -373,7 +483,18 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       void bootstrapInstance(directory)
     },
     onMcp: (directory, setStore) => {
-      void loadCommands(directory, serverSDK.api.command, sdkFor(directory), serverSDK.protocol)
+      void serverSDK
+        .apiForGeneration()
+        .then((api) =>
+          loadCommands(
+            directory,
+            api.command,
+            legacyClientFor(directory),
+            serverSDK.protocolForGeneration,
+            serverSDK.apiForGeneration,
+            serverSDK.generationFor,
+          ),
+        )
         .then((commands) => setStore("command", commands))
         .catch((err) => {
           showToast({
@@ -387,7 +508,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       const key = directoryKey(directory)
       queue.clear(key)
       sessionMeta.delete(key)
-      sdkCache.delete(key)
+      requestRevisions.delete(key)
+      legacyClientCache.delete(key)
       clearProviderRev(serverSDK.scope, key)
     },
     translate: language.t,
@@ -426,12 +548,11 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
         queryFn: () =>
-          serverSDK.protocol
-            .then((protocol) =>
-              protocol === "v1"
-                ? loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
-                : loadRootSessions({ api: serverSDK.api.session, directory, limit }),
-            )
+          serverSDK.generationFor().then(({ protocol, api }) => {
+            if (protocol === "v1")
+              return loadRootSessionsV1({ client: legacyClientFor(directory), directory, limit })
+            return loadRootSessions({ api: api.session, directory, limit })
+          })
             .then((x) => {
               const nonArchived = (x.data ?? [])
                 .filter((s) => !!s?.id)
@@ -489,7 +610,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       const child = children.ensureChild(directory)
       const cache = children.vcsCache.get(key)
       if (!cache) return
-      const sdk = sdkFor(directory)
+      const legacyClient = legacyClientFor(directory)
       await bootstrapDirectory({
         directory,
         scope: serverSDK.scope,
@@ -500,8 +621,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           project: globalStore.project,
           provider: globalStore.provider,
         },
-        sdk,
+        sdk: legacyClient,
         api: serverSDK.api,
+        apiForGeneration: serverSDK.apiForGeneration,
+        generationFor: serverSDK.generationFor,
         store: child[0],
         setStore: child[1],
         vcsCache: cache,
@@ -509,7 +632,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         translate: language.t,
         queryClient,
         session,
-        protocol: serverSDK.protocol,
+        protocol: serverSDK.protocolForGeneration,
+        activeSessions: () => activeSessionsQuery.data,
+        pendingRequestRevision: pendingRequestRevision(directory),
       })
     })
 
@@ -547,14 +672,36 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
+    const server = ServerConnection.key(serverSDK.server)
+    const removedTabs = sessionTabsRemovedFromServerEvent({ server, directory, event })
+    if (removedTabs) notifySessionTabsRemoved(removedTabs)
     if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
       homeSessions.apply(event)
     }
     homeSessions.refresh(event.type)
 
     if (directory === "global") {
-      if (eventType === "server.connected" && activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching)
-        void activeSessionsQuery.refetch()
+      if (eventType === "server.connected") {
+        notifySessionTabsReconcile({ server })
+        if (!recent) {
+          void bootstrap.refetch()
+          void activeSessionsQuery
+            .refetch()
+            .then((result) => {
+              if (result.data === undefined) return
+              const sessionIDs = reconcileActiveSessionStatuses(session, result.data)
+              return Promise.allSettled(
+                sessionIDs.flatMap((sessionID) => [
+                  session.sync(sessionID, { force: true }),
+                  session.context.refresh(sessionID),
+                ]),
+              )
+            })
+            .catch((error) => console.error("Failed to recover sessions after server reconnect", error))
+        } else if (activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching) {
+          void activeSessionsQuery.refetch()
+        }
+      }
       applyGlobalEvent({
         event,
         project: globalStore.project,
@@ -594,6 +741,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const existing = children.children[key]
     if (!existing) return
     children.mark(key)
+    if (
+      eventType === "permission.asked" ||
+      eventType === "permission.replied" ||
+      eventType === "question.asked" ||
+      eventType === "question.replied" ||
+      eventType === "question.rejected"
+    )
+      bumpPendingRequestRevision(key, eventType)
     if (
       event.current?.type === "session.moved" ||
       event.current?.type === "session.next.moved" ||
@@ -677,10 +832,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   }
 
   const updateConfigMutation = useMutation(() => ({
-    mutationFn: (config: Config) =>
-      serverSDK.api.config.update({
+    mutationFn: async (config: Config) => {
+      const api = await serverSDK.apiForGeneration()
+      return api.config.update({
         config: config as unknown as Parameters<ServerApi["config"]["update"]>[0]["config"],
-      }),
+      })
+    },
     onSuccess: refreshProviders,
   }))
 
@@ -706,15 +863,15 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     mcp: {
       toggle: async (directory: string, name: string) => {
         const key = directoryKey(directory)
-        const sdk = sdkFor(key)
         const status = children.child(key, { bootstrap: false })[0].mcp[name]?.status
         if (!status) return
+        const api = await serverSDK.apiForGeneration()
         await toggleMcp({
           status,
-          connect: () => serverSDK.api.mcp.connect({ server: name, location: { directory: key } }),
-          disconnect: () => serverSDK.api.mcp.disconnect({ server: name, location: { directory: key } }),
+          connect: () => api.mcp.connect({ server: name, location: { directory: key } }),
+          disconnect: () => api.mcp.disconnect({ server: name, location: { directory: key } }),
           authenticate: async () => {
-            await sdk.mcp.auth.authenticate({ name })
+            await api.mcp.authenticate({ name, location: { directory: key } })
           },
           refresh: async () => {
             await queryClient.refetchQueries(queryOptionsApi.mcp(key))

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { detectServerProtocol } from "./server-protocol"
+import {
+  detectServerProtocol,
+  detectServerProtocolDetails,
+  resolveDesktopServerProtocolMode,
+  resolveServerProtocolMode,
+} from "./server-protocol"
 
 const server = { url: "http://localhost:4096" }
 const json = (value: unknown, status = 200) =>
@@ -8,6 +13,31 @@ const mockFetch = (run: (input: string | URL | Request, init?: RequestInit) => P
   Object.assign(run, { preconnect: globalThis.fetch.preconnect })
 
 describe("detectServerProtocol", () => {
+  test("normalizes the connection-boundary protocol override", () => {
+    expect(resolveServerProtocolMode("auto")).toBe("auto")
+    expect(resolveServerProtocolMode("v1")).toBe("v1")
+    expect(resolveServerProtocolMode("v2")).toBe("v2")
+    expect(resolveServerProtocolMode(undefined)).toBe("auto")
+  })
+
+  test("keeps bundled sidecars V2-only even when the global override requests V1", () => {
+    expect(resolveDesktopServerProtocolMode("sidecar", "v1")).toBe("v2")
+    expect(resolveDesktopServerProtocolMode("sidecar", "invalid")).toBe("v2")
+    expect(resolveDesktopServerProtocolMode("http", "v1")).toBe("v1")
+    expect(resolveDesktopServerProtocolMode("ssh", undefined)).toBe("auto")
+  })
+
+  test("forces V1 without probing or changing the server session", async () => {
+    let requests = 0
+    const fetcher = mockFetch(() => {
+      requests += 1
+      return Promise.reject(new Error("forced V1 should not probe V2"))
+    })
+
+    await expect(detectServerProtocolDetails(server, fetcher, { mode: "v1" })).resolves.toEqual({ protocol: "v1" })
+    expect(requests).toBe(0)
+  })
+
   test("recognizes a V2 server that also serves the legacy health endpoint", async () => {
     const fetcher = mockFetch((input) => {
       const path = new URL(input instanceof Request ? input.url : input).pathname
@@ -26,6 +56,21 @@ describe("detectServerProtocol", () => {
     })
 
     expect(await detectServerProtocol(server, fetcher)).toBe("v2")
+  })
+
+  test("returns V2 health and capability details for diagnostics", async () => {
+    const fetcher = mockFetch((input) => {
+      const path = new URL(input instanceof Request ? input.url : input).pathname
+      if (path === "/api/capability") return Promise.resolve(json({ backgroundSubagents: true }))
+      return Promise.resolve(json({ healthy: true, version: "2.0.0", pid: 123 }))
+    })
+
+    await expect(detectServerProtocolDetails(server, fetcher, { v2Only: true })).resolves.toEqual({
+      protocol: "v2",
+      version: "2.0.0",
+      pid: 123,
+      backgroundSubagents: true,
+    })
   })
 
   test("requires the capability contract for a sidecar connection", async () => {

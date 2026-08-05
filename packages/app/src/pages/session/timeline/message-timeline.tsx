@@ -69,6 +69,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
+import { runServerSessionMutation } from "@/utils/session-mutation"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { createTimelineProjection } from "./projection"
@@ -656,22 +657,45 @@ export function MessageTimeline(props: {
   }
 
   const shareMutation = useMutation(() => ({
-    mutationFn: (id: string) => sdk().api.session.share({ sessionID: id }),
+    mutationFn: (id: string) => {
+      const target = sdk()
+      return runServerSessionMutation({
+        sessionMutations: target.sessionMutations,
+        sessionID: id,
+        apiForGeneration: target.apiForGeneration,
+        run: (api) => api.share({ sessionID: id }),
+      })
+    },
     onError: (err) => {
       console.error("Failed to share session", err)
     },
   }))
 
   const unshareMutation = useMutation(() => ({
-    mutationFn: (id: string) => sdk().api.session.unshare({ sessionID: id }),
+    mutationFn: (id: string) => {
+      const target = sdk()
+      return runServerSessionMutation({
+        sessionMutations: target.sessionMutations,
+        sessionID: id,
+        apiForGeneration: target.apiForGeneration,
+        run: (api) => api.unshare({ sessionID: id }),
+      })
+    },
     onError: (err) => {
       console.error("Failed to unshare session", err)
     },
   }))
 
   const titleMutation = useMutation(() => ({
-    mutationFn: (input: { id: string; title: string }) =>
-      sdk().api.session.rename({ sessionID: input.id, title: input.title }),
+    mutationFn: (input: { id: string; title: string }) => {
+      const target = sdk()
+      return runServerSessionMutation({
+        sessionMutations: target.sessionMutations,
+        sessionID: input.id,
+        apiForGeneration: target.apiForGeneration,
+        run: (api) => api.rename({ sessionID: input.id, title: input.title }),
+      })
+    },
     onSuccess: (_, input) => {
       sync().set(
         produce((draft) => {
@@ -814,8 +838,13 @@ export function MessageTimeline(props: {
     const index = sessions.findIndex((s) => s.id === sessionID)
     const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
 
-    await sdk()
-      .api.session.archive({ sessionID })
+    const target = sdk()
+    await runServerSessionMutation({
+      sessionMutations: target.sessionMutations,
+      sessionID,
+      apiForGeneration: target.apiForGeneration,
+      run: (api) => api.archive({ sessionID }),
+    })
       .then(() => {
         sync().set(
           produce((draft) => {
@@ -843,8 +872,16 @@ export function MessageTimeline(props: {
     const index = sessions.findIndex((s) => s.id === sessionID)
     const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
 
-    const result = await sdk()
-      .api.session.remove({ sessionID })
+    const target = sdk()
+    const result = await runServerSessionMutation({
+      sessionMutations: target.sessionMutations,
+      sessionID,
+      apiForGeneration: target.apiForGeneration,
+      run: async (api) => {
+        if (sync().data.session_working(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
+        await api.remove({ sessionID })
+      },
+    })
       .then(() => true)
       .catch((err) => {
         showToast({

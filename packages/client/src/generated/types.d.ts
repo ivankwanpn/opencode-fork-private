@@ -245,6 +245,7 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -255,6 +256,7 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -265,6 +267,7 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -275,16 +278,29 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
         readonly cursor?: string | undefined;
     }["search"];
+    readonly parentID?: {
+        readonly workspace?: string | undefined;
+        readonly limit?: number | undefined;
+        readonly order?: "asc" | "desc" | undefined;
+        readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
+        readonly directory?: string | undefined;
+        readonly project?: string | undefined;
+        readonly subpath?: string | undefined;
+        readonly cursor?: string | undefined;
+    }["parentID"];
     readonly directory?: {
         readonly workspace?: string | undefined;
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -295,6 +311,7 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -305,6 +322,7 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -315,6 +333,7 @@ export type SessionsListInput = {
         readonly limit?: number | undefined;
         readonly order?: "asc" | "desc" | undefined;
         readonly search?: string | undefined;
+        readonly parentID?: null | string | undefined;
         readonly directory?: string | undefined;
         readonly project?: string | undefined;
         readonly subpath?: string | undefined;
@@ -7535,6 +7554,40 @@ export type McpsDisconnectInput = {
     }["location"];
 };
 export type McpsDisconnectOutput = void;
+export type McpsAuthenticateInput = {
+    readonly name: {
+        readonly name: string;
+    }["name"];
+    readonly location?: {
+        readonly location?: {
+            readonly directory?: string | undefined;
+            readonly workspace?: string | undefined;
+        } | undefined;
+    }["location"];
+};
+export type McpsAuthenticateOutput = {
+    readonly location: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+        readonly project: {
+            readonly id: string;
+            readonly directory: string;
+        };
+    };
+    readonly data: {
+        readonly status: "connected";
+    } | {
+        readonly status: "disabled";
+    } | {
+        readonly status: "failed";
+        readonly error: string;
+    } | {
+        readonly status: "needs_auth";
+    } | {
+        readonly status: "needs_client_registration";
+        readonly error: string;
+    };
+};
 export type LspStatusInput = {
     readonly location?: {
         readonly location?: {

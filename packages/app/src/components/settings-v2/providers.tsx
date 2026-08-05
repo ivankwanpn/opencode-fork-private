@@ -30,11 +30,7 @@ const PROVIDER_NOTES = [
 ] as const
 
 const PROVIDER_ICON_SIZE = 16
-const CUSTOM_PROVIDER_PACKAGES = new Set([
-  "@ai-sdk/openai",
-  "@ai-sdk/openai-compatible",
-  "@ai-sdk/anthropic",
-])
+const CUSTOM_PROVIDER_PACKAGES = new Set(["@ai-sdk/openai", "@ai-sdk/openai-compatible", "@ai-sdk/anthropic"])
 
 export const SettingsProvidersV2: Component<{ onBack?: () => void }> = (props) => {
   const dialog = useDialog()
@@ -120,12 +116,18 @@ export const SettingsProvidersV2: Component<{ onBack?: () => void }> = (props) =
   }
 
   const disconnect = async (providerID: string, name: string) => {
+    const target = serverSdk()
     if (isConfigCustom(providerID)) {
-      await disconnectProviderCredentials(serverSdk().api, providerID).catch(() => undefined)
+      await target
+        .apiForGeneration()
+        .then((api) => disconnectProviderCredentials(api, providerID))
+        .catch(() => undefined)
       await disableProvider(providerID, name)
       return
     }
-    await disconnectProviderCredentials(serverSdk().api, providerID)
+    await target
+      .apiForGeneration()
+      .then((api) => disconnectProviderCredentials(api, providerID))
       .then(async () => {
         await serverSync().refreshProviders()
         showToast({
@@ -189,9 +191,9 @@ export const SettingsProvidersV2: Component<{ onBack?: () => void }> = (props) =
                       <Show
                         when={canDisconnect(item)}
                         fallback={
-                        <span class="settings-v2-provider-env-hint">
-                          {language.t("settings.providers.connected.environmentDescription")}
-                        </span>
+                          <span class="settings-v2-provider-env-hint">
+                            {language.t("settings.providers.connected.environmentDescription")}
+                          </span>
                         }
                       >
                         <ButtonV2

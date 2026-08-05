@@ -30,6 +30,85 @@ describe("adaptServerEvent", () => {
       current,
     })
   })
+
+  test("adapts the complete permission and question request lifecycle", () => {
+    const permissionAsked = {
+      id: "evt_permission_asked",
+      created: 1,
+      type: "permission.v2.asked",
+      data: {
+        id: "perm_1",
+        sessionID: "ses_1",
+        action: "read",
+        resources: ["src/**"],
+        save: ["src/**"],
+        metadata: { reason: "test" },
+        source: { type: "tool", messageID: "msg_1", callID: "call_1" },
+      },
+    } as OpenCodeEvent
+    const permissionReplied = {
+      id: "evt_permission_replied",
+      created: 2,
+      type: "permission.v2.replied",
+      data: { sessionID: "ses_1", requestID: "perm_1", reply: "once" },
+    } as OpenCodeEvent
+    const questionAsked = {
+      id: "evt_question_asked",
+      created: 3,
+      type: "question.v2.asked",
+      data: {
+        id: "que_1",
+        sessionID: "ses_1",
+        questions: [{ question: "Continue?", header: "Continue", options: [] }],
+        tool: { messageID: "msg_1", callID: "call_2" },
+      },
+    } as OpenCodeEvent
+    const questionReplied = {
+      id: "evt_question_replied",
+      created: 4,
+      type: "question.v2.replied",
+      data: { sessionID: "ses_1", requestID: "que_1", answers: [["yes"]] },
+    } as OpenCodeEvent
+    const questionRejected = {
+      id: "evt_question_rejected",
+      created: 5,
+      type: "question.v2.rejected",
+      data: { sessionID: "ses_1", requestID: "que_1" },
+    } as OpenCodeEvent
+
+    expect(adaptServerEvent(permissionAsked)).toMatchObject({
+      type: "permission.asked",
+      properties: {
+        id: "perm_1",
+        sessionID: "ses_1",
+        permission: "read",
+        patterns: ["src/**"],
+        always: ["src/**"],
+        metadata: { reason: "test" },
+        tool: { messageID: "msg_1", callID: "call_1" },
+      },
+    })
+    expect(adaptServerEvent(permissionReplied)).toMatchObject({
+      type: "permission.replied",
+      properties: { sessionID: "ses_1", requestID: "perm_1", reply: "once" },
+    })
+    expect(adaptServerEvent(questionAsked)).toMatchObject({
+      type: "question.asked",
+      properties: {
+        id: "que_1",
+        sessionID: "ses_1",
+        questions: [{ question: "Continue?", header: "Continue", options: [] }],
+      },
+    })
+    expect(adaptServerEvent(questionReplied)).toMatchObject({
+      type: "question.replied",
+      properties: { sessionID: "ses_1", requestID: "que_1", answers: [["yes"]] },
+    })
+    expect(adaptServerEvent(questionRejected)).toMatchObject({
+      type: "question.rejected",
+      properties: { sessionID: "ses_1", requestID: "que_1" },
+    })
+  })
 })
 
 describe("coalesceServerEvents", () => {

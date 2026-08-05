@@ -45,6 +45,7 @@ const applicationServices = LayerNode.group([
   httpClient,
   ToolOutputStore.cleanupNode,
   SessionV2.node,
+  SessionExecutionLocal.node,
   SessionTodo.node,
   PermissionSaved.node,
   PtyTicket.node,
@@ -70,7 +71,9 @@ export function createEmbeddedRoutes() {
   return makeRoutes(ServerAuth.Config.configLayer({ username: "opencode", password: Option.none() }))
 }
 
-function makeRoutes<AuthError, AuthServices>(auth: Layer.Layer<ServerAuth.Config, AuthError, AuthServices>) {
+function makeRoutes<AuthError>(
+  auth: Layer.Layer<ServerAuth.Config, AuthError, never>,
+): Layer.Layer<never, AuthError | EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMap = buildLocationServiceMap([
     [SessionExecution.node, SessionExecution.noopLayer],
   ])

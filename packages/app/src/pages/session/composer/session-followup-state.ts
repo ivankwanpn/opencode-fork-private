@@ -1,14 +1,11 @@
 import { createStore } from "solid-js/store"
 import type { FilePartSource } from "@opencode-ai/sdk/v2/client"
-import type { DirectorySDK } from "@/context/sdk"
+import type { ServerApi } from "@/utils/server"
 import { decodeFilePath, stripQueryAndHash } from "@/context/file/path"
 import type { ContextItem, FileAttachmentPart, Prompt } from "@/context/prompt"
 import { readCommentMetadata } from "@/utils/comment-note"
 
-type SessionFollowupApi = Pick<
-  DirectorySDK["api"]["session"],
-  "inputList" | "inputGet" | "inputPromote" | "inputCancel"
->
+type SessionFollowupApi = Pick<ServerApi["session"], "inputList" | "inputGet" | "inputPromote" | "inputCancel">
 
 export type SessionFollowupItem = Awaited<ReturnType<SessionFollowupApi["inputList"]>>[number]
 
@@ -21,6 +18,9 @@ export type SessionFollowupEdit = {
 export function createSessionFollowupState(input: {
   sessionID: () => string | undefined
   api: () => SessionFollowupApi
+  resolveApi?: () => Promise<SessionFollowupApi>
+  mutate?: (sessionID: string, task: (api: SessionFollowupApi) => Promise<unknown>) => Promise<unknown>
+  enabled?: () => boolean
 }) {
   const [store, setStore] = createStore({
     items: [] as SessionFollowupItem[],
@@ -30,29 +30,29 @@ export function createSessionFollowupState(input: {
   let request = 0
 
   const currentSession = () => input.sessionID()
+  const enabled = () => input.enabled?.() ?? true
+  const resolveApi = () => input.resolveApi?.() ?? Promise.resolve(input.api())
 
   const pending = (sessionID: string, items: readonly SessionFollowupItem[]) =>
     items
-      .filter(
-        (item) =>
-          item.sessionID === sessionID && item.delivery === "queue" && item.promotedSeq === undefined,
-      )
+      .filter((item) => item.sessionID === sessionID && item.delivery === "queue" && item.promotedSeq === undefined)
       .slice()
       .sort((left, right) => left.admittedSeq - right.admittedSeq)
 
   const refresh = async () => {
     const sessionID = currentSession()
-    if (!sessionID) {
+    if (!sessionID || !enabled()) {
+      request++
       setStore("items", [])
       setStore("loading", false)
       return
     }
 
     const ticket = ++request
-    const api = input.api()
     setStore("items", [])
     setStore("loading", true)
     try {
+      const api = await resolveApi()
       const items = await api.inputList({ sessionID, delivery: "queue" })
       if (ticket !== request || currentSession() !== sessionID) return
       setStore("items", pending(sessionID, items))
@@ -63,9 +63,10 @@ export function createSessionFollowupState(input: {
 
   const reconcile = async (inputID: string) => {
     const sessionID = currentSession()
-    if (!sessionID) return
+    if (!sessionID || !enabled()) return
 
-    const item = await input.api().inputGet({ sessionID, inputID })
+    const api = await resolveApi()
+    const item = await api.inputGet({ sessionID, inputID })
     if (currentSession() !== sessionID) return item
 
     setStore("items", (items) => pending(sessionID, [...items.filter((entry) => entry.id !== item.id), item]))
@@ -74,12 +75,13 @@ export function createSessionFollowupState(input: {
 
   const promote = async (inputID: string) => {
     const sessionID = currentSession()
-    if (!sessionID || store.sending) return false
+    if (!sessionID || !enabled() || store.sending) return false
 
-    const api = input.api()
+    const api = await resolveApi()
     setStore("sending", inputID)
     try {
-      await api.inputPromote({ sessionID, inputID })
+      if (input.mutate) await input.mutate(sessionID, (current) => current.inputPromote({ sessionID, inputID }))
+      else await api.inputPromote({ sessionID, inputID })
       await refresh()
       return true
     } catch (error) {
@@ -94,12 +96,13 @@ export function createSessionFollowupState(input: {
 
   const cancel = async (inputID: string) => {
     const sessionID = currentSession()
-    if (!sessionID || store.sending) return false
+    if (!sessionID || !enabled() || store.sending) return false
 
-    const api = input.api()
+    const api = await resolveApi()
     setStore("sending", inputID)
     try {
-      await api.inputCancel({ sessionID, inputID })
+      if (input.mutate) await input.mutate(sessionID, (current) => current.inputCancel({ sessionID, inputID }))
+      else await api.inputCancel({ sessionID, inputID })
       await refresh()
       return true
     } finally {

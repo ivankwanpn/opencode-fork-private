@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
-import type { Config, OpencodeClient, Project } from "@opencode-ai/sdk/v2/client"
+import type { Config, OpencodeClient, PermissionRequest, Project, QuestionRequest } from "@opencode-ai/sdk/v2/client"
 import type { AgentApi, CommandApi, ProjectApi, ReferenceApi } from "@opencode-ai/client/promise"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
@@ -16,6 +16,7 @@ import {
 import type { State, VcsCache } from "./types"
 import { ServerScope } from "@/utils/server-scope"
 import type { ServerApi } from "@/utils/server"
+import type { CompatibleImplementation } from "@/utils/server-compat"
 
 const provider = { all: new Map(), connected: [], default: {} } satisfies NormalizedProviderListResponse
 const api = {
@@ -127,6 +128,127 @@ describe("bootstrapDirectory", () => {
 
     expect(store.status).toBe("complete")
     expect(mcpReads).toEqual([])
+  })
+
+  test("uses the V2 active snapshot instead of the legacy status endpoint", async () => {
+    let legacyStatusCalls = 0
+    const [store, setStore] = directoryState()
+
+    await bootstrapDirectory({
+      directory: "/project",
+      scope: ServerScope.local,
+      mcp: false,
+      global: {
+        config: {} satisfies Config,
+        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+        project: [{ id: "project", worktree: "/project" } as Project],
+        provider,
+      },
+      sdk: {
+        session: {
+          status: async () => {
+            legacyStatusCalls++
+            throw new Error("legacy status endpoint should not be called for V2")
+          },
+        },
+      } as unknown as OpencodeClient,
+      api,
+      activeSessions: () => ({ ses_running: { type: "running" } }),
+      protocol: Promise.resolve("v2" as const),
+      store,
+      setStore,
+      vcsCache: { setStore() {} } as unknown as VcsCache,
+      loadSessions() {},
+      translate: (key) => key,
+      queryClient: new QueryClient(),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    expect(legacyStatusCalls).toBe(0)
+    expect(store.session_status).toEqual({ ses_running: { type: "busy" } })
+  })
+
+  test("does not overwrite requests changed while list snapshots are in flight", async () => {
+    const [store, setStore] = directoryState()
+    const revisions = { permission: 0, question: 0 }
+    const permission = {
+      id: "per_1",
+      sessionID: "ses_1",
+      permission: "read",
+      patterns: ["src/**"],
+      metadata: {},
+      always: [],
+    } satisfies PermissionRequest
+    const question = {
+      id: "que_1",
+      sessionID: "ses_1",
+      questions: [{ question: "Continue?", header: "Continue", options: [] }],
+    } satisfies QuestionRequest
+
+    let startPermission!: () => void
+    let startQuestion!: () => void
+    const permissionStarted = new Promise<void>((resolve) => {
+      startPermission = resolve
+    })
+    const questionStarted = new Promise<void>((resolve) => {
+      startQuestion = resolve
+    })
+    type EmptyList = { location: Record<string, never>; data: never[] }
+    let resolvePermission!: (value: EmptyList) => void
+    let resolveQuestion!: (value: EmptyList) => void
+    const permissionList = () => {
+      startPermission()
+      return new Promise<EmptyList>((resolve) => {
+        resolvePermission = resolve
+      })
+    }
+    const questionList = () => {
+      startQuestion()
+      return new Promise<EmptyList>((resolve) => {
+        resolveQuestion = resolve
+      })
+    }
+
+    const running = bootstrapDirectory({
+      directory: "/project",
+      scope: ServerScope.local,
+      mcp: false,
+      global: {
+        config: {} satisfies Config,
+        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+        project: [{ id: "project", worktree: "/project" } as Project],
+        provider,
+      },
+      sdk: {} as OpencodeClient,
+      api: {
+        ...api,
+        permission: { request: { list: permissionList } },
+        question: { request: { list: questionList } },
+      } as unknown as ServerApi,
+      store,
+      setStore,
+      vcsCache: { setStore() {} } as unknown as VcsCache,
+      loadSessions() {},
+      translate: (key) => key,
+      queryClient: new QueryClient(),
+      pendingRequestRevision: {
+        permission: () => revisions.permission,
+        question: () => revisions.question,
+      },
+    })
+
+    await Promise.all([permissionStarted, questionStarted])
+    setStore("permission", permission.sessionID, [permission])
+    setStore("question", question.sessionID, [question])
+    revisions.permission += 1
+    revisions.question += 1
+    resolvePermission({ location: {}, data: [] })
+    resolveQuestion({ location: {}, data: [] })
+    await running
+
+    expect(store.permission.ses_1).toEqual([permission])
+    expect(store.question.ses_1).toEqual([question])
   })
 })
 
@@ -243,6 +365,69 @@ describe("query keys", () => {
     expect(result.all.has("anthropic")).toBe(true)
   })
 
+  test("keeps the provider branch paired with its selected API generation", async () => {
+    const calls: string[] = []
+    const current = {
+      providers: {
+        catalog: async () => {
+          calls.push("catalog")
+          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as Parameters<typeof loadProvidersQuery>[2]
+    const legacy = {
+      provider: {
+        list: async () => {
+          calls.push("legacy")
+          return { data: { all: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as OpencodeClient
+    const query = loadProvidersQuery(
+      ServerScope.local,
+      "/repo",
+      current,
+      legacy,
+      Promise.resolve("v2"),
+      async () => current as unknown as CompatibleImplementation,
+      async () => ({ protocol: "v1" as const, api: current as unknown as CompatibleImplementation }),
+    )
+
+    await new QueryClient().fetchQuery(query)
+
+    expect(calls).toEqual(["legacy"])
+  })
+
+  test("re-evaluates the protocol resolver for a later query generation", async () => {
+    const calls: string[] = []
+    let protocol: "v1" | "v2" = "v2"
+    const current = {
+      providers: {
+        catalog: async () => {
+          calls.push("catalog")
+          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as Parameters<typeof loadProvidersQuery>[2]
+    const legacy = {
+      provider: {
+        list: async () => {
+          calls.push("legacy")
+          return { data: { all: [], connected: [], default: {} } }
+        },
+      },
+    } as unknown as OpencodeClient
+    const query = loadProvidersQuery(ServerScope.local, "/repo", current, legacy, () => Promise.resolve(protocol))
+    const queryClient = new QueryClient()
+
+    await queryClient.fetchQuery(query)
+    protocol = "v1"
+    await queryClient.invalidateQueries({ queryKey: query.queryKey })
+    await queryClient.fetchQuery(query)
+
+    expect(calls).toEqual(["catalog", "legacy"])
+  })
+
   test("loads agents from the current location-scoped endpoint", async () => {
     const calls: unknown[] = []
     const api = {
@@ -274,6 +459,32 @@ describe("query keys", () => {
 
     expect(calls).toEqual([{ location: { directory: "/repo" } }])
     expect(result).toEqual([{ name: "review", template: "Review files", source: "command" }])
+  })
+
+  test("loads commands from the current protocol generation", async () => {
+    const calls: string[] = []
+    const stale = {
+      list: async () => {
+        calls.push("stale")
+        return { location: {}, data: [] }
+      },
+    } as unknown as CommandApi
+    const current = {
+      command: {
+        list: async (input: unknown) => {
+          calls.push(JSON.stringify(input))
+          return {
+            location: {},
+            data: [{ name: "review", template: "Current command", source: "command" as const }],
+          }
+        },
+      },
+    } as unknown as CompatibleImplementation
+
+    const result = await loadCommands("/repo", stale, undefined, undefined, async () => current)
+
+    expect(calls).toEqual(['{"location":{"directory":"/repo"}}'])
+    expect(result).toEqual([{ name: "review", template: "Current command", source: "command" }])
   })
 
   test("loads projects from the current endpoint", async () => {

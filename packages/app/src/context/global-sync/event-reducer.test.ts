@@ -244,6 +244,21 @@ describe("applyDirectoryEvent", () => {
     expect(store.session_status.ses_1).toBeUndefined()
   })
 
+  test("projects a legacy idle event into the passive directory status", () => {
+    const [store, setStore] = createStore(baseState({ session_status: { ses_1: { type: "busy" } } }))
+
+    applyDirectoryEvent({
+      event: { type: "session.idle", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_status.ses_1).toEqual({ type: "idle" })
+  })
+
   test("ignores an archived session absent from a passive directory store", () => {
     const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
 

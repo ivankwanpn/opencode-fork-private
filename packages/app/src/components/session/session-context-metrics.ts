@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message } from "@opencode-ai/sdk/v2/client"
+import type { AssistantMessage, Message, SessionMessage } from "@opencode-ai/sdk/v2/client"
 
 type Provider = {
   id: string
@@ -14,7 +14,7 @@ type Model = {
 }
 
 type Context = {
-  message: AssistantMessage
+  message: ContextMessage
   provider?: Provider
   model?: Model
   providerLabel: string
@@ -25,7 +25,10 @@ type Context = {
   usage: number | null
 }
 
-const tokenTotal = (msg: AssistantMessage) => {
+type ContextMessage = Pick<AssistantMessage, "id" | "time" | "providerID" | "modelID" | "tokens">
+
+const tokenTotal = (msg: { tokens?: ContextMessage["tokens"] }) => {
+  if (!msg.tokens) return 0
   return msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
 }
 
@@ -38,8 +41,16 @@ const lastAssistantWithTokens = (messages: Message[]) => {
   }
 }
 
-const build = (messages: Message[] = [], providers: Provider[] = []): Context | undefined => {
-  const message = lastAssistantWithTokens(messages)
+const lastV2AssistantWithTokens = (messages: readonly SessionMessage[]) => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.type !== "assistant" || !message.tokens) continue
+    if (tokenTotal(message) <= 0) continue
+    return message
+  }
+}
+
+const build = (message: ContextMessage | undefined, providers: Provider[] = []): Context | undefined => {
   if (!message) return undefined
 
   const provider = providers.find((item) => item.id === message.providerID)
@@ -61,5 +72,20 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
 }
 
 export function getSessionContext(messages: Message[] = [], providers: Provider[] = []) {
-  return build(messages, providers)
+  return build(lastAssistantWithTokens(messages), providers)
+}
+
+export function getV2SessionContext(messages: readonly SessionMessage[] = [], providers: Provider[] = []) {
+  const message = lastV2AssistantWithTokens(messages)
+  if (!message?.tokens) return undefined
+  return build(
+    {
+      id: message.id,
+      time: message.time,
+      providerID: message.model.providerID,
+      modelID: message.model.id,
+      tokens: message.tokens,
+    },
+    providers,
+  )
 }

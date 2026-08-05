@@ -58,6 +58,7 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
 import { TerminalProvider, useTerminal } from "@/context/terminal"
+import { runServerSessionMutation } from "@/utils/session-mutation"
 import { PromptInput } from "@/components/prompt-input"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
@@ -405,12 +406,26 @@ export default function Page() {
   const followupState = createSessionFollowupState({
     sessionID: () => params.id,
     api: () => sdk().api.session,
+    resolveApi: () =>
+      sdk()
+        .apiForGeneration()
+        .then((api) => api.session),
+    mutate: (sessionID, task) => {
+      const target = sdk()
+      return runServerSessionMutation({
+        sessionMutations: target.sessionMutations,
+        sessionID,
+        apiForGeneration: target.apiForGeneration,
+        run: task,
+      })
+    },
+    enabled: () => serverSDK().protocolKind() === "v2",
   })
   const [followupEdit, setFollowupEdit] = createStore<Record<string, SessionFollowupEdit | undefined>>({})
 
   createEffect(
     on(
-      () => [params.id, sdk().directory, serverSDK().scope] as const,
+      () => [params.id, sdk().directory, serverSDK().scope, serverSDK().protocolKind()] as const,
       ([sessionID]) => {
         void followupState.refresh().catch((error) => {
           console.debug("[session-followup] failed to refresh durable inputs", { sessionID, error })
@@ -692,14 +707,23 @@ export default function Page() {
       queryKey: [...vcsKey(), mode] as const,
       enabled,
       queryFn: mode
-        ? () =>
-            sdk()
-              .api.vcs.diff({ location: { directory: sdk().directory }, mode: mode === "git" ? "working" : mode })
+        ? () => {
+            const target = sdk()
+            const directory = target.directory
+            return target
+              .apiForGeneration()
+              .then((api) =>
+                api.vcs.diff({
+                  location: { directory },
+                  mode: mode === "git" ? "working" : mode,
+                }),
+              )
               .then((result) => result.data)
               .catch((error) => {
                 console.debug("[session-review] failed to load vcs diff", { mode, error })
                 return []
               })
+          }
         : skipToken,
     }
   })
@@ -740,14 +764,19 @@ export default function Page() {
           queryKey: [serverSDK().scope, ...vcsKey(), mode, "directory", scope, context, version] as const,
           staleTime: Number.POSITIVE_INFINITY,
           retry: 2,
-          queryFn: () =>
-            sdk()
-              .api.vcs.diff({
-                location: { directory: scope },
-                mode: mode === "git" ? "working" : mode,
-                context,
-              })
-              .then((result) => result.data),
+          queryFn: () => {
+            const target = sdk()
+            return target
+              .apiForGeneration()
+              .then((api) =>
+                api.vcs.diff({
+                  location: { directory: scope },
+                  mode: mode === "git" ? "working" : mode,
+                  context,
+                }),
+              )
+              .then((result) => result.data)
+          },
         })
         .then((diffs) => diffs.find((diff) => diff.file === file))
 
@@ -851,7 +880,10 @@ export default function Page() {
   }
 
   const gitMutation = useMutation(() => ({
-    mutationFn: () => sdk().api.project.initGit({ location: { directory: sdk().directory } }),
+    mutationFn: () => {
+      const target = sdk()
+      return target.apiForGeneration().then((api) => api.project.initGit({ location: { directory: target.directory } }))
+    },
     onSuccess: (x) => {
       upsert(x)
     },
@@ -1765,16 +1797,9 @@ export default function Page() {
     setFollowupEdit(id, undefined)
   }
 
-  const halt = (sessionID: string) =>
-    busy(sessionID)
-      ? sdk()
-          .api.session.interrupt({ sessionID })
-          .catch(() => {})
-      : Promise.resolve()
-
   const revertMutation = useMutation(() => ({
     mutationFn: async (input: { sessionID: string; messageID: string }) => {
-      const session = sdk().api.session
+      const sdkTarget = sdk()
       const target = sync()
       const last = target.session.get(input.sessionID)?.revert
       const value = draft(input.messageID)
@@ -1784,7 +1809,16 @@ export default function Page() {
           roll(input.sessionID, { messageID: input.messageID }, target)
           prompt.set(value)
         },
-        request: () => halt(input.sessionID).then(() => session.revert.stage(input)),
+        request: () =>
+          runServerSessionMutation({
+            sessionMutations: sdkTarget.sessionMutations,
+            sessionID: input.sessionID,
+            apiForGeneration: sdkTarget.apiForGeneration,
+            run: async (api) => {
+              if (busy(input.sessionID)) await api.interrupt({ sessionID: input.sessionID }).catch(() => {})
+              return api.revert.stage(input)
+            },
+          }),
         complete: () => undefined,
         rollback: () => roll(input.sessionID, last, target),
         fail,
@@ -1797,7 +1831,7 @@ export default function Page() {
       const sessionID = params.id
       if (!sessionID) return
 
-      const session = sdk().api.session
+      const sdkTarget = sdk()
       const target = sync()
       const next = userMessages().find((item) => item.id > id)
       const last = target.session.get(sessionID)?.revert
@@ -1813,9 +1847,19 @@ export default function Page() {
           promptSession.reset()
         },
         request: () =>
-          !next
-            ? halt(sessionID).then(() => session.revert.clear({ sessionID }))
-            : halt(sessionID).then(() => session.revert.stage({ sessionID, messageID: next.id }).then(() => undefined)),
+          runServerSessionMutation({
+            sessionMutations: sdkTarget.sessionMutations,
+            sessionID,
+            apiForGeneration: sdkTarget.apiForGeneration,
+            run: async (api) => {
+              if (busy(sessionID)) await api.interrupt({ sessionID }).catch(() => {})
+              if (!next) {
+                await api.revert.clear({ sessionID })
+                return
+              }
+              await api.revert.stage({ sessionID, messageID: next.id })
+            },
+          }),
         complete: () => undefined,
         rollback: () => roll(sessionID, last, target),
         fail,

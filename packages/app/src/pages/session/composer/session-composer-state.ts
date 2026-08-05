@@ -9,6 +9,7 @@ import { usePermission } from "@/context/permission"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
+import { runServerMutation } from "@/utils/session-mutation"
 
 export const todoState = (input: {
   count: number
@@ -81,8 +82,13 @@ export function createSessionComposerController(options?: { closeMs?: number | (
     if (store.responding === perm.id) return
 
     setStore("responding", perm.id)
-    sdk()
-      .api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response })
+    const target = sdk()
+    runServerMutation({
+      sessionMutations: target.sessionMutations,
+      sessionID: perm.sessionID,
+      apiForGeneration: target.apiForGeneration,
+      run: (api) => api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response }),
+    })
       .catch((err: unknown) => {
         const description = err instanceof Error ? err.message : String(err)
         showToast({ title: language.t("common.requestFailed"), description })

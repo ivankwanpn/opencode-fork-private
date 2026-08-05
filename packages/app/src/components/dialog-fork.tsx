@@ -2,6 +2,7 @@ import { Component, createMemo } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useSync } from "@/context/sync"
 import { useSDK } from "@/context/sdk"
+import { runServerSessionMutation } from "@/context/server-sdk"
 import { usePrompt } from "@/context/prompt"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
@@ -68,8 +69,13 @@ export const DialogFork: Component = () => {
     })
     const dir = base64Encode(sdk().directory)
 
-    sdk()
-      .api.session.fork({ sessionID, messageID: item.id })
+    const target = sdk()
+    runServerSessionMutation({
+      sessionMutations: target.sessionMutations,
+      sessionID,
+      apiForGeneration: target.apiForGeneration,
+      run: (api) => api.fork({ sessionID, messageID: item.id }),
+    })
       .then((forked) => {
         dialog.close()
         prompt.set(restored, undefined, { dir, id: forked.id })

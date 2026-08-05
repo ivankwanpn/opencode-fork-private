@@ -8,11 +8,13 @@ import { useServerSync } from "@/context/server-sync"
 import { showToast } from "@/utils/toast"
 import { modelVariantsForProtocol } from "@/pages/session/composer/model-protocol-variants"
 import {
-  configurableAgentIDs,
+  agentRoleMetadata,
   agentModelProtocols,
   formatAgentModel,
   parseAgentModel,
+  primaryAgentIDs,
   resolveAgentProtocol,
+  subagentAgentIDs,
   type ConfigurableAgentID,
 } from "./agent-settings"
 import { SettingsListV2 } from "./parts/list"
@@ -134,7 +136,7 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
   }
 
   return (
-    <SettingsRowV2 title={props.id} description={language.t("settings.agents.description")}>
+    <SettingsRowV2 title={props.id} description={language.t(agentRoleMetadata[props.id].descriptionKey)}>
       <div class="settings-v2-agent-controls">
         <div class="settings-v2-agent-control">
           <span class="settings-v2-agent-control-label">{language.t("settings.models.title")}</span>
@@ -223,6 +225,19 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
   )
 }
 
+const AgentSettingsSection: Component<{ title: string; ids: readonly ConfigurableAgentID[] }> = (props) => (
+  <div class="settings-v2-section">
+    <h3 class="settings-v2-section-title">{props.title}</h3>
+    <For each={props.ids}>
+      {(id) => (
+        <SettingsListV2>
+          <AgentSettingRow id={id} />
+        </SettingsListV2>
+      )}
+    </For>
+  </div>
+)
+
 export const SettingsAgentsV2: Component = () => {
   const language = useLanguage()
   return (
@@ -232,16 +247,11 @@ export const SettingsAgentsV2: Component = () => {
         <p class="settings-v2-tab-description">{language.t("settings.agents.description")}</p>
       </div>
       <div class="settings-v2-tab-body settings-v2-agents">
-        <div class="settings-v2-section">
-          <h3 class="settings-v2-section-title">{language.t("settings.agents.title")}</h3>
-          <For each={configurableAgentIDs}>
-            {(id) => (
-              <SettingsListV2>
-                <AgentSettingRow id={id} />
-              </SettingsListV2>
-            )}
-          </For>
-        </div>
+        <AgentSettingsSection
+          title={language.t("settings.agents.section.coordinators")}
+          ids={primaryAgentIDs}
+        />
+        <AgentSettingsSection title={language.t("settings.agents.section.subagents")} ids={subagentAgentIDs} />
       </div>
     </>
   )

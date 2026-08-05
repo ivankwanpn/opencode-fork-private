@@ -275,6 +275,101 @@ function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithPa
 }
 
 describe("tool.task", () => {
+  it.instance("documents specialized task roles", () =>
+    Effect.gen(function* () {
+      const tool = yield* TaskTool
+      const definition = yield* tool.init()
+
+      expect(definition.description).toContain("general")
+      expect(definition.description).toContain("explore")
+      expect(definition.description).toContain("research")
+      expect(definition.description).toContain("worker")
+      expect(definition.description).toContain("deep read-only analysis")
+      expect(definition.description).toContain("strong implementation")
+    }),
+  )
+
+  it.instance("resolves specialized research and worker agents", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const research = yield* def.execute(
+        {
+          description: "research task",
+          prompt: "trace the behavior",
+          subagent_type: "research",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps() },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+      expect(yield* sessions.get(research.metadata.sessionId)).toMatchObject({ agent: "research" })
+
+      const worker = yield* def.execute(
+        {
+          description: "worker task",
+          prompt: "fix the bug",
+          subagent_type: "worker",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps() },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+      expect(yield* sessions.get(worker.metadata.sessionId)).toMatchObject({ agent: "worker" })
+    }),
+  )
+
+  it.instance("rejects primary and hidden agents as task targets", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      for (const subagent_type of ["build", "plan", "compaction", "title", "summary"]) {
+        const exit = yield* def
+          .execute(
+            {
+              description: "invalid target",
+              prompt: "should not run",
+              subagent_type,
+            },
+            {
+              sessionID: chat.id,
+              messageID: assistant.id,
+              agent: "build",
+              abort: new AbortController().signal,
+              extra: { promptOps: stubOps() },
+              messages: [],
+              metadata: () => Effect.void,
+              ask: () => Effect.void,
+            },
+          )
+          .pipe(Effect.exit)
+        expect(Exit.isFailure(exit)).toBe(true)
+      }
+
+      expect(yield* sessions.children(chat.id)).toHaveLength(0)
+    }),
+  )
+
   it.instance(
     "description sorts subagents by name and is stable across calls",
     () =>
@@ -308,6 +403,11 @@ describe("tool.task", () => {
             description: "Zebra agent",
             mode: "subagent",
           },
+          hidden: {
+            description: "Hidden agent",
+            hidden: true,
+            mode: "subagent",
+          },
           alpha: {
             description: "Alpha agent",
             mode: "subagent",
@@ -329,6 +429,7 @@ describe("tool.task", () => {
 
         expect(description).toContain("- alpha: Alpha agent")
         expect(description).not.toContain("- zebra: Zebra agent")
+        expect(description).not.toContain("- hidden: Hidden agent")
       }),
     {
       config: {
@@ -346,6 +447,46 @@ describe("tool.task", () => {
           alpha: {
             description: "Alpha agent",
             mode: "subagent",
+          },
+        },
+      },
+    },
+  )
+
+  it.instance(
+    "accepts configured agents with mode all",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            description: "all mode task",
+            prompt: "run the configured task",
+            subagent_type: "all-agent",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(yield* sessions.get(result.metadata.sessionId)).toMatchObject({ agent: "all-agent" })
+      }),
+    {
+      config: {
+        agent: {
+          "all-agent": {
+            mode: "all",
           },
         },
       },

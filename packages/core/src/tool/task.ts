@@ -55,14 +55,16 @@ When asynchronous delegation is available, it is the default and the parent is a
 
 Do not delegate a specific file read or a narrow symbol search; use direct read, glob, or grep tools instead. Clearly state whether the subagent should write code or only research, and include enough context for it to work autonomously.
 
-The "subagent_type" parameter must use an exact agent identifier. Built-in task agent identifiers are "build", "plan", "general", and "explore"; configured task agent identifiers are listed below when available. Internal agents "compaction", "title", and "summary" are not task targets. Do not infer an identifier from an agent description. "general-purpose" is accepted as a compatibility alias for "general".`
+Choose the task role by the work required: use \`explore\` for fast read-only navigation, \`research\` for deep read-only analysis and evidence-based investigation, \`worker\` for strong implementation work such as code changes, bug fixes, tests, and verification, and \`general\` for broad mixed-scope work that may research and execute multiple units of work. The role does not select a model; use the configured agent model for that role.
+
+The "subagent_type" parameter must use an exact agent identifier. Built-in task agent identifiers are "general", "explore", "research", and "worker"; configured task agent identifiers are listed below when available. Primary coordinator agents and internal agents "build", "plan", "compaction", "title", and "summary" are not task targets. Do not infer an identifier from an agent description. "general-purpose" is accepted as a compatibility alias for "general".`
 
 const InputFields = {
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
   subagent_type: Schema.String.annotate({
     description:
-      "The agent identifier to use. Built-in task agents are `build`, `plan`, `general`, and `explore`; `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Internal agents `compaction`, `title`, and `summary` are not task targets.",
+      "The agent identifier to use. Built-in task agents are `general`, `explore`, `research`, and `worker`. Use `explore` for fast read-only navigation, `research` for deep read-only analysis, `worker` for strong implementation work, and `general` for broad mixed-scope work. The role uses its configured model; it does not select a model itself. `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Primary coordinator agents and internal agents `build`, `plan`, `compaction`, `title`, and `summary` are not task targets.",
   }),
   task_id: Schema.optional(Schema.String).annotate({
     description: "A prior task ID to continue the same child session",
@@ -226,6 +228,10 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         if (!agent)
           return yield* new ToolFailure({
             message: `Unknown agent type: ${subagentType} is not a valid agent type`,
+          })
+        if (agent.mode === "primary" || agent.hidden === true)
+          return yield* new ToolFailure({
+            message: `Agent "${subagentType}" cannot be used as a task target`,
           })
 
         const requested = input.task_id ? SessionSchema.ID.make(input.task_id) : undefined

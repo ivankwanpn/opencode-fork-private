@@ -1,13 +1,29 @@
 import { describe, expect, test } from "bun:test"
 import {
+  agentRoleMetadata,
   agentModelProtocols,
   agentReasoningOptions,
+  configurableAgentIDs,
   formatAgentModel,
   parseAgentModel,
+  primaryAgentIDs,
   resolveAgentProtocol,
+  subagentAgentIDs,
 } from "./agent-settings"
 
 describe("agent settings", () => {
+  test("separates coordinator and task subagent roles", () => {
+    expect(primaryAgentIDs).toEqual(["build", "plan"])
+    expect(subagentAgentIDs).toEqual(["general", "explore", "research", "worker"])
+    expect(configurableAgentIDs).toEqual([...primaryAgentIDs, ...subagentAgentIDs])
+    expect(new Set(configurableAgentIDs).size).toBe(configurableAgentIDs.length)
+  })
+
+  test("describes research and worker roles independently", () => {
+    expect(agentRoleMetadata.research.descriptionKey).toBe("settings.agents.role.research")
+    expect(agentRoleMetadata.worker.descriptionKey).toBe("settings.agents.role.worker")
+  })
+
   test("parses provider/model values without losing model path segments", () => {
     expect(parseAgentModel("openrouter/openai/gpt-5")).toEqual({
       providerID: "openrouter",

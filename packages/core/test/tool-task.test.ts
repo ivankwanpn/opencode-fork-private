@@ -79,6 +79,18 @@ const info = (input: {
     location,
   })
 
+const addAgent = (id: string, mode: "subagent" | "primary" | "all", hidden = false) =>
+  agents.set(
+    AgentV2.ID.make(id),
+    AgentV2.Info.make({
+      id: AgentV2.ID.make(id),
+      request: { headers: {}, body: {} },
+      mode,
+      hidden,
+      permissions: [{ action: "*", resource: "*", effect: "allow" }],
+    }),
+  )
+
 const assistant = (text: string) =>
   SessionMessage.Assistant.make({
     id: SessionMessage.ID.create(),
@@ -154,6 +166,13 @@ const reset = () => {
       permissions: [{ action: "*", resource: "*", effect: "allow" }],
     }),
   )
+  addAgent("research", "subagent")
+  addAgent("worker", "subagent")
+  addAgent("all-agent", "all")
+  addAgent("plan", "primary")
+  addAgent("compaction", "primary", true)
+  addAgent("title", "primary", true)
+  addAgent("summary", "primary", true)
   agents.set(
     AgentV2.ID.make("general"),
     AgentV2.Info.make({
@@ -637,6 +656,10 @@ describe("TaskTool", () => {
       expect(definition?.description).toContain("Available task agent identifiers (use exact names):")
       expect(definition?.description).toContain("`general`")
       expect(definition?.description).toContain("`explore`")
+      expect(definition?.description).toContain("`research`")
+      expect(definition?.description).toContain("`worker`")
+      expect(definition?.description).toContain("deep read-only analysis")
+      expect(definition?.description).toContain("strong implementation")
       expect(definition?.description).toContain("`reviewer`")
       expect(definition?.inputSchema).toMatchObject({
         properties: {
@@ -880,6 +903,35 @@ describe("TaskTool", () => {
     }),
   )
 
+  foreground.effect("creates children for research and worker roles", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+
+      const research = yield* settleTool(registry, call({ ...input, subagent_type: "research" }, "call-research"))
+      expect(research).toMatchObject({ result: { type: "text" } })
+      expect(sessions.get(SessionSchema.ID.make("ses_task_child_1"))).toMatchObject({ agent: "research" })
+
+      const worker = yield* settleTool(registry, call({ ...input, subagent_type: "worker" }, "call-worker"))
+      expect(worker).toMatchObject({ result: { type: "text" } })
+      expect(sessions.get(SessionSchema.ID.make("ses_task_child_2"))).toMatchObject({ agent: "worker" })
+    }),
+  )
+
+  foreground.effect("accepts configured agents with mode all", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+      const result = yield* settleTool(
+        registry,
+        call({ ...input, subagent_type: "all-agent" }, "call-all-agent"),
+      )
+
+      expect(result).toMatchObject({ result: { type: "text" } })
+      expect(sessions.get(SessionSchema.ID.make("ses_task_child_1"))).toMatchObject({ agent: "all-agent" })
+    }),
+  )
+
   foreground.effect("resumes an existing task session without creating another child", () =>
     Effect.gen(function* () {
       reset()
@@ -916,6 +968,24 @@ describe("TaskTool", () => {
       expect(yield* executeTool(registry, call(input, "call-nested-default-deny", AgentV2.ID.make("general")))).toEqual(
         { type: "error", value: "Permission denied: task general" },
       )
+      expect(createCount).toBe(0)
+    }),
+  )
+
+  foreground.effect("rejects primary and hidden agents as task targets", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+
+      for (const subagent_type of ["build", "plan", "compaction", "title", "summary"]) {
+        expect(
+          yield* executeTool(registry, call({ ...input, subagent_type }, `call-invalid-${subagent_type}`)),
+        ).toEqual({
+          type: "error",
+          value: `Agent "${subagent_type}" cannot be used as a task target`,
+        })
+      }
+
       expect(createCount).toBe(0)
     }),
   )

@@ -924,6 +924,14 @@ export const dict = {
 
   "settings.agents.title": "智能体",
   "settings.agents.description": "智能体设置将在此处可配置。",
+  "settings.agents.section.coordinators": "主代理 / 协调者",
+  "settings.agents.section.subagents": "任务子代理",
+  "settings.agents.role.build": "拥有完整执行权限的主代理协调者。",
+  "settings.agents.role.plan": "负责规划和只读工作的主代理协调者。",
+  "settings.agents.role.general": "适合广泛混合任务的通用子代理。",
+  "settings.agents.role.explore": "用于文件和符号探索的快速只读子代理。",
+  "settings.agents.role.research": "用于证据驱动研究和架构分析的深度只读子代理。",
+  "settings.agents.role.worker": "用于代码修改、修复问题、测试和验证的高质量执行子代理。",
 
   "settings.commands.title": "命令",
   "settings.commands.description": "命令设置将在此处可配置。",

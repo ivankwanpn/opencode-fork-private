@@ -120,8 +120,9 @@ export function migrateAgent(info: ConfigAgentV1.Info) {
     ...(info.top_p === undefined ? {} : { top_p: info.top_p }),
   }
   return {
-    model: info.model,
-    variant: info.variant,
+    model: info.model ?? undefined,
+    protocol: info.protocol ?? undefined,
+    variant: info.variant ?? undefined,
     request: Object.keys(body).length ? { body } : undefined,
     system: info.prompt,
     description: info.description,
@@ -154,10 +155,7 @@ export function migrateMcp(info: ConfigMCPV1.Info) {
       cwd: info.cwd,
       environment: info.environment,
       disabled,
-      timeout:
-        info.timeout === undefined
-          ? undefined
-          : { startup: info.timeout, request: info.timeout },
+      timeout: info.timeout === undefined ? undefined : { startup: info.timeout, request: info.timeout },
     }
   return {
     type: info.type,

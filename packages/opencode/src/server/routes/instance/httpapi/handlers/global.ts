@@ -74,7 +74,15 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
 
     const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx) {
       const result = yield* config.updateGlobal(ctx.payload)
-      if (result.changed) bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
+      if (result.changed) {
+        const reason = Config.isAgentOnlyUpdate(ctx.payload) ? "agent-config" : undefined
+        bridge.fork(
+          disposeAllInstancesAndEmitGlobalDisposed({
+            swallowErrors: true,
+            ...(reason ? { reason } : {}),
+          }),
+        )
+      }
       return result.info
     })
 

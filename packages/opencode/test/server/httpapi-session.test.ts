@@ -30,6 +30,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { MessageTable, SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionStatus } from "../../src/session/status"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
@@ -997,6 +998,49 @@ describe("session HttpApi", () => {
           "10 seconds",
         )
         expect(assistant.info.role).toBe("assistant")
+      }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
+    30_000,
+  )
+
+  it.live(
+    "aborts a legacy async prompt through the legacy runner",
+    () =>
+      Effect.gen(function* () {
+        const llm = yield* TestLLMServer
+        yield* llm.hang
+        const directory = yield* tmpdirScoped({ git: true, config: testProviderConfig(llm.url) })
+        const session = yield* createSession({ title: "legacy abort compatibility" }).pipe(
+          provideInstanceEffect(directory),
+        )
+        const route = (path: string) => `${path}?directory=${encodeURIComponent(directory)}`
+        const prompt = yield* request(route(pathFor(SessionPaths.promptAsync, { sessionID: session.id })), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "build",
+            model: { providerID: "test", modelID: "test-model" },
+            parts: [{ id: PartID.ascending(), type: "text", text: "cancel this legacy prompt" }],
+          }),
+        })
+        expect(prompt.status).toBe(204)
+        yield* llm.wait(1)
+
+        const busy = yield* requestJson<Record<string, { type: string }>>(route(SessionPaths.status))
+        expect(busy[session.id]?.type).toBe("busy")
+
+        const abort = yield* request(route(pathFor(SessionPaths.abort, { sessionID: session.id })), {
+          method: "POST",
+        })
+        expect(abort.status).toBe(200)
+        expect(yield* json<boolean>(abort)).toBe(true)
+
+        yield* pollWithTimeout(
+          requestJson<Record<string, SessionStatus.Info>>(route(SessionPaths.status)).pipe(
+            Effect.map((statuses) => (statuses[session.id] === undefined ? true : undefined)),
+          ),
+          "Legacy abort did not return the session to idle",
+          "10 seconds",
+        )
       }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
     30_000,
   )

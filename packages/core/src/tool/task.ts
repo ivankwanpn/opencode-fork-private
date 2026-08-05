@@ -26,6 +26,8 @@ import { Tools } from "./tools"
 
 export const name = "task"
 
+const normalizeSubagentType = (type: string) => (type === "general-purpose" ? "general" : type)
+
 const BACKGROUND_DESCRIPTION = [
   "Tasks run asynchronously by default and return a handle immediately.",
   "The parent session is automatically notified and woken when a task finishes.",
@@ -51,12 +53,17 @@ Use task_id only to continue an existing child session. Each fresh invocation ot
 
 When asynchronous delegation is available, it is the default and the parent is automatically notified and woken on completion. Use background=false only for an immediate hard dependency, never batch multiple foreground task calls, and never repeatedly poll task status.
 
-Do not delegate a specific file read or a narrow symbol search; use direct read, glob, or grep tools instead. Clearly state whether the subagent should write code or only research, and include enough context for it to work autonomously.`
+Do not delegate a specific file read or a narrow symbol search; use direct read, glob, or grep tools instead. Clearly state whether the subagent should write code or only research, and include enough context for it to work autonomously.
+
+The "subagent_type" parameter must use an exact agent identifier. Built-in task agent identifiers are "build", "plan", "general", and "explore"; configured task agent identifiers are listed below when available. Internal agents "compaction", "title", and "summary" are not task targets. Do not infer an identifier from an agent description. "general-purpose" is accepted as a compatibility alias for "general".`
 
 const InputFields = {
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
-  subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
+  subagent_type: Schema.String.annotate({
+    description:
+      "The agent identifier to use. Built-in task agents are `build`, `plan`, `general`, and `explore`; `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Internal agents `compaction`, `title`, and `summary` are not task targets.",
+  }),
   task_id: Schema.optional(Schema.String).annotate({
     description: "A prior task ID to continue the same child session",
   }),
@@ -76,6 +83,7 @@ const ModelMetadata = Schema.Struct({
   modelID: Schema.String,
   providerID: Schema.String,
   variant: Schema.optional(Schema.String),
+  protocol: Schema.optional(ModelV2.Protocol),
 })
 
 export const Metadata = Schema.Struct({
@@ -116,6 +124,7 @@ const modelMetadata = (model: ModelV2.Ref | undefined) =>
         modelID: model.id,
         providerID: model.providerID,
         ...(model.variant === undefined ? {} : { variant: model.variant }),
+        ...(model.protocol === undefined ? {} : { protocol: model.protocol }),
       }
     : undefined
 
@@ -166,6 +175,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
       })
 
       const execute = Effect.fn("TaskTool.execute")(function* (input: typeof Input.Type, context: Tool.Context) {
+        const subagentType = normalizeSubagentType(input.subagent_type)
         const requestedBackground = input.background === true
         if (requestedBackground && !allowBackground)
           return yield* new ToolFailure({
@@ -198,24 +208,24 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         yield* permission
           .assert({
             action: name,
-            resources: [input.subagent_type],
+            resources: [subagentType],
             save: ["*"],
-            metadata: { description: input.description, subagent_type: input.subagent_type },
+            metadata: { description: input.description, subagent_type: subagentType },
             sessionID: context.sessionID,
             agent: context.agent,
             source,
           })
-          .pipe(Effect.mapError(() => new ToolFailure({ message: `Permission denied: task ${input.subagent_type}` })))
+          .pipe(Effect.mapError(() => new ToolFailure({ message: `Permission denied: task ${subagentType}` })))
 
         const caller = yield* agents.resolve(context.agent)
         if (parent.parentID && caller?.mode === "subagent" && !caller.permissions.some((rule) => rule.action === name))
-          return yield* new ToolFailure({ message: `Permission denied: task ${input.subagent_type}` })
+          return yield* new ToolFailure({ message: `Permission denied: task ${subagentType}` })
 
-        const agentID = AgentV2.ID.make(input.subagent_type)
+        const agentID = AgentV2.ID.make(subagentType)
         const agent = yield* agents.get(agentID)
         if (!agent)
           return yield* new ToolFailure({
-            message: `Unknown agent type: ${input.subagent_type} is not a valid agent type`,
+            message: `Unknown agent type: ${subagentType} is not a valid agent type`,
           })
 
         const requested = input.task_id ? SessionSchema.ID.make(input.task_id) : undefined

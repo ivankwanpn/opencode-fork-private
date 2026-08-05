@@ -26,7 +26,7 @@ import {
   loadReferencesQuery,
 } from "./global-sync/bootstrap"
 import { createChildStoreManager } from "./global-sync/child-store"
-import { applyDirectoryEvent, applyGlobalEvent } from "./global-sync/event-reducer"
+import { applyDirectoryEvent, applyGlobalEvent, isAgentConfigDisposal } from "./global-sync/event-reducer"
 import { estimateRootSessionTotal, loadRootSessions, loadRootSessionsV1 } from "./global-sync/session-load"
 import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta } from "./global-sync/types"
@@ -120,8 +120,8 @@ export const loadMcpQuery = (
   >({
     queryKey: [scope, directory, "mcp"] as const,
     queryFn: async () =>
-      (await apiForGeneration?.())
-        ?.mcp.list({ location: { directory } })
+      (await apiForGeneration?.())?.mcp
+        .list({ location: { directory } })
         .then((result) => Object.fromEntries(extractArray(result).map((server) => [server.name, server.status]))) ??
       api
         .list({ location: { directory } })
@@ -142,8 +142,7 @@ export const loadMcpResourcesQuery = (
   >({
     queryKey: [scope, directory, "mcpResources"] as const,
     queryFn: async () =>
-      (await apiForGeneration?.())
-        ?.mcp.resource
+      (await apiForGeneration?.())?.mcp.resource
         .catalog({ location: { directory } })
         .then((result) =>
           Object.fromEntries(
@@ -208,6 +207,10 @@ export async function refreshProviderQueries(input: {
       predicate: (query) => query.queryKey[0] === input.scope && query.queryKey[2] === "providers",
     }),
   ])
+}
+
+export type ConfigUpdateOptions = {
+  refreshProviders?: boolean
 }
 
 export function isProviderCatalogEvent(type: string) {
@@ -301,10 +304,8 @@ function makeQueryOptionsApi(
         generationFor,
       ),
     mcp: (directory: PathKey) => loadMcpQuery(scope, directory, serverAPI.mcp, apiForGeneration),
-    mcpResources: (directory: PathKey) =>
-      loadMcpResourcesQuery(scope, directory, serverAPI.mcp, apiForGeneration),
-    lsp: (directory: PathKey) =>
-      loadLspQuery(scope, directory, serverAPI.lsp, apiForGeneration, generationFor),
+    mcpResources: (directory: PathKey) => loadMcpResourcesQuery(scope, directory, serverAPI.mcp, apiForGeneration),
+    lsp: (directory: PathKey) => loadLspQuery(scope, directory, serverAPI.lsp, apiForGeneration, generationFor),
     sessions: (directory: PathKey) => ({ queryKey: [scope, directory, "loadSessions"] as const }),
   }
 }
@@ -548,11 +549,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
         queryFn: () =>
-          serverSDK.generationFor().then(({ protocol, api }) => {
-            if (protocol === "v1")
-              return loadRootSessionsV1({ client: legacyClientFor(directory), directory, limit })
-            return loadRootSessions({ api: api.session, directory, limit })
-          })
+          serverSDK
+            .generationFor()
+            .then(({ protocol, api }) => {
+              if (protocol === "v1") return loadRootSessionsV1({ client: legacyClientFor(directory), directory, limit })
+              return loadRootSessions({ api: api.session, directory, limit })
+            })
             .then((x) => {
               const nonArchived = (x.data ?? [])
                 .filter((s) => !!s?.id)
@@ -702,12 +704,16 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           void activeSessionsQuery.refetch()
         }
       }
+      const agentConfigDisposal = isAgentConfigDisposal(event)
       applyGlobalEvent({
         event,
         project: globalStore.project,
         refresh: () => {
           if (recent) return
-          bootstrap.refetch()
+          void bootstrap.refetch()
+        },
+        refreshConfig: () => {
+          void queryClient.invalidateQueries({ queryKey: [serverSDK.scope, "config"] })
         },
         setGlobalProject: setProjects,
       })
@@ -718,7 +724,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         eventType === "project.directories.updated"
       )
         bootstrap.refetch()
-      if (eventType === "server.connected" || eventType === "global.disposed") {
+      if ((eventType === "server.connected" || eventType === "global.disposed") && !agentConfigDisposal) {
         if (recent) return
         for (const directory of Object.keys(children.children)) {
           if (!children.active(directory)) continue
@@ -838,8 +844,13 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         config: config as unknown as Parameters<ServerApi["config"]["update"]>[0]["config"],
       })
     },
-    onSuccess: refreshProviders,
   }))
+
+  const updateConfig = async (config: Config, options?: ConfigUpdateOptions) => {
+    const result = await updateConfigMutation.mutateAsync(config)
+    if (options?.refreshProviders !== false) await refreshProviders()
+    return result
+  }
 
   return {
     data: globalStore,
@@ -855,7 +866,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     disableMcp: children.disableMcp,
     queryOptions: queryOptionsApi,
     // bootstrap,
-    updateConfig: updateConfigMutation.mutateAsync,
+    updateConfig,
     refreshProviders,
     project: projectApi,
     session,

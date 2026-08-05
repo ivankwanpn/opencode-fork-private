@@ -3,7 +3,7 @@
   "productName": "OpenCode",
   "description": "AI-powered development tool",
   "private": true,
-  "version": "999.0.9",
+  "version": "999.0.10",
   "type": "module",
   "license": "MIT",
   "homepage": "https://opencode.ai",

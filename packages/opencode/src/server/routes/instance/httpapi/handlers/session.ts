@@ -429,7 +429,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
-      yield* sessionV2.interrupt(SessionV2.ID.make(ctx.params.sessionID))
+      const sessionID = SessionID.make(ctx.params.sessionID)
+      yield* sessionV2.interrupt(SessionV2.ID.make(sessionID))
+      yield* runState.cancelIfRunning(sessionID)
       return true
     })
 

@@ -1770,6 +1770,7 @@ export type PermissionConfig =
 
 export type AgentConfig = {
   model?: string
+  protocol?: CustomProviderProtocol
   variant?: string
   temperature?: number
   top_p?: number
@@ -1794,6 +1795,7 @@ export type AgentConfig = {
   [key: string]:
     | unknown
     | string
+    | CustomProviderProtocol
     | number
     | {
         [key: string]: boolean
@@ -2441,6 +2443,7 @@ export type Agent = {
   model?: {
     modelID: string
     providerID: string
+    protocol?: CustomProviderProtocol
   }
   variant?: string
   prompt?: string
@@ -14710,6 +14713,49 @@ export type ServerMcpMcpDisconnectResponses = {
 }
 
 export type ServerMcpMcpDisconnectResponse = ServerMcpMcpDisconnectResponses[keyof ServerMcpMcpDisconnectResponses]
+
+export type V2McpAuthenticateData = {
+  body?: never
+  path: {
+    name: string
+  }
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
+  url: "/api/mcp/{name}/authenticate"
+}
+
+export type V2McpAuthenticateErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * McpNotFoundError
+   */
+  404: McpNotFoundError
+}
+
+export type V2McpAuthenticateError = V2McpAuthenticateErrors[keyof V2McpAuthenticateErrors]
+
+export type V2McpAuthenticateResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo
+    data: McpStatus
+  }
+}
+
+export type V2McpAuthenticateResponse = V2McpAuthenticateResponses[keyof V2McpAuthenticateResponses]
 
 export type V2LspStatusData = {
   body?: never

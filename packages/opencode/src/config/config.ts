@@ -115,6 +115,12 @@ export type Info = ConfigV1.Info & {
   plugin_origins?: ConfigPlugin.Origin[]
 }
 
+export function isAgentOnlyUpdate(config: unknown) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false
+  const keys = Object.keys(config)
+  return keys.length === 1 && keys[0] === "agent"
+}
+
 type State = {
   config: Info
   directories: string[]

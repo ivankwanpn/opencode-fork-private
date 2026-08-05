@@ -85,6 +85,16 @@ describe("session action routes", () => {
 
         expect(res.status).toBe(200)
         expect(yield* res.json).toBe(true)
+        const admitted = yield* requestInDirectory(`/api/session/${session.id}/prompt`, test.directory, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: "msg_idle_abort_reuse",
+            prompt: { text: "reuse after idle abort" },
+            resume: false,
+          }),
+        })
+        expect(admitted.status).toBe(200)
       }),
     { git: true },
   )

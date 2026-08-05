@@ -3,6 +3,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Config } from "@/config/config"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { Provider } from "@/provider/provider"
+import { CustomProvider } from "@opencode-ai/schema/custom-provider"
 
 import { generateObject, streamObject, type ModelMessage } from "ai"
 import { Truncate } from "@/tool/truncate"
@@ -46,6 +47,7 @@ export const Info = Schema.Struct({
     Schema.Struct({
       modelID: ModelV2.ID,
       providerID: ProviderV2.ID,
+      protocol: Schema.optional(CustomProvider.Protocol),
     }),
   ),
   variant: Schema.optional(Schema.String),
@@ -181,7 +183,7 @@ const layer = Layer.effect(
           },
           general: {
             name: "general",
-            description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
+            description: `General agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
@@ -278,8 +280,15 @@ const layer = Layer.effect(
               options: {},
               native: false,
             }
-          if (value.model) item.model = Provider.parseModel(value.model)
-          item.variant = value.variant ?? item.variant
+          if (value.model === null) item.model = undefined
+          if (value.model) {
+            const model = Provider.parseModel(value.model)
+            item.model = { ...model, protocol: value.protocol ?? undefined }
+          }
+          if (value.protocol === null && item.model !== undefined) delete item.model.protocol
+          if (value.protocol !== undefined && value.protocol !== null && item.model !== undefined)
+            item.model.protocol = value.protocol
+          if (value.variant !== undefined) item.variant = value.variant ?? undefined
           item.prompt = value.prompt ?? item.prompt
           item.description = value.description ?? item.description
           item.temperature = value.temperature ?? item.temperature

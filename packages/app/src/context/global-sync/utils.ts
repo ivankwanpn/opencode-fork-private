@@ -1,6 +1,7 @@
 import type { AgentListOutput, PermissionV2Request } from "@opencode-ai/client/promise"
 import type { Agent, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
 import type { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
+import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
@@ -13,6 +14,10 @@ export function normalizeAgentList(input: AgentListOutput["data"] | Agent[]): Ag
     // v2 伺服器回傳的 request 可能只有 {headers, body} 而沒有 settings,
     // 防禦性地存取避免讀取 undefined 的屬性。
     const settings = agent.request.settings ?? {}
+    const protocol =
+      agent.model && "protocol" in agent.model && typeof agent.model.protocol === "string"
+        ? (agent.model.protocol as CustomProvider.Protocol)
+        : undefined
     return {
       name: agent.id,
       description: agent.description,
@@ -26,7 +31,11 @@ export function normalizeAgentList(input: AgentListOutput["data"] | Agent[]): Ag
         pattern: rule.resource,
         action: rule.effect,
       })),
-      model: agent.model && { providerID: agent.model.providerID, modelID: agent.model.id },
+      model: agent.model && {
+        providerID: agent.model.providerID,
+        modelID: agent.model.id,
+        ...(protocol ? { protocol } : {}),
+      },
       variant: agent.model?.variant,
       prompt: agent.system,
       options: settings,

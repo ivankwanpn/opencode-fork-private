@@ -31,6 +31,7 @@ export interface TaskPromptOps {
 }
 
 const id = "task"
+const normalizeSubagentType = (type: string) => (type === "general-purpose" ? "general" : type)
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",
   "Foreground is the default; use it when you need the result before continuing.",
@@ -52,7 +53,10 @@ const BACKGROUND_UPDATED = [
 const BaseParameterFields = {
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
-  subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
+  subagent_type: Schema.String.annotate({
+    description:
+      "The agent identifier to use. Built-in task agents are `build`, `plan`, `general`, and `explore`; `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Internal agents `compaction`, `title`, and `summary` are not task targets.",
+  }),
   task_id: Schema.optional(Schema.String).annotate({
     description:
       "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
@@ -91,9 +95,11 @@ function promptModel(value: unknown) {
   if (typeof value !== "object" || value === null) return undefined
   if (!("id" in value) || !("providerID" in value)) return undefined
   if (typeof value.id !== "string" || typeof value.providerID !== "string") return undefined
+  const protocol = "protocol" in value && Schema.is(ModelV2.Protocol)(value.protocol) ? value.protocol : undefined
   return {
     modelID: ModelV2.ID.make(value.id),
     providerID: ProviderV2.ID.make(value.providerID),
+    ...(protocol === undefined ? {} : { protocol }),
   }
 }
 
@@ -115,6 +121,7 @@ export const TaskTool = Tool.define(
       params: Schema.Schema.Type<typeof Parameters>,
       ctx: Tool.Context,
     ) {
+      const subagentType = normalizeSubagentType(params.subagent_type)
       const cfg = yield* config.get()
       const runInBackground = params.background === true
       if (runInBackground && !flags.experimentalBackgroundSubagents) {
@@ -141,18 +148,18 @@ export const TaskTool = Tool.define(
       if (!ctx.extra?.bypassAgentCheck) {
         yield* ctx.ask({
           permission: id,
-          patterns: [params.subagent_type],
+          patterns: [subagentType],
           always: ["*"],
           metadata: {
             description: params.description,
-            subagent_type: params.subagent_type,
+            subagent_type: subagentType,
           },
         })
       }
 
-      const next = yield* agent.get(params.subagent_type)
+      const next = yield* agent.get(subagentType)
       if (!next) {
-        return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
+        return yield* Effect.fail(new Error(`Unknown agent type: ${subagentType} is not a valid agent type`))
       }
 
       const session = params.task_id
@@ -223,7 +230,7 @@ export const TaskTool = Tool.define(
         parentSessionID: SessionSchema.ID.make(ctx.sessionID),
         assistantMessageID: SessionMessage.ID.make(ctx.messageID),
         toolCallID:
-          ctx.callID ?? `legacy-task:${nextSession.id}:${params.description}:${params.prompt}:${params.subagent_type}`,
+          ctx.callID ?? `legacy-task:${nextSession.id}:${params.description}:${params.prompt}:${subagentType}`,
         childSessionID: SessionSchema.ID.make(nextSession.id),
         description: params.description,
         prompt: Prompt.make({ text: params.prompt }),
@@ -239,7 +246,11 @@ export const TaskTool = Tool.define(
           const model =
             promptModel(ctx.extra?.model) ??
             (currentParent.model
-              ? { modelID: currentParent.model.id, providerID: currentParent.model.providerID }
+              ? {
+                  modelID: currentParent.model.id,
+                  providerID: currentParent.model.providerID,
+                  protocol: currentParent.model.protocol,
+                }
               : undefined)
           yield* ops.prompt({
             messageID: MessageID.make(input.id),
@@ -271,6 +282,7 @@ export const TaskTool = Tool.define(
           model: {
             modelID: model.modelID,
             providerID: model.providerID,
+            protocol: "protocol" in model ? model.protocol : undefined,
           },
           variant: next.model ? undefined : variant,
           agent: next.name,

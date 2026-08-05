@@ -233,7 +233,7 @@ export const node = makeGlobalNode({
 })
 
 function renderPayload(payload: typeof NotificationPayload.Type, taskID: string) {
-  const tag = payload.state === "error" ? "task_error" : "task_result"
+  const tag = payload.state === "completed" ? "task_result" : "task_error"
   return [
     `<task id="${taskID}" state="${payload.state}">`,
     `<summary>${payload.description}</summary>`,

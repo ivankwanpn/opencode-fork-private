@@ -12,12 +12,12 @@ describe("normalizeAgentList", () => {
         mode: "primary",
         hidden: false,
         color: "primary",
-        model: { id: "gpt-5", providerID: "openai", variant: "high" },
+        model: { id: "gpt-5", providerID: "openai", variant: "high", protocol: "openai-responses" },
         request: { settings: { temperature: 0.2, topP: 0.9 }, headers: {}, body: {} },
         system: "Build software",
         permissions: [{ action: "read", resource: "*", effect: "allow" }],
       },
-    ] as AgentListOutput["data"])
+    ] as unknown as AgentListOutput["data"])
 
     expect(result).toEqual([
       {
@@ -29,7 +29,7 @@ describe("normalizeAgentList", () => {
         topP: 0.9,
         color: "primary",
         permission: [{ permission: "read", pattern: "*", action: "allow" }],
-        model: { providerID: "openai", modelID: "gpt-5" },
+        model: { providerID: "openai", modelID: "gpt-5", protocol: "openai-responses" },
         variant: "high",
         prompt: "Build software",
         options: { temperature: 0.2, topP: 0.9 },

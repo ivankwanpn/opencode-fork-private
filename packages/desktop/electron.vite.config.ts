@@ -7,6 +7,7 @@ import { resolveChannel } from "../script/src/channel"
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
 
 const channel = resolveChannel()
+const desktopServerProtocol = process.env.VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL ?? "auto"
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
 
@@ -90,6 +91,7 @@ const require = __cjs_mod__.createRequire(import.meta.url);
     define: {
       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
       "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL": JSON.stringify(desktopServerProtocol),
     },
     plugins: [appPlugin, sentry],
     publicDir: "../../../app/public",

@@ -94,7 +94,7 @@ Record the exact sidecar build commit, channel, version, health response, route 
 
 ### API boundary
 
-Refactor `createCompatibleApi` so its responsibility is limited to protocol adaptation. The normal Desktop path should consume a V2-shaped API directly. The adapter should not hide protocol differences from session execution code.
+Refactor `createExternalCompatibleApi` so its responsibility is limited to protocol adaptation. The normal Desktop path should consume a V2-shaped API directly. The adapter should not hide protocol differences from session execution code.
 
 Required invariants:
 
@@ -146,11 +146,20 @@ After Phase 2 is green, audit the remaining V1 surfaces instead of deleting them
 
 ### Removal checklist
 
-- `packages/app/src/utils/server-compat.ts`: list every remaining V1 method and its caller. Each must be either removed from the normal Desktop path or explicitly documented as external-server fallback.
+- `packages/app/src/utils/server-compat.ts`: list every remaining V1 method and its caller. Each must be either removed from the normal Desktop path or explicitly documented as external-server fallback. The `createExternalCompatibleApi` factory is reserved for that boundary; bundled sidecars use `createV2OnlyApi`.
 - `packages/app/src/context/server-sdk.tsx`: retain one protocol-specific event implementation. Confirm V2 event adaptation does not pass legacy payloads through the V2 branch.
 - `packages/opencode/src/server/routes/instance/httpapi/server.ts`: identify routes needed only by old clients. Keep them until external compatibility is intentionally ended.
 - Legacy `packages/opencode` task and prompt handlers: do not remove until V1 clients, installed versions, and migration data are covered by the release policy.
 - Any V1 session projection used during restore: add a data migration or read-only adapter first; never reinterpret old rows in memory without a validation test.
+
+### 999.0.9 Phase 3 audit progress
+
+- [x] Renamed the compatibility factory to `createExternalCompatibleApi` so its external-server boundary is explicit.
+- [x] Confirmed bundled sidecars construct `createV2OnlyApi` in both global and directory-scoped SDK contexts.
+- [x] Renamed the retained generated client to `legacyClient`/`createLegacyClient`; V1 PTY, history, bootstrap, and catalog fallbacks now declare their boundary at the call site.
+- [x] Removed an unused directory-sync legacy client allocation; V2 directory sync does not construct a compatibility client merely by opening a directory.
+- [x] Recorded the V1 adapter methods, event branch, and non-adapter fallbacks in `docs/superpowers/plans/2026-08-05-v1-compatibility-inventory.md`.
+- [ ] Satisfy the removal gate and delete V1 code from the normal Desktop path.
 
 ### Removal gate
 
@@ -166,9 +175,17 @@ V1 code may be removed from the Desktop normal path only when:
 
 Use a small feature boundary instead of a broad flag scattered through UI components.
 
+### 999.0.9 progress
+
+- [x] Protocol diagnostics now expose the server type, explicit compatibility boundary, selected protocol, protocol/event generations, reconnect count, server version, sidecar PID, and capability result.
+- [x] Add the last durable aggregate and sequence to support diagnostics without logging prompt contents.
+- [x] Add and exercise the single connection-boundary protocol override. `VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL=auto|v1|v2` applies only to external server SDK creation; bundled sidecars remain V2-only.
+- [x] Unit-test the sidecar invariant: a global `v1` override cannot downgrade a bundled sidecar.
+- [x] Verify renderer build-time injection in both `v1` override and default `auto` builds; the bundle contains the selected value and no unresolved environment lookup.
+
 ### Recommended controls
 
-- `desktopServerProtocol`: `v2` for the bundled sidecar, `auto` for external servers, and `v1` only for emergency compatibility testing.
+- `desktopServerProtocol`: `v2` for the bundled sidecar, `auto` for external servers, and `v1` only for emergency compatibility testing. The current build-time input is `VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL`.
 - Diagnostic logging: selected protocol, server build/version, sidecar PID, health result, event stream generation, and last durable session sequence. Do not log prompt contents or credentials.
 - A single kill switch at connection creation that can force the legacy adapter for external servers. The switch must not change the durable database schema or delete session data.
 

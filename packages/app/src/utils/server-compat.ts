@@ -133,7 +133,12 @@ function unsupportedV1(operation: string): never {
   throw new Error(`${operation} is unavailable on a V1 server`)
 }
 
-export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
+/**
+ * Creates the protocol adapter reserved for explicitly connected external servers.
+ * Bundled Desktop sidecars must use createV2OnlyApi so a protocol probe cannot
+ * silently redirect normal execution through legacy routes.
+ */
+export function createExternalCompatibleApi(input: CompatibleInput): CompatibleApi {
   const v1 = createV1Api(input)
   const select = (protocol: ServerProtocol) => (protocol === "v1" ? v1 : input.current)
   const api = lazyApi(() => resolveProtocol(input.protocol).then(select), input.current)

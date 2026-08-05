@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ServerApi } from "./server"
 import {
-  createCompatibleApi,
+  createExternalCompatibleApi,
   createV2OnlyApi,
   resolveCompatibleApiForProtocol,
   resolveCompatibleGeneration,
@@ -109,7 +109,7 @@ describe("server compatibility API", () => {
 
   test("does not leak V2 session input methods into V1 connections", async () => {
     const calls: string[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v1"),
       current: currentApi(calls),
       legacy: () => {
@@ -132,7 +132,7 @@ describe("server compatibility API", () => {
 
   test("does not expose V2 message history to V1 connections", async () => {
     const calls: string[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v1"),
       current: currentApi(calls),
       legacy: () => {
@@ -148,7 +148,7 @@ describe("server compatibility API", () => {
 
   test("keeps V2 session methods on V2 connections", async () => {
     const calls: string[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v2"),
       current: currentApi(calls),
       legacy: () => {
@@ -162,7 +162,7 @@ describe("server compatibility API", () => {
 
   test("routes MCP authentication through the current API on V2 connections", async () => {
     const calls: string[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v2"),
       current: currentApi(calls),
       legacy: () => {
@@ -178,7 +178,7 @@ describe("server compatibility API", () => {
 
   test("maps MCP authentication to the legacy adapter on V1 connections", async () => {
     const calls: unknown[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v1"),
       current: currentApi([]),
       legacy: (directory) =>
@@ -203,7 +203,7 @@ describe("server compatibility API", () => {
   test("maps V1 todo and LSP reads through the compatibility adapter", async () => {
     const calls: string[] = []
     const todos = [{ id: "todo_1", content: "finish migration", status: "pending", priority: "high" }]
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v1"),
       current: currentApi([]),
       legacy: () =>
@@ -233,7 +233,7 @@ describe("server compatibility API", () => {
 
   test("does not send V1 OAuth cleanup through the current API", async () => {
     const calls: string[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v1"),
       current: currentApi(calls),
       legacy: () => {
@@ -248,7 +248,7 @@ describe("server compatibility API", () => {
   test("re-evaluates the protocol resolver for a new connection generation", async () => {
     const calls: string[] = []
     let protocol: "v1" | "v2" = "v2"
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: () => Promise.resolve(protocol),
       current: currentApi(calls),
       legacy: () => {
@@ -267,7 +267,7 @@ describe("server compatibility API", () => {
   test("keeps a resolved API on the generation selected before reconnect", async () => {
     const calls: string[] = []
     let protocol: "v1" | "v2" = "v2"
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: () => Promise.resolve(protocol),
       current: currentApi(calls),
       legacy: () => {
@@ -284,7 +284,7 @@ describe("server compatibility API", () => {
 
   test("keeps the protocol and API selected from the same generation", async () => {
     const calls: string[] = []
-    const api = createCompatibleApi({
+    const api = createExternalCompatibleApi({
       protocol: Promise.resolve("v2"),
       current: currentApi(calls),
       legacy: () => {

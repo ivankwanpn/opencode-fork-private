@@ -183,7 +183,7 @@ export const loadProjectsQuery = (
   })
 
 export async function bootstrapGlobal(input: {
-  serverSDK: OpencodeClient
+  legacyClient: OpencodeClient
   serverAPI: CatalogApi &
     ProviderCatalogApi & {
       readonly config: ConfigApi
@@ -211,11 +211,19 @@ export async function bootstrapGlobal(input: {
         ? resolveApi().then((api) =>
             input.queryClient.fetchQuery(loadCompatibleConfigQuery(input.scope, api.config, apiForGeneration)),
           )
-        : input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.serverSDK)),
+        : input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.legacyClient)),
     () =>
       resolveApi().then((api) =>
         input.queryClient.fetchQuery(
-          loadProvidersQuery(input.scope, null, api, input.serverSDK, input.protocol, apiForGeneration, generationFor),
+          loadProvidersQuery(
+            input.scope,
+            null,
+            api,
+            input.legacyClient,
+            input.protocol,
+            apiForGeneration,
+            generationFor,
+          ),
         ),
       ),
     () =>

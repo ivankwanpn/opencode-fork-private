@@ -3,6 +3,7 @@ interface ImportMetaEnv {
   readonly VITE_OPENCODE_SERVER_PORT: string
   readonly OPENCODE_CHANNEL?: "dev" | "beta" | "prod"
   readonly VITE_OPENCODE_CHANNEL?: "dev" | "beta" | "prod"
+  readonly VITE_OPENCODE_DESKTOP_SERVER_PROTOCOL?: "auto" | "v1" | "v2"
 
   readonly VITE_SENTRY_DSN?: string
   readonly VITE_SENTRY_ENVIRONMENT?: string

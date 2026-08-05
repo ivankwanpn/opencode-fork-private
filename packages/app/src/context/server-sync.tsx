@@ -259,9 +259,9 @@ export function reconcileActiveSessionStatuses(
 
 function makeQueryOptionsApi(
   scope: ServerScope,
-  serverSDK: () => OpencodeClient,
+  legacyClient: () => OpencodeClient,
   serverAPI: ServerApi,
-  sdkFor: (dir: PathKey) => OpencodeClient,
+  legacyClientFor: (dir: PathKey) => OpencodeClient,
   protocol: ServerProtocolResolver,
   apiForGeneration: () => Promise<CompatibleImplementation>,
   generationFor: () => Promise<ServerGeneration>,
@@ -274,20 +274,28 @@ function makeQueryOptionsApi(
         scope,
         directory,
         serverAPI,
-        directory ? sdkFor(directory) : serverSDK(),
+        directory ? legacyClientFor(directory) : legacyClient(),
         protocol,
         apiForGeneration,
         generationFor,
       ),
     path: (directory: PathKey | null) => loadPathQuery(scope, directory, serverAPI.path, apiForGeneration),
     agents: (directory: PathKey) =>
-      loadAgentsQuery(scope, directory, serverAPI.agent, sdkFor(directory), protocol, apiForGeneration, generationFor),
+      loadAgentsQuery(
+        scope,
+        directory,
+        serverAPI.agent,
+        legacyClientFor(directory),
+        protocol,
+        apiForGeneration,
+        generationFor,
+      ),
     references: (directory: PathKey) =>
       loadReferencesQuery(
         scope,
         directory,
         serverAPI.reference,
-        sdkFor(directory),
+        legacyClientFor(directory),
         protocol,
         apiForGeneration,
         generationFor,
@@ -307,7 +315,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const owner = getOwner()
   if (!owner) throw new Error("ServerSync must be created within owner")
 
-  const sdkCache = new Map<string, OpencodeClient>()
+  const legacyClientCache = new Map<string, OpencodeClient>()
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
   const sessionMeta = new Map<string, { limit: number }>()
@@ -333,19 +341,19 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     if (type.startsWith("question.")) requestRevisions.set(key, { ...current, question: current.question + 1 })
   }
 
-  const sdkFor = (directory: string) => {
+  const legacyClientFor = (directory: string) => {
     const key = directoryKey(directory)
-    const cached = sdkCache.get(key)
+    const cached = legacyClientCache.get(key)
     if (cached) return cached
-    const sdk = serverSDK.createClient({
+    const client = serverSDK.createLegacyClient({
       directory,
       throwOnError: true,
     })
-    sdkCache.set(key, sdk)
-    return sdk
+    legacyClientCache.set(key, client)
+    return client
   }
 
-  const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
+  const session = createServerSession(serverSDK.legacyClient, serverSDK.api.session, serverSDK.api.message, {
     protocol: serverSDK.protocolForGeneration,
     api: serverSDK.api,
     apiForGeneration: serverSDK.apiForGeneration,
@@ -353,9 +361,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
-    () => serverSDK.client,
+    () => serverSDK.legacyClient,
     serverSDK.api,
-    sdkFor,
+    legacyClientFor,
     serverSDK.protocolForGeneration,
     serverSDK.apiForGeneration,
     serverSDK.generationFor,
@@ -431,7 +439,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     queryKey: [serverSDK.scope, "bootstrap"],
     queryFn: async () => {
       await bootstrapGlobal({
-        serverSDK: serverSDK.client,
+        legacyClient: serverSDK.legacyClient,
         serverAPI: serverSDK.api,
         apiForGeneration: serverSDK.apiForGeneration,
         generationFor: serverSDK.generationFor,
@@ -481,7 +489,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           loadCommands(
             directory,
             api.command,
-            sdkFor(directory),
+            legacyClientFor(directory),
             serverSDK.protocolForGeneration,
             serverSDK.apiForGeneration,
             serverSDK.generationFor,
@@ -501,7 +509,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       queue.clear(key)
       sessionMeta.delete(key)
       requestRevisions.delete(key)
-      sdkCache.delete(key)
+      legacyClientCache.delete(key)
       clearProviderRev(serverSDK.scope, key)
     },
     translate: language.t,
@@ -541,7 +549,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         ...queryOptionsApi.sessions(key),
         queryFn: () =>
           serverSDK.generationFor().then(({ protocol, api }) => {
-            if (protocol === "v1") return loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
+            if (protocol === "v1")
+              return loadRootSessionsV1({ client: legacyClientFor(directory), directory, limit })
             return loadRootSessions({ api: api.session, directory, limit })
           })
             .then((x) => {
@@ -601,7 +610,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       const child = children.ensureChild(directory)
       const cache = children.vcsCache.get(key)
       if (!cache) return
-      const sdk = sdkFor(directory)
+      const legacyClient = legacyClientFor(directory)
       await bootstrapDirectory({
         directory,
         scope: serverSDK.scope,
@@ -612,7 +621,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           project: globalStore.project,
           provider: globalStore.provider,
         },
-        sdk,
+        sdk: legacyClient,
         api: serverSDK.api,
         apiForGeneration: serverSDK.apiForGeneration,
         generationFor: serverSDK.generationFor,

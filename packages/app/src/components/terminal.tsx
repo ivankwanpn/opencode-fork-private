@@ -528,7 +528,7 @@ export const Terminal = (props: TerminalProps) => {
 
       const gone = async (target: ReturnType<typeof sdk>, generation: ServerGeneration) => {
         if (generation.protocol === "v1") {
-          return target.client.pty
+          return target.legacyClient.pty
             .get({ ptyID: id }, { throwOnError: false })
             .then((result) => result.response.status === 404)
             .catch((err) => {
@@ -548,7 +548,7 @@ export const Terminal = (props: TerminalProps) => {
 
       const connectToken = async (target: ReturnType<typeof sdk>, generation: ServerGeneration) => {
         if (generation.protocol === "v1") {
-          const result = await target.client.pty
+          const result = await target.legacyClient.pty
             .connectToken(
               { ptyID: id, directory },
               {

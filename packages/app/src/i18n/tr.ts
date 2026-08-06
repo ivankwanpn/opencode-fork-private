@@ -929,6 +929,16 @@ export const dict = {
   "settings.models.description": "Model ayarları burada yapılandırılabilecek.",
   "settings.agents.title": "Ajanlar",
   "settings.agents.description": "Ajan ayarları burada yapılandırılabilecek.",
+  "settings.agents.section.coordinators": "Birincil koordinatörler",
+  "settings.agents.section.subagents": "Görev alt ajanları",
+  "settings.agents.role.build": "Tam yürütme izinlerine sahip birincil koordinatör.",
+  "settings.agents.role.plan": "Planlama ve salt okunur çalışmalar için birincil koordinatör.",
+  "settings.agents.role.general": "Geniş ve karma kapsamdaki görevler için genel amaçlı alt ajan.",
+  "settings.agents.role.explore": "Dosya ve sembol keşfi için hızlı, salt okunur alt ajan.",
+  "settings.agents.role.research":
+    "Kanıta dayalı araştırma ve mimari analiz için derinlemesine çalışan salt okunur alt ajan.",
+  "settings.agents.role.worker":
+    "Kod değişiklikleri, hata düzeltmeleri, testler ve doğrulama için güçlü uygulama alt ajanı.",
   "settings.commands.title": "Komutlar",
   "settings.commands.description": "Komut ayarları burada yapılandırılabilecek.",
   "settings.mcp.title": "MCP",

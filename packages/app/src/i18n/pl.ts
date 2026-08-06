@@ -853,6 +853,16 @@ export const dict = {
   "settings.models.description": "Ustawienia modeli będą tutaj konfigurowalne.",
   "settings.agents.title": "Agenci",
   "settings.agents.description": "Ustawienia agentów będą tutaj konfigurowalne.",
+  "settings.agents.section.coordinators": "Główni koordynatorzy",
+  "settings.agents.section.subagents": "Podagenci zadań",
+  "settings.agents.role.build": "Główny koordynator z pełnymi uprawnieniami do wykonywania działań.",
+  "settings.agents.role.plan": "Główny koordynator do planowania i pracy tylko do odczytu.",
+  "settings.agents.role.general": "Podagent ogólnego przeznaczenia do szerokiego zakresu różnorodnych zadań.",
+  "settings.agents.role.explore": "Szybki podagent tylko do odczytu do eksploracji plików i symboli.",
+  "settings.agents.role.research":
+    "Dogłębny podagent tylko do odczytu do badań opartych na dowodach i analizy architektury.",
+  "settings.agents.role.worker":
+    "Zaawansowany podagent implementacyjny do zmian w kodzie, naprawiania błędów, testów i weryfikacji.",
   "settings.commands.title": "Polecenia",
   "settings.commands.description": "Ustawienia poleceń będą tutaj konfigurowalne.",
   "settings.mcp.title": "MCP",

@@ -769,6 +769,16 @@ export const dict = {
   "settings.models.description": "Modellinnstillinger vil kunne konfigureres her.",
   "settings.agents.title": "Agenter",
   "settings.agents.description": "Agentinnstillinger vil kunne konfigureres her.",
+  "settings.agents.section.coordinators": "Primære koordinatorer",
+  "settings.agents.section.subagents": "Underagenter for oppgaver",
+  "settings.agents.role.build": "Primær koordinator med fullstendige utførelsestillatelser.",
+  "settings.agents.role.plan": "Primær koordinator for planlegging og skrivebeskyttet arbeid.",
+  "settings.agents.role.general": "Generell underagent for omfattende oppgaver med blandet omfang.",
+  "settings.agents.role.explore": "Rask skrivebeskyttet underagent for utforsking av filer og symboler.",
+  "settings.agents.role.research":
+    "Grundig skrivebeskyttet underagent for evidensbasert forskning og arkitekturanalyse.",
+  "settings.agents.role.worker":
+    "Kraftig implementeringsunderagent for kodeendringer, feilrettinger, tester og verifisering.",
   "settings.commands.title": "Kommandoer",
   "settings.commands.description": "Kommandoinnstillinger vil kunne konfigureres her.",
   "settings.mcp.title": "MCP",

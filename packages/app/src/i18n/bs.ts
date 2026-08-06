@@ -922,6 +922,16 @@ export const dict = {
   "settings.models.description": "Postavke modela će se ovdje moći podešavati.",
   "settings.agents.title": "Agenti",
   "settings.agents.description": "Postavke agenata će se ovdje moći podešavati.",
+  "settings.agents.section.coordinators": "Glavni koordinatori",
+  "settings.agents.section.subagents": "Podagenti za zadatke",
+  "settings.agents.role.build": "Glavni koordinator s punim dozvolama za izvršavanje.",
+  "settings.agents.role.plan": "Glavni koordinator za planiranje i rad samo za čitanje.",
+  "settings.agents.role.general": "Podagent opće namjene za širok raspon mješovitih zadataka.",
+  "settings.agents.role.explore": "Brzi podagent samo za čitanje za istraživanje datoteka i simbola.",
+  "settings.agents.role.research":
+    "Temeljiti podagent samo za čitanje za istraživanje zasnovano na dokazima i analizu arhitekture.",
+  "settings.agents.role.worker":
+    "Snažni implementacijski podagent za izmjene koda, ispravke grešaka, testove i provjeru.",
   "settings.commands.title": "Komande",
   "settings.commands.description": "Postavke komandi će se ovdje moći podešavati.",
   "settings.mcp.title": "MCP",

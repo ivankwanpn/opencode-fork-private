@@ -1011,6 +1011,16 @@ export const dict = {
   "settings.models.description": "Налаштування моделей будуть доступні тут.",
   "settings.agents.title": "Агенти",
   "settings.agents.description": "Налаштування агентів будуть доступні тут.",
+  "settings.agents.section.coordinators": "Основні координатори",
+  "settings.agents.section.subagents": "Субагенти для завдань",
+  "settings.agents.role.build": "Основний координатор із повними дозволами на виконання.",
+  "settings.agents.role.plan": "Основний координатор для планування та роботи лише для читання.",
+  "settings.agents.role.general": "Субагент загального призначення для широкого кола змішаних завдань.",
+  "settings.agents.role.explore": "Швидкий субагент лише для читання для дослідження файлів і символів.",
+  "settings.agents.role.research":
+    "Поглиблений субагент лише для читання для доказових досліджень та аналізу архітектури.",
+  "settings.agents.role.worker":
+    "Потужний субагент для реалізації змін коду, виправлення помилок, тестування та перевірки.",
   "settings.commands.title": "Команди",
   "settings.commands.description": "Налаштування команд будуть доступні тут.",
   "settings.mcp.title": "MCP",

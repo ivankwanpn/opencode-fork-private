@@ -865,6 +865,17 @@ export const dict = {
   "settings.models.description": "Modelleinstellungen können hier konfiguriert werden.",
   "settings.agents.title": "Agenten",
   "settings.agents.description": "Agenteneinstellungen können hier konfiguriert werden.",
+  "settings.agents.section.coordinators": "Hauptkoordinatoren",
+  "settings.agents.section.subagents": "Aufgaben-Unteragenten",
+  "settings.agents.role.build": "Hauptkoordinator mit vollständigen Ausführungsberechtigungen.",
+  "settings.agents.role.plan": "Hauptkoordinator für Planung und schreibgeschützte Aufgaben.",
+  "settings.agents.role.general": "Allgemeiner Unteragent für vielfältige Aufgaben mit breitem Umfang.",
+  "settings.agents.role.explore":
+    "Schneller schreibgeschützter Unteragent zum Erkunden von Dateien und Symbolen.",
+  "settings.agents.role.research":
+    "Gründlicher schreibgeschützter Unteragent für evidenzbasierte Recherche und Architekturanalyse.",
+  "settings.agents.role.worker":
+    "Leistungsstarker Implementierungs-Unteragent für Codeänderungen, Fehlerbehebungen, Tests und Überprüfung.",
   "settings.commands.title": "Befehle",
   "settings.commands.description": "Befehlseinstellungen können hier konfiguriert werden.",
   "settings.mcp.title": "MCP",

@@ -909,6 +909,17 @@ export const dict = {
   "settings.models.description": "การตั้งค่าโมเดลจะสามารถกำหนดค่าได้ที่นี่",
   "settings.agents.title": "เอเจนต์",
   "settings.agents.description": "การตั้งค่าเอเจนต์จะสามารถกำหนดค่าได้ที่นี่",
+  "settings.agents.section.coordinators": "ผู้ประสานงานหลัก",
+  "settings.agents.section.subagents": "เอเจนต์ย่อยสำหรับงาน",
+  "settings.agents.role.build": "ผู้ประสานงานหลักที่มีสิทธิ์ดำเนินการอย่างเต็มรูปแบบ",
+  "settings.agents.role.plan": "ผู้ประสานงานหลักสำหรับการวางแผนและงานแบบอ่านอย่างเดียว",
+  "settings.agents.role.general": "เอเจนต์ย่อยอเนกประสงค์สำหรับงานหลากหลายขอบเขต",
+  "settings.agents.role.explore":
+    "เอเจนต์ย่อยแบบอ่านอย่างเดียวที่รวดเร็วสำหรับสำรวจไฟล์และสัญลักษณ์",
+  "settings.agents.role.research":
+    "เอเจนต์ย่อยแบบอ่านอย่างเดียวเชิงลึกสำหรับการวิจัยโดยอิงหลักฐานและการวิเคราะห์สถาปัตยกรรม",
+  "settings.agents.role.worker":
+    "เอเจนต์ย่อยด้านการนำไปใช้ที่มีประสิทธิภาพสำหรับการเปลี่ยนแปลงโค้ด การแก้ไขข้อบกพร่อง การทดสอบ และการตรวจสอบ",
   "settings.commands.title": "คำสั่ง",
   "settings.commands.description": "การตั้งค่าคำสั่งจะสามารถกำหนดค่าได้ที่นี่",
   "settings.mcp.title": "MCP",

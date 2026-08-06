@@ -299,6 +299,141 @@ describe("server session", () => {
     expect(store.data.part[assistant.id]).toEqual([expect.objectContaining({ text: "complete answer live" })])
   })
 
+  test("refreshes V2 history when an idle boundary follows missing terminal events", async () => {
+    const user = userMessage("msg_1_user")
+    const assistant = assistantMessage("msg_2_assistant", user.id)
+    const requests: unknown[] = []
+    const refreshed = Promise.withResolvers<unknown>()
+    const messageApi = {
+      list: async (input: unknown) => {
+        requests.push(input)
+        return refreshed.promise
+      },
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("child") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+    store.remember(session("child"))
+    store.pin("child")
+    store.set("session_message", "child", [
+      { id: user.id, type: "user", text: "hello", time: user.time },
+      {
+        id: assistant.id,
+        type: "assistant",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+        content: [{ type: "text", text: "partial answer" }],
+        time: { created: 2 },
+      },
+    ])
+
+    store.applyV2({
+      id: "evt_status_idle",
+      type: "session.status",
+      location: { directory: "/repo" },
+      data: { sessionID: "child", status: { type: "idle" } },
+    } as unknown as V2Event)
+    store.applyV2({
+      id: "evt_idle",
+      type: "session.idle",
+      location: { directory: "/repo" },
+      data: { sessionID: "child" },
+    } as unknown as V2Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toEqual([{ sessionID: "child", limit: 20, order: "desc" }])
+
+    refreshed.resolve({
+      data: [
+        {
+          id: assistant.id,
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [{ type: "text", text: "complete canonical answer" }],
+          time: assistant.time,
+        },
+        { id: user.id, type: "user", text: "hello", time: user.time },
+      ],
+      cursor: { previous: null, next: null },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.data.part[assistant.id]).toEqual([
+      expect.objectContaining({ text: "complete canonical answer" }),
+    ])
+    expect(store.data.session_status.child).toEqual({ type: "idle" })
+  })
+
+  test("defers idle reconciliation for an unpinned V2 session until it is revisited", async () => {
+    const requests: unknown[] = []
+    const messageApi = {
+      list: async (input: unknown) => {
+        requests.push(input)
+        return { data: [], cursor: { previous: null, next: null } }
+      },
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("child") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+    await store.sync("child")
+
+    expect(store.fresh("child", 15_000)).toBe(true)
+
+    store.applyV2({
+      id: "evt_status_idle",
+      type: "session.status",
+      location: { directory: "/repo" },
+      data: { sessionID: "child", status: { type: "idle" } },
+    } as unknown as V2Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toEqual([{ sessionID: "child", limit: 20, order: "desc" }])
+    expect(store.fresh("child", 15_000)).toBe(false)
+  })
+
+  test("runs idle reconciliation after an older V2 history load finishes", async () => {
+    const first = Promise.withResolvers<unknown>()
+    const second = Promise.withResolvers<unknown>()
+    const requests: unknown[] = []
+    const messageApi = {
+      list: async (input: unknown) => {
+        requests.push(input)
+        return requests.length === 1 ? first.promise : second.promise
+      },
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("child") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+    store.pin("child")
+    const initial = store.sync("child")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    store.applyV2({
+      id: "evt_status_idle",
+      type: "session.status",
+      location: { directory: "/repo" },
+      data: { sessionID: "child", status: { type: "idle" } },
+    } as unknown as V2Event)
+    first.resolve({ data: [], cursor: { previous: null, next: null } })
+    await initial
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toEqual([
+      { sessionID: "child", limit: 20, order: "desc" },
+      { sessionID: "child", limit: 20, order: "desc" },
+    ])
+
+    second.resolve({ data: [], cursor: { previous: null, next: null } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+
   test("does not hydrate a stale V2 event through a V1 generation", async () => {
     let calls = 0
     const api = createV2OnlyApi({

@@ -68,15 +68,62 @@ function segment(value: string, fallback: string) {
 }
 
 function entries(tools: Record<string, MCP.McpTool>, permissions: PermissionV2.Ruleset): CatalogEntry[] {
-  return Object.entries(tools)
+  const selected = Object.entries(tools)
     .filter(([key]) => PermissionV2.evaluate(key, "*", permissions).effect !== "deny")
     .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([key, tool]) => ({
-      key,
-      server: segment(tool.clientName, "server"),
-      local: segment(tool.def.name, "tool"),
-      tool,
-    }))
+  const serverNames = new Map<string, string>()
+  const serverCandidates = [...new Set(selected.map(([, tool]) => tool.clientName))].map((clientName) => ({
+    clientName,
+    base: segment(clientName, "server"),
+  }))
+  const serverValues = uniqueSegments(
+    serverCandidates.map((candidate) => ({ base: candidate.base, identity: candidate.clientName })),
+  )
+  for (const [index, candidate] of serverCandidates.entries()) serverNames.set(candidate.clientName, serverValues[index]!)
+
+  const localCandidates = selected.map(([key, tool]) => ({
+    key,
+    tool,
+    server: serverNames.get(tool.clientName)!,
+    base: segment(tool.def.name, "tool"),
+    identity: `${tool.clientName}\u0000${tool.def.name}`,
+  }))
+  const localCounts = new Map<string, number>()
+  for (const candidate of localCandidates) {
+    const group = `${candidate.server}\u0000${candidate.base}`
+    localCounts.set(group, (localCounts.get(group) ?? 0) + 1)
+  }
+  const localOccurrences = new Map<string, number>()
+  return localCandidates.map((candidate) => {
+    const group = `${candidate.server}\u0000${candidate.base}`
+    const occurrence = localOccurrences.get(group) ?? 0
+    localOccurrences.set(group, occurrence + 1)
+    return {
+      key: candidate.key,
+      server: candidate.server,
+      local:
+        (localCounts.get(group) ?? 0) > 1
+          ? McpCatalog.disambiguateName(candidate.base, candidate.identity, occurrence)
+          : candidate.base,
+      tool: candidate.tool,
+    }
+  })
+}
+
+function uniqueSegments(items: ReadonlyArray<{ readonly base: string; readonly identity: string }>) {
+  const counts = new Map<string, number>()
+  for (const item of items) counts.set(item.base, (counts.get(item.base) ?? 0) + 1)
+  const occurrences = new Map<string, number>()
+  const used = new Set<string>()
+  return items.map((item) => {
+    let occurrence = occurrences.get(item.base) ?? 0
+    occurrences.set(item.base, occurrence + 1)
+    let value = item.base
+    if ((counts.get(item.base) ?? 0) > 1) value = McpCatalog.disambiguateName(item.base, item.identity, occurrence)
+    while (used.has(value)) value = McpCatalog.disambiguateName(item.base, item.identity, ++occurrence)
+    used.add(value)
+    return value
+  })
 }
 
 function toolTree(catalog: ReadonlyArray<CatalogEntry>, run: (entry: CatalogEntry) => Run) {
@@ -119,16 +166,29 @@ function projectMcpResult(result: CallToolResult, collect: (attachment: Attachme
         break
       case "image":
       case "audio":
+        {
+          const mediaError = McpCatalog.validateMedia(block.data)
+          if (mediaError) {
+            text.push(`[MCP media omitted: ${mediaError}]`)
+            break
+          }
+        }
         push({ data: block.data, mime: block.mimeType })
         break
       case "resource":
         if ("text" in block.resource) text.push(block.resource.text)
-        else
+        else {
+          const mediaError = McpCatalog.validateMedia(block.resource.blob)
+          if (mediaError) {
+            text.push(`[MCP resource omitted: ${block.resource.uri}: ${mediaError}]`)
+            break
+          }
           push({
             data: block.resource.blob,
             mime: block.resource.mimeType ?? "application/octet-stream",
             name: lastSegment(block.resource.uri),
           })
+        }
         break
       case "resource_link":
         text.push(`${block.name}: ${block.uri}`)

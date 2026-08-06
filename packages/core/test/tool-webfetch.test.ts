@@ -114,7 +114,7 @@ describe("WebFetchTool registration", () => {
     }),
   )
 
-  live.effect("follows redirects while approving only the requested URL", () =>
+  live.effect("follows redirects while approving every requested URL", () =>
     Effect.acquireUseRelease(
       Effect.sync(() =>
         Bun.serve({
@@ -135,9 +135,8 @@ describe("WebFetchTool registration", () => {
             type: "text",
             value: "redirected",
           })
-          expect(assertions).toMatchObject([
-            { sessionID, action: "webfetch", resources: [url], save: ["*"], metadata: { url, format: "text" } },
-          ])
+          const target = new URL("/target", server.url).toString()
+          expect(assertions.map((assertion) => assertion.resources)).toEqual([[url], [target]])
         }),
       (server) => Effect.promise(() => server.stop(true)),
     ),
@@ -150,7 +149,7 @@ describe("WebFetchTool registration", () => {
 
       expect(yield* executeTool(registry, call({ url: "file:///etc/passwd", format: "text" }))).toEqual({
         type: "error",
-        value: "Unable to fetch file:///etc/passwd",
+        value: expect.stringContaining("URL must use http:// or https://"),
       })
       expect(assertions).toEqual([])
       expect(requests).toEqual([])
@@ -163,7 +162,7 @@ describe("WebFetchTool registration", () => {
       respond = () =>
         Effect.succeed(
           new Response("<h1>Hello</h1><p>world</p><script>bad()</script>", {
-            headers: { "content-type": "text/html; charset=utf-8" },
+            headers: { "content-type": "TEXT/HTML; charset=utf-8" },
           }),
         )
       const registry = yield* ToolRegistry.Service
@@ -191,7 +190,7 @@ describe("WebFetchTool registration", () => {
         )
       expect(yield* executeTool(registry, call({ url: "https://1.1.1.1/declared", format: "text" }))).toEqual({
         type: "error",
-        value: "Unable to fetch https://1.1.1.1/declared",
+        value: expect.stringContaining("Response too large"),
       })
 
       respond = () =>
@@ -200,7 +199,7 @@ describe("WebFetchTool registration", () => {
         )
       expect(yield* executeTool(registry, call({ url: "https://1.1.1.1/streamed", format: "text" }))).toEqual({
         type: "error",
-        value: "Unable to fetch https://1.1.1.1/streamed",
+        value: expect.stringContaining("Response too large"),
       })
     }),
   )
@@ -212,13 +211,13 @@ describe("WebFetchTool registration", () => {
       respond = () => Effect.succeed(new Response("png", { headers: { "content-type": "image/png" } }))
       expect(yield* executeTool(registry, call({ url: "https://1.1.1.1/image", format: "html" }))).toEqual({
         type: "error",
-        value: "Unable to fetch https://1.1.1.1/image",
+        value: expect.stringContaining("Unsupported fetched image content type: image/png"),
       })
 
       respond = () => Effect.succeed(new Response("pdf", { headers: { "content-type": "application/pdf" } }))
       expect(yield* executeTool(registry, call({ url: "https://1.1.1.1/file", format: "html" }))).toEqual({
         type: "error",
-        value: "Unable to fetch https://1.1.1.1/file",
+        value: expect.stringContaining("Unsupported fetched file content type: application/pdf"),
       })
     }),
   )
@@ -256,7 +255,10 @@ describe("WebFetchTool registration", () => {
       ).pipe(Effect.forkChild)
       yield* TestClock.adjust(Duration.seconds(1))
 
-      expect(yield* Fiber.join(fiber)).toEqual({ type: "error", value: "Unable to fetch https://1.1.1.1/slow" })
+      expect(yield* Fiber.join(fiber)).toMatchObject({
+        type: "error",
+        value: expect.stringContaining("Request timed out"),
+      })
     }),
   )
 })

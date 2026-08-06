@@ -44,6 +44,17 @@ describe("websearch provider", () => {
     expect(webSearchEnabled(ProviderV2.ID.openai, { exa: false, parallel: true })).toBe(true)
   })
 
+  test("is enabled when the provider is selected through the environment", () => {
+    const original = process.env.OPENCODE_WEBSEARCH_PROVIDER
+    try {
+      process.env.OPENCODE_WEBSEARCH_PROVIDER = "exa"
+      expect(webSearchEnabled(ProviderV2.ID.openai, { exa: false, parallel: false })).toBe(true)
+    } finally {
+      if (original === undefined) delete process.env.OPENCODE_WEBSEARCH_PROVIDER
+      else process.env.OPENCODE_WEBSEARCH_PROVIDER = original
+    }
+  })
+
   test("uses branded labels", () => {
     expect(webSearchProviderLabel("parallel")).toBe("Parallel Web Search")
     expect(webSearchProviderLabel("exa")).toBe("Exa Web Search")

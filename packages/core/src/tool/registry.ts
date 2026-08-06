@@ -78,6 +78,19 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/v2
 
 const BUILTIN_TASK_AGENT_TYPES = ["general", "explore", "research", "worker"] as const
 
+export function webSearchEnabled(
+  providerID: ProviderV2.ID,
+  flags = { exa: false, parallel: false },
+) {
+  return (
+    providerID === ProviderV2.ID.opencode ||
+    flags.exa ||
+    flags.parallel ||
+    process.env.OPENCODE_WEBSEARCH_PROVIDER === "exa" ||
+    process.env.OPENCODE_WEBSEARCH_PROVIDER === "parallel"
+  )
+}
+
 const registryLayer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -275,9 +288,7 @@ function whollyDisabled(action: string, rules: PermissionV2.Ruleset) {
 export function visible(name: string, context: MaterializationContext) {
   const features = { ...materializationFeatures(), ...context.features }
   if (name === "websearch")
-    return (
-      context.model.providerID === ProviderV2.ID.opencode || features.enableExa || features.enableParallel
-    )
+    return webSearchEnabled(context.model.providerID, { exa: features.enableExa, parallel: features.enableParallel })
 
   const usePatch =
     context.model.modelID.includes("gpt-") &&

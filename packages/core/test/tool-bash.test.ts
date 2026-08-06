@@ -181,8 +181,8 @@ describe("BashTool", () => {
             expect(runs[0]?.shell).toBe(process.platform === "win32" && Shell.ps(shell) ? undefined : shell)
             expect(runs[0]?.options).toMatchObject({
               combineOutput: true,
-              maxOutputBytes: BashTool.MAX_CAPTURE_BYTES,
             })
+            expect(runs[0]?.options).not.toHaveProperty("maxOutputBytes")
             expect(assertions).toMatchObject([{ sessionID, action: "bash", resources: ["pwd"], save: ["pwd"] }])
           }),
         )
@@ -344,25 +344,22 @@ describe("BashTool", () => {
     ),
   )
 
-  it.live("reports external command arguments as advisory warnings without enforcing approval", () =>
+  it.live("requires external-directory approval for command arguments", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
       ([active, outside]) => {
         reset()
-        denyAction = "external_directory"
         const target = path.join(outside.path, "secret.txt")
         return withTool(active.path, (registry) => settleTool(registry, call({ command: `cat ${target}` }))).pipe(
           Effect.andThen((settled) =>
             Effect.sync(() => {
-              expect(assertions.map((item) => item.action)).toEqual(["bash"])
+              expect(assertions.map((item) => item.action)).toEqual(["external_directory", "bash"])
               expect(runs).toHaveLength(1)
               expect(settled.output?.structured).toMatchObject({
                 truncated: false,
               })
-              expect(settled.output?.structured).not.toHaveProperty("warnings")
-              expect(settled.output?.content[1]).toMatchObject({
-                type: "text",
-                text: expect.stringContaining("Warnings:"),
+              expect(assertions[0]).toMatchObject({
+                resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
               })
             }),
           ),
@@ -372,6 +369,29 @@ describe("BashTool", () => {
         Effect.promise(() =>
           Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
         ),
+    ),
+  )
+
+  it.live("retains complete output through the managed output store", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        result = { ...result, output: Buffer.from("HEAD\n" + "x".repeat(BashTool.MAX_CAPTURE_BYTES + 64) + "\nTAIL") }
+        return withTool(tmp.path, (registry) => settleTool(registry, call({ command: "verbose" }))).pipe(
+          Effect.andThen((settled) =>
+            Effect.gen(function* () {
+              expect(settled.outputPaths).toHaveLength(1)
+              expect(yield* Effect.promise(() => fs.readFile(settled.outputPaths![0], "utf8"))).toContain("TAIL")
+              expect(settled.output?.content[0]).toMatchObject({
+                type: "text",
+                text: expect.stringContaining("full content saved to"),
+              })
+            }),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
     ),
   )
 
@@ -455,13 +475,12 @@ test("keeps locked deferred parity TODOs visible", async () => {
   for (const todo of [
     "Port tree-sitter bash / PowerShell parser-based approval reduction.",
     "Port BashArity reusable command-prefix approvals.",
-    "Replace token-based command-argument external-directory advisories with parser-based detection.",
+    "Replace token-based command-argument path detection with parser-based detection.",
     "Add plugin shell.env environment augmentation once V2 plugin hooks exist.",
     "Add durable/live progress metadata streaming for long-running commands once V2 tool invocation progress context is wired.",
     "Persist background job status and define restart recovery before exposing remote observation.",
     "Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.",
     "Revisit binary output handling if stdout/stderr decoding is text-only.",
-    "Stream full shell output into managed storage while retaining only a bounded in-memory preview.",
   ]) {
     expect(source).toContain(`TODO: ${todo}`)
   }

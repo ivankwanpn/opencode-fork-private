@@ -135,6 +135,17 @@ describe("code mode execute", () => {
     expect(description).toContain("tools.standalone.standalone(")
   })
 
+  test("keeps sanitized MCP tool names distinct inside a namespace", () => {
+    const description = describeFor(
+      {
+        server_first: mcpTool("read:item", () => ""),
+        server_second: mcpTool("read_item", () => ""),
+      },
+      ["server"],
+    )
+    expect(description.match(/tools\.server\.[a-zA-Z0-9_-]+\(/g)?.length).toBe(2)
+  })
+
   test("describeCatalog carries the raw MCP schemas for rendering", () => {
     const description = describeFor(
       {

@@ -531,7 +531,7 @@ const layer = Layer.effect(
         .map(([name, instructions]) => ({
           name,
           instructions,
-          tools: (state.definitions.get(name) ?? []).map((definition) => McpCatalog.toolName(name, definition.name)),
+          tools: McpCatalog.toolNames(name, state.definitions.get(name) ?? []),
         }))
     })
 
@@ -547,8 +547,9 @@ const layer = Layer.effect(
           continue
         }
         const timeout = requestTimeout(server)
-        for (const definition of definitions)
-          result[McpCatalog.toolName(name, definition.name)] = {
+        const names = McpCatalog.toolNames(name, definitions)
+        for (const [index, definition] of definitions.entries())
+          result[names[index]!] = {
             clientName: name,
             def: definition,
             client,

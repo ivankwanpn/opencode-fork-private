@@ -81,7 +81,7 @@ const processCommand = (shell: string, input: string, cwd: string) => {
  */
 // TODO: Port tree-sitter bash / PowerShell parser-based approval reduction.
 // TODO: Port BashArity reusable command-prefix approvals.
-// TODO: Replace token-based command-argument external-directory advisories with parser-based detection.
+// TODO: Replace token-based command-argument path detection with parser-based detection.
 // TODO: Add plugin shell.env environment augmentation once V2 plugin hooks exist.
 // TODO: Add durable/live progress metadata streaming for long-running commands once V2 tool invocation progress context is wired.
 // TODO: Persist background job status and define restart recovery before exposing remote observation.
@@ -89,7 +89,8 @@ const processCommand = (shell: string, input: string, cwd: string) => {
 // TODO: Add HTTP background-job observation only after durable status, restart recovery, and authorization are defined.
 // TODO: Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.
 // TODO: Revisit binary output handling if stdout/stderr decoding is text-only.
-// TODO: Stream full shell output into managed storage while retaining only a bounded in-memory preview.
+// Full shell output is retained by ToolOutputStore after execution; revisit streaming
+// capture if unbounded process memory becomes a concern for hostile commands.
 
 const shellTokens = (command: string) => command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
 const unquote = (value: string) => value.replace(/^(['"])(.*)\1$/, "$2")
@@ -121,7 +122,7 @@ const layer = Layer.effectDiscard(
     yield* tools
       .register({
         [name]: Tool.make({
-          description: `Execute one shell command string with the host user's filesystem, process, and network authority. The active Location is the default working directory. Relative workdir values resolve from that Location. External workdir values require external_directory approval; best-effort command-argument path warnings are advisory only. Timeout values are milliseconds (default: ${DEFAULT_TIMEOUT_MS}; maximum: ${MAX_TIMEOUT_MS}). Uses the configured shell when set and the same host-shell selection as the official runtime otherwise. On Windows, configured bash resolves to Git Bash instead of WSL bash; use Windows drive paths such as D:/path with Git Bash and native paths with PowerShell or cmd.`,
+          description: `Execute one shell command string with the host user's filesystem, process, and network authority. The active Location is the default working directory. Relative workdir values resolve from that Location. External workdir and command-argument paths require external_directory approval. Timeout values are milliseconds (default: ${DEFAULT_TIMEOUT_MS}; maximum: ${MAX_TIMEOUT_MS}). Uses the configured shell when set and the same host-shell selection as the official runtime otherwise. On Windows, configured bash resolves to Git Bash instead of WSL bash; use Windows drive paths such as D:/path with Git Bash and native paths with PowerShell or cmd.`,
           input: Input,
           output: Output,
           structured: StructuredOutput,
@@ -150,10 +151,19 @@ const layer = Layer.effectDiscard(
                   agent: context.agent,
                   source,
                 })
-              const warnings = (yield* externalCommandDirectories(fs, input.command, target.canonical)).map(
-                (directory) =>
-                  `Command argument references external directory ${path.join(directory, "*").replaceAll("\\", "/")}. Bash runs with host-user filesystem, process, and network authority; this scan is advisory only.`,
-              )
+              const externalDirectories = yield* externalCommandDirectories(fs, input.command, target.canonical)
+              for (const directory of externalDirectories) {
+                const resource = path.join(directory, "*").replaceAll("\\", "/")
+                yield* permission.assert({
+                  action: "external_directory",
+                  resources: [resource],
+                  save: [resource],
+                  metadata: { command: input.command, directory },
+                  sessionID: context.sessionID,
+                  agent: context.agent,
+                  source,
+                })
+              }
               yield* permission.assert({
                 action: name,
                 resources: [input.command],
@@ -172,7 +182,6 @@ const layer = Layer.effectDiscard(
                 .run(processCommand(shell, input.command, target.canonical), {
                   combineOutput: true,
                   timeout: Duration.millis(timeout),
-                  maxOutputBytes: MAX_CAPTURE_BYTES,
                 })
                 .pipe(
                   Effect.catchTag("AppProcessError", (error) =>
@@ -184,7 +193,6 @@ const layer = Layer.effectDiscard(
                   output: `Command exceeded timeout of ${timeout} ms. Retry with a larger timeout if the command is expected to take longer.`,
                   truncated: false,
                   timeout: true,
-                  ...(warnings.length ? { warnings } : {}),
                 }
               }
 
@@ -196,7 +204,6 @@ const layer = Layer.effectDiscard(
                 exit: result.exitCode,
                 output: notice ? `${output}\n\n${notice}` : output,
                 truncated: result.outputTruncated === true,
-                ...(warnings.length ? { warnings } : {}),
               }
             }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to execute command: ${input.command}` }))),
         }),

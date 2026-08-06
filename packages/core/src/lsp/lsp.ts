@@ -6,7 +6,6 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { Config } from "../config"
 import { makeLocationNode } from "../effect/app-node"
 import { EventV2 } from "../event"
-import { FSUtil } from "../fs-util"
 import { Location } from "../location"
 import { NonNegativeInt } from "../schema"
 import { LSPClient } from "./client"
@@ -169,7 +168,6 @@ export const layerWith = (options: LayerOptions = {}) =>
       )
 
       const getClients = Effect.fnUntraced(function* (file: string) {
-        if (!FSUtil.contains(location.directory, file)) return [] as LSPClient.Info[]
         const clients = yield* Effect.promise(async () => {
           const extension = path.parse(file).ext || file
           const result: LSPClient.Info[] = []

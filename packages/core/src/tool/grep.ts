@@ -7,14 +7,16 @@ import { makeLocationNode } from "../effect/app-node"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "../fs-util"
 import { Location } from "../location"
+import { LocationMutation } from "../location-mutation"
 import { PermissionV2 } from "../permission"
 import { Ripgrep } from "../ripgrep"
-import { RelativePath } from "../schema"
+import { PositiveInt, RelativePath } from "../schema"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
 export const name = "grep"
+export const MAX_RESULTS = 1_000
 
 export const Input = Schema.Struct({
   pattern: FileSystem.GrepInput.fields.pattern.annotate({
@@ -26,8 +28,8 @@ export const Input = Schema.Struct({
   include: FileSystem.GrepInput.fields.include.annotate({
     description: 'File glob to include in the search (for example, "*.js" or "*.{ts,tsx}")',
   }),
-  limit: FileSystem.GrepInput.fields.limit.annotate({
-    description: "Maximum matches to return",
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_RESULTS))).annotate({
+    description: `Maximum matches to return (maximum: ${MAX_RESULTS})`,
   }),
 })
 
@@ -56,6 +58,7 @@ const layer = Layer.effectDiscard(
     const fs = yield* FSUtil.Service
     const ripgrep = yield* Ripgrep.Service
     const location = yield* Location.Service
+    const mutation = yield* LocationMutation.Service
     const permission = yield* PermissionV2.Service
 
     yield* tools
@@ -78,6 +81,19 @@ const layer = Layer.effectDiscard(
           ],
           execute: (input, context) =>
             Effect.gen(function* () {
+              const source = {
+                type: "tool" as const,
+                messageID: context.assistantMessageID,
+                callID: context.toolCallID,
+              }
+              const target = yield* mutation.resolve({ path: input.path ?? ".", kind: "directory" })
+              if (target.externalDirectory)
+                yield* permission.assert({
+                  ...LocationMutation.externalDirectoryPermission(target.externalDirectory),
+                  sessionID: context.sessionID,
+                  agent: context.agent,
+                  source,
+                })
               yield* permission.assert({
                 action: name,
                 resources: [input.pattern],
@@ -90,17 +106,18 @@ const layer = Layer.effectDiscard(
                 },
                 sessionID: context.sessionID,
                 agent: context.agent,
-                source: { type: "tool", messageID: context.assistantMessageID, callID: context.toolCallID },
+                source,
               })
-              const target = path.resolve(location.directory, input.path ?? ".")
-              const info = yield* fs.stat(target).pipe(Effect.catch(() => Effect.succeed(undefined)))
+              const info = yield* fs.stat(target.canonical)
+              if (info.type !== "Directory" && info.type !== "File")
+                return yield* new ToolFailure({ message: `Unable to grep for ${input.pattern}` })
               return yield* ripgrep
                 .grep({
-                  cwd: info?.type === "Directory" ? target : path.dirname(target),
+                  cwd: info.type === "Directory" ? target.canonical : path.dirname(target.canonical),
                   pattern: input.pattern,
-                  file: info?.type === "File" ? path.basename(target) : undefined,
+                  file: info.type === "File" ? path.basename(target.canonical) : undefined,
                   include: input.include,
-                  limit: input.limit ?? Number.MAX_SAFE_INTEGER,
+                  limit: input.limit ?? MAX_RESULTS,
                 })
                 .pipe(
                   Effect.map((result) =>
@@ -113,7 +130,7 @@ const layer = Layer.effectDiscard(
                             path.relative(
                               location.directory,
                               path.resolve(
-                                info?.type === "Directory" ? target : path.dirname(target),
+                                info.type === "Directory" ? target.canonical : path.dirname(target.canonical),
                                 match.entry.path,
                               ),
                             ).replaceAll("\\", "/"),
@@ -133,5 +150,5 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/grep",
   layer,
-  deps: [ToolRegistry.node, FSUtil.node, Ripgrep.node, Location.node, PermissionV2.node],
+  deps: [ToolRegistry.node, FSUtil.node, LocationMutation.node, Ripgrep.node, Location.node, PermissionV2.node],
 })

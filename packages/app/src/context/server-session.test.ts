@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { retry } from "@opencode-ai/core/util/retry"
-import type { MessageApi, OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
+import type { MessageApi, OpenCodeEvent, SessionApi, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { Message, OpencodeClient, Part, Session, Todo, V2Event } from "@opencode-ai/sdk/v2/client"
 import type { ServerApi } from "@/utils/server"
 import { createV2OnlyApi, type CompatibleApi } from "@/utils/server-compat"
@@ -2063,5 +2063,84 @@ describe("server session", () => {
     await Promise.resolve()
 
     expect(store.data.session_message.child).toBeUndefined()
+  })
+
+  test("deduplicates V2 hydration and replays events received while the message is loading", async () => {
+    const pending = Promise.withResolvers<SessionMessageInfo>()
+    const requests: unknown[] = []
+    const sessionApi = {
+      message: async (input: unknown) => {
+        requests.push(input)
+        return pending.promise
+      },
+    } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, {} as MessageApi)
+    const current = { metadata: {}, location: { directory: "/repo" } }
+    const apply = (type: string, data: object) =>
+      store.applyV2({ ...current, id: `evt_${requests.length}_${type}`, type, data } as unknown as V2Event)
+
+    apply("session.next.tool.input.started", {
+      timestamp: 2,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      name: "bash",
+    })
+    await Promise.resolve()
+    apply("session.next.tool.input.delta", {
+      timestamp: 3,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      delta: '{"command":"pwd"}',
+    })
+    apply("session.next.tool.called", {
+      timestamp: 4,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      tool: "bash",
+      input: { command: "pwd" },
+      provider: { executed: false },
+    })
+    apply("session.next.tool.success", {
+      timestamp: 5,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      structured: { exit: 0 },
+      content: [{ type: "text", text: "D:/repo" }],
+      provider: { executed: false },
+    })
+
+    expect(requests).toEqual([{ sessionID: "child", messageID: "msg_assistant" }])
+
+    pending.resolve({
+      id: "msg_assistant",
+      type: "assistant",
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      content: [],
+      time: { created: 1 },
+    } as SessionMessageInfo)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toHaveLength(1)
+    expect(store.data.session_message.child).toEqual([
+      expect.objectContaining({
+        id: "msg_assistant",
+        type: "assistant",
+        content: [
+          expect.objectContaining({
+            type: "tool",
+            id: "call_1",
+            state: expect.objectContaining({ status: "completed", input: { command: "pwd" } }),
+          }),
+        ],
+      }),
+    ])
   })
 })

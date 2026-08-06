@@ -216,6 +216,89 @@ describe("server session", () => {
     ])
   })
 
+  test("refreshes V2 history when durable event sequences have a gap", async () => {
+    const user = userMessage("msg_1_user")
+    const assistant = assistantMessage("msg_2_assistant", user.id)
+    const requests: unknown[] = []
+    const refreshed = Promise.withResolvers<unknown>()
+    const messageApi = {
+      list: async (input: unknown) => {
+        requests.push(input)
+        return refreshed.promise
+      },
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("child") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+    store.remember(session("child"))
+    store.set("session_message", "child", [
+      { id: user.id, type: "user", text: "hello", time: user.time },
+    ])
+
+    store.applyV2({
+      id: "evt_step_started",
+      created: 2,
+      type: "session.step.started",
+      durable: { aggregateID: "child", seq: 1, version: 1 },
+      location: { directory: "/repo" },
+      data: {
+        sessionID: "child",
+        assistantMessageID: assistant.id,
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+      },
+    } as unknown as V2Event)
+    store.applyV2({
+      id: "evt_step_ended",
+      created: 4,
+      type: "session.step.ended",
+      durable: { aggregateID: "child", seq: 3, version: 1 },
+      location: { directory: "/repo" },
+      data: {
+        sessionID: "child",
+        assistantMessageID: assistant.id,
+        finish: "stop",
+        cost: 0,
+        tokens: assistant.tokens,
+      },
+    } as unknown as V2Event)
+    store.applyV2({
+      id: "evt_text_delta",
+      created: 5,
+      type: "session.next.text.delta",
+      durable: { aggregateID: "child", seq: 4, version: 1 },
+      location: { directory: "/repo" },
+      data: {
+        timestamp: 5,
+        sessionID: "child",
+        assistantMessageID: assistant.id,
+        textID: "text_1",
+        delta: " live",
+      },
+    } as unknown as V2Event)
+    refreshed.resolve({
+      data: [
+        {
+          id: assistant.id,
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [{ type: "text", text: "complete answer" }],
+          time: assistant.time,
+        },
+        { id: user.id, type: "user", text: "hello", time: user.time },
+      ],
+      cursor: { previous: null, next: null },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(requests).toEqual([{ sessionID: "child", limit: 20, order: "desc" }])
+    expect(store.data.part[assistant.id]).toEqual([expect.objectContaining({ text: "complete answer live" })])
+  })
+
   test("does not hydrate a stale V2 event through a V1 generation", async () => {
     let calls = 0
     const api = createV2OnlyApi({

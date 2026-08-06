@@ -214,6 +214,11 @@ type PendingV2Hydration = {
   messageID: string
 }
 
+type PendingV2Recovery = {
+  events: V2InputEvent[]
+  baseline: Map<string, number>
+}
+
 export function createServerSession(
   client: OpencodeClient,
   sessionApiOrOptions?: SessionApi | ServerSessionOptions,
@@ -246,6 +251,8 @@ export function createServerSession(
   const v2 = createV2SessionReducer()
   const v2Hydrations = new Map<string, Promise<void>>()
   const pendingV2Hydrations = new Map<string, PendingV2Hydration>()
+  const durableSequences = new Map<string, number>()
+  const pendingV2Recoveries = new Map<string, PendingV2Recovery>()
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
   const orphanParts = new Map<string, Set<string>>()
@@ -538,6 +545,8 @@ export function createServerSession(
       inflightTodo.delete(sessionID)
       v2Hydrations.delete(sessionID)
       pendingV2Hydrations.delete(sessionID)
+      pendingV2Recoveries.delete(sessionID)
+      durableSequences.delete(sessionID)
       messageLoads.delete(sessionID)
       v2.clear(sessionID)
       pendingParts.delete(sessionID)
@@ -1084,6 +1093,51 @@ export function createServerSession(
   const applyV2 = (event: V2InputEvent) => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
     const sessionID = event.data.sessionID
+    const pendingRecovery = pendingV2Recoveries.get(sessionID)
+    if (pendingRecovery) {
+      pendingRecovery.events.push(event)
+      return
+    }
+    if ("durable" in event && event.durable) {
+      const durable = event.durable
+      const previous = durableSequences.get(sessionID)
+      if (previous !== undefined && durable.seq <= previous) return
+      if (previous !== undefined && durable.seq > previous + 1 && messageApi && options?.protocol) {
+        const baseline = new Map([[sessionID, durable.seq]])
+        const recovery: PendingV2Recovery = { events: [event], baseline }
+        pendingV2Recoveries.set(sessionID, recovery)
+        durableSequences.set(sessionID, durable.seq)
+        void sync(sessionID, { force: true })
+          .then(() => {
+            if (pendingV2Recoveries.get(sessionID) !== recovery) return
+            pendingV2Recoveries.delete(sessionID)
+            for (const pending of recovery.events) {
+              if (
+                "durable" in pending &&
+                pending.durable &&
+                pending.durable.seq <= (recovery.baseline.get(sessionID) ?? -1)
+              )
+                continue
+              applyV2(pending)
+            }
+          })
+          .catch((error) => {
+            if (pendingV2Recoveries.get(sessionID) !== recovery) return
+            pendingV2Recoveries.delete(sessionID)
+            durableSequences.delete(sessionID)
+            for (const pending of recovery.events) applyV2(pending)
+            console.error("Failed to recover V2 session history after a durable event gap", {
+              sessionID,
+              aggregateID: durable.aggregateID,
+              previous,
+              next: durable.seq,
+              error,
+            })
+          })
+        return
+      }
+      durableSequences.set(sessionID, durable.seq)
+    }
     if (v2Hydrations.has(sessionID)) {
       pendingV2Hydrations.get(sessionID)?.events.push(event)
     } else {

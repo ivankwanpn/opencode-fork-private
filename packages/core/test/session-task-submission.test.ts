@@ -752,6 +752,58 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("recovers the final completed assistant after earlier provider turns", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Recover final task result",
+        agent: "general",
+      })
+      yield* submissions.claim(submitted.id)
+      const earlier = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_task_recovered_earlier_turn"),
+        type: "assistant",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        content: [{ type: "reasoning", id: "reasoning_recovered_earlier", text: "I will inspect the task first." }],
+        finish: "tool-calls",
+        time: { created: DateTime.makeUnsafe(2), completed: DateTime.makeUnsafe(3) },
+      })
+      const final = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_task_recovered_final_turn"),
+        type: "assistant",
+        agent: "general",
+        model: ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") }),
+        content: [{ type: "text", id: "text_recovered_final", text: "recovered final result" }],
+        time: { created: DateTime.makeUnsafe(4), completed: DateTime.makeUnsafe(5) },
+      })
+
+      expect(
+        yield* submissions.recoverCompleted({
+          sessionID: childSessionID,
+          messages: [
+            SessionMessage.User.make({
+              id: submitted.childInputID,
+              type: "user",
+              text: invocation.prompt.text,
+              time: { created: DateTime.makeUnsafe(1) },
+            }),
+            earlier,
+            final,
+          ],
+        }),
+      ).toBe(1)
+      expect(yield* submissions.get(submitted.id)).toMatchObject({
+        outcome: "completed",
+        resultMessageID: final.id,
+        resultText: "recovered final result",
+      })
+    }),
+  )
+
   it.effect("binds recovery results to the exact child input instead of the latest completed assistant", () =>
     Effect.gen(function* () {
       yield* setup

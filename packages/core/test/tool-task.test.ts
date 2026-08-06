@@ -101,15 +101,29 @@ const assistant = (text: string) =>
     time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
   })
 
-const childContext = (sessionID: SessionSchema.ID, text: string) => [
-  ...(taskInputHistory.get(sessionID) ?? [taskInputIDs.get(sessionID) ?? SessionMessage.ID.create()]).map((id) =>
+const childInputs = (sessionID: SessionSchema.ID) =>
+  (taskInputHistory.get(sessionID) ?? [taskInputIDs.get(sessionID) ?? SessionMessage.ID.create()]).map((id) =>
     SessionMessage.User.make({
       id,
       type: "user",
       text: "task input",
       time: { created: DateTime.makeUnsafe(1) },
     }),
-  ),
+  )
+
+const childContext = (sessionID: SessionSchema.ID, text: string) => [...childInputs(sessionID), assistant(text)]
+
+const childContextWithEarlierTurn = (sessionID: SessionSchema.ID, text: string) => [
+  ...childInputs(sessionID),
+  SessionMessage.Assistant.make({
+    id: SessionMessage.ID.create(),
+    type: "assistant",
+    agent: "general",
+    model,
+    content: [{ type: "reasoning", id: "reasoning_task", text: "I will inspect the task first." }],
+    finish: "tool-calls",
+    time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
+  }),
   assistant(text),
 ]
 
@@ -792,6 +806,30 @@ describe("TaskTool", () => {
       expect(Array.from(taskSubmissions.values())).toMatchObject([{ completionDelivery: "tool" }])
       expect(syntheticAdmissions).toHaveLength(0)
       expect(woken).toHaveLength(0)
+    }),
+  )
+
+  foreground.effect("captures the final assistant after earlier completed provider turns", () =>
+    Effect.gen(function* () {
+      reset()
+      resumeHandler = (sessionID) =>
+        Effect.sync(() => {
+          contexts.set(sessionID, childContextWithEarlierTurn(sessionID, "final child answer"))
+        })
+      const registry = yield* ToolRegistry.Service
+
+      const settled = yield* settleTool(
+        registry,
+        call({ ...input, background: false }, "call-final-provider-turn"),
+      )
+
+      expect(settled.result).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("final child answer"),
+      })
+      expect(Array.from(taskSubmissions.values())).toMatchObject([
+        { outcome: "completed", resultText: "final child answer" },
+      ])
     }),
   )
 

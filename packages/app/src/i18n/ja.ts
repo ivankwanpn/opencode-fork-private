@@ -847,6 +847,16 @@ export const dict = {
   "settings.models.description": "モデル設定はここで構成できます。",
   "settings.agents.title": "エージェント",
   "settings.agents.description": "エージェント設定はここで構成できます。",
+  "settings.agents.section.coordinators": "プライマリコーディネーター",
+  "settings.agents.section.subagents": "タスクサブエージェント",
+  "settings.agents.role.build": "完全な実行権限を持つプライマリコーディネーター。",
+  "settings.agents.role.plan": "計画と読み取り専用作業を担当するプライマリコーディネーター。",
+  "settings.agents.role.general": "広範で複合的なタスクに対応する汎用サブエージェント。",
+  "settings.agents.role.explore": "ファイルとシンボルの探索に適した高速な読み取り専用サブエージェント。",
+  "settings.agents.role.research":
+    "根拠に基づく調査とアーキテクチャ分析を行う詳細な読み取り専用サブエージェント。",
+  "settings.agents.role.worker":
+    "コード変更、バグ修正、テスト、検証を行う強力な実装サブエージェント。",
   "settings.commands.title": "コマンド",
   "settings.commands.description": "コマンド設定はここで構成できます。",
   "settings.mcp.title": "MCP",

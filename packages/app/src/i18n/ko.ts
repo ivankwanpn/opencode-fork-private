@@ -690,6 +690,16 @@ export const dict = {
   "settings.models.description": "모델 설정은 여기서 구성할 수 있습니다.",
   "settings.agents.title": "에이전트",
   "settings.agents.description": "에이전트 설정은 여기서 구성할 수 있습니다.",
+  "settings.agents.section.coordinators": "기본 코디네이터",
+  "settings.agents.section.subagents": "작업 하위 에이전트",
+  "settings.agents.role.build": "전체 실행 권한을 가진 기본 코디네이터입니다.",
+  "settings.agents.role.plan": "계획 및 읽기 전용 작업을 위한 기본 코디네이터입니다.",
+  "settings.agents.role.general": "범위가 넓고 다양한 작업을 위한 범용 하위 에이전트입니다.",
+  "settings.agents.role.explore": "파일 및 기호 탐색을 위한 빠른 읽기 전용 하위 에이전트입니다.",
+  "settings.agents.role.research":
+    "근거 기반 조사 및 아키텍처 분석을 위한 심층 읽기 전용 하위 에이전트입니다.",
+  "settings.agents.role.worker":
+    "코드 변경, 버그 수정, 테스트 및 검증을 위한 강력한 구현 하위 에이전트입니다.",
   "settings.commands.title": "명령어",
   "settings.commands.description": "명령어 설정은 여기서 구성할 수 있습니다.",
   "settings.mcp.title": "MCP",

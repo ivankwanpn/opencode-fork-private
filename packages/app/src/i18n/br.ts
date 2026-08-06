@@ -853,6 +853,16 @@ export const dict = {
   "settings.models.description": "Configurações de modelos estarão disponíveis aqui.",
   "settings.agents.title": "Agentes",
   "settings.agents.description": "Configurações de agentes estarão disponíveis aqui.",
+  "settings.agents.section.coordinators": "Coordenadores principais",
+  "settings.agents.section.subagents": "Subagentes de tarefas",
+  "settings.agents.role.build": "Coordenador principal com permissões completas de execução.",
+  "settings.agents.role.plan": "Coordenador principal para planejamento e trabalhos somente leitura.",
+  "settings.agents.role.general": "Subagente de uso geral para tarefas amplas de escopo variado.",
+  "settings.agents.role.explore": "Subagente rápido e somente leitura para explorar arquivos e símbolos.",
+  "settings.agents.role.research":
+    "Subagente aprofundado e somente leitura para pesquisas baseadas em evidências e análise de arquitetura.",
+  "settings.agents.role.worker":
+    "Subagente de implementação robusto para alterações de código, correções de bugs, testes e verificação.",
   "settings.commands.title": "Comandos",
   "settings.commands.description": "Configurações de comandos estarão disponíveis aqui.",
   "settings.mcp.title": "MCP",

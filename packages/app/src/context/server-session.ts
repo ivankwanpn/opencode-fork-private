@@ -253,6 +253,7 @@ export function createServerSession(
   const pendingV2Hydrations = new Map<string, PendingV2Hydration>()
   const durableSequences = new Map<string, number>()
   const pendingV2Recoveries = new Map<string, PendingV2Recovery>()
+  const v2SettlementRefreshes = new Map<string, Promise<void>>()
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
   const orphanParts = new Map<string, Set<string>>()
@@ -546,6 +547,7 @@ export function createServerSession(
       v2Hydrations.delete(sessionID)
       pendingV2Hydrations.delete(sessionID)
       pendingV2Recoveries.delete(sessionID)
+      v2SettlementRefreshes.delete(sessionID)
       durableSequences.delete(sessionID)
       messageLoads.delete(sessionID)
       v2.clear(sessionID)
@@ -929,6 +931,25 @@ export function createServerSession(
     })
   }
 
+  const reconcileV2Settlement = (sessionID: string) => {
+    if (data.message[sessionID] !== undefined) setMeta("at", sessionID, 0)
+    if (!pinned.has(sessionID) || v2SettlementRefreshes.has(sessionID)) return
+
+    const refresh = (inflight.get(sessionID) ?? Promise.resolve())
+      .then(() => {
+        if (!pinned.has(sessionID)) return
+        return sync(sessionID, {
+          force: true,
+          messageLimit: Math.max(meta.limit[sessionID] ?? 0, initialMessagePageSize),
+        })
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (v2SettlementRefreshes.get(sessionID) === refresh) v2SettlementRefreshes.delete(sessionID)
+      })
+    v2SettlementRefreshes.set(sessionID, refresh)
+  }
+
   const refreshContext = (sessionID: string) => {
     if ((!sessionApi && !options?.api && !options?.apiForGeneration && !options?.generationFor) || !options?.protocol)
       return Promise.resolve()
@@ -1239,6 +1260,15 @@ export function createServerSession(
     )
       void resolve(sessionID, { force: true }).catch(() => {})
     const eventType = event.type as string
+    const settled =
+      messageApi &&
+      options?.protocol &&
+      ((event.type === "session.status" && event.data.status.type === "idle") ||
+        eventType === "session.idle" ||
+        eventType === "session.execution.succeeded" ||
+        eventType === "session.execution.failed" ||
+        eventType === "session.execution.interrupted")
+    if (settled) reconcileV2Settlement(sessionID)
     if (
       eventType === "session.idle" ||
       eventType === "session.next.context.updated" ||

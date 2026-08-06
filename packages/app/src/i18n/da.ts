@@ -913,6 +913,16 @@ export const dict = {
   "settings.models.description": "Modelindstillinger vil kunne konfigureres her.",
   "settings.agents.title": "Agenter",
   "settings.agents.description": "Agentindstillinger vil kunne konfigureres her.",
+  "settings.agents.section.coordinators": "Primære koordinatorer",
+  "settings.agents.section.subagents": "Underagenter til opgaver",
+  "settings.agents.role.build": "Primær koordinator med fulde udførelsesrettigheder.",
+  "settings.agents.role.plan": "Primær koordinator til planlægning og skrivebeskyttet arbejde.",
+  "settings.agents.role.general": "Underagent til generelle formål og brede opgaver med blandet omfang.",
+  "settings.agents.role.explore": "Hurtig skrivebeskyttet underagent til udforskning af filer og symboler.",
+  "settings.agents.role.research":
+    "Grundig skrivebeskyttet underagent til evidensbaseret research og arkitekturanalyse.",
+  "settings.agents.role.worker":
+    "Stærk implementeringsunderagent til kodeændringer, fejlrettelser, tests og verificering.",
   "settings.commands.title": "Kommandoer",
   "settings.commands.description": "Kommandoindstillinger vil kunne konfigureres her.",
   "settings.mcp.title": "MCP",

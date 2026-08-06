@@ -1,11 +1,11 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
-import { WebFetchTool } from "../../src/tool/webfetch"
+import { Parameters, WebFetchTool } from "../../src/tool/webfetch"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { Tool } from "@/tool/tool"
 import { testEffect } from "../lib/effect"
@@ -39,13 +39,27 @@ const withFetch = <A, E, R>(
     (server) => Effect.sync(() => server.stop(true)),
   )
 
-const exec = Effect.fn("WebFetchToolTest.exec")(function* (args: Tool.InferParameters<typeof WebFetchTool>) {
+const exec = Effect.fn("WebFetchToolTest.exec")(function* (
+  args: Tool.InferParameters<typeof WebFetchTool>,
+  context: Tool.Context = ctx,
+) {
   const info = yield* WebFetchTool
   const tool = yield* info.init()
-  return yield* tool.execute(args, ctx)
+  return yield* tool.execute(args, context)
 })
 
 describe("tool.webfetch", () => {
+  test("validates timeout controls before execution", () => {
+    const decode = Schema.decodeUnknownSync(Parameters)
+
+    expect(decode({ url: "https://example.com", format: "text" })).toEqual({
+      url: "https://example.com",
+      format: "text",
+    })
+    expect(() => decode({ url: "https://example.com", format: "text", timeout: 0 })).toThrow()
+    expect(() => decode({ url: "https://example.com", format: "text", timeout: 121 })).toThrow()
+  })
+
   it.instance("returns image responses as file attachments", () =>
     Effect.gen(function* () {
       const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
@@ -107,7 +121,7 @@ describe("tool.webfetch", () => {
           "<html><head><style>.hidden{}</style><script>alert('x')</script></head><body>Hello <b>world</b></body></html>",
           {
             status: 200,
-            headers: { "content-type": "text/html; charset=utf-8" },
+            headers: { "content-type": "TEXT/HTML; charset=utf-8" },
           },
         ),
       (url) =>
@@ -118,4 +132,28 @@ describe("tool.webfetch", () => {
         }),
     ),
   )
+
+  it.instance("approves every redirect target", () => {
+    const asked: string[] = []
+    const permissionCtx: Tool.Context = {
+      ...ctx,
+      ask: (request) => Effect.sync(() => asked.push(...request.patterns)),
+    }
+
+    return withFetch(
+      (request) =>
+        new URL(request.url).pathname === "/redirect"
+          ? new Response("", { status: 302, headers: { location: "/target" } })
+          : new Response("redirected", { headers: { "content-type": "text/plain" } }),
+      (url) =>
+        Effect.gen(function* () {
+          const source = new URL("/redirect", url).toString()
+          const target = new URL("/target", url).toString()
+          const result = yield* exec({ url: source, format: "text" }, permissionCtx)
+
+          expect(result.output).toBe("redirected")
+          expect(asked).toEqual([source, target])
+        }),
+    )
+  })
 })

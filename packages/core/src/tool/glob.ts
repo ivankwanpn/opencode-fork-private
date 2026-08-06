@@ -5,23 +5,26 @@ import { Effect, Layer, Schema } from "effect"
 import path from "path"
 import { makeLocationNode } from "../effect/app-node"
 import { FileSystem } from "../filesystem"
+import { FSUtil } from "../fs-util"
 import { Location } from "../location"
+import { LocationMutation } from "../location-mutation"
 import { Ripgrep } from "../ripgrep"
-import { RelativePath } from "../schema"
+import { PositiveInt, RelativePath } from "../schema"
 import { PermissionV2 } from "../permission"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
 export const name = "glob"
+export const MAX_RESULTS = 1_000
 
 export const Input = Schema.Struct({
   pattern: FileSystem.GlobInput.fields.pattern.annotate({ description: "Glob pattern to match files against" }),
   path: RelativePath.pipe(Schema.optional).annotate({
     description: "Relative directory to search. Defaults to the active Location.",
   }),
-  limit: FileSystem.GlobInput.fields.limit.annotate({
-    description: "Maximum results to return",
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_RESULTS))).annotate({
+    description: `Maximum results to return (maximum: ${MAX_RESULTS})`,
   }),
 })
 
@@ -38,8 +41,10 @@ export const toModelOutput = (output: ModelOutput) => {
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const tools = yield* Tools.Service
+    const fs = yield* FSUtil.Service
     const ripgrep = yield* Ripgrep.Service
     const location = yield* Location.Service
+    const mutation = yield* LocationMutation.Service
     const permission = yield* PermissionV2.Service
 
     yield* tools
@@ -59,6 +64,21 @@ const layer = Layer.effectDiscard(
           ],
           execute: (input, context) =>
             Effect.gen(function* () {
+              const source = {
+                type: "tool" as const,
+                messageID: context.assistantMessageID,
+                callID: context.toolCallID,
+              }
+              const target = yield* mutation.resolve({ path: input.path ?? ".", kind: "directory" })
+              if (target.externalDirectory)
+                yield* permission.assert({
+                  ...LocationMutation.externalDirectoryPermission(target.externalDirectory),
+                  sessionID: context.sessionID,
+                  agent: context.agent,
+                  source,
+                })
+              if ((yield* fs.stat(target.canonical)).type !== "Directory")
+                return yield* new ToolFailure({ message: `Unable to find files matching ${input.pattern}` })
               yield* permission.assert({
                 action: name,
                 resources: [input.pattern],
@@ -70,14 +90,14 @@ const layer = Layer.effectDiscard(
                 },
                 sessionID: context.sessionID,
                 agent: context.agent,
-                source: { type: "tool", messageID: context.assistantMessageID, callID: context.toolCallID },
+                source,
               })
-              const cwd = path.resolve(location.directory, input.path ?? ".")
+              const cwd = target.canonical
               return yield* ripgrep
                 .glob({
                   cwd,
                   pattern: input.pattern,
-                  limit: input.limit ?? Number.MAX_SAFE_INTEGER,
+                  limit: input.limit ?? MAX_RESULTS,
                 })
                 .pipe(
                   Effect.map((result) =>
@@ -103,5 +123,5 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/glob",
   layer,
-  deps: [ToolRegistry.node, Ripgrep.node, Location.node, PermissionV2.node],
+  deps: [ToolRegistry.node, FSUtil.node, LocationMutation.node, Ripgrep.node, Location.node, PermissionV2.node],
 })

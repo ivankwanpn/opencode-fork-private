@@ -55,7 +55,13 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { PluginToolCompat } from "./plugin-compat"
 
 export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
-  return providerID === ProviderV2.ID.opencode || flags.exa || flags.parallel
+  return (
+    providerID === ProviderV2.ID.opencode ||
+    flags.exa ||
+    flags.parallel ||
+    process.env.OPENCODE_WEBSEARCH_PROVIDER === "exa" ||
+    process.env.OPENCODE_WEBSEARCH_PROVIDER === "parallel"
+  )
 }
 
 type TaskDef = Tool.InferDef<typeof TaskTool>

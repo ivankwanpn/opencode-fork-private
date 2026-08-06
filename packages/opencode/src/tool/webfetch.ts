@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Parser } from "htmlparser2"
 import * as Tool from "./tool"
 import TurndownService from "turndown"
@@ -9,6 +9,9 @@ import { isImageAttachment } from "@/util/media"
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
 const MAX_TIMEOUT = 120 * 1000 // 2 minutes
+const MAX_REDIRECTS = 10
+
+const Timeout = Schema.Number.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(MAX_TIMEOUT / 1000))
 
 export const Parameters = Schema.Struct({
   url: Schema.String.annotate({ description: "The URL to fetch content from" }),
@@ -18,14 +21,13 @@ export const Parameters = Schema.Struct({
       default: "markdown",
     })
     .pipe(Schema.withDecodingDefault(Effect.succeed("markdown" as const))),
-  timeout: Schema.optional(Schema.Number).annotate({ description: "Optional timeout in seconds (max 120)" }),
+  timeout: Timeout.pipe(Schema.optional).annotate({ description: "Optional timeout in seconds (max 120)" }),
 })
 
 export const WebFetchTool = Tool.define(
   "webfetch",
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
-    const httpOk = HttpClient.filterStatusOk(http)
 
     return {
       description: DESCRIPTION,
@@ -73,21 +75,49 @@ export const WebFetchTool = Tool.define(
             "Accept-Language": "en-US,en;q=0.9",
           }
 
-          const request = HttpClientRequest.get(params.url).pipe(HttpClientRequest.setHeaders(headers))
+          const execute = (userAgent: string) =>
+            Effect.gen(function* () {
+              let current = params.url
+              for (let redirects = 0; ; redirects++) {
+                const response = yield* HttpClient.followRedirects(http, 0)
+                  .execute(
+                    HttpClientRequest.get(current).pipe(
+                      HttpClientRequest.setHeaders({ ...headers, "User-Agent": userAgent }),
+                    ),
+                  )
+                  .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }))
+                const location = response.headers.location
+                if (response.status < 300 || response.status >= 400 || !location)
+                  return yield* HttpClientResponse.filterStatusOk(response)
+                if (redirects >= MAX_REDIRECTS) throw new Error(`Too many redirects (maximum ${MAX_REDIRECTS})`)
+
+                const target = new URL(location, current)
+                if (target.protocol !== "http:" && target.protocol !== "https:")
+                  throw new Error("Redirect URL must use http:// or https://")
+                const next = target.toString()
+                yield* ctx.ask({
+                  permission: "webfetch",
+                  patterns: [next],
+                  always: ["*"],
+                  metadata: {
+                    url: next,
+                    redirectFrom: current,
+                    format: params.format,
+                    timeout: params.timeout,
+                  },
+                })
+                current = next
+              }
+            })
 
           // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
-          const response = yield* httpOk.execute(request).pipe(
+          const response = yield* execute(headers["User-Agent"]).pipe(
             Effect.catchIf(
               (err) =>
                 err.reason._tag === "StatusCodeError" &&
                 err.reason.response.status === 403 &&
                 err.reason.response.headers["cf-mitigated"] === "challenge",
-              () =>
-                httpOk.execute(
-                  HttpClientRequest.get(params.url).pipe(
-                    HttpClientRequest.setHeaders({ ...headers, "User-Agent": "opencode" }),
-                  ),
-                ),
+              () => execute("opencode"),
             ),
             Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.die(new Error("Request timed out")) }),
           )
@@ -128,7 +158,7 @@ export const WebFetchTool = Tool.define(
           // Handle content based on requested format and actual content type
           switch (params.format) {
             case "markdown":
-              if (contentType.includes("text/html")) {
+              if (mime === "text/html" || mime === "application/xhtml+xml") {
                 const markdown = convertHTMLToMarkdown(content)
                 return {
                   output: markdown,
@@ -139,7 +169,7 @@ export const WebFetchTool = Tool.define(
               return { output: content, title, metadata: {} }
 
             case "text":
-              if (contentType.includes("text/html")) {
+              if (mime === "text/html" || mime === "application/xhtml+xml") {
                 return { output: extractTextFromHTML(content), title, metadata: {} }
               }
               return { output: content, title, metadata: {} }

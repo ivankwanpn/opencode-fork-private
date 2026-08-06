@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
@@ -38,6 +38,17 @@ describe("Ripgrep", () => {
         expect(result).toHaveLength(1)
         expect(result[0]?.entry.path).toBe(RelativePath.make("src/match.ts"))
         expect(result[0]?.submatches[0]?.text).toBe("needle")
+      }),
+    ),
+  )
+
+  it.live("fails when ripgrep reports a search error", () =>
+    withTmp((cwd) =>
+      Effect.gen(function* () {
+        const result = yield* (yield* Ripgrep.Service)
+          .grep({ cwd, pattern: "needle", file: "missing.txt", limit: 10 })
+          .pipe(Effect.exit)
+        expect(Exit.isFailure(result)).toBe(true)
       }),
     ),
   )

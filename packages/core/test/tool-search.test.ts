@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
-import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { describe, expect, test } from "bun:test"
+import { Effect, Layer, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Location } from "@opencode-ai/core/location"
@@ -69,6 +69,14 @@ const call = (name: "glob" | "grep", input: Record<string, unknown>) => ({
 const it = testEffect(Layer.empty)
 
 describe("search tools", () => {
+  test("bounds the public search result limit", () => {
+    const decodeGlob = Schema.decodeUnknownSync(GlobTool.Input)
+    const decodeGrep = Schema.decodeUnknownSync(GrepTool.Input)
+
+    expect(() => decodeGlob({ pattern: "*", limit: 1001 })).toThrow()
+    expect(() => decodeGrep({ pattern: "needle", limit: 1001 })).toThrow()
+  })
+
   it.live("finds and greps files through the active Location", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
@@ -128,6 +136,41 @@ describe("search tools", () => {
           )
         }),
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("requires external-directory approval before searching outside the active Location", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) =>
+        Effect.gen(function* () {
+          assertions.length = 0
+          yield* Effect.promise(() => fs.writeFile(path.join(outside.path, "secret.txt"), "needle\n"))
+          denied = "external_directory"
+          yield* withTools(active.path, (registry) =>
+            Effect.gen(function* () {
+              const glob = yield* executeTool(
+                registry,
+                call("glob", { pattern: "*.txt", path: outside.path, limit: 10 }),
+              )
+              expect(glob).toEqual({ type: "error", value: "Unable to find files matching *.txt" })
+
+              const grep = yield* executeTool(
+                registry,
+                call("grep", { pattern: "needle", path: path.join(outside.path, "secret.txt"), limit: 10 }),
+              )
+              expect(grep).toEqual({ type: "error", value: "Unable to grep for needle" })
+              expect(assertions.map((input) => input.action)).toEqual([
+                "external_directory",
+                "external_directory",
+              ])
+            }),
+          )
+        }),
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
     ),
   )
 

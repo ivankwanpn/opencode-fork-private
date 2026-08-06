@@ -2,7 +2,7 @@ export * as WebFetchTool from "./webfetch"
 
 import { ToolFailure } from "@opencode-ai/llm"
 import { Duration, Effect, Layer, Schema } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
 import { makeLocationNode } from "../effect/app-node"
@@ -17,6 +17,7 @@ export const name = "webfetch"
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 export const DEFAULT_TIMEOUT_SECONDS = 30
 export const MAX_TIMEOUT_SECONDS = 120
+export const MAX_REDIRECTS = 10
 
 export const description = `Fetch content from an HTTP or HTTPS URL and return it as text, markdown, or HTML. Markdown is the default.
 
@@ -86,8 +87,30 @@ const assertHttpUrl = (url: URL) => {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must use http:// or https://")
 }
 
-const execute = (http: HttpClient.HttpClient, url: string, format: Format, userAgent = browserUserAgent) =>
-  http.execute(request(url, format, userAgent)).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk))
+const execute = (
+  http: HttpClient.HttpClient,
+  url: string,
+  format: Format,
+  userAgent = browserUserAgent,
+  onRedirect?: (url: string, from: string) => Effect.Effect<void, unknown>,
+) =>
+  Effect.gen(function* () {
+    let current = url
+    for (let redirects = 0; ; redirects++) {
+      const response = yield* HttpClient.followRedirects(http, 0)
+        .execute(request(current, format, userAgent))
+        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }))
+      const location = response.headers.location
+      if (response.status < 300 || response.status >= 400 || !location)
+        return yield* HttpClientResponse.filterStatusOk(response)
+      if (redirects >= MAX_REDIRECTS) return yield* Effect.fail(new Error(`Too many redirects (maximum ${MAX_REDIRECTS})`))
+      const target = new URL(location, current)
+      assertHttpUrl(target)
+      const next = target.toString()
+      if (onRedirect) yield* onRedirect(next, current)
+      current = next
+    }
+  })
 
 const collectBody = (response: HttpClientResponse.HttpClientResponse) =>
   collectBoundedResponseBody(
@@ -108,8 +131,8 @@ const isTextualMime = (mime: string) =>
   mime.endsWith("+xml") ||
   mime === "application/javascript" ||
   mime === "application/x-javascript"
-const convert = (content: string, contentType: string, format: Format) => {
-  if (!contentType.includes("text/html")) return content
+const convert = (content: string, mime: string, format: Format) => {
+  if (mime !== "text/html" && mime !== "application/xhtml+xml") return content
   if (format === "markdown") return convertHTMLToMarkdown(content)
   if (format === "text") return extractTextFromHTML(content)
   return content
@@ -145,9 +168,27 @@ const layer = Layer.effectDiscard(
                 source: { type: "tool", messageID: context.assistantMessageID, callID: context.toolCallID },
               })
 
-              const { body, contentType } = yield* Effect.gen(function* () {
-                const response = yield* execute(http, input.url, input.format).pipe(
-                  Effect.catchIf(isCloudflareChallenge, () => execute(http, input.url, input.format, "opencode")),
+              const { body, contentType, mime } = yield* Effect.gen(function* () {
+                const redirectPermission = (url: string, from: string) =>
+                  permission.assert({
+                    action: name,
+                    resources: [url],
+                    save: ["*"],
+                    metadata: { ...input, url, redirectFrom: from },
+                    sessionID: context.sessionID,
+                    agent: context.agent,
+                    source: { type: "tool", messageID: context.assistantMessageID, callID: context.toolCallID },
+                  })
+                const response = yield* execute(
+                  http,
+                  input.url,
+                  input.format,
+                  browserUserAgent,
+                  redirectPermission,
+                ).pipe(
+                  Effect.catchIf(isCloudflareChallenge, () =>
+                    execute(http, input.url, input.format, "opencode", redirectPermission),
+                  ),
                 )
                 const contentType = response.headers["content-type"] || ""
                 const mime = mimeFrom(contentType)
@@ -155,7 +196,7 @@ const layer = Layer.effectDiscard(
                   return yield* Effect.fail(new Error(`Unsupported fetched image content type: ${mime}`))
                 if (!isTextualMime(mime))
                   return yield* Effect.fail(new Error(`Unsupported fetched file content type: ${mime}`))
-                return { body: yield* collectBody(response), contentType }
+                return { body: yield* collectBody(response), contentType, mime }
               }).pipe(
                 Effect.timeoutOrElse({
                   duration: Duration.seconds(input.timeout ?? DEFAULT_TIMEOUT_SECONDS),
@@ -164,7 +205,7 @@ const layer = Layer.effectDiscard(
               )
               const content = new TextDecoder().decode(body)
               const output = yield* Effect.try({
-                try: () => convert(content, contentType, input.format),
+                try: () => convert(content, mime, input.format),
                 catch: (error) => error,
               })
               return {
@@ -173,7 +214,14 @@ const layer = Layer.effectDiscard(
                 format: input.format,
                 output,
               }
-            }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to fetch ${input.url}` }))),
+            }).pipe(
+              Effect.mapError((error) => {
+                const detail = error instanceof Error ? error.message : String(error)
+                return new ToolFailure({
+                  message: detail ? `Unable to fetch ${input.url}: ${detail}` : `Unable to fetch ${input.url}`,
+                })
+              }),
+            ),
         }),
       })
       .pipe(Effect.orDie)

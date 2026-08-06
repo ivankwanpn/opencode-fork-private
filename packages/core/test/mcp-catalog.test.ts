@@ -87,6 +87,27 @@ describe("MCP catalog", () => {
     }),
   )
 
+  it.effect("keeps sanitized MCP tool names distinct when the source names collide", () =>
+    Effect.sync(() => {
+      const names = McpCatalog.toolNames("server", [{ name: "read:item" }, { name: "read_item" }])
+      expect(new Set(names).size).toBe(2)
+      expect(names[0]).not.toBe(names[1])
+    }),
+  )
+
+  it.effect("keeps sanitized MCP catalog entries distinct", () =>
+    Effect.gen(function* () {
+      const result = yield* McpCatalog.collect(
+        "server",
+        {} as Client,
+        () => Promise.resolve([{ name: "read:item" }, { name: "read_item" }]),
+        "tools",
+      )
+      expect(result).toBeDefined()
+      expect(Object.keys(result ?? {})).toHaveLength(2)
+    })
+  )
+
   it.effect("preserves native schemas and projects structured text and media output", () =>
     Effect.gen(function* () {
       const tool = McpCatalog.toCoreTool(

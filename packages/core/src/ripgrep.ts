@@ -135,10 +135,13 @@ const layer = Layer.effect(
           if (input.pattern && code === 2 && isInvalidPattern(stderr)) {
             return yield* new InvalidPatternError({ pattern: input.pattern, message: stderr.trim() })
           }
-          if (code !== 0 && code !== 1 && code !== 2) {
+          if (code === 2) {
+            return yield* failure(stderr.trim() || "ripgrep reported a search error")
+          }
+          if (code !== 0 && code !== 1) {
             return yield* failure(stderr.trim() || `ripgrep failed with code ${code}`)
           }
-          return { items: code === 1 ? [] : rows, truncated: false, partial: code === 2 }
+          return { items: code === 1 ? [] : rows, truncated: false, partial: false }
         }),
       )
       const abortable = input.signal ? program.pipe(Effect.raceFirst(waitForAbort(input.signal))) : program

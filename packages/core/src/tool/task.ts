@@ -294,7 +294,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
           const assistant = afterInput
             .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
-            .find((message) => message.type === "assistant" && message.time.completed !== undefined)
+            .findLast((message) => message.type === "assistant" && message.time.completed !== undefined)
           if (!assistant || assistant.type !== "assistant")
             return yield* Effect.fail(
               new Error(`Child input has no completed assistant result: ${submission.childInputID}`),

@@ -640,12 +640,12 @@ function findCompletedAssistant(
     return undefined
   }
   const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
-  return afterInput
-    .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
-    .find(
-      (message): message is SessionMessage.Assistant =>
-        message.type === "assistant" && message.time.completed !== undefined,
-    )
+    return afterInput
+      .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
+      .findLast(
+        (message): message is SessionMessage.Assistant =>
+          message.type === "assistant" && message.time.completed !== undefined,
+      )
 }
 
 function digest(value: string) {

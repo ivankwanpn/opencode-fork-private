@@ -207,6 +207,18 @@ type ServerSessionOptions = {
   currentSession?: Pick<ServerApi["session"], "todo">
 }
 
+type V2InputEvent = OpenCodeEvent | LegacyV2Event | V2Event
+
+type PendingV2Hydration = {
+  events: V2InputEvent[]
+  messageID: string
+}
+
+type PendingV2Recovery = {
+  events: V2InputEvent[]
+  baseline: Map<string, number>
+}
+
 export function createServerSession(
   client: OpencodeClient,
   sessionApiOrOptions?: SessionApi | ServerSessionOptions,
@@ -237,6 +249,10 @@ export function createServerSession(
   const inflightTodo = new Map<string, Promise<void>>()
   const optimistic = new Map<string, Map<string, OptimisticItem>>()
   const v2 = createV2SessionReducer()
+  const v2Hydrations = new Map<string, Promise<void>>()
+  const pendingV2Hydrations = new Map<string, PendingV2Hydration>()
+  const durableSequences = new Map<string, number>()
+  const pendingV2Recoveries = new Map<string, PendingV2Recovery>()
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
   const orphanParts = new Map<string, Set<string>>()
@@ -362,7 +378,8 @@ export function createServerSession(
         !requests.has(sessionID) &&
         !messageLoads.has(sessionID) &&
         !inflight.has(sessionID) &&
-        !inflightTodo.has(sessionID)
+        !inflightTodo.has(sessionID) &&
+        !v2Hydrations.has(sessionID)
       )
         generations.delete(sessionID)
     }
@@ -526,6 +543,10 @@ export function createServerSession(
       inflight.delete(sessionID)
       contextLoads.delete(sessionID)
       inflightTodo.delete(sessionID)
+      v2Hydrations.delete(sessionID)
+      pendingV2Hydrations.delete(sessionID)
+      pendingV2Recoveries.delete(sessionID)
+      durableSequences.delete(sessionID)
       messageLoads.delete(sessionID)
       v2.clear(sessionID)
       pendingParts.delete(sessionID)
@@ -1006,7 +1027,24 @@ export function createServerSession(
     })
   }
 
+  const replayV2Events = (sessionID: string, events: V2InputEvent[]) => {
+    for (let index = 0; index < events.length; index++) {
+      const event = events[index]
+      const reduction = v2.reduce(data.session_message[sessionID] ?? [], event)
+      if (!reduction) continue
+      if (reduction.missing) {
+        pendingV2Hydrations.set(sessionID, {
+          events: events.slice(index),
+          messageID: reduction.missing,
+        })
+        return reduction.missing
+      }
+      projectV2(reduction)
+    }
+  }
+
   const hydrateV2Message = (sessionID: string, messageID: string) => {
+    if (v2Hydrations.has(sessionID)) return
     const currentSessionApi = options?.generationFor
       ? options
           .generationFor()
@@ -1021,7 +1059,8 @@ export function createServerSession(
           : Promise.resolve(sessionApi)
     if (!options?.generationFor && !options?.apiForGeneration && !options?.api && !sessionApi) return
     const active = generation(sessionID)
-    void currentSessionApi
+    let retryMessageID: string | undefined
+    const request = currentSessionApi
       .then((api) => api?.message({ sessionID, messageID }))
       .then((message) => {
         if (!message) return
@@ -1029,17 +1068,84 @@ export function createServerSession(
         const current = data.session_message[sessionID] ?? []
         const messages = [...current.filter((item) => item.id !== message.id), message].sort((a, b) => cmp(a.id, b.id))
         projectV2({ sessionID, messages, touched: [message.id] })
+        const pending = pendingV2Hydrations.get(sessionID)
+        pendingV2Hydrations.delete(sessionID)
+        if (pending?.events.length) retryMessageID = replayV2Events(sessionID, pending.events)
       })
       .catch(() => {})
+    const tracked = request.finally(() => {
+      if (v2Hydrations.get(sessionID) === tracked) v2Hydrations.delete(sessionID)
+      if (retryMessageID && generations.get(sessionID) === active) hydrateV2Message(sessionID, retryMessageID)
+    })
+    v2Hydrations.set(sessionID, tracked)
   }
 
-  const applyV2 = (event: OpenCodeEvent | LegacyV2Event | V2Event) => {
+  const queueV2Event = (sessionID: string, event: V2InputEvent, messageID: string) => {
+    const pending = pendingV2Hydrations.get(sessionID)
+    if (pending) {
+      pending.events.push(event)
+    } else {
+      pendingV2Hydrations.set(sessionID, { events: [event], messageID })
+    }
+    if (!v2Hydrations.has(sessionID)) hydrateV2Message(sessionID, pending?.messageID ?? messageID)
+  }
+
+  const applyV2 = (event: V2InputEvent) => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
     const sessionID = event.data.sessionID
-    const reduction = v2.reduce(data.session_message[sessionID] ?? [], event)
-    if (reduction) {
-      projectV2(reduction)
-      if (reduction.missing) hydrateV2Message(sessionID, reduction.missing)
+    const pendingRecovery = pendingV2Recoveries.get(sessionID)
+    if (pendingRecovery) {
+      pendingRecovery.events.push(event)
+      return
+    }
+    if ("durable" in event && event.durable) {
+      const durable = event.durable
+      const previous = durableSequences.get(sessionID)
+      if (previous !== undefined && durable.seq <= previous) return
+      if (previous !== undefined && durable.seq > previous + 1 && messageApi && options?.protocol) {
+        const baseline = new Map([[sessionID, durable.seq]])
+        const recovery: PendingV2Recovery = { events: [event], baseline }
+        pendingV2Recoveries.set(sessionID, recovery)
+        durableSequences.set(sessionID, durable.seq)
+        void sync(sessionID, { force: true })
+          .then(() => {
+            if (pendingV2Recoveries.get(sessionID) !== recovery) return
+            pendingV2Recoveries.delete(sessionID)
+            for (const pending of recovery.events) {
+              if (
+                "durable" in pending &&
+                pending.durable &&
+                pending.durable.seq <= (recovery.baseline.get(sessionID) ?? -1)
+              )
+                continue
+              applyV2(pending)
+            }
+          })
+          .catch((error) => {
+            if (pendingV2Recoveries.get(sessionID) !== recovery) return
+            pendingV2Recoveries.delete(sessionID)
+            durableSequences.delete(sessionID)
+            for (const pending of recovery.events) applyV2(pending)
+            console.error("Failed to recover V2 session history after a durable event gap", {
+              sessionID,
+              aggregateID: durable.aggregateID,
+              previous,
+              next: durable.seq,
+              error,
+            })
+          })
+        return
+      }
+      durableSequences.set(sessionID, durable.seq)
+    }
+    if (v2Hydrations.has(sessionID)) {
+      pendingV2Hydrations.get(sessionID)?.events.push(event)
+    } else {
+      const reduction = v2.reduce(data.session_message[sessionID] ?? [], event)
+      if (reduction) {
+        if (reduction.missing) queueV2Event(sessionID, event, reduction.missing)
+        else projectV2(reduction)
+      }
     }
 
     const info = data.info[sessionID]

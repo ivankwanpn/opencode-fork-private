@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { retry } from "@opencode-ai/core/util/retry"
-import type { MessageApi, OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
+import type { MessageApi, OpenCodeEvent, SessionApi, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { Message, OpencodeClient, Part, Session, Todo, V2Event } from "@opencode-ai/sdk/v2/client"
 import type { ServerApi } from "@/utils/server"
 import { createV2OnlyApi, type CompatibleApi } from "@/utils/server-compat"
@@ -214,6 +214,89 @@ describe("server session", () => {
     expect(ctx.store.data.part.msg_2_assistant).toEqual([
       expect.objectContaining({ type: "text", text: "world" }),
     ])
+  })
+
+  test("refreshes V2 history when durable event sequences have a gap", async () => {
+    const user = userMessage("msg_1_user")
+    const assistant = assistantMessage("msg_2_assistant", user.id)
+    const requests: unknown[] = []
+    const refreshed = Promise.withResolvers<unknown>()
+    const messageApi = {
+      list: async (input: unknown) => {
+        requests.push(input)
+        return refreshed.promise
+      },
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("child") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
+      protocol: Promise.resolve("v2" as const),
+      retry: retryImmediately,
+    })
+    store.remember(session("child"))
+    store.set("session_message", "child", [
+      { id: user.id, type: "user", text: "hello", time: user.time },
+    ])
+
+    store.applyV2({
+      id: "evt_step_started",
+      created: 2,
+      type: "session.step.started",
+      durable: { aggregateID: "child", seq: 1, version: 1 },
+      location: { directory: "/repo" },
+      data: {
+        sessionID: "child",
+        assistantMessageID: assistant.id,
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+      },
+    } as unknown as V2Event)
+    store.applyV2({
+      id: "evt_step_ended",
+      created: 4,
+      type: "session.step.ended",
+      durable: { aggregateID: "child", seq: 3, version: 1 },
+      location: { directory: "/repo" },
+      data: {
+        sessionID: "child",
+        assistantMessageID: assistant.id,
+        finish: "stop",
+        cost: 0,
+        tokens: assistant.tokens,
+      },
+    } as unknown as V2Event)
+    store.applyV2({
+      id: "evt_text_delta",
+      created: 5,
+      type: "session.next.text.delta",
+      durable: { aggregateID: "child", seq: 4, version: 1 },
+      location: { directory: "/repo" },
+      data: {
+        timestamp: 5,
+        sessionID: "child",
+        assistantMessageID: assistant.id,
+        textID: "text_1",
+        delta: " live",
+      },
+    } as unknown as V2Event)
+    refreshed.resolve({
+      data: [
+        {
+          id: assistant.id,
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [{ type: "text", text: "complete answer" }],
+          time: assistant.time,
+        },
+        { id: user.id, type: "user", text: "hello", time: user.time },
+      ],
+      cursor: { previous: null, next: null },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(requests).toEqual([{ sessionID: "child", limit: 20, order: "desc" }])
+    expect(store.data.part[assistant.id]).toEqual([expect.objectContaining({ text: "complete answer live" })])
   })
 
   test("does not hydrate a stale V2 event through a V1 generation", async () => {
@@ -2063,5 +2146,84 @@ describe("server session", () => {
     await Promise.resolve()
 
     expect(store.data.session_message.child).toBeUndefined()
+  })
+
+  test("deduplicates V2 hydration and replays events received while the message is loading", async () => {
+    const pending = Promise.withResolvers<SessionMessageInfo>()
+    const requests: unknown[] = []
+    const sessionApi = {
+      message: async (input: unknown) => {
+        requests.push(input)
+        return pending.promise
+      },
+    } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, {} as MessageApi)
+    const current = { metadata: {}, location: { directory: "/repo" } }
+    const apply = (type: string, data: object) =>
+      store.applyV2({ ...current, id: `evt_${requests.length}_${type}`, type, data } as unknown as V2Event)
+
+    apply("session.next.tool.input.started", {
+      timestamp: 2,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      name: "bash",
+    })
+    await Promise.resolve()
+    apply("session.next.tool.input.delta", {
+      timestamp: 3,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      delta: '{"command":"pwd"}',
+    })
+    apply("session.next.tool.called", {
+      timestamp: 4,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      tool: "bash",
+      input: { command: "pwd" },
+      provider: { executed: false },
+    })
+    apply("session.next.tool.success", {
+      timestamp: 5,
+      sessionID: "child",
+      assistantMessageID: "msg_assistant",
+      callID: "call_1",
+      structured: { exit: 0 },
+      content: [{ type: "text", text: "D:/repo" }],
+      provider: { executed: false },
+    })
+
+    expect(requests).toEqual([{ sessionID: "child", messageID: "msg_assistant" }])
+
+    pending.resolve({
+      id: "msg_assistant",
+      type: "assistant",
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      content: [],
+      time: { created: 1 },
+    } as SessionMessageInfo)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(requests).toHaveLength(1)
+    expect(store.data.session_message.child).toEqual([
+      expect.objectContaining({
+        id: "msg_assistant",
+        type: "assistant",
+        content: [
+          expect.objectContaining({
+            type: "tool",
+            id: "call_1",
+            state: expect.objectContaining({ status: "completed", input: { command: "pwd" } }),
+          }),
+        ],
+      }),
+    ])
   })
 })

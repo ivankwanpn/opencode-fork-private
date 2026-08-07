@@ -1,6 +1,6 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { expect, test, type Page } from "@playwright/test"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { mockLocatedResponse, mockOpenCodeServer, mockPtyResponse } from "../utils/mock-server"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/TerminalComposerFocus"
@@ -46,25 +46,30 @@ test.beforeEach(async ({ page }) => {
     ],
     pageMessages: () => ({ items: [] }),
   })
-  await page.route("**/pty", (route) =>
+  await page.route(/\/api\/pty(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: ptyID, title: "Terminal 1" })),
+    })
+  })
+  await page.route(new RegExp(`/api/pty/${ptyID}(?:\\?.*)?$`), (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ id: ptyID, title: "Terminal 1" }),
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: ptyID, title: "Terminal 1" })),
     }),
   )
-  await page.route(`**/pty/${ptyID}`, (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
-  )
-  await page.route(`**/pty/${ptyID}/connect-token*`, (route) =>
+  await page.route(new RegExp(`/api/pty/${ptyID}/connect-token(?:\\?.*)?$`), (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
       headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify({ ticket: "e2e-ticket" }),
+      body: JSON.stringify(mockLocatedResponse({ directory, projectID, data: { ticket: "e2e-ticket" } })),
     }),
   )
-  await page.routeWebSocket(new RegExp(`/pty/${ptyID}/connect`), () => undefined)
+  await page.routeWebSocket(new RegExp(`/api/pty/${ptyID}/connect`), () => undefined)
   await page.addInitScript(() => {
     localStorage.setItem("settings.v3", JSON.stringify({ general: { newLayoutDesigns: true } }))
   })
@@ -95,12 +100,13 @@ test("keeps composer focus when a cached terminal finishes mounting", async ({ p
   const ghostty = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   const created = { count: 0 }
-  await page.route("**/pty", (route) => {
+  await page.route(/\/api\/pty(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
     created.count += 1
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ id: ptyID, title: "Terminal 1" }),
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: ptyID, title: "Terminal 1" })),
     })
   })
   await page.route(/ghostty-web/, async (route) => {
@@ -155,27 +161,32 @@ test("keeps newer composer focus while an explicit terminal open finishes", asyn
 
 test("focuses a terminal created from the new-terminal button", async ({ page }) => {
   const created = { count: 0 }
-  await page.route("**/pty", (route) => {
+  await page.route(/\/api\/pty(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
     created.count += 1
     const next = created.count === 1 ? { id: ptyID, title: "Terminal 1" } : { id: newPtyID, title: "Terminal 2" }
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(next),
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, ...next })),
     })
   })
-  await page.route(`**/pty/${newPtyID}`, (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+  await page.route(new RegExp(`/api/pty/${newPtyID}(?:\\?.*)?$`), (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: newPtyID, title: "Terminal 2" })),
+    }),
   )
-  await page.route(`**/pty/${newPtyID}/connect-token*`, (route) =>
+  await page.route(new RegExp(`/api/pty/${newPtyID}/connect-token(?:\\?.*)?$`), (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
       headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify({ ticket: "e2e-ticket" }),
+      body: JSON.stringify(mockLocatedResponse({ directory, projectID, data: { ticket: "e2e-ticket" } })),
     }),
   )
-  await page.routeWebSocket(new RegExp(`/pty/${newPtyID}/connect`), () => undefined)
+  await page.routeWebSocket(new RegExp(`/api/pty/${newPtyID}/connect`), () => undefined)
 
   await page.goto(`/${base64Encode(directory)}/session/${sessionID}`)
   await expectSessionTitle(page, "Terminal composer focus")

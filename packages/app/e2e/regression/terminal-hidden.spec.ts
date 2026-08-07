@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { mockLocatedResponse, mockOpenCodeServer, mockPtyResponse } from "../utils/mock-server"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/HiddenTerminalRegression"
@@ -43,17 +43,29 @@ test("unmounts the terminal panel while it is hidden", async ({ page }) => {
     ],
     pageMessages: () => ({ items: [] }),
   })
-  await page.route("**/pty", (route) =>
+  await page.route(/\/api\/pty(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: "pty_hidden_terminal", title: "Terminal 1" })),
+    })
+  })
+  await page.route(/\/api\/pty\/pty_hidden_terminal(?:\?.*)?$/, (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ id: "pty_hidden_terminal", title: "Terminal 1" }),
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: "pty_hidden_terminal", title: "Terminal 1" })),
     }),
   )
-  await page.route("**/pty/pty_hidden_terminal", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+  await page.route(/\/api\/pty\/pty_hidden_terminal\/connect-token(?:\?.*)?$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockLocatedResponse({ directory, projectID, data: { ticket: "e2e-ticket" } })),
+    }),
   )
-  await page.routeWebSocket("**/pty/pty_hidden_terminal/connect", () => undefined)
+  await page.routeWebSocket(/\/api\/pty\/pty_hidden_terminal\/connect/, () => undefined)
 
   await page.goto(`/${base64Encode(directory)}/session/${sessionID}`)
   await expectSessionTitle(page, title)

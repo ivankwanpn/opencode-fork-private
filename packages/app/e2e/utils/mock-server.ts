@@ -134,6 +134,16 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
         located(config, typeof config.questions === "function" ? config.questions() : (config.questions ?? [])),
       )
 
+    const projectMatch = path.match(/^\/api\/project\/([^/]+)$/)
+    if (projectMatch && route.request().method() === "PATCH") {
+      const update: unknown = route.request().postDataJSON()
+      return json(route, {
+        ...(record(config.project) ? config.project : {}),
+        ...(record(update) ? update : {}),
+        id: decodeURIComponent(projectMatch[1]!),
+      })
+    }
+
     const staticRoutes: Record<string, unknown> = {
       "/api/location": location(config),
       "/api/path": {
@@ -169,7 +179,7 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
       "/api/mcp": located(config, {}),
       "/api/mcp/resource": located(config, {}),
       "/api/reference": located(config, []),
-      "/api/vcs": located(config, { branch: "main", defaultBranch: "main", default_branch: "main" }),
+      "/api/vcs": located(config, { branch: "main", default_branch: "main" }),
       "/api/vcs/status": located(config, []),
       "/api/vcs/diff": located(config, config.vcsDiff ?? []),
       "/api/workspace/adapter": located(config, []),
@@ -477,8 +487,34 @@ function fileContent(path: string, value: unknown) {
   }
 }
 
+export function mockLocatedResponse(input: { directory: string; projectID: string; data: unknown }) {
+  return {
+    location: {
+      directory: input.directory,
+      project: { id: input.projectID, directory: input.directory },
+    },
+    data: input.data,
+  }
+}
+
+export function mockPtyResponse(input: { directory: string; projectID: string; id: string; title: string }) {
+  return mockLocatedResponse({
+    directory: input.directory,
+    projectID: input.projectID,
+    data: {
+      id: input.id,
+      title: input.title,
+      command: "",
+      args: [],
+      cwd: input.directory,
+      status: "running",
+      pid: 1,
+    },
+  })
+}
+
 function located(config: MockServerConfig, data: unknown) {
-  return { location: location(config), data }
+  return mockLocatedResponse({ directory: config.directory, projectID: projectID(config), data })
 }
 
 function location(config: MockServerConfig) {

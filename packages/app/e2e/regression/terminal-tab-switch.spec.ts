@@ -1,6 +1,6 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { expect, test, type Page } from "@playwright/test"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { mockLocatedResponse, mockOpenCodeServer, mockPtyResponse } from "../utils/mock-server"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/TerminalTabSwitch"
@@ -85,26 +85,31 @@ async function setup(page: Page) {
     sessions: [session(sessionA, titleA, 1700000000000), session(sessionB, titleB, 1700000001000)],
     pageMessages: () => ({ items: [] }),
   })
-  await page.route("**/pty", (route) =>
+  await page.route(/\/api\/pty(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: ptyID, title: "Terminal 1" })),
+    })
+  })
+  await page.route(new RegExp(`/api/pty/${ptyID}(?:\\?.*)?$`), (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ id: ptyID, title: "Terminal 1" }),
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: ptyID, title: "Terminal 1" })),
     }),
   )
-  await page.route(`**/pty/${ptyID}`, (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
-  )
-  await page.route(`**/pty/${ptyID}/connect-token*`, (route) =>
+  await page.route(new RegExp(`/api/pty/${ptyID}/connect-token(?:\\?.*)?$`), (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
       headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify({ ticket: "e2e-ticket" }),
+      body: JSON.stringify(mockLocatedResponse({ directory, projectID, data: { ticket: "e2e-ticket" } })),
     }),
   )
   const connections: string[] = []
-  await page.routeWebSocket(new RegExp(`/pty/${ptyID}/connect`), (ws) => {
+  await page.routeWebSocket(new RegExp(`/api/pty/${ptyID}/connect`), (ws) => {
     connections.push(ws.url())
   })
 

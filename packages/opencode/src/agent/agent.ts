@@ -232,6 +232,8 @@ const layer = Layer.effect(
                 webfetch: "allow",
                 websearch: "allow",
                 read: "allow",
+                "playwright_*": "allow",
+                "mcp_playwright_*": "allow",
                 external_directory: readonlyExternalDirectory,
               }),
               user,

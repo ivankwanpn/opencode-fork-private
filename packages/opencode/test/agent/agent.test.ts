@@ -149,6 +149,11 @@ it.instance("research agent is read-only", () =>
     expect(evalPerm(research, "glob")).toBe("allow")
     expect(evalPerm(research, "webfetch")).toBe("allow")
     expect(evalPerm(research, "websearch")).toBe("allow")
+    expect(evalPerm(research, "playwright_browser_navigate")).toBe("allow")
+    expect(evalPerm(research, "mcp_playwright_browser_navigate")).toBe("allow")
+    expect(evalPerm(research, "mcp_other_tool")).toBe("deny")
+    const explore = yield* load((svc) => svc.get("explore"))
+    expect(evalPerm(explore, "playwright_browser_navigate")).toBe("deny")
   }),
 )
 

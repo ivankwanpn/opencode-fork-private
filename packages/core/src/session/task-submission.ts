@@ -1,6 +1,6 @@
 export * as TaskSubmission from "./task-submission"
 
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm"
+import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -11,7 +11,13 @@ import { Prompt } from "./prompt"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionAttemptTable, SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
+import {
+  SessionAttemptTable,
+  SessionInputTable,
+  SessionMessageTable,
+  TaskNotificationOutboxTable,
+  TaskSubmissionTable,
+} from "./sql"
 import { TaskNotification } from "./task-notification"
 
 export type Identity = {
@@ -108,6 +114,8 @@ export interface Interface {
   }) => Effect.Effect<Info | undefined>
   readonly claim: (id: string) => Effect.Effect<ClaimResult, Missing>
   readonly terminalize: (input: TerminalizeInput) => Effect.Effect<Info | undefined>
+  /** Settles a submission from the durable child transcript, independent of compaction. */
+  readonly terminalizeFromChild: (submissionID: string) => Effect.Effect<Info | undefined>
   readonly promoteDelivery: (submissionID: string) => Effect.Effect<Info | undefined>
   readonly recoverSession: (input: RecoveryInput) => Effect.Effect<number>
   readonly recoverCompleted: (input: SessionRecoveryInput) => Effect.Effect<number>
@@ -197,6 +205,65 @@ const layer = Layer.effect(
         )
         .get()
         .pipe(Effect.orDie)
+    })
+
+    const findCompletedAssistantDurable = Effect.fn("TaskSubmission.findCompletedAssistantDurable")(function* (input: {
+      readonly sessionID: SessionSchema.ID
+      readonly childInputID: SessionMessage.ID
+      readonly assistantMessageID?: SessionMessage.ID
+    }) {
+      const inputRow = yield* db
+        .select({ admittedSeq: SessionInputTable.admitted_seq, promotedSeq: SessionInputTable.promoted_seq })
+        .from(SessionInputTable)
+        .where(and(eq(SessionInputTable.session_id, input.sessionID), eq(SessionInputTable.id, input.childInputID)))
+        .get()
+        .pipe(Effect.orDie)
+      const messageRow = inputRow
+        ? undefined
+        : yield* db
+            .select({ seq: SessionMessageTable.seq })
+            .from(SessionMessageTable)
+            .where(
+              and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.id, input.childInputID)),
+            )
+            .get()
+            .pipe(Effect.orDie)
+      const anchor = inputRow ? { seq: inputRow.promotedSeq ?? inputRow.admittedSeq } : messageRow
+      if (!anchor) return undefined
+
+      const nextInput = yield* db
+        .select({ seq: SessionMessageTable.seq })
+        .from(SessionMessageTable)
+        .where(
+          and(
+            eq(SessionMessageTable.session_id, input.sessionID),
+            eq(SessionMessageTable.type, "user"),
+            gt(SessionMessageTable.seq, anchor.seq),
+          ),
+        )
+        .orderBy(asc(SessionMessageTable.seq))
+        .limit(1)
+        .get()
+        .pipe(Effect.orDie)
+      const rows = yield* db
+        .select()
+        .from(SessionMessageTable)
+        .where(
+          and(
+            eq(SessionMessageTable.session_id, input.sessionID),
+            gt(SessionMessageTable.seq, anchor.seq),
+            nextInput ? lt(SessionMessageTable.seq, nextInput.seq) : undefined,
+          ),
+        )
+        .orderBy(asc(SessionMessageTable.seq))
+        .all()
+        .pipe(Effect.orDie)
+      const messages = yield* Effect.forEach(rows, (row) =>
+        Schema.decodeUnknownEffect(SessionMessage.Message)({ ...row.data, id: row.id, type: row.type }).pipe(
+          Effect.orDie,
+        ),
+      )
+      return findCompletedAssistantAfterInput(messages, input.assistantMessageID)
     })
 
     const get: Interface["get"] = Effect.fn("TaskSubmission.get")(function* (id) {
@@ -335,8 +402,9 @@ const layer = Layer.effect(
     ) {
       if (row.outcome === null) return
       const text =
-        row.result_text ??
-        (typeof row.error === "object" && row.error !== null && "message" in row.error ? String(row.error.message) : "")
+        row.outcome === "completed"
+          ? (row.result_text ?? "")
+          : (nonEmptyText(row.result_text) ?? errorText(row.error) ?? "")
       yield* db
         .insert(TaskNotificationOutboxTable)
         .values({
@@ -416,6 +484,36 @@ const layer = Layer.effect(
       if (result?.completionDelivery === "parent") yield* notifications.signal()
       return result
     })
+
+    const terminalizeFromChild: Interface["terminalizeFromChild"] = Effect.fn("TaskSubmission.terminalizeFromChild")(
+      function* (submissionID) {
+        const row = yield* db
+          .select()
+          .from(TaskSubmissionTable)
+          .where(eq(TaskSubmissionTable.id, submissionID))
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return undefined
+        if (row.outcome !== null) return toInfo(row)
+
+        const assistant = yield* findCompletedAssistantDurable({
+          sessionID: row.child_session_id,
+          childInputID: SessionMessage.ID.make(row.child_input_id),
+        })
+        if (!assistant) return toInfo(row)
+        const text = assistant.content
+          .filter((part): part is SessionMessage.AssistantText => part.type === "text")
+          .map((part) => part.text)
+          .join("")
+        return yield* terminalize({
+          submissionID: row.id,
+          outcome: assistant.error || assistant.finish === "error" ? "error" : "completed",
+          resultMessageID: assistant.id,
+          resultText: text,
+          error: assistant.error,
+        })
+      },
+    )
 
     const promoteDelivery: Interface["promoteDelivery"] = Effect.fn("TaskSubmission.promoteDelivery")(function* (
       submissionID,
@@ -512,7 +610,12 @@ const layer = Layer.effect(
     })
 
     const recoverSession: Interface["recoverSession"] = Effect.fn("TaskSubmission.recoverSession")(function* (input) {
-      const assistant = findCompletedAssistant(input.messages, input.childInputID, input.assistantMessageID)
+      const assistant =
+        (yield* findCompletedAssistantDurable({
+          sessionID: input.sessionID,
+          childInputID: input.childInputID,
+          assistantMessageID: input.assistantMessageID,
+        })) ?? findCompletedAssistant(input.messages, input.childInputID, input.assistantMessageID)
       if (!assistant) return 0
       const row = yield* db
         .select()
@@ -540,7 +643,12 @@ const layer = Layer.effect(
           .pipe(Effect.orDie)
         let recovered = 0
         for (const row of rows) {
-          const assistant = findCompletedAssistant(input.messages, SessionMessage.ID.make(row.child_input_id))
+          const childInputID = SessionMessage.ID.make(row.child_input_id)
+          const assistant =
+            (yield* findCompletedAssistantDurable({
+              sessionID: input.sessionID,
+              childInputID,
+            })) ?? findCompletedAssistant(input.messages, childInputID)
           if (assistant && (yield* recoverOne(row, assistant))) recovered++
         }
         return recovered
@@ -600,6 +708,7 @@ const layer = Layer.effect(
       latestByChild,
       claim,
       terminalize,
+      terminalizeFromChild,
       promoteDelivery,
       recoverSession,
       recoverCompleted,
@@ -626,6 +735,17 @@ function serializedModel(model: unknown) {
   return JSON.stringify(model ?? null)
 }
 
+function nonEmptyText(value: string | null | undefined) {
+  return value && value.trim().length > 0 ? value : undefined
+}
+
+function errorText(error: unknown) {
+  if (typeof error === "string" && error.trim()) return error
+  if (typeof error !== "object" || error === null || !("message" in error)) return undefined
+  const message = String(error.message)
+  return message.trim() ? message : undefined
+}
+
 function findCompletedAssistant(
   messages: ReadonlyArray<SessionMessage.Message>,
   childInputID: SessionMessage.ID,
@@ -633,19 +753,25 @@ function findCompletedAssistant(
 ) {
   const inputIndex = messages.findIndex((message) => message.id === childInputID)
   if (inputIndex < 0) return undefined
-  const afterInput = messages.slice(inputIndex + 1)
+  return findCompletedAssistantAfterInput(messages.slice(inputIndex + 1), assistantMessageID)
+}
+
+function findCompletedAssistantAfterInput(
+  messages: ReadonlyArray<SessionMessage.Message>,
+  assistantMessageID?: SessionMessage.ID,
+) {
   if (assistantMessageID !== undefined) {
-    const assistant = afterInput.find((message) => message.id === assistantMessageID)
+    const assistant = messages.find((message) => message.id === assistantMessageID)
     if (assistant?.type === "assistant" && assistant.time.completed !== undefined) return assistant
     return undefined
   }
-  const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
-    return afterInput
-      .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
-      .findLast(
-        (message): message is SessionMessage.Assistant =>
-          message.type === "assistant" && message.time.completed !== undefined,
-      )
+  const nextInputIndex = messages.findIndex((message) => message.type === "user")
+  return messages
+    .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
+    .findLast(
+      (message): message is SessionMessage.Assistant =>
+        message.type === "assistant" && message.time.completed !== undefined,
+    )
 }
 
 function digest(value: string) {

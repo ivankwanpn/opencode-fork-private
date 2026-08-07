@@ -426,6 +426,39 @@ const taskSubmissionLayer = Layer.succeed(
         if (terminalizeRelease) yield* Deferred.await(terminalizeRelease)
         return settled
       }),
+    terminalizeFromChild: (id) =>
+      Effect.gen(function* () {
+        const info = taskSubmissions.get(id)
+        if (!info || info.outcome) return info
+        const messages = contexts.get(info.childSessionID) ?? []
+        const inputIndex = messages.findIndex((message) => message.id === info.childInputID)
+        const afterInput = inputIndex < 0 ? [] : messages.slice(inputIndex + 1)
+        const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
+        const result = afterInput
+          .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
+          .findLast(
+            (message): message is SessionMessage.Assistant =>
+              message.type === "assistant" && message.time.completed !== undefined,
+          )
+        if (!result) return info
+        const resultText = result.content
+          .filter((part): part is SessionMessage.AssistantText => part.type === "text")
+          .map((part) => part.text)
+          .join("")
+        const settled: TaskSubmission.Info = {
+          ...info,
+          status: result.error || result.finish === "error" ? "error" : "completed",
+          outcome: result.error || result.finish === "error" ? "error" : "completed",
+          resultMessageID: result.id,
+          resultText,
+          error: result.error,
+          timeCompleted: 1,
+        }
+        taskSubmissions.set(id, settled)
+        if (terminalizedSignal) yield* Deferred.succeed(terminalizedSignal, undefined).pipe(Effect.ignore)
+        if (terminalizeRelease) yield* Deferred.await(terminalizeRelease)
+        return settled
+      }),
     recoverSession: () => Effect.succeed(0),
     recoverCompleted: () => Effect.succeed(0),
     markRecoveryRequired: () => Effect.succeed(0),

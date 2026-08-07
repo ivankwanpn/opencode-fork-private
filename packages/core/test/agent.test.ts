@@ -155,8 +155,14 @@ describe("AgentV2", () => {
           expect.objectContaining({ action: "read", effect: "allow" }),
           expect.objectContaining({ action: "webfetch", effect: "allow" }),
           expect.objectContaining({ action: "websearch", effect: "allow" }),
+          expect.objectContaining({ action: "playwright_*", effect: "allow" }),
+          expect.objectContaining({ action: "mcp_playwright_*", effect: "allow" }),
         ]),
       )
+      expect(PermissionV2.evaluate("playwright_browser_navigate", "*", research?.permissions ?? []).effect).toBe(
+        "allow",
+      )
+      expect(PermissionV2.evaluate("mcp_other_tool", "*", research?.permissions ?? []).effect).toBe("deny")
       expect(research?.permissions.some((rule) => rule.action === "edit" && rule.effect !== "deny")).toBe(false)
     }),
   )

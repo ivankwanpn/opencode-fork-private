@@ -11,7 +11,6 @@ import { PermissionV2 } from "../permission"
 import { SessionCommand } from "../session/command"
 import { SessionExecution } from "../session/execution"
 import { SessionAttempt } from "../session/attempt"
-import { SessionMessage } from "../session/message"
 import { Prompt } from "../session/prompt"
 import { SessionSchema } from "../session/schema"
 import { SessionStore } from "../session/store"
@@ -274,85 +273,74 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             content: text ? [{ type: "text", text }] : [],
           })
 
-        const runTask = (submission: TaskSubmission.Info) => Effect.gen(function* () {
-          const claim = yield* submissions.claim(submission.id)
-          if (!claim.acquired) {
-            yield* execution.wait(child.id)
-            const existing = yield* submissions.get(submission.id)
-            if (existing?.outcome === "completed") return existing.resultText ?? ""
-            if (existing?.outcome === "cancelled") return yield* new ToolFailure({ message: "Task cancelled" })
-            return yield* new ToolFailure({ message: String(existing?.error ?? "Task did not complete") })
-          }
-
-          yield* execution.resume(child.id)
-          yield* execution.wait(child.id)
-          const messages = yield* sessions.context(child.id)
-          const inputIndex = messages.findIndex((message) => message.id === submission.childInputID)
-          if (inputIndex < 0)
-            return yield* Effect.fail(new Error(`Child input not visible: ${submission.childInputID}`))
-          const afterInput = messages.slice(inputIndex + 1)
-          const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
-          const assistant = afterInput
-            .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
-            .findLast((message) => message.type === "assistant" && message.time.completed !== undefined)
-          if (!assistant || assistant.type !== "assistant")
-            return yield* Effect.fail(
-              new Error(`Child input has no completed assistant result: ${submission.childInputID}`),
-            )
-          const text = assistant.content
-            .filter((part): part is SessionMessage.AssistantText => part.type === "text")
-            .map((part) => part.text)
-            .join("")
-          const outcome: TaskSubmission.Outcome =
-            assistant.error || assistant.finish === "error" ? "error" : "completed"
-          const settled = yield* submissions.terminalize({
-            submissionID: submission.id,
-            outcome,
-            resultMessageID: assistant.id,
-            resultText: text,
-            error: assistant.error,
-          })
-          if (!settled) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
-          yield* notifications.drain({
+        const drainNotifications = () =>
+          notifications.drain({
             admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
             wake: execution.wake,
           })
-          if (outcome === "error") return yield* new ToolFailure({ message: text || "Task failed" })
-          return text
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.uninterruptible(
-              submissions
-                .terminalize({
-                  submissionID: submission.id,
-                  outcome: Cause.hasInterrupts(cause)
-                    ? "cancelled"
-                    : Cause.squash(cause) instanceof SessionAttempt.RecoveryRequiredError
-                      ? "recovery-required"
-                      : "error",
-                  error: { message: String(Cause.squash(cause)) },
-                })
-                .pipe(
-                  Effect.andThen(
-                    notifications.drain({
-                      admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
-                      wake: execution.wake,
-                    }),
-                  ),
-                  Effect.ignore,
-                ),
-            ).pipe(Effect.andThen(Effect.failCause(cause))),
-          ),
-          Effect.onInterrupt(() =>
-            cancellation
-              .cancelTree({
-                rootSessionID: child.id,
-                interrupt: execution.interrupt,
-                wait: execution.wait,
+
+        const settleResult = (submission: TaskSubmission.Info, info: TaskSubmission.Info | undefined) =>
+          Effect.gen(function* () {
+            if (!info) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
+            if (!info.outcome)
+              return yield* Effect.fail(
+                new Error(`Child input has no completed assistant result: ${submission.childInputID}`),
+              )
+            yield* drainNotifications()
+            if (info.outcome === "cancelled") return yield* new ToolFailure({ message: "Task cancelled" })
+            if (info.outcome !== "completed")
+              return yield* new ToolFailure({
+                message:
+                  taskErrorText(info.error) ?? (info.resultText?.trim() ? info.resultText : undefined) ?? "Task failed",
               })
-              .pipe(Effect.asVoid),
-          ),
-        )
+            return info.resultText ?? ""
+          })
+
+        const runTask = (submission: TaskSubmission.Info) =>
+          Effect.gen(function* () {
+            const claim = yield* submissions.claim(submission.id)
+            if (!claim.acquired) {
+              yield* execution.wait(child.id)
+              return yield* settleResult(submission, yield* submissions.terminalizeFromChild(submission.id))
+            }
+
+            yield* execution.resume(child.id)
+            yield* execution.wait(child.id)
+            return yield* settleResult(submission, yield* submissions.terminalizeFromChild(submission.id))
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.uninterruptible(
+                submissions
+                  .terminalize({
+                    submissionID: submission.id,
+                    outcome: Cause.hasInterrupts(cause)
+                      ? "cancelled"
+                      : Cause.squash(cause) instanceof SessionAttempt.RecoveryRequiredError
+                        ? "recovery-required"
+                        : "error",
+                    error: { message: String(Cause.squash(cause)) },
+                  })
+                  .pipe(
+                    Effect.andThen(
+                      notifications.drain({
+                        admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+                        wake: execution.wake,
+                      }),
+                    ),
+                    Effect.ignore,
+                  ),
+              ).pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+            Effect.onInterrupt(() =>
+              cancellation
+                .cancelTree({
+                  rootSessionID: child.id,
+                  interrupt: execution.interrupt,
+                  wait: execution.wait,
+                })
+                .pipe(Effect.asVoid),
+            ),
+          )
 
         const backgroundMetadata = {
           ...baseMetadata,
@@ -534,6 +522,13 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         .pipe(Effect.orDie)
     }),
   )
+
+function taskErrorText(error: unknown) {
+  if (typeof error === "string" && error.trim()) return error
+  if (typeof error !== "object" || error === null || !("message" in error)) return undefined
+  const message = String(error.message)
+  return message.trim() ? message : undefined
+}
 
 const deps = [
   AgentV2.node,

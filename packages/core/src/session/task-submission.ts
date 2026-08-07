@@ -1,7 +1,7 @@
 export * as TaskSubmission from "./task-submission"
 
 import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm"
-import { Clock, Context, Effect, Layer, Schema } from "effect"
+import { Clock, Context, Effect, Layer, PubSub, Schema, Stream } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { Identifier } from "../id/id"
@@ -112,6 +112,8 @@ export interface Interface {
     readonly parentSessionID: SessionSchema.ID
     readonly childSessionID: SessionSchema.ID
   }) => Effect.Effect<Info | undefined>
+  /** Process-local advisory wakeup; callers must re-read the durable submission after each signal. */
+  readonly subscribe: () => Stream.Stream<void>
   readonly claim: (id: string) => Effect.Effect<ClaimResult, Missing>
   readonly terminalize: (input: TerminalizeInput) => Effect.Effect<Info | undefined>
   /** Settles a submission from the durable child transcript, independent of compaction. */
@@ -160,6 +162,7 @@ const layer = Layer.effect(
     const { db } = yield* Database.Service
     const events = yield* EventV2.Service
     const notifications = yield* TaskNotification.Service
+    const changes = yield* PubSub.sliding<void>(1)
 
     const isCancelled = Effect.fn("TaskSubmission.isCancelled")(function* (sessionID: SessionSchema.ID) {
       const rows = yield* db
@@ -481,6 +484,7 @@ const layer = Layer.effect(
           }),
         )
         .pipe(Effect.orDie)
+      if (result) yield* PubSub.publish(changes, undefined)
       if (result?.completionDelivery === "parent") yield* notifications.signal()
       return result
     })
@@ -515,53 +519,53 @@ const layer = Layer.effect(
       },
     )
 
-    const promoteDelivery: Interface["promoteDelivery"] = Effect.fn("TaskSubmission.promoteDelivery")(function* (
-      submissionID,
-    ) {
-      const now = yield* Clock.currentTimeMillis
-      const result = yield* db
-        .transaction(() =>
-          Effect.gen(function* () {
-            const row = yield* db
-              .select()
-              .from(TaskSubmissionTable)
-              .where(eq(TaskSubmissionTable.id, submissionID))
-              .get()
-              .pipe(Effect.orDie)
-            if (!row) return undefined
-
-            const updated =
-              row.completion_delivery === "tool"
-                ? yield* db
-                    .update(TaskSubmissionTable)
-                    .set({ completion_delivery: "parent" })
-                    .where(
-                      and(
-                        eq(TaskSubmissionTable.id, submissionID),
-                        eq(TaskSubmissionTable.completion_delivery, "tool"),
-                      ),
-                    )
-                    .returning()
-                    .get()
-                    .pipe(Effect.orDie)
-                : row
-            const current =
-              updated ??
-              (yield* db
+    const promoteDelivery: Interface["promoteDelivery"] = Effect.fn("TaskSubmission.promoteDelivery")(
+      function* (submissionID) {
+        const now = yield* Clock.currentTimeMillis
+        const result = yield* db
+          .transaction(() =>
+            Effect.gen(function* () {
+              const row = yield* db
                 .select()
                 .from(TaskSubmissionTable)
                 .where(eq(TaskSubmissionTable.id, submissionID))
                 .get()
-                .pipe(Effect.orDie))
-            if (!current) return undefined
-            if (current.outcome !== null) yield* enqueueNotification(current, now)
-            return toInfo(current)
-          }),
-        )
-        .pipe(Effect.orDie)
-      if (result?.completionDelivery === "parent") yield* notifications.signal()
-      return result
-    })
+                .pipe(Effect.orDie)
+              if (!row) return undefined
+
+              const updated =
+                row.completion_delivery === "tool"
+                  ? yield* db
+                      .update(TaskSubmissionTable)
+                      .set({ completion_delivery: "parent" })
+                      .where(
+                        and(
+                          eq(TaskSubmissionTable.id, submissionID),
+                          eq(TaskSubmissionTable.completion_delivery, "tool"),
+                        ),
+                      )
+                      .returning()
+                      .get()
+                      .pipe(Effect.orDie)
+                  : row
+              const current =
+                updated ??
+                (yield* db
+                  .select()
+                  .from(TaskSubmissionTable)
+                  .where(eq(TaskSubmissionTable.id, submissionID))
+                  .get()
+                  .pipe(Effect.orDie))
+              if (!current) return undefined
+              if (current.outcome !== null) yield* enqueueNotification(current, now)
+              return toInfo(current)
+            }),
+          )
+          .pipe(Effect.orDie)
+        if (result?.completionDelivery === "parent") yield* notifications.signal()
+        return result
+      },
+    )
 
     const recoverOne = Effect.fn("TaskSubmission.recoverOne")(function* (
       submission: typeof TaskSubmissionTable.$inferSelect,
@@ -706,6 +710,7 @@ const layer = Layer.effect(
       submit,
       get,
       latestByChild,
+      subscribe: () => Stream.fromPubSub(changes),
       claim,
       terminalize,
       terminalizeFromChild,
@@ -717,7 +722,11 @@ const layer = Layer.effect(
   }),
 )
 
-export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node, EventV2.node, TaskNotification.node] })
+export const node = makeGlobalNode({
+  service: Service,
+  layer,
+  deps: [Database.node, EventV2.node, TaskNotification.node],
+})
 
 function matches(existing: Info, input: Invocation, requestedCompletionDelivery = existing.completionDelivery) {
   return (

@@ -29,3 +29,30 @@ permitIt.effect("deduplicates re-acquire for the same child id", () =>
     yield* permits.release(first.key)
   }),
 )
+
+limitedPermitIt.effect("rekeys a provisional reservation without consuming another slot", () =>
+  Effect.gen(function* () {
+    const permits = yield* SubagentPermit.Service
+    const provisional = yield* permits.acquire("ses_provisional")
+    if (provisional.kind !== "new") throw new Error("Expected a new provisional reservation")
+    const transferred = yield* permits.rekey(provisional, "ses_child_1")
+    yield* permits.acquire("ses_child_2")
+
+    expect(transferred).toEqual({ kind: "new", key: "ses_child_1" })
+    expect(yield* permits.active).toEqual(new Set(["ses_child_1", "ses_child_2"]))
+    expect(yield* permits.acquire("ses_child_3").pipe(Effect.flip)).toBeInstanceOf(SubagentLimitReached)
+  }),
+)
+
+limitedPermitIt.effect("drops a provisional slot when its final key is already reserved", () =>
+  Effect.gen(function* () {
+    const permits = yield* SubagentPermit.Service
+    yield* permits.acquire("ses_child_1")
+    const provisional = yield* permits.acquire("ses_provisional")
+    if (provisional.kind !== "new") throw new Error("Expected a new provisional reservation")
+    const transferred = yield* permits.rekey(provisional, "ses_child_1")
+
+    expect(transferred).toEqual({ kind: "existing", key: "ses_child_1" })
+    expect(yield* permits.active).toEqual(new Set(["ses_child_1"]))
+  }),
+)

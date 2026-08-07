@@ -57,6 +57,7 @@ let promotionSignal: Deferred.Deferred<void> | undefined
 let promotionRelease: Deferred.Deferred<void> | undefined
 let promoteDeliveryMissing = false
 let notificationDrainFailure = false
+let submissionConflict = false
 let resumeHandler: SessionExecution.Interface["resume"]
 
 const info = (input: {
@@ -168,6 +169,7 @@ const reset = () => {
   promotionRelease = undefined
   promoteDeliveryMissing = false
   notificationDrainFailure = false
+  submissionConflict = false
   sessions.set(rootID, info({ id: rootID, agent: AgentV2.ID.make("build"), model }))
   sessions.set(parentID, info({ id: parentID, agent: AgentV2.ID.make("build"), model }))
   agents.set(
@@ -339,43 +341,51 @@ const taskSubmissionLayer = Layer.succeed(
   TaskSubmission.Service,
   TaskSubmission.Service.of({
     submit: (input) =>
-      Effect.sync(() => {
-        const key = `${input.parentSessionID}:${input.assistantMessageID}:${input.toolCallID}`
-        const existing = Array.from(taskSubmissions.values()).find(
-          (submission) =>
-            `${submission.parentSessionID}:${submission.assistantMessageID}:${submission.toolCallID}` === key,
-        )
-        if (existing) return existing
-        const id = `sub_task_test_${taskSubmissions.size}`
-        const childInputID = TaskSubmission.inputID(input)
-        const info: TaskSubmission.Info = {
-          id,
-          parentSessionID: input.parentSessionID,
-          assistantMessageID: input.assistantMessageID,
-          toolCallID: input.toolCallID,
-          childSessionID: input.childSessionID,
-          childInputID,
-          description: input.description,
-          prompt: input.prompt,
-          agent: input.agent,
-          model: input.model,
-          completionDelivery: input.completionDelivery,
-          status: "accepted",
-          timeCreated: 0,
-        }
-        taskSubmissions.set(id, info)
-        taskInputIDs.set(input.childSessionID, childInputID)
-        taskInputHistory.set(input.childSessionID, [
-          ...(taskInputHistory.get(input.childSessionID) ?? []),
-          childInputID,
-        ])
-        admissions.push({
-          sessionID: input.childSessionID,
-          prompt: { text: input.prompt.text },
-          delivery: "steer",
-        })
-        return info
-      }),
+      submissionConflict
+        ? Effect.fail(
+            new TaskSubmission.InvocationConflict({
+              parentSessionID: input.parentSessionID,
+              assistantMessageID: input.assistantMessageID,
+              toolCallID: input.toolCallID,
+            }),
+          )
+        : Effect.sync(() => {
+            const key = `${input.parentSessionID}:${input.assistantMessageID}:${input.toolCallID}`
+            const existing = Array.from(taskSubmissions.values()).find(
+              (submission) =>
+                `${submission.parentSessionID}:${submission.assistantMessageID}:${submission.toolCallID}` === key,
+            )
+            if (existing) return existing
+            const id = `sub_task_test_${taskSubmissions.size}`
+            const childInputID = TaskSubmission.inputID(input)
+            const info: TaskSubmission.Info = {
+              id,
+              parentSessionID: input.parentSessionID,
+              assistantMessageID: input.assistantMessageID,
+              toolCallID: input.toolCallID,
+              childSessionID: input.childSessionID,
+              childInputID,
+              description: input.description,
+              prompt: input.prompt,
+              agent: input.agent,
+              model: input.model,
+              completionDelivery: input.completionDelivery,
+              status: "accepted",
+              timeCreated: 0,
+            }
+            taskSubmissions.set(id, info)
+            taskInputIDs.set(input.childSessionID, childInputID)
+            taskInputHistory.set(input.childSessionID, [
+              ...(taskInputHistory.get(input.childSessionID) ?? []),
+              childInputID,
+            ])
+            admissions.push({
+              sessionID: input.childSessionID,
+              prompt: { text: input.prompt.text },
+              delivery: "steer",
+            })
+            return info
+          }),
     get: (id) => Effect.succeed(taskSubmissions.get(id)),
     latestByChild: (input) =>
       Effect.succeed(
@@ -387,6 +397,7 @@ const taskSubmissionLayer = Layer.succeed(
           )
           .toSorted((a, b) => b.timeCreated - a.timeCreated || b.id.localeCompare(a.id))[0],
       ),
+    subscribe: () => Stream.empty,
     promoteDelivery: (id) =>
       Effect.gen(function* () {
         if (promotionSignal) yield* Deferred.succeed(promotionSignal, undefined).pipe(Effect.ignore)
@@ -571,6 +582,7 @@ const promotionPostCommitFailure = testEffect(
   ]),
 )
 const foregroundLimited = testEffect(makeLayer(false, [[Config.node, makeConfigLayer(2)]]))
+const backgroundLimited = testEffect(makeLayer(true, [[Config.node, makeConfigLayer(1)]]))
 const foregroundFastCompletion = testEffect(
   makeLayer(false, [
     [
@@ -851,10 +863,7 @@ describe("TaskTool", () => {
         })
       const registry = yield* ToolRegistry.Service
 
-      const settled = yield* settleTool(
-        registry,
-        call({ ...input, background: false }, "call-final-provider-turn"),
-      )
+      const settled = yield* settleTool(registry, call({ ...input, background: false }, "call-final-provider-turn"))
 
       expect(settled.result).toMatchObject({
         type: "text",
@@ -993,10 +1002,7 @@ describe("TaskTool", () => {
     Effect.gen(function* () {
       reset()
       const registry = yield* ToolRegistry.Service
-      const result = yield* settleTool(
-        registry,
-        call({ ...input, subagent_type: "all-agent" }, "call-all-agent"),
-      )
+      const result = yield* settleTool(registry, call({ ...input, subagent_type: "all-agent" }, "call-all-agent"))
 
       expect(result).toMatchObject({ result: { type: "text" } })
       expect(sessions.get(SessionSchema.ID.make("ses_task_child_1"))).toMatchObject({ agent: "all-agent" })
@@ -1084,10 +1090,48 @@ describe("TaskTool", () => {
         type: "error",
         value: "Subagent concurrency limit reached",
       })
+      expect(createCount).toBe(2)
 
       yield* Deferred.succeed(release, undefined)
       yield* Fiber.join(first)
       yield* Fiber.join(second)
+    }),
+  )
+
+  backgroundLimited.effect("keeps an existing task permit when a continuation fails before job ownership", () =>
+    Effect.gen(function* () {
+      reset()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      resumeHandler = (sessionID) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          contexts.set(sessionID, childContext(sessionID, "limited background result"))
+        })
+      const registry = yield* ToolRegistry.Service
+      const jobs = yield* BackgroundJob.Service
+
+      const first = yield* executeTool(registry, call({ ...input, background: true }, "call-permit-owner"))
+      expect(first).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
+      const childID = Array.from(taskSubmissions.values())[0]?.childSessionID
+      if (!childID) yield* Effect.die("Expected the first task submission")
+      yield* Deferred.await(started)
+
+      submissionConflict = true
+      expect(
+        yield* executeTool(registry, call({ ...input, background: true, task_id: childID }, "call-permit-conflict")),
+      ).toEqual({ type: "error", value: "Task invocation conflict: call-permit-conflict" })
+      submissionConflict = false
+
+      expect(yield* executeTool(registry, call({ ...input, background: true }, "call-permit-contender"))).toEqual({
+        type: "error",
+        value: "Subagent concurrency limit reached",
+      })
+      expect(createCount).toBe(1)
+
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
     }),
   )
 
@@ -1177,8 +1221,9 @@ describe("TaskTool", () => {
       )
 
       expect(foreground).toMatchObject({ type: "text", value: expect.stringContaining('state="running"') })
-      expect(Array.from(taskSubmissions.values()).find((submission) => submission.toolCallID === "call-explicit-foreground"))
-        .toMatchObject({ completionDelivery: "parent" })
+      expect(
+        Array.from(taskSubmissions.values()).find((submission) => submission.toolCallID === "call-explicit-foreground"),
+      ).toMatchObject({ completionDelivery: "parent" })
 
       yield* Deferred.succeed(release, undefined)
       expect((yield* jobs.wait({ id: childID })).info?.status).toBe("completed")
@@ -1230,10 +1275,9 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(
-        registry,
-        call({ ...input, background: false }, "call-promote"),
-      ).pipe(Effect.forkScoped)
+      const running = yield* executeTool(registry, call({ ...input, background: false }, "call-promote")).pipe(
+        Effect.forkScoped,
+      )
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* jobs.promote(childID)
@@ -1270,7 +1314,9 @@ describe("TaskTool", () => {
       yield* Deferred.await(started)
 
       expect(yield* jobs.promote(childID)).toMatchObject({ metadata: { background: true } })
-      expect(Array.from(taskSubmissions.values()).find((submission) => submission.childSessionID === childID)).toMatchObject({
+      expect(
+        Array.from(taskSubmissions.values()).find((submission) => submission.childSessionID === childID),
+      ).toMatchObject({
         completionDelivery: "parent",
       })
       expect(yield* Fiber.join(running)).toMatchObject({
@@ -1302,10 +1348,9 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(
-        registry,
-        call({ ...input, background: false }, "call-terminal-promote"),
-      ).pipe(Effect.forkScoped)
+      const running = yield* executeTool(registry, call({ ...input, background: false }, "call-terminal-promote")).pipe(
+        Effect.forkScoped,
+      )
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* Deferred.succeed(releaseCompletion, undefined)
@@ -1336,9 +1381,7 @@ describe("TaskTool", () => {
         type: "text",
         value: expect.stringContaining('state="running"'),
       })
-      expect(promotedSubmissions).toMatchObject([
-        { status: "completed", completionDelivery: "parent" },
-      ])
+      expect(promotedSubmissions).toMatchObject([{ status: "completed", completionDelivery: "parent" }])
       expect(promotedAdmissions).toHaveLength(1)
       expect(promotedWakes).toEqual([parentID])
       expect(completed.info?.status).toBe("completed")
@@ -1444,10 +1487,9 @@ describe("TaskTool", () => {
       const registry = yield* ToolRegistry.Service
       const jobs = yield* BackgroundJob.Service
 
-      const running = yield* executeTool(
-        registry,
-        call({ ...input, background: false }, "call-cancel"),
-      ).pipe(Effect.forkScoped)
+      const running = yield* executeTool(registry, call({ ...input, background: false }, "call-cancel")).pipe(
+        Effect.forkScoped,
+      )
       const childID = SessionSchema.ID.make("ses_task_child_1")
       yield* Deferred.await(started)
       yield* Fiber.interrupt(running).pipe(Effect.forkScoped)

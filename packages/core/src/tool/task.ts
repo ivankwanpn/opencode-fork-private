@@ -1,7 +1,7 @@
 export * as TaskTool from "./task"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Cause, Effect, Layer, Ref, Schema } from "effect"
+import { Cause, Effect, Exit, Layer, Ref, Schema } from "effect"
 import { AgentV2 } from "../agent"
 import { BackgroundJob } from "../background-job"
 import { Config } from "../config"
@@ -236,25 +236,34 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         const requested = input.task_id ? SessionSchema.ID.make(input.task_id) : undefined
         const resumed = requested ? yield* sessions.get(requested) : undefined
         const model = agent.model ?? parent.model
-        const child =
-          resumed ??
-          (yield* commands.create({
-            parentID: context.sessionID,
-            title: `${input.description} (@${agent.id} subagent)`,
-            agent: agent.id,
-            model,
-            location: parent.location,
-          }))
-        if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
-        if (model) yield* commands.switchModel({ sessionID: child.id, model })
-
-        const reservation = yield* permits.acquire(child.id).pipe(
-          Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })),
-        )
-        // Until background.start succeeds and the job record owns the permit, a
-        // failure (submit conflict, checkpoint, interrupt) must release the
-        // reservation or the key leaks out of the concurrency budget forever.
+        const acquired = yield* permits
+          .acquire(resumed?.id ?? SessionSchema.ID.create())
+          .pipe(Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })))
+        if (!resumed && acquired.kind === "existing")
+          return yield* Effect.die(`Subagent provisional reservation collision: ${acquired.key}`)
+        const reservationRef = yield* Ref.make(acquired)
         const ownedByJob = yield* Ref.make(false)
+        const releaseReservation = Ref.get(reservationRef).pipe(
+          Effect.flatMap((reservation) =>
+            reservation.kind === "new" ? permits.release(reservation.key) : Effect.void,
+          ),
+        )
+        const child = yield* Effect.gen(function* () {
+          const child =
+            resumed ??
+            (yield* commands.create({
+              parentID: context.sessionID,
+              title: `${input.description} (@${agent.id} subagent)`,
+              agent: agent.id,
+              model,
+              location: parent.location,
+            }))
+          if (!resumed && acquired.kind === "new")
+            yield* permits.rekey(acquired, child.id).pipe(Effect.flatMap((next) => Ref.set(reservationRef, next)))
+          if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
+          if (model) yield* commands.switchModel({ sessionID: child.id, model })
+          return child
+        }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseReservation : Effect.void)))
 
         const baseMetadata = {
           parentSessionId: context.sessionID,
@@ -399,9 +408,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             yield* Ref.set(ownedByJob, true)
             return { info: started, submissionID: submission.id }
           }),
-          Effect.flatMap(Ref.get(ownedByJob), (owned) =>
-            owned ? Effect.void : permits.release(child.id),
-          ),
+          Effect.flatMap(Ref.get(ownedByJob), (owned) => (owned ? Effect.void : releaseReservation)),
         )
         const info = started.info
 
@@ -491,9 +498,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           // The job-scope onRelease owns the permit for the background path; the
           // foreground path releases explicitly once the observed task settles
           // (never while it keeps running in the background after promotion).
-          Effect.tap((result) =>
-            "background" in result.metadata ? Effect.void : permits.release(child.id),
-          ),
+          Effect.tap((result) => ("background" in result.metadata ? Effect.void : releaseReservation)),
           Effect.onInterrupt(() => background.cancel(child.id).pipe(Effect.asVoid)),
         )
       })

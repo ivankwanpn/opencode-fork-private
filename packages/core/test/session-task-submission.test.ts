@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result, Schema } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Queue, Result, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -337,6 +337,28 @@ describe("TaskSubmission", () => {
       const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
       expect(outbox).toHaveLength(1)
       expect(outbox[0]?.payload).toMatchObject({ taskID: childSessionID })
+    }),
+  )
+
+  it.effect("signals subscribers after a durable terminal transition", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      })
+      const activity = yield* Queue.sliding<void>(1)
+      yield* submissions.subscribe().pipe(
+        Stream.runForEach(() => Queue.offer(activity, undefined)),
+        Effect.forkScoped({ startImmediately: true }),
+      )
+
+      yield* submissions.terminalize({ submissionID: submitted.id, outcome: "completed", resultText: "done" })
+
+      expect(yield* Queue.take(activity)).toBeUndefined()
     }),
   )
 

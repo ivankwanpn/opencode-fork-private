@@ -51,6 +51,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { CommandInput, PromptInput, ShellInput } from "./legacy-session-input"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -60,6 +61,8 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+
+export { CommandInput, PromptInput, ShellInput } from "./legacy-session-input"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1533,76 +1536,9 @@ const layer = Layer.effect(
   }),
 )
 
-const ModelRef = Schema.Struct({
-  providerID: ProviderV2.ID,
-  modelID: ModelV2.ID,
-  protocol: Schema.optional(ModelV2.Protocol),
-})
-
-export const PromptInput = Schema.Struct({
-  sessionID: SessionID,
-  messageID: Schema.optional(MessageID),
-  model: Schema.optional(ModelRef),
-  agent: Schema.optional(Schema.String),
-  noReply: Schema.optional(Schema.Boolean),
-  tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)).annotate({
-    description:
-      "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
-  }),
-  format: Schema.optional(SessionV1.Format),
-  system: Schema.optional(Schema.String),
-  variant: Schema.optional(Schema.String),
-  parts: Schema.Array(
-    Schema.Union([
-      SessionV1.TextPartInput,
-      SessionV1.FilePartInput,
-      SessionV1.AgentPartInput,
-      SessionV1.SubtaskPartInput,
-    ]).annotate({ discriminator: "type" }),
-  ),
-})
-export type PromptInput = Schema.Schema.Type<typeof PromptInput>
-
 export class LoopInput extends Schema.Class<LoopInput>("SessionPrompt.LoopInput")({
   sessionID: SessionID,
 }) {}
-
-export const ShellInput = Schema.Struct({
-  sessionID: SessionID,
-  messageID: Schema.optional(MessageID),
-  agent: Schema.String,
-  model: Schema.optional(ModelRef),
-  command: Schema.String,
-})
-export type ShellInput = Schema.Schema.Type<typeof ShellInput>
-
-export const CommandInput = Schema.Struct({
-  messageID: Schema.optional(MessageID),
-  sessionID: SessionID,
-  agent: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String),
-  arguments: Schema.String,
-  command: Schema.String,
-  variant: Schema.optional(Schema.String),
-  // Inlined (no identifier annotation) to keep the original SDK output — the
-  // PromptInput call site below references FilePartInput by ref via the
-  // Schema export in message-v2.ts.
-  parts: Schema.optional(
-    Schema.Array(
-      Schema.Union([
-        Schema.Struct({
-          id: Schema.optional(PartID),
-          type: Schema.Literal("file"),
-          mime: Schema.String,
-          filename: Schema.optional(Schema.String),
-          url: Schema.String,
-          source: Schema.optional(SessionV1.FilePartSource),
-        }),
-      ]).annotate({ discriminator: "type" }),
-    ),
-  ),
-})
-export type CommandInput = Schema.Schema.Type<typeof CommandInput>
 
 /** @internal Exported for testing */
 export function createStructuredOutputTool(input: {

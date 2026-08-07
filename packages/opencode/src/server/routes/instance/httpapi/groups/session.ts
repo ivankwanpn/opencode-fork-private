@@ -4,7 +4,7 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
-import { SessionPrompt } from "@/session/prompt"
+import { CommandInput, PromptInput, ShellInput } from "@/session/legacy-session-input"
 import { SessionRevert } from "@/session/revert"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
@@ -67,9 +67,9 @@ export const SummarizePayload = Schema.Struct({
   modelID: ModelV2.ID,
   auto: Schema.optional(Schema.Boolean),
 })
-export const PromptPayload = Schema.Struct(Struct.omit(SessionPrompt.PromptInput.fields, ["sessionID"]))
-export const CommandPayload = Schema.Struct(Struct.omit(SessionPrompt.CommandInput.fields, ["sessionID"]))
-export const ShellPayload = Schema.Struct(Struct.omit(SessionPrompt.ShellInput.fields, ["sessionID"]))
+export const PromptPayload = Schema.Struct(Struct.omit(PromptInput.fields, ["sessionID"]))
+export const CommandPayload = Schema.Struct(Struct.omit(CommandInput.fields, ["sessionID"]))
+export const ShellPayload = Schema.Struct(Struct.omit(ShellInput.fields, ["sessionID"]))
 export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput.fields, ["sessionID"]))
 export const PermissionResponsePayload = Schema.Struct({
   response: PermissionV1.Reply,

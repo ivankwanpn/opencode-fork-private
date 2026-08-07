@@ -1,5 +1,4 @@
 import { Account } from "@/account/account"
-import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
@@ -8,9 +7,12 @@ import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { Project } from "@/project/project"
 import { Session } from "@/session/session"
 import type { SessionID } from "@/session/schema"
-import { ToolJsonSchema } from "@/tool/json-schema"
-import { ToolRegistry } from "@/tool/registry"
 import { Worktree } from "@/worktree"
+import { AgentV2 } from "@opencode-ai/core/agent"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
@@ -26,15 +28,29 @@ function mapWorktreeError<A, R>(self: Effect.Effect<A, Worktree.Error, R>) {
 export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "experimental", (handlers) =>
   Effect.gen(function* () {
     const account = yield* Account.Service
-    const agents = yield* Agent.Service
     const config = yield* Config.Service
     const mcp = yield* MCP.Service
     const project = yield* Project.Service
-    const registry = yield* ToolRegistry.Service
+    const locations = yield* LocationServiceMap.Service
     const worktreeSvc = yield* Worktree.Service
     const sessions = yield* Session.Service
     const background = yield* BackgroundJob.Service
     const flags = yield* RuntimeFlags.Service
+
+    const location = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      return yield* effect.pipe(
+        Effect.provide(
+          locations.get(
+            Location.Ref.make({
+              directory: AbsolutePath.make(ctx.directory),
+              ...(workspaceID === undefined ? {} : { workspaceID }),
+            }),
+          ),
+        ),
+      )
+    })
 
     const capabilities = Effect.fn("ExperimentalHttpApi.capabilities")(function* () {
       return { backgroundSubagents: flags.experimentalBackgroundSubagents }
@@ -92,20 +108,32 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     })
 
     const tool = Effect.fn("ExperimentalHttpApi.tool")(function* (ctx: { query: typeof ToolListQuery.Type }) {
-      const list = yield* registry.tools({
-        providerID: ctx.query.provider,
-        modelID: ctx.query.model,
-        agent: yield* agents.defaultInfo(),
-      })
-      return list.map((item) => ({
-        id: item.id,
-        description: item.description,
-        parameters: ToolJsonSchema.fromTool(item),
-      }))
+      return yield* location(
+        Effect.gen(function* () {
+          const agents = yield* AgentV2.Service
+          const registry = yield* ToolRegistry.Service
+          const materialized = yield* registry.materialize(
+            (yield* agents.default())?.permissions ?? [],
+            {},
+            {
+              model: { providerID: ctx.query.provider, modelID: ctx.query.model },
+            },
+          )
+          return materialized.definitions.map((item) => ({
+            id: item.name,
+            description: item.description,
+            parameters: item.inputSchema,
+          }))
+        }),
+      )
     })
 
     const toolIDs = Effect.fn("ExperimentalHttpApi.toolIDs")(function* () {
-      return yield* registry.ids()
+      return yield* location(
+        ToolRegistry.Service.use((registry) =>
+          registry.materialize().pipe(Effect.map((result) => result.definitions.map((item) => item.name))),
+        ),
+      )
     })
 
     const worktree = Effect.fn("ExperimentalHttpApi.worktree")(function* () {

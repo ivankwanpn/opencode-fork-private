@@ -279,6 +279,11 @@ function orderedParts(message: Message) {
   return message.parts.slice().sort((a, b) => a.id.localeCompare(b.id))
 }
 
+function projectedPartID(message: Message, part: MessagePart) {
+  if (part.type !== "text" && part.type !== "reasoning") return part.id
+  return `${message.info.id}:${part.type}:${message.parts.filter((item) => item.type === part.type).indexOf(part)}`
+}
+
 export const fixture = {
   directory,
   project: {
@@ -348,7 +353,7 @@ export const fixture = {
     targetPartIDs: targetMessages.flatMap((message) =>
       orderedParts(message)
         .filter(renderable)
-        .map((part) => part.id),
+        .map((part) => projectedPartID(message, part)),
     ),
   },
 }

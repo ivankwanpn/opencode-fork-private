@@ -48,22 +48,19 @@ describe("session mutation queue", () => {
     expect(events).toEqual(["failed", "next"])
   })
 
-  test("waits for the selected V2 protocol before resolving the session namespace", async () => {
-    const protocol = Promise.withResolvers<"v1" | "v2">()
+  test("waits for the selected V2 generation before resolving the session namespace", async () => {
+    const generation = Promise.withResolvers<ServerApi>()
     const calls: string[] = []
-    const api = createV2OnlyApi({
-      protocol: protocol.promise,
-      current: {
-        session: {
-          inputList: async () => {
-            calls.push("inputList")
-            return []
-          },
+    const current = {
+      session: {
+        inputList: async () => {
+          calls.push("inputList")
+          return []
         },
-      } as unknown as ServerApi,
-    })
+      },
+    } as unknown as ServerApi
 
-    const selected = resolveServerSessionApi({ protocol: protocol.promise, api })
+    const selected = resolveServerSessionApi({ apiForGeneration: () => generation.promise })
     let settled = false
     void selected.then(() => {
       settled = true
@@ -71,7 +68,7 @@ describe("session mutation queue", () => {
     await Promise.resolve()
     expect(settled).toBe(false)
 
-    protocol.resolve("v2")
+    generation.resolve(current)
     const session = await selected
     await expect(session.inputList({ sessionID: "ses_1", delivery: "queue" })).resolves.toEqual([])
     expect(calls).toEqual(["inputList"])
@@ -91,13 +88,13 @@ describe("session mutation queue", () => {
       } as unknown as ServerApi,
     })
 
-    await expect(resolveServerSessionApi({ protocol: Promise.resolve("v1"), api })).rejects.toThrow(
+    await expect(resolveServerSessionApi({ apiForGeneration: () => api.session.inputList({ sessionID: "ses_1", delivery: "queue" }).then(() => api) })).rejects.toThrow(
       "V2 server protocol unavailable",
     )
     expect(calls).toEqual([])
   })
 
-  test("prefers the generation-pinned API over a stale protocol pair", async () => {
+  test("uses the generation-pinned API for a queued mutation", async () => {
     const calls: string[] = []
     const current = {
       session: {
@@ -111,8 +108,6 @@ describe("session mutation queue", () => {
 
     await expect(
       runServerSessionMutation({
-        protocol: Promise.resolve("v1"),
-        api,
         apiForGeneration: () => Promise.resolve(current),
         sessionMutations: createSessionMutationQueue(),
         sessionID: "ses_1",

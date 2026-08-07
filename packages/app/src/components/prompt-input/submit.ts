@@ -195,7 +195,6 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       model: input.draft.model,
       variant: input.draft.variant,
       delivery,
-      legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
         if (part.type !== "file") return []

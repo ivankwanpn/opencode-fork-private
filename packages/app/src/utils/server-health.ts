@@ -1,6 +1,6 @@
 import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
-import { authTokenFromCredentials, createSdkForServer } from "./server"
+import { authTokenFromCredentials } from "./server"
 import { ClientError, OpenCode } from "@opencode-ai/client"
 import { Accessor, createEffect, onCleanup } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
@@ -96,18 +96,14 @@ export async function checkServerHealth(
     })
       .health.get({ signal })
       .then((x) =>
-        typeof x.healthy === "boolean"
+        typeof x.healthy === "boolean" && Number.isInteger(x.pid)
           ? { data: { healthy: x.healthy, version: x.version } }
           : { error: new Error("Invalid health response") },
       )
       .catch((error) => ({ error }))
     if ("data" in current && current.data) return current.data
     if (signal?.aborted) return { healthy: false }
-
-    return createSdkForServer({ server, fetch, signal })
-      .global.health()
-      .then((x) => (x.error ? next(count, x.error) : { healthy: x.data?.healthy === true, version: x.data?.version }))
-      .catch((error) => next(count, error))
+    return next(count, current.error)
   }
   return attempt(0).finally(() => timeout?.clear?.())
 }

@@ -1783,4 +1783,45 @@ describe("session.message-v2.toLegacy", () => {
     })
     for (const message of projected) Schema.decodeUnknownSync(SessionV1.WithParts)(message)
   })
+
+  test("preserves canonical context overflow errors in the V1 projection", () => {
+    const time = DateTime.makeUnsafe(1)
+    const canonicalModel = {
+      providerID,
+      id: ModelV2.ID.make("test-model"),
+    }
+    const projected = MessageV2.toLegacy(
+      {
+        id: sessionID,
+        projectID: ProjectV2.ID.make("project"),
+        agent: AgentV2.ID.make("build"),
+        model: canonicalModel,
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        time: { created: time, updated: time },
+        title: "compatibility",
+        location: { directory: AbsolutePath.make("/project") },
+      },
+      [
+        SessionMessage.Assistant.make({
+          id: SessionMessage.ID.make("msg_assistant_overflow"),
+          type: "assistant",
+          agent: "build",
+          model: canonicalModel,
+          time: { created: time, completed: time },
+          error: { type: "unknown", message: "Input is too long for requested model" },
+          content: [],
+        }),
+      ],
+    )
+
+    expect(projected[0]?.info).toMatchObject({
+      role: "assistant",
+      error: {
+        name: "ContextOverflowError",
+        data: { message: "Input is too long for requested model" },
+      },
+    })
+    Schema.decodeUnknownSync(SessionV1.WithParts)(projected[0])
+  })
 })

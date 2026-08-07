@@ -586,11 +586,11 @@ describe("prompt submit worktree selection", () => {
       text: "ls",
       files: [],
       agents: [],
+      model: { providerID: "provider", modelID: "model" },
+      variant: "high",
     })
     expect((promptInputs[0] as { id?: string }).id).toStartWith("msg_")
-    expect((promptInputs[0] as { legacyParts?: { id: string; type: string; text?: string }[] }).legacyParts).toEqual([
-      { id: expect.stringMatching(/^prt_/), type: "text", text: "ls" },
-    ])
+    expect(promptInputs[0]).not.toHaveProperty("legacyParts")
   })
 
   test("uses the persisted delivery unless an explicit follow-up delivery overrides it", async () => {

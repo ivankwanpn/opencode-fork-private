@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { mockLocatedResponse, mockOpenCodeServer, mockPtyResponse } from "../utils/mock-server"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/ReviewTerminalStacked"
@@ -60,43 +60,63 @@ test("keeps the review tree and terminal sized when both panels are open", async
     events: () => events.splice(0, 1),
     eventRetry: 16,
   })
-  await page.route(/\/vcs(?:\?.*)?$/, (route) =>
+  await page.route(/\/api\/vcs(?:\?.*)?$/, (route) =>
     route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ branch: "review-pane-performance", default_branch: "dev" }),
-    }),
-  )
-  await page.route("**/vcs/diff**", (route) => {
-    const url = new URL(route.request().url())
-    const scope = url.searchParams.get("directory")?.replaceAll("\\", "/")
-    const detail = scope?.endsWith("/src/branch/d00027")
-    if (detail && detailFailures-- > 0) return route.fulfill({ status: 500, body: "retry detail" })
-    return route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(
-        url.searchParams.get("mode") === "branch"
-          ? detail
-            ? branchDiffs
-                .filter((diff) => diff.file.startsWith("src/branch/d00027/"))
-                .map((diff) => fileDiff(diff.file, diff.additions, true, detailVersion))
-            : branchDiffs
-          : Array.from({ length: 7 }, (_, index) => fileDiff(`src/git-${index}.ts`, 1)),
+        mockLocatedResponse({
+          directory,
+          projectID,
+          data: { branch: "review-pane-performance", default_branch: "dev" },
+        }),
       ),
+    }),
+  )
+  await page.route(/\/api\/vcs\/diff(?:\?.*)?$/, (route) => {
+    const url = new URL(route.request().url())
+    const scope = url.searchParams.get("location[directory]")?.replaceAll("\\", "/")
+    const detail = scope?.endsWith("/src/branch/d00027")
+    if (detail && detailFailures-- > 0) return route.fulfill({ status: 500, body: "retry detail" })
+    const mode = url.searchParams.get("mode")
+    if (mode !== "git" && mode !== "branch") return route.fulfill({ status: 400, body: "invalid V2 diff mode" })
+    const data =
+      mode === "branch"
+        ? detail
+          ? branchDiffs
+              .filter((diff) => diff.file.startsWith("src/branch/d00027/"))
+              .map((diff) => fileDiff(diff.file, diff.additions, true, detailVersion))
+          : branchDiffs
+        : Array.from({ length: 7 }, (_, index) => fileDiff(`src/git-${index}.ts`, 1))
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockLocatedResponse({ directory: scope ?? directory, projectID, data })),
     })
   })
-  await page.route("**/pty", (route) =>
+  await page.route(/\/api\/pty(?:\?.*)?$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: "pty_review_terminal", title: "Terminal 1" })),
+    })
+  })
+  await page.route(/\/api\/pty\/pty_review_terminal(?:\?.*)?$/, (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ id: "pty_review_terminal", title: "Terminal 1" }),
+      body: JSON.stringify(mockPtyResponse({ directory, projectID, id: "pty_review_terminal", title: "Terminal 1" })),
     }),
   )
-  await page.route("**/pty/pty_review_terminal", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+  await page.route(/\/api\/pty\/pty_review_terminal\/connect-token(?:\?.*)?$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockLocatedResponse({ directory, projectID, data: { ticket: "e2e-ticket" } })),
+    }),
   )
-  await page.routeWebSocket("**/pty/pty_review_terminal/connect", () => undefined)
+  await page.routeWebSocket(/\/api\/pty\/pty_review_terminal\/connect/, () => undefined)
   await page.addInitScript(() => {
     localStorage.setItem("settings.v3", JSON.stringify({ general: { newLayoutDesigns: true } }))
     localStorage.setItem(
@@ -134,8 +154,8 @@ test("keeps the review tree and terminal sized when both panels are open", async
   const lazyDiff = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === "/vcs/diff" &&
-      url.searchParams.get("directory")?.replaceAll("\\", "/").endsWith("/src/branch/d00027") === true
+      url.pathname === "/api/vcs/diff" &&
+      url.searchParams.get("location[directory]")?.replaceAll("\\", "/").endsWith("/src/branch/d00027") === true
     )
   })
   await lastFile.click()
@@ -148,8 +168,8 @@ test("keeps the review tree and terminal sized when both panels are open", async
   const refreshedDiff = page.waitForRequest((request) => {
     const url = new URL(request.url())
     return (
-      url.pathname === "/vcs/diff" &&
-      url.searchParams.get("directory")?.replaceAll("\\", "/").endsWith("/src/branch/d00027") === true
+      url.pathname === "/api/vcs/diff" &&
+      url.searchParams.get("location[directory]")?.replaceAll("\\", "/").endsWith("/src/branch/d00027") === true
     )
   })
   events.push(statusEvent("idle"))

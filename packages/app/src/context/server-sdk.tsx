@@ -4,7 +4,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
-import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
+import { createApiForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
 import { usePlatform } from "./platform"
 import { ServerConnection, useServer } from "./server"
@@ -18,7 +18,6 @@ import {
   type ServerProtocolMode,
 } from "@/utils/server-protocol"
 import {
-  createExternalCompatibleApi,
   createV2OnlyApi,
   resolveCompatibleGeneration,
   type CompatibleApi,
@@ -212,7 +211,7 @@ export function resumeStreamAfterPageShow(event: PageTransitionEvent, start: () 
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
 export type ServerGenerationDiagnostics = {
   serverType: ServerConnection.Any["type"]
-  compatibility: "sidecar-v2-only" | "external-auto"
+  compatibility: "v2-only"
   protocolMode: ServerProtocolMode
   protocol: ServerProtocol | undefined
   serverVersion?: string
@@ -239,7 +238,6 @@ type ServerSDKBase = {
   apiForGeneration: () => Promise<CompatibleImplementation>
   protocolKind: Accessor<ServerProtocol | undefined>
   url: string
-  legacyClient: ReturnType<typeof createSdkForServer>
   api: CompatibleApi
   currentApi: ServerApi
   sessionMutations: ReturnType<typeof createSessionMutationQueue>
@@ -248,9 +246,6 @@ type ServerSDKBase = {
     listen: ServerEventEmitter["listen"]
     start: () => Promise<void> | undefined
   }
-  createLegacyClient: (
-    opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">,
-  ) => ReturnType<typeof createSdkForServer>
 }
 
 function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerScope): ServerSDKBase {
@@ -269,11 +264,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   })()
 
   const eventApi = createApiForServer({ server: server.http, fetch: eventFetch })
-  const eventSdk = createSdkForServer({
-    signal: abort.signal,
-    fetch: eventFetch,
-    server: server.http,
-  })
   let serverVersion: string | undefined
   let serverPID: number | undefined
   let backgroundSubagents: boolean | undefined
@@ -378,11 +368,12 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         try {
           if (reconnect) refreshProtocol()
           const kind = await protocolForGeneration()
+          if (kind !== "v2") throw new Error("V2 server protocol unavailable")
           lastConnectedAt = Date.now()
           console.debug("[global-sdk] event stream connected", {
             protocol: kind,
             serverType: server.type,
-            compatibility: server.type === "sidecar" ? "sidecar-v2-only" : "external-auto",
+            compatibility: "v2-only",
             protocolMode,
             serverVersion,
             serverPID,
@@ -393,25 +384,19 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             eventGeneration: streamGeneration,
             reconnects,
           })
-          const events =
-            kind === "v1"
-              ? (await eventSdk.global.event({ signal: attempt.signal })).stream
-              : eventApi.event.subscribe({ signal: attempt.signal })
+          const events = eventApi.event.subscribe({ signal: attempt.signal })
           let yielded = Date.now()
           for await (const event of events) {
             if (abort.signal.aborted || !started || generation !== active || eventGeneration !== streamGeneration) break
             streamErrorLogged = false
             lastEventAt = Date.now()
-            const legacy = "payload" in event
-            if (legacy && event.payload.type === "sync") continue
-            const position = legacy ? undefined : durableEventPosition(event)
+            const position = durableEventPosition(event)
             if (position) {
               lastDurableAggregateID = position.aggregateID
               lastDurableSequence = position.seq
             }
-            const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
-            const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
-            if (enqueueServerEvent(queue, { directory, payload })) schedule()
+            const directory = event.location?.directory ?? "global"
+            if (enqueueServerEvent(queue, { directory, payload: adaptServerEvent(event) })) schedule()
 
             if (Date.now() - yielded < STREAM_YIELD_MS) continue
             yielded = Date.now()
@@ -462,26 +447,8 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     flush()
   })
 
-  const legacyClient = createSdkForServer({
-    server: server.http,
-    fetch: platform.fetch,
-    throwOnError: true,
-  })
   const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: platform.fetch })
-  const legacy = (directory?: string) =>
-    createSdkForServer({
-      server: server.http,
-      fetch: platform.fetch,
-      throwOnError: true,
-      directory,
-    })
-  // The bundled sidecar has a fail-closed V2 contract. Keep the compatibility
-  // adapter at the external-server boundary so normal Desktop calls cannot
-  // silently drift into legacy execution routes.
-  const api =
-    server.type === "sidecar"
-      ? createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
-      : createExternalCompatibleApi({ protocol: protocolForGeneration, current: currentApi, legacy })
+  const api = createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
   const generationFor = () => protocolForGeneration().then((value) => resolveCompatibleGeneration(api, value))
   const apiForGeneration = () => generationFor().then((value) => value.api)
 
@@ -498,7 +465,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     apiForGeneration,
     diagnostics: () => ({
       serverType: server.type,
-      compatibility: server.type === "sidecar" ? "sidecar-v2-only" : "external-auto",
+      compatibility: "v2-only",
       protocolMode,
       protocol: protocolKind(),
       serverVersion,
@@ -515,7 +482,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     }),
     protocolKind,
     url: server.http.url,
-    legacyClient,
     api,
     currentApi,
     sessionMutations,
@@ -523,13 +489,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       on: emitter.on.bind(emitter),
       listen: emitter.listen.bind(emitter),
       start,
-    },
-    createLegacyClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
-      return createSdkForServer({
-        server: server.http,
-        fetch: platform.fetch,
-        ...opts,
-      })
     },
   }
 }
@@ -579,15 +538,7 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
   })
   onCleanup(unsub)
 
-  const api =
-    serverSDK.server.type === "sidecar"
-      ? serverSDK.api
-      : createExternalCompatibleApi({
-          protocol: serverSDK.protocolForGeneration,
-          current: serverSDK.currentApi,
-          legacy: (next) => serverSDK.createLegacyClient({ directory: next ?? directory, throwOnError: true }),
-          directory,
-        })
+  const api = serverSDK.api
   const generationFor = () =>
     serverSDK.protocolForGeneration().then((protocol) => resolveCompatibleGeneration(api, protocol))
   const apiForGeneration = () => generationFor().then((value) => value.api)
@@ -610,9 +561,6 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     event: emitter,
     get url() {
       return serverSDK.url
-    },
-    createLegacyClient(opts: Parameters<typeof serverSDK.createLegacyClient>[0]) {
-      return serverSDK.createLegacyClient(opts)
     },
   }
 }

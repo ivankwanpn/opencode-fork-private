@@ -32,7 +32,6 @@ import { SessionCompaction } from "@/session/compaction"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
 import { SessionProcessor } from "@/session/processor"
-import { SessionPrompt } from "@/session/prompt"
 import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
 import { Session } from "@/session/session"
@@ -45,7 +44,6 @@ import { Skill } from "@/skill"
 import { Discovery } from "@/skill/discovery"
 import { Snapshot } from "@/snapshot"
 import { Storage } from "@/storage/storage"
-import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
 import { Worktree } from "@/worktree"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -272,7 +270,6 @@ const app = LayerNode.group([
   SessionCompaction.node,
   SessionRevert.node,
   SessionSummary.node,
-  SessionPrompt.node,
   Instruction.node,
   LLM.node,
   LSP.node,
@@ -280,7 +277,6 @@ const app = LayerNode.group([
   McpAuth.node,
   Command.node,
   Truncate.node,
-  ToolRegistry.node,
   Format.node,
   Project.node,
   Vcs.node,
@@ -333,7 +329,12 @@ export function createRoutes(
     Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
 
-    Layer.provide(AppNodeBuilderV1.build(app, [[LocationServiceMap.node, locationServiceMapV2]])),
+    Layer.provide(
+      AppNodeBuilderV1.build(app, [
+        [LocationServiceMap.node, locationServiceMapV2],
+        [SessionExecution.node, SessionExecutionLocal.node],
+      ]),
+    ),
     // Must stay last: layers provided later in this pipe build beneath earlier ones,
     // so Observability must come after every service graph. Otherwise eagerly forked
     // fibers (e.g. the ModelsDev background refresh) capture Effect's default stdout
@@ -365,7 +366,12 @@ export function createNativeRoutes(
     Layer.provide(PtyEnvironment.layer),
     Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
-    Layer.provide(AppNodeBuilderV1.build(app, [[LocationServiceMap.node, locationServiceMapV2]])),
+    Layer.provide(
+      AppNodeBuilderV1.build(app, [
+        [LocationServiceMap.node, locationServiceMapV2],
+        [SessionExecution.node, SessionExecutionLocal.node],
+      ]),
+    ),
     Layer.provideMerge(Observability.layer),
   )
 }

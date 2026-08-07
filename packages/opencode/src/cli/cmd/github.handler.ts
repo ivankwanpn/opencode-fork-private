@@ -22,12 +22,15 @@ import { InstanceRef } from "@/effect/instance-ref"
 import { SessionShare } from "@/share/session"
 import { Session } from "@/session/session"
 import type { SessionID } from "../../session/schema"
-import { MessageID, PartID } from "../../session/schema"
 import { Provider } from "@/provider/provider"
 import { MessageV2 } from "../../session/message-v2"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { EventV2 } from "@opencode-ai/core/event"
-import { SessionPrompt } from "@/session/prompt"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Git } from "@/git"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Process } from "@/util/process"
@@ -379,7 +382,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
   const gitSvc = yield* Git.Service
   const sessionSvc = yield* Session.Service
   const sessionShare = yield* SessionShare.Service
-  const sessionPrompt = yield* SessionPrompt.Service
+  const sessionV2 = yield* SessionV2.Service
   const events = yield* EventV2Bridge.Service
   const runLocalEffect = <A, E>(effect: Effect.Effect<A, E>) =>
     Effect.runPromise(effect.pipe(Effect.provideService(InstanceRef, ctx)))
@@ -891,42 +894,52 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
 
       return runLocalEffect(
         Effect.gen(function* () {
-          const prompt = sessionPrompt
-          const result = yield* prompt.prompt({
-            sessionID: session.id,
-            messageID: MessageID.ascending(),
-            variant,
-            model: {
-              providerID,
-              modelID,
-            },
-            // agent is omitted - server will use default_agent from config or fall back to "build"
-            parts: [
-              {
-                id: PartID.ascending(),
-                type: "text",
-                text: message,
-              },
-              ...files.flatMap((f) => [
-                {
-                  id: PartID.ascending(),
-                  type: "file" as const,
-                  mime: f.mime,
-                  url: `data:${f.mime};base64,${f.content}`,
-                  filename: f.filename,
-                  source: {
-                    type: "file" as const,
-                    text: {
-                      value: f.replacement,
-                      start: f.start,
-                      end: f.end,
+          const runPrompt = Effect.fn("Cli.github.runPrompt")(function* (input: {
+            text: string
+            files?: PromptFiles
+            tools?: Record<string, boolean>
+          }) {
+            const sessionID = SessionV2.ID.make(session.id)
+            const admitted = yield* sessionV2.prompt({
+              id: SessionMessage.ID.create(),
+              sessionID,
+              prompt: PromptInput.Prompt.make({
+                text: input.text,
+                files: input.files?.map((file) =>
+                  PromptInput.FileAttachment.make({
+                    uri: `data:${file.mime};base64,${file.content}`,
+                    mime: file.mime,
+                    name: file.filename,
+                    source: {
+                      text: file.replacement,
+                      start: file.start,
+                      end: file.end,
                     },
-                    path: f.filename,
-                  },
-                },
-              ]),
-            ],
+                  }),
+                ),
+                tools: input.tools,
+              }),
+              model: {
+                providerID: ProviderV2.ID.make(providerID),
+                id: ModelV2.ID.make(modelID),
+                variant: variant === undefined ? undefined : ModelV2.VariantID.make(variant),
+              },
+              resume: false,
+            })
+            yield* sessionV2.resume(sessionID)
+            const current = yield* sessionV2.get(sessionID)
+            const messages = yield* sessionV2
+              .messages({ sessionID, order: "asc" })
+              .pipe(Effect.catchTag("Session.MessageDecodeError", Effect.die))
+            const userIndex = messages.findIndex((item) => item.type === "user" && item.id === admitted.id)
+            if (userIndex < 0) return yield* Effect.die("Admitted GitHub prompt was not projected")
+            const result = MessageV2.toLegacy(current, messages.slice(userIndex)).findLast(
+              (item) => item.info.role === "assistant",
+            )
+            if (!result) return yield* Effect.die("GitHub prompt did not produce an assistant response")
+            return result
           })
+          const result = yield* runPrompt({ text: message, files })
 
           if (result.info.role === "assistant" && result.info.error) {
             const err = result.info.error
@@ -940,22 +953,9 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
           if (text) return text
 
           console.log("Requesting summary from agent...")
-          const summary = yield* prompt.prompt({
-            sessionID: session.id,
-            messageID: MessageID.ascending(),
-            variant,
-            model: {
-              providerID,
-              modelID,
-            },
+          const summary = yield* runPrompt({
+            text: "Summarize the actions (tool calls & reasoning) you did for the user in 1-2 sentences.",
             tools: { "*": false },
-            parts: [
-              {
-                id: PartID.ascending(),
-                type: "text",
-                text: "Summarize the actions (tool calls & reasoning) you did for the user in 1-2 sentences.",
-              },
-            ],
           })
 
           if (summary.info.role === "assistant" && summary.info.error) {

@@ -29,7 +29,6 @@ import { SessionProcessor } from "@/session/processor"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionRevert } from "@/session/revert"
 import { SessionSummary } from "@/session/summary"
-import { SessionPrompt } from "@/session/prompt"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
 import { LSP } from "@/lsp/lsp"
@@ -37,7 +36,6 @@ import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { McpAuth } from "@opencode-ai/core/mcp"
 import { Command } from "@/command"
 import { Truncate } from "@/tool/truncate"
-import { ToolRegistry } from "@/tool/registry"
 import { Format } from "@/format"
 import { InstanceStore } from "@/project/instance-store"
 import { Project } from "@/project/project"
@@ -60,6 +58,9 @@ import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Credential } from "@opencode-ai/core/credential"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
 
 export const AppLayer = AppNodeBuilderV1.build(
   LayerNode.group([
@@ -94,12 +95,14 @@ export const AppLayer = AppNodeBuilderV1.build(
     RuntimeFlags.node,
     EventV2.node,
     EventV2Bridge.node,
+    LocationServiceMap.node,
     SessionRunState.node,
     SessionProcessor.node,
     SessionCompaction.node,
     SessionRevert.node,
     SessionSummary.node,
-    SessionPrompt.node,
+    SessionV2.node,
+    SessionExecutionLocal.node,
     Instruction.node,
     LLM.node,
     LSP.node,
@@ -107,7 +110,6 @@ export const AppLayer = AppNodeBuilderV1.build(
     McpAuth.node,
     Command.node,
     Truncate.node,
-    ToolRegistry.node,
     Format.node,
     InstanceStore.node,
     Project.node,
@@ -117,7 +119,10 @@ export const AppLayer = AppNodeBuilderV1.build(
     ShareNext.node,
     SessionShare.node,
   ]),
-  [[LocationServiceMap.node, locationServiceMapLayer]],
+  [
+    [LocationServiceMap.node, locationServiceMapLayer],
+    [SessionExecution.node, SessionExecutionLocal.node],
+  ],
 ).pipe(Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)), Layer.provideMerge(Observability.layer))
 
 const rt = ManagedRuntime.make(AppLayer, { memoMap })

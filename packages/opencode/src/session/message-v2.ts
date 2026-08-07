@@ -32,6 +32,7 @@ import { lt } from "drizzle-orm"
 import { or } from "drizzle-orm"
 import { MessageTable, PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { ProviderError } from "@/provider/error"
+import { isContextOverflow } from "@opencode-ai/llm"
 import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
@@ -757,6 +758,11 @@ export function toLegacy(
     }
     if (message.type === "assistant") {
       const messageID = id(message.id)
+      const assistantError = message.error
+        ? isContextOverflow(message.error.message)
+          ? new ContextOverflowError({ message: message.error.message }).toObject()
+          : new NamedError.Unknown({ message: message.error.message }).toObject()
+        : undefined
       const info = assistantInfo(messageID, {
         agent: message.agent,
         model: message.model,
@@ -770,9 +776,7 @@ export function toLegacy(
           reasoning: message.tokens.reasoning,
           cache: { read: message.tokens.cache.read, write: message.tokens.cache.write },
         },
-        error: message.error
-          ? ({ name: "UnknownError", data: { message: message.error.message } } as SessionV1.Assistant["error"])
-          : undefined,
+        error: assistantError,
         structured: message.structured,
       })
       const parts: SessionV1.Part[] = []

@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test"
+import { sessionMessagePartID } from "../../../src/utils/session-message"
 import { expectSessionTitle } from "../../utils/waits"
 import { mockOpenCodeServer } from "../../utils/mock-server"
 import { benchmark, expect, withBenchmarkPage } from "../benchmark"
@@ -41,7 +42,7 @@ const assistants = Array.from({ length: 14 }, (_, index) => {
 const messages = [user, ...assistants]
 const target = fixture.sessions.find((session) => session.id === fixture.targetID)!
 const lastID = userID
-const lastPartID = assistants.at(-1)!.parts.at(-1)!.id
+const lastPartID = sessionMessagePartID(assistants.at(-1)!.info.id, "text", 0)
 
 benchmark("hydrates an orphaned latest turn after a cold session click", async ({ browser, report }, testInfo) => {
   benchmark.setTimeout(180_000)
@@ -80,6 +81,7 @@ async function trial(page: Page, mode: ParentHydrationBenchmarkMode) {
   let historyGates = 0
   await mockOpenCodeServer(page, {
     sessions: fixture.sessions.filter((session) => session.id === fixture.sourceID),
+    session: (sessionID) => (sessionID === fixture.targetID ? target : undefined),
     provider: fixture.provider,
     directory: fixture.directory,
     project: fixture.project,
@@ -107,9 +109,6 @@ async function trial(page: Page, mode: ParentHydrationBenchmarkMode) {
       return { items: items.slice(start, end), cursor: start > 0 ? items[start]!.info.id : undefined }
     },
   })
-  await page.route(`**/session/${fixture.targetID}`, (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(target) }),
-  )
   await installStressSessionTabs(page, { sessionIDs: [fixture.sourceID] })
   await page.goto(stressSessionHref(fixture.sourceID))
   await expectSessionTitle(page, fixture.expected.sourceTitle)

@@ -8,7 +8,6 @@ import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTra
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
 import {
-  loadLegacyHomeSessionIndex,
   loadHomeSessionIndex,
   retainHomeSessions,
   type HomeSessionEvents,
@@ -70,15 +69,12 @@ export function createHomeSessionsController(home: HomeController) {
       if (!ctx) return { sessions: [], eventSequence: 0 }
       const cache = homeSessions()
       const eventSequence = cache.eventSequence()
-      const { protocol, api } = await ctx.sdk.generationFor()
+      const api = await ctx.sdk.apiForGeneration()
       const sessionList = (
         input: Parameters<typeof ctx.sdk.api.session.list>[0],
         options?: Parameters<typeof ctx.sdk.api.session.list>[1],
       ) => api.session.list(input, options)
-      const index =
-        protocol === "v1"
-          ? await loadLegacyHomeSessionIndex(projectDirectories(), sessionList, eventSequence, signal)
-          : await loadHomeSessionIndex(sessionList, eventSequence, signal)
+      const index = await loadHomeSessionIndex(sessionList, eventSequence, signal)
       cache.complete(eventSequence)
       return index
     },
@@ -225,7 +221,7 @@ export function createHomeSessionsController(home: HomeController) {
               sessionMutations: ctx.sdk.sessionMutations,
               sessionID,
               apiForGeneration: ctx.sdk.apiForGeneration,
-              run: (api) => api.archive({ sessionID, directory: session.directory }),
+              run: (api) => api.archive({ sessionID }),
             }),
           remove: () => {
             ctx.sync.session.evict(session.id)

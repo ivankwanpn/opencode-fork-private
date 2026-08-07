@@ -408,11 +408,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       sessionMutations: target.sessionMutations,
       sessionID,
       apiForGeneration: target.apiForGeneration,
-      run: (api) =>
-        api.compact({
-          sessionID,
-          model: { providerID: model.provider.id, modelID: model.id },
-        }),
+      run: (api) => api.compact({ sessionID }),
     })
   }
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
-import type { Config, OpencodeClient, PermissionRequest, Project, QuestionRequest } from "@opencode-ai/sdk/v2/client"
+import type { Config, PermissionRequest, Project, QuestionRequest } from "@opencode-ai/sdk/v2/client"
 import type { AgentApi, CommandApi, ProjectApi, ReferenceApi } from "@opencode-ai/client/promise"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
@@ -16,7 +16,6 @@ import {
 import type { State, VcsCache } from "./types"
 import { ServerScope } from "@/utils/server-scope"
 import type { ServerApi } from "@/utils/server"
-import type { CompatibleImplementation } from "@/utils/server-compat"
 
 const provider = { all: new Map(), connected: [], default: {} } satisfies NormalizedProviderListResponse
 const api = {
@@ -92,27 +91,6 @@ describe("bootstrapDirectory", () => {
         project: [{ id: "project", worktree: "/project" } as Project],
         provider,
       },
-      sdk: {
-        app: { agents: async () => ({ data: [{ name: "build", mode: "primary" }] }) },
-        config: { get: async () => ({ data: {} }) },
-        vcs: { get: async () => ({ data: undefined }) },
-        command: {
-          list: async () => {
-            mcpReads.push("command")
-            return { data: [] }
-          },
-        },
-        permission: { list: async () => ({ data: [] }) },
-        question: { list: async () => ({ data: [] }) },
-        v2: { reference: { list: async () => ({ data: { data: [] } }) } },
-        mcp: {
-          status: async () => {
-            mcpReads.push("status")
-            return { data: {} }
-          },
-        },
-        provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
-      } as unknown as OpencodeClient,
       api,
       store,
       setStore,
@@ -130,8 +108,7 @@ describe("bootstrapDirectory", () => {
     expect(mcpReads).toEqual([])
   })
 
-  test("uses the V2 active snapshot instead of the legacy status endpoint", async () => {
-    let legacyStatusCalls = 0
+  test("uses the V2 active snapshot for session status", async () => {
     const [store, setStore] = directoryState()
 
     await bootstrapDirectory({
@@ -144,17 +121,8 @@ describe("bootstrapDirectory", () => {
         project: [{ id: "project", worktree: "/project" } as Project],
         provider,
       },
-      sdk: {
-        session: {
-          status: async () => {
-            legacyStatusCalls++
-            throw new Error("legacy status endpoint should not be called for V2")
-          },
-        },
-      } as unknown as OpencodeClient,
       api,
       activeSessions: () => ({ ses_running: { type: "running" } }),
-      protocol: Promise.resolve("v2" as const),
       store,
       setStore,
       vcsCache: { setStore() {} } as unknown as VcsCache,
@@ -165,7 +133,6 @@ describe("bootstrapDirectory", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 80))
 
-    expect(legacyStatusCalls).toBe(0)
     expect(store.session_status).toEqual({ ses_running: { type: "busy" } })
   })
 
@@ -220,7 +187,6 @@ describe("bootstrapDirectory", () => {
         project: [{ id: "project", worktree: "/project" } as Project],
         provider,
       },
-      sdk: {} as OpencodeClient,
       api: {
         ...api,
         permission: { request: { list: permissionList } },
@@ -299,133 +265,31 @@ describe("query keys", () => {
     expect(result.connected).toEqual(["openai"])
   })
 
-  test("does not call the legacy provider endpoint for a native v2 server", async () => {
+  test("uses the provider catalog from the selected V2 generation", async () => {
     const calls: string[] = []
-    const current = {
+    const stale = {
       providers: {
         catalog: async () => {
-          calls.push("catalog")
+          calls.push("stale")
           return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
         },
       },
     } as unknown as Parameters<typeof loadProvidersQuery>[2]
-    const legacy = {
-      provider: {
-        list: async () => {
-          calls.push("legacy")
-          return {
-            data: {
-              all: [{ id: "anthropic", name: "Anthropic", source: "env", env: [], options: {}, models: {} }],
-              connected: [],
-              default: {},
-            },
-          }
+    const current = {
+      providers: {
+        catalog: async () => {
+          calls.push("current")
+          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
         },
       },
-    } as unknown as OpencodeClient
+    } as unknown as ServerApi
 
     const result = await new QueryClient().fetchQuery(
-      loadProvidersQuery(ServerScope.local, "/repo", current, legacy, Promise.resolve("v2")),
+      loadProvidersQuery(ServerScope.local, "/repo", stale, async () => current),
     )
 
-    expect(calls).toEqual(["catalog"])
+    expect(calls).toEqual(["current"])
     expect(result.all.size).toBe(0)
-  })
-
-  test("keeps the legacy provider catalog for an explicitly detected v1 server", async () => {
-    const calls: string[] = []
-    const current = {
-      providers: {
-        catalog: async () => {
-          calls.push("catalog")
-          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
-        },
-      },
-    } as unknown as Parameters<typeof loadProvidersQuery>[2]
-    const legacy = {
-      provider: {
-        list: async () => {
-          calls.push("legacy")
-          return {
-            data: {
-              all: [{ id: "anthropic", name: "Anthropic", source: "env", env: [], options: {}, models: {} }],
-              connected: [],
-              default: {},
-            },
-          }
-        },
-      },
-    } as unknown as OpencodeClient
-
-    const result = await new QueryClient().fetchQuery(
-      loadProvidersQuery(ServerScope.local, "/repo", current, legacy, Promise.resolve("v1")),
-    )
-
-    expect(calls).toEqual(["legacy"])
-    expect(result.all.has("anthropic")).toBe(true)
-  })
-
-  test("keeps the provider branch paired with its selected API generation", async () => {
-    const calls: string[] = []
-    const current = {
-      providers: {
-        catalog: async () => {
-          calls.push("catalog")
-          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
-        },
-      },
-    } as unknown as Parameters<typeof loadProvidersQuery>[2]
-    const legacy = {
-      provider: {
-        list: async () => {
-          calls.push("legacy")
-          return { data: { all: [], connected: [], default: {} } }
-        },
-      },
-    } as unknown as OpencodeClient
-    const query = loadProvidersQuery(
-      ServerScope.local,
-      "/repo",
-      current,
-      legacy,
-      Promise.resolve("v2"),
-      async () => current as unknown as CompatibleImplementation,
-      async () => ({ protocol: "v1" as const, api: current as unknown as CompatibleImplementation }),
-    )
-
-    await new QueryClient().fetchQuery(query)
-
-    expect(calls).toEqual(["legacy"])
-  })
-
-  test("re-evaluates the protocol resolver for a later query generation", async () => {
-    const calls: string[] = []
-    let protocol: "v1" | "v2" = "v2"
-    const current = {
-      providers: {
-        catalog: async () => {
-          calls.push("catalog")
-          return { location: {}, data: { providers: [], models: [], connected: [], default: {} } }
-        },
-      },
-    } as unknown as Parameters<typeof loadProvidersQuery>[2]
-    const legacy = {
-      provider: {
-        list: async () => {
-          calls.push("legacy")
-          return { data: { all: [], connected: [], default: {} } }
-        },
-      },
-    } as unknown as OpencodeClient
-    const query = loadProvidersQuery(ServerScope.local, "/repo", current, legacy, () => Promise.resolve(protocol))
-    const queryClient = new QueryClient()
-
-    await queryClient.fetchQuery(query)
-    protocol = "v1"
-    await queryClient.invalidateQueries({ queryKey: query.queryKey })
-    await queryClient.fetchQuery(query)
-
-    expect(calls).toEqual(["catalog", "legacy"])
   })
 
   test("loads agents from the current location-scoped endpoint", async () => {
@@ -479,9 +343,9 @@ describe("query keys", () => {
           }
         },
       },
-    } as unknown as CompatibleImplementation
+    } as unknown as ServerApi
 
-    const result = await loadCommands("/repo", stale, undefined, undefined, async () => current)
+    const result = await loadCommands("/repo", stale, async () => current)
 
     expect(calls).toEqual(['{"location":{"directory":"/repo"}}'])
     expect(result).toEqual([{ name: "review", template: "Current command", source: "command" }])

@@ -13,7 +13,6 @@ import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
-import { SessionPrompt } from "@/session/prompt"
 import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
@@ -61,7 +60,7 @@ type CanonicalSelection = {
   tools?: Record<string, boolean>
 }
 
-const requiresLegacyPrompt = (input: typeof PromptPayload.Type) => {
+const hasUnsupportedPromptShape = (input: typeof PromptPayload.Type) => {
   if (input.parts[0]?.type !== "text") return true
 
   let filesComplete = false
@@ -106,7 +105,7 @@ const toCanonicalFile = (part: SessionV1.FilePartInput): PromptInput.FileAttachm
         : undefined,
   })
 
-const requiresLegacyCommand = (input: typeof CommandPayload.Type) =>
+const hasUnsupportedCommandShape = (input: typeof CommandPayload.Type) =>
   input.parts?.some(
     (part) => part.id !== undefined || (part.source !== undefined && part.source.type !== "resource"),
   ) ?? false
@@ -142,7 +141,6 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const session = yield* Session.Service
     const sessionV2 = yield* SessionV2.Service
     const shareSvc = yield* SessionShare.Service
-    const promptSvc = yield* SessionPrompt.Service
     const revertSvc = yield* SessionRevert.Service
     const runState = yield* SessionRunState.Service
     const agentSvc = yield* Agent.Service
@@ -530,8 +528,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
             ? {
                 id: ctx.payload.model.modelID,
                 providerID: ctx.payload.model.providerID,
-                variant:
-                  ctx.payload.variant === undefined ? undefined : ModelV2.VariantID.make(ctx.payload.variant),
+                variant: ctx.payload.variant === undefined ? undefined : ModelV2.VariantID.make(ctx.payload.variant),
                 protocol: ctx.payload.model.protocol,
               }
             : undefined,
@@ -580,14 +577,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload: typeof PromptPayload.Type
     }) {
-      const message = requiresLegacyPrompt(ctx.payload)
-        ? yield* promptSvc
-            .prompt({
-              ...ctx.payload,
-              sessionID: ctx.params.sessionID,
-            })
-            .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
-        : yield* runCanonicalPrompt(ctx)
+      if (hasUnsupportedPromptShape(ctx.payload)) return yield* new HttpApiError.BadRequest({})
+      const message = yield* runCanonicalPrompt(ctx)
       return HttpServerResponse.stream(Stream.make(JSON.stringify(message)).pipe(Stream.encodeText), {
         contentType: "application/json",
       })
@@ -598,21 +589,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof PromptPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
-      if (requiresLegacyPrompt(ctx.payload)) {
-        yield* promptSvc.prompt({ ...ctx.payload, sessionID: ctx.params.sessionID }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.gen(function* () {
-              yield* Effect.logError("prompt_async failed", { sessionID: ctx.params.sessionID, cause })
-              yield* events.publish(Session.Event.Error, {
-                sessionID: ctx.params.sessionID,
-                error: new NamedError.Unknown({ message: Cause.pretty(cause) }).toObject(),
-              })
-            }),
-          ),
-          Effect.forkIn(scope, { startImmediately: true }),
-        )
-        return HttpApiSchema.NoContent.make()
-      }
+      if (hasUnsupportedPromptShape(ctx.payload)) return yield* new HttpApiError.BadRequest({})
 
       const legacySession = yield* requireSession(ctx.params.sessionID)
       yield* cleanupRevert(legacySession)
@@ -658,11 +635,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof CommandPayload.Type
     }) {
       const legacySession = yield* requireSession(ctx.params.sessionID)
-      if (requiresLegacyCommand(ctx.payload)) {
-        return yield* promptSvc
-          .command({ ...ctx.payload, sessionID: ctx.params.sessionID })
-          .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
-      }
+      if (hasUnsupportedCommandShape(ctx.payload)) return yield* new HttpApiError.BadRequest({})
 
       yield* cleanupRevert(legacySession)
       const current = yield* requireCanonicalSession(ctx.params.sessionID)

@@ -44,7 +44,7 @@ benchmark.describe("performance: review pane scaling", () => {
         const patchByteLimit = Number(process.env.REVIEW_PANE_PATCH_BYTE_LIMIT ?? Number.POSITIVE_INFINITY)
         if (Number.isNaN(patchByteLimit) || patchByteLimit < 0)
           throw new Error(`Invalid REVIEW_PANE_PATCH_BYTE_LIMIT: ${process.env.REVIEW_PANE_PATCH_BYTE_LIMIT}`)
-        const responseBody = JSON.stringify(createScalingDiffs(fileCount, patchByteLimit))
+        const responseBody = JSON.stringify({ data: createScalingDiffs(fileCount, patchByteLimit) })
         await setupTimelineBenchmark(page, {
           historyTurns: 0,
           eventBatch: 1,

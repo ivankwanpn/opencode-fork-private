@@ -16,6 +16,7 @@ import { Session as SessionNs } from "@/session/session"
 import { SessionID } from "@/session/schema"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { EventSequenceTable } from "@opencode-ai/core/event/sql"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideTmpdirInstance, requireInstance, TestInstance } from "../fixture/fixture"
@@ -40,7 +41,7 @@ const originalEnv = {
   OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES,
 }
 
-const workspaceLayer = (experimentalWorkspaces: boolean) =>
+const workspaceLayer = (experimentalWorkspaces: boolean, executionLayer = SessionExecution.noopLayer) =>
   AppNodeBuilder.build(
     LayerNode.group([
       Workspace.node,
@@ -52,6 +53,7 @@ const workspaceLayer = (experimentalWorkspaces: boolean) =>
     ]),
     [
       [RuntimeFlags.node, RuntimeFlags.layer({ experimentalWorkspaces })],
+      [SessionExecution.node, executionLayer],
       [
         InstanceStore.bootstrapNode,
         Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void })),
@@ -64,6 +66,21 @@ const testServerLayer = Layer.mergeAll(
   workspaceLayer(true),
 )
 const it = testEffect(testServerLayer)
+const interruptedSessions: string[] = []
+const interruptIt = testEffect(
+  Layer.mergeAll(
+    NodeHttpServer.layer(Http.createServer, { host: "127.0.0.1", port: 0 }),
+    workspaceLayer(
+      true,
+      Layer.mock(SessionExecution.Service, {
+        interrupt: (sessionID) =>
+          Effect.sync(() => {
+            interruptedSessions.push(sessionID)
+          }),
+      }),
+    ),
+  ),
+)
 
 type RecordedCreate = {
   info: WorkspaceInfo
@@ -861,6 +878,29 @@ describe("workspace CRUD", () => {
         expect(yield* sessionSequenceOwner(session.id)).toBe(target.id)
       })
     },
+    { git: true },
+  )
+
+  interruptIt.instance(
+    "sessionWarp interrupts the exact V2 session before leaving a local workspace",
+    () =>
+      Effect.gen(function* () {
+        interruptedSessions.length = 0
+        const { directory: dir } = yield* TestInstance
+        const instance = yield* requireInstance
+        const workspace = yield* Workspace.Service
+        const sessionSvc = yield* SessionNs.Service
+        const previousType = unique("warp-interrupt-local")
+        const previous = workspaceInfo(instance.project.id, previousType)
+        yield* insertWorkspace(previous)
+        registerAdapter(instance.project.id, previousType, localAdapter(path.join(dir, "warp-interrupt-local")).adapter)
+        const session = yield* sessionSvc.create({})
+        yield* attachSessionToWorkspace(session.id, previous.id)
+
+        yield* workspace.sessionWarp({ workspaceID: null, sessionID: session.id })
+
+        expect(interruptedSessions).toEqual([session.id])
+      }),
     { git: true },
   )
 

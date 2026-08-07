@@ -72,6 +72,7 @@ const appLayer = AppNodeBuilder.build(
   [
     [InstanceStore.bootstrapNode, noopBootstrapLayer],
     [LocationServiceMap.node, locationServiceMapLayer],
+    [SessionExecution.node, SessionExecution.noopLayer],
   ],
 )
 const wakeExpectations = new Map<string, { inputID: string; kind: "promote" | "cancel" }>()
@@ -99,9 +100,7 @@ const failingWakeLayer = Layer.effect(
             .get()
             .pipe(Effect.orDie)
           const durable =
-            expected.kind === "promote"
-              ? row !== undefined && row.promoted !== null
-              : row?.terminal === "cancelled"
+            expected.kind === "promote" ? row !== undefined && row.promoted !== null : row?.terminal === "cancelled"
           if (durable) return yield* Effect.die(`Advisory session wake failed: ${sessionID}`)
           return yield* Effect.die(`Session input was not durable before wake: ${expected.inputID}`)
         }),
@@ -742,11 +741,10 @@ describe("session HttpApi", () => {
   )
 
   it.live(
-    "keeps loss-sensitive command attachments on the legacy path",
+    "rejects loss-sensitive command attachments without entering a runner",
     () =>
       Effect.gen(function* () {
         const llm = yield* TestLLMServer
-        yield* llm.text("legacy command done", { usage: { input: 1, output: 1 } })
         const base = testProviderConfig(llm.url)
         const directory = yield* tmpdirScoped({
           git: true,
@@ -788,10 +786,16 @@ describe("session HttpApi", () => {
           },
         )
 
-        expect(response.status).toBe(200)
+        expect(response.status).toBe(400)
         const rows = yield* Database.Service.use(({ db }) =>
           Effect.all({
             legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
+            admitted: db
+              .select()
+              .from(SessionInputTable)
+              .where(eq(SessionInputTable.id, SessionMessage.ID.make(messageID)))
+              .get()
+              .pipe(Effect.orDie),
             canonical: db
               .select()
               .from(SessionMessageTable)
@@ -800,9 +804,10 @@ describe("session HttpApi", () => {
               .pipe(Effect.orDie),
           }),
         )
-        expect(rows.legacy).toBeDefined()
+        expect(rows.legacy).toBeUndefined()
+        expect(rows.admitted).toBeUndefined()
         expect(rows.canonical).toBeUndefined()
-        expect(yield* llm.calls).toBe(1)
+        expect(yield* llm.calls).toBe(0)
       }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
     30_000,
   )
@@ -894,7 +899,7 @@ describe("session HttpApi", () => {
     }),
   )
 
-  it.live("keeps loss-sensitive prompt payloads on the legacy path", () =>
+  it.live("rejects loss-sensitive prompt payloads without durable admission", () =>
     Effect.gen(function* () {
       const directory = yield* tmpdirScoped({ git: true, config: testProviderConfig("http://127.0.0.1:1/v1") })
       const cases = [
@@ -963,11 +968,17 @@ describe("session HttpApi", () => {
             }),
           },
         )
-        expect(response.status).toBe(200)
+        expect(response.status).toBe(400)
 
         const rows = yield* Database.Service.use(({ db }) =>
           Effect.all({
             legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
+            admitted: db
+              .select()
+              .from(SessionInputTable)
+              .where(eq(SessionInputTable.id, SessionMessage.ID.make(messageID)))
+              .get()
+              .pipe(Effect.orDie),
             canonical: db
               .select()
               .from(SessionMessageTable)
@@ -976,7 +987,8 @@ describe("session HttpApi", () => {
               .pipe(Effect.orDie),
           }),
         )
-        expect(rows.legacy, item.name).toBeDefined()
+        expect(rows.legacy, item.name).toBeUndefined()
+        expect(rows.admitted, item.name).toBeUndefined()
         expect(rows.canonical, item.name).toBeUndefined()
       }
     }),
@@ -1024,44 +1036,48 @@ describe("session HttpApi", () => {
   )
 
   it.live(
-    "aborts a legacy async prompt through the legacy runner",
+    "rejects loss-sensitive async prompts without starting a runner",
     () =>
       Effect.gen(function* () {
         const llm = yield* TestLLMServer
-        yield* llm.hang
         const directory = yield* tmpdirScoped({ git: true, config: testProviderConfig(llm.url) })
-        const session = yield* createSession({ title: "legacy abort compatibility" }).pipe(
+        const session = yield* createSession({ title: "rejected async compatibility" }).pipe(
           provideInstanceEffect(directory),
         )
         const route = (path: string) => `${path}?directory=${encodeURIComponent(directory)}`
+        const messageID = MessageID.ascending()
         const prompt = yield* request(route(pathFor(SessionPaths.promptAsync, { sessionID: session.id })), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            messageID,
             agent: "build",
             model: { providerID: "test", modelID: "test-model" },
             parts: [{ id: PartID.ascending(), type: "text", text: "cancel this legacy prompt" }],
           }),
         })
-        expect(prompt.status).toBe(204)
-        yield* llm.wait(1)
-
-        const busy = yield* requestJson<Record<string, { type: string }>>(route(SessionPaths.status))
-        expect(busy[session.id]?.type).toBe("busy")
-
-        const abort = yield* request(route(pathFor(SessionPaths.abort, { sessionID: session.id })), {
-          method: "POST",
-        })
-        expect(abort.status).toBe(200)
-        expect(yield* json<boolean>(abort)).toBe(true)
-
-        yield* pollWithTimeout(
-          requestJson<Record<string, SessionStatus.Info>>(route(SessionPaths.status)).pipe(
-            Effect.map((statuses) => (statuses[session.id] === undefined ? true : undefined)),
-          ),
-          "Legacy abort did not return the session to idle",
-          "10 seconds",
+        expect(prompt.status).toBe(400)
+        const rows = yield* Database.Service.use(({ db }) =>
+          Effect.all({
+            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
+            admitted: db
+              .select()
+              .from(SessionInputTable)
+              .where(eq(SessionInputTable.id, SessionMessage.ID.make(messageID)))
+              .get()
+              .pipe(Effect.orDie),
+            canonical: db
+              .select()
+              .from(SessionMessageTable)
+              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(messageID)))
+              .get()
+              .pipe(Effect.orDie),
+          }),
         )
+        expect(rows.legacy).toBeUndefined()
+        expect(rows.admitted).toBeUndefined()
+        expect(rows.canonical).toBeUndefined()
+        expect(yield* llm.calls).toBe(0)
       }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
     30_000,
   )

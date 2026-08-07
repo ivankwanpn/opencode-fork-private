@@ -20,6 +20,7 @@ import { AuthTest } from "../fake/auth"
 import { NpmTest } from "../fake/npm"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const it = testEffect(
@@ -29,6 +30,7 @@ const it = testEffect(
     [Npm.node, NpmTest.noop],
     [InstanceStore.bootstrapNode, noopBootstrapLayer],
     [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true, experimentalWorkspaces: true })],
+    [SessionExecution.node, SessionExecution.noopLayer],
     locationServiceMapReplacement,
   ]),
 )

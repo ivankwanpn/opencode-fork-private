@@ -92,10 +92,8 @@ export function createApiForServer(input: {
 
   const connectToken: OpenCodeClient["pty"]["connectToken"] = async (value, requestOptions) => {
     const url = new URL(`/api/pty/${encodeURIComponent(value.ptyID)}/connect-token`, input.server.url)
-    if (value.location?.directory !== undefined)
-      url.searchParams.set("location[directory]", value.location.directory)
-    if (value.location?.workspace !== undefined)
-      url.searchParams.set("location[workspace]", value.location.workspace)
+    if (value.location?.directory !== undefined) url.searchParams.set("location[directory]", value.location.directory)
+    if (value.location?.workspace !== undefined) url.searchParams.set("location[workspace]", value.location.workspace)
     const headers = new Headers(clientOptions.headers)
     for (const [key, header] of new Headers(requestOptions?.headers)) headers.set(key, header)
     headers.set("x-opencode-ticket", value["x-opencode-ticket"] ?? "1")
@@ -172,10 +170,7 @@ export function createApiForServer(input: {
     }
   }
   const readFile: ServerApi["file"]["read"] = async (value, requestOptions) => {
-    const result = await current.files.read(
-      { path: value.path, location: value.location },
-      requestOptions,
-    )
+    const result = await current.files.read({ path: value.path, location: value.location }, requestOptions)
     return {
       location: result.location,
       data: {
@@ -200,6 +195,39 @@ export function createApiForServer(input: {
     (await current.projects.directories(value, requestOptions)).data.map((item) => ({ ...item }))
   const projectInitGit: ServerApi["project"]["initGit"] = async (value, requestOptions) =>
     projectInfo(await current.projects.initGit(value, requestOptions))
+  const vcsGet: ServerApi["vcs"]["get"] = async (value, requestOptions) => {
+    const result = await current.vcs.get(value, requestOptions)
+    return {
+      location: result.location,
+      data: { branch: result.data.branch, defaultBranch: result.data.default_branch },
+    }
+  }
+  const vcsStatus: ServerApi["vcs"]["status"] = async (value, requestOptions) => {
+    const result = await current.vcs.status(value, requestOptions)
+    return { location: result.location, data: result.data.map((item) => ({ ...item })) }
+  }
+  const vcsDiff: ServerApi["vcs"]["diff"] = async (value, requestOptions) => {
+    const result = await current.vcs.diff(
+      { ...value, mode: value.mode === "working" ? "git" : value.mode },
+      requestOptions,
+    )
+    return {
+      location: result.location,
+      data: result.data.flatMap((item) =>
+        item.file
+          ? [
+              {
+                file: item.file,
+                patch: item.patch ?? "",
+                additions: item.additions,
+                deletions: item.deletions,
+                status: item.status ?? "modified",
+              },
+            ]
+          : [],
+      ),
+    }
+  }
 
   return {
     health: current.health,
@@ -271,7 +299,11 @@ export function createApiForServer(input: {
       directories: projectDirectories,
       initGit: projectInitGit,
     },
-    vcs: current.vcs,
+    vcs: {
+      get: vcsGet,
+      status: vcsStatus,
+      diff: vcsDiff,
+    },
     path: current.path,
     event: {
       subscribe: current.events.subscribe,
@@ -305,9 +337,7 @@ type CompatibleProjectInfo = Omit<Awaited<ReturnType<CurrentClient["projects"]["
   readonly sandboxes: string[]
 }
 type CompatibleProjectApi = Omit<OpenCodeClient["project"], "list" | "update"> & {
-  readonly list: (
-    requestOptions?: Parameters<OpenCodeClient["project"]["list"]>[0],
-  ) => Promise<CompatibleProjectInfo[]>
+  readonly list: (requestOptions?: Parameters<OpenCodeClient["project"]["list"]>[0]) => Promise<CompatibleProjectInfo[]>
   readonly update: (
     input: Parameters<OpenCodeClient["project"]["update"]>[0],
     requestOptions?: Parameters<OpenCodeClient["project"]["update"]>[1],

@@ -431,7 +431,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
       const sessionID = SessionID.make(ctx.params.sessionID)
       yield* sessionV2.interrupt(SessionV2.ID.make(sessionID))
-      yield* runState.cancelIfRunning(sessionID)
+      // Cancellation must reach durable TaskSubmission ownership even when the
+      // parent session is idle after returning a background task handle.
+      yield* runState.cancel(sessionID)
       return true
     })
 

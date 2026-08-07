@@ -3,7 +3,7 @@ import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import path from "path"
-import { tool, type ModelMessage } from "ai"
+import { APICallError, tool, type ModelMessage } from "ai"
 import { Cause, Effect, Exit, Fiber, Layer, Stream } from "effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
@@ -184,7 +184,9 @@ describe("session.llm.ai-sdk adapter", () => {
   const adapt = (events: ReadonlyArray<AISDKAdapterEvent>) => {
     const state = LLMAISDK.adapterState()
     return Effect.runPromise(
-      Effect.forEach(events, (event) => LLMAISDK.toLLMEvents(state, event)).pipe(Effect.map((items) => items.flat())),
+      Effect.forEach(events, (event) => LLMAISDK.toLLMEvents(state, event, ProviderV2.ID.make("openai"))).pipe(
+        Effect.map((items) => items.flat()),
+      ),
     )
   }
   // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- tests defensive adapter branches outside AI SDK's current typed surface
@@ -337,6 +339,74 @@ describe("session.llm.ai-sdk adapter", () => {
         uncheckedAdapterEvent({ type: "tool-approval-request" }),
       ]),
     ).toEqual([])
+  })
+
+  test("normalizes retryable provider stream errors for bounded session retry", async () => {
+    const message = "The provider failed while reading the response stream."
+    const events = await adapt([
+      uncheckedAdapterEvent({
+        type: "error",
+        error: {
+          message: JSON.stringify({
+            type: "error",
+            error: { type: "server_error", code: "stream_read_error", message },
+          }),
+        },
+      }),
+      uncheckedAdapterEvent({
+        type: "error",
+        error: new APICallError({
+          message: "Service unavailable",
+          url: "https://api.openai.com/v1/responses",
+          requestBodyValues: {},
+          statusCode: 503,
+          responseHeaders: { "content-type": "application/json" },
+          isRetryable: true,
+        }),
+      }),
+    ])
+
+    expect(events).toEqual([
+      { type: "provider-error", message, retryable: true },
+      { type: "provider-error", message: "Service unavailable", retryable: true },
+    ])
+  })
+
+  test("preserves context overflow classification from provider stream errors", async () => {
+    const events = await adapt([
+      uncheckedAdapterEvent({
+        type: "error",
+        error: {
+          type: "error",
+          error: { code: "context_length_exceeded" },
+        },
+      }),
+    ])
+
+    expect(events).toEqual([
+      {
+        type: "provider-error",
+        message: "Input exceeds context window of this model",
+        classification: "context-overflow",
+      },
+    ])
+  })
+
+  test("preserves non-retryable provider stream failures", async () => {
+    const error = new APICallError({
+      message: "Unauthorized",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 401,
+      responseHeaders: { "content-type": "application/json" },
+      isRetryable: false,
+    })
+
+    const failure = await adapt([uncheckedAdapterEvent({ type: "error", error })]).then(
+      () => undefined,
+      (cause) => cause,
+    )
+    expect(failure).toBe(error)
   })
 
   test("preserves tool-error cause", async () => {

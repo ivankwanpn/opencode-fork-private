@@ -1,9 +1,12 @@
 export * as GetTaskOutputTool from "./get-task-output"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Clock, Effect, Layer, Schema } from "effect"
-import { BackgroundJob } from "../background-job"
+import { Clock, Effect, Layer, Queue, Schema, Stream } from "effect"
+import { Database } from "../database/database"
 import { makeLocationNode } from "../effect/app-node"
+import { EventV2 } from "../event"
+import { SessionEvent } from "../session/event"
+import { SessionInput } from "../session/input"
 import { SessionSchema } from "../session/schema"
 import { TaskSubmission } from "../session/task-submission"
 import { ToolRegistry } from "./registry"
@@ -39,7 +42,8 @@ export const Output = Schema.Array(StatusRecord)
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const background = yield* BackgroundJob.Service
+    const { db } = yield* Database.Service
+    const events = yield* EventV2.Service
     const submissions = yield* TaskSubmission.Service
     const tools = yield* Tools.Service
 
@@ -75,31 +79,47 @@ const layer = Layer.effectDiscard(
                 const current = yield* Effect.forEach(taskIDs, (taskID) => resolve(context.sessionID, taskID))
                 const timeout = input.timeout_ms ?? 0
                 const deadline = timeout === 0 ? undefined : (yield* Clock.currentTimeMillis) + timeout
-                const timedOut =
-                  deadline === undefined
-                    ? []
-                    : (
-                        yield* Effect.forEach(
-                          current.filter((submission) => submission.outcome === undefined),
-                          (submission) =>
-                            Effect.gen(function* () {
-                              const job = yield* background.get(submission.childSessionID)
-                              if (job?.status !== "running") return
-                              const result = yield* background.wait({
-                                id: submission.childSessionID,
-                                timeout: Math.max(0, deadline - (yield* Clock.currentTimeMillis)),
-                              })
-                              return result.timedOut ? submission.childSessionID : undefined
-                            }),
-                          { concurrency: "unbounded" },
-                        )
-                      ).filter((taskID): taskID is SessionSchema.ID => taskID !== undefined)
-                return (yield* Effect.forEach(taskIDs, (taskID) => resolve(context.sessionID, taskID))).map(
-                  (submission) =>
-                    toRecord(
-                      submission,
-                      submission.outcome === undefined && timedOut.includes(submission.childSessionID),
-                    ),
+                if (deadline === undefined || current.every((submission) => submission.outcome !== undefined))
+                  return current.map((submission) => toRecord(submission, false))
+
+                const settled = yield* Effect.scoped(
+                  Effect.gen(function* () {
+                    const activity = yield* Queue.sliding<void>(1)
+                    yield* submissions
+                      .subscribe()
+                      .pipe(
+                        Stream.runForEach(() => Queue.offer(activity, undefined)),
+                        Effect.forkScoped({ startImmediately: true }),
+                      )
+                    yield* events
+                      .subscribe(SessionEvent.PromptAdmitted)
+                      .pipe(
+                        Stream.filter(
+                          (event) => event.data.sessionID === context.sessionID && event.data.delivery === "steer",
+                        ),
+                        Stream.runForEach(() => Queue.offer(activity, undefined)),
+                        Effect.forkScoped({ startImmediately: true }),
+                      )
+                    const observe = () =>
+                      Effect.gen(function* () {
+                        const snapshots = yield* Effect.forEach(taskIDs, (taskID) => resolve(context.sessionID, taskID))
+                        if (snapshots.every((submission) => submission.outcome !== undefined))
+                          return { done: true as const, snapshots, timedOut: false }
+                        if (yield* SessionInput.hasPending(db, context.sessionID, "steer"))
+                          return { done: true as const, snapshots, timedOut: false }
+
+                        const remaining = deadline - (yield* Clock.currentTimeMillis)
+                        if (remaining <= 0) return { done: true as const, snapshots, timedOut: true }
+                        yield* Effect.raceFirst(Queue.take(activity), Effect.sleep(Math.min(1_000, remaining)))
+                        return { done: false as const, snapshots, timedOut: false }
+                      })
+                    const wait = (): ReturnType<typeof observe> =>
+                      observe().pipe(Effect.flatMap((state) => (state.done ? Effect.succeed(state) : wait())))
+                    return yield* wait()
+                  }),
+                )
+                return settled.snapshots.map((submission) =>
+                  toRecord(submission, settled.timedOut && submission.outcome === undefined),
                 )
               }),
           }),
@@ -113,7 +133,7 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/get-task-output",
   layer,
-  deps: [BackgroundJob.node, TaskSubmission.node, ToolRegistry.node],
+  deps: [Database.node, EventV2.node, TaskSubmission.node, ToolRegistry.node],
 })
 
 function toRecord(submission: TaskSubmission.Info, timedOut: boolean): typeof StatusRecord.Type {

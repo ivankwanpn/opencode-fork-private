@@ -9,6 +9,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Project } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
@@ -113,10 +114,7 @@ describe("GetTaskOutputTool", () => {
       yield* Effect.all([submit(first), submit(second), submit(third)], { concurrency: "unbounded" })
       const registry = yield* ToolRegistry.Service
 
-      const normalized = yield* settleTool(
-        registry,
-        call({ task_ids: [`  ${second}  `, first, second, ` ${third}`] }),
-      )
+      const normalized = yield* settleTool(registry, call({ task_ids: [`  ${second}  `, first, second, ` ${third}`] }))
       expect(normalized.output?.structured).toEqual([
         expect.objectContaining({ taskID: second }),
         expect.objectContaining({ taskID: first }),
@@ -192,7 +190,7 @@ describe("GetTaskOutputTool", () => {
     }),
   )
 
-  it.effect("waits for all process-local jobs and then re-reads durable task state", () =>
+  it.effect("waits for all tasks and then re-reads durable task state", () =>
     Effect.gen(function* () {
       const firstID = SessionSchema.ID.make("ses_task_output_wait_first")
       const secondID = SessionSchema.ID.make("ses_task_output_wait_second")
@@ -228,10 +226,9 @@ describe("GetTaskOutputTool", () => {
         ),
       })
       const registry = yield* ToolRegistry.Service
-      const waiting = yield* settleTool(
-        registry,
-        call({ task_ids: [firstID, secondID], timeout_ms: 5_000 }),
-      ).pipe(Effect.forkScoped)
+      const waiting = yield* settleTool(registry, call({ task_ids: [firstID, secondID], timeout_ms: 5_000 })).pipe(
+        Effect.forkScoped,
+      )
 
       yield* Effect.yieldNow
       yield* Deferred.succeed(releaseFirst, undefined)
@@ -239,6 +236,7 @@ describe("GetTaskOutputTool", () => {
       expect(waiting.pollUnsafe()).toBeUndefined()
       yield* Deferred.succeed(releaseSecond, undefined)
       yield* Deferred.await(completedSecond)
+      yield* TestClock.adjust(1_000)
 
       expect((yield* Fiber.join(waiting)).output?.structured).toEqual([
         expect.objectContaining({ taskID: firstID, status: "completed", result: "first result" }),
@@ -261,10 +259,9 @@ describe("GetTaskOutputTool", () => {
       yield* jobs.start({ id: firstID, type: "task", run: Effect.never })
       yield* jobs.start({ id: secondID, type: "task", run: Effect.never })
       const registry = yield* ToolRegistry.Service
-      const waiting = yield* settleTool(
-        registry,
-        call({ task_ids: [firstID, secondID], timeout_ms: 100 }),
-      ).pipe(Effect.forkScoped)
+      const waiting = yield* settleTool(registry, call({ task_ids: [firstID, secondID], timeout_ms: 100 })).pipe(
+        Effect.forkScoped,
+      )
 
       yield* Effect.yieldNow
       yield* TestClock.adjust(99)
@@ -329,10 +326,7 @@ describe("GetTaskOutputTool", () => {
       })
       const registry = yield* ToolRegistry.Service
 
-      const settled = yield* settleTool(
-        registry,
-        call({ task_ids: [completedID, errorID, cancelledID, recoveryID] }),
-      )
+      const settled = yield* settleTool(registry, call({ task_ids: [completedID, errorID, cancelledID, recoveryID] }))
       expect(settled.output?.structured).toEqual([
         {
           taskID: completedID,
@@ -374,9 +368,15 @@ describe("GetTaskOutputTool", () => {
       expect(settled.result).toMatchObject({
         type: "content",
         value: [
-          expect.objectContaining({ type: "text", text: expect.stringContaining(`id="${completedID}" state="completed"`) }),
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringContaining(`id="${completedID}" state="completed"`),
+          }),
           expect.objectContaining({ type: "text", text: expect.stringContaining(`id="${errorID}" state="error"`) }),
-          expect.objectContaining({ type: "text", text: expect.stringContaining(`id="${cancelledID}" state="cancelled"`) }),
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringContaining(`id="${cancelledID}" state="cancelled"`),
+          }),
           expect.objectContaining({
             type: "text",
             text: expect.stringContaining(`id="${recoveryID}" state="recovery-required"`),
@@ -403,7 +403,7 @@ describe("GetTaskOutputTool", () => {
     }),
   )
 
-  it.effect("returns a running durable snapshot immediately when no process-local job exists", () =>
+  it.effect("keeps waiting without a process-local job and observes durable completion", () =>
     Effect.gen(function* () {
       const childID = SessionSchema.ID.make("ses_task_output_restarted")
       yield* setup([childID])
@@ -411,16 +411,47 @@ describe("GetTaskOutputTool", () => {
       const submissions = yield* TaskSubmission.Service
       yield* submissions.claim(submitted.id)
       const registry = yield* ToolRegistry.Service
-      const waiting = yield* settleTool(
-        registry,
-        call({ task_ids: [childID], timeout_ms: 600_000 }),
-      ).pipe(Effect.forkScoped)
+      const waiting = yield* settleTool(registry, call({ task_ids: [childID], timeout_ms: 600_000 })).pipe(
+        Effect.forkScoped,
+      )
 
       yield* Effect.yieldNow
-      expect(waiting.pollUnsafe()).toBeDefined()
+      expect(waiting.pollUnsafe()).toBeUndefined()
+      yield* submissions.terminalize({ submissionID: submitted.id, outcome: "completed", resultText: "recovered" })
+      yield* TestClock.adjust(1_000)
       expect((yield* Fiber.join(waiting)).output?.structured).toEqual([
-        expect.objectContaining({ taskID: childID, status: "running" }),
+        expect.objectContaining({ taskID: childID, status: "completed", result: "recovered" }),
       ])
+    }),
+  )
+
+  it.effect("returns early when new steer input arrives during a bounded wait", () =>
+    Effect.gen(function* () {
+      const childID = SessionSchema.ID.make("ses_task_output_steered")
+      yield* setup([childID])
+      const submitted = yield* submit(childID)
+      const submissions = yield* TaskSubmission.Service
+      yield* submissions.claim(submitted.id)
+      const registry = yield* ToolRegistry.Service
+      const waiting = yield* settleTool(registry, call({ task_ids: [childID], timeout_ms: 600_000 })).pipe(
+        Effect.forkScoped,
+      )
+
+      yield* Effect.yieldNow
+      expect(waiting.pollUnsafe()).toBeUndefined()
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      yield* SessionInput.admit(db, events, {
+        id: SessionMessage.ID.make("msg_task_output_steer"),
+        sessionID: parentID,
+        prompt: Prompt.make({ text: "New direction" }),
+        delivery: "steer",
+      })
+      yield* TestClock.adjust(1_000)
+
+      const result = (yield* Fiber.join(waiting)).output?.structured
+      expect(result).toEqual([expect.objectContaining({ taskID: childID, status: "running" })])
+      expect(result).not.toEqual([expect.objectContaining({ timedOut: true })])
     }),
   )
 
@@ -428,10 +459,7 @@ describe("GetTaskOutputTool", () => {
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
       const denied = [{ action: "*", resource: "*", effect: "deny" as const }]
-      const allowed = [
-        ...denied,
-        { action: "task", resource: "*", effect: "allow" as const },
-      ]
+      const allowed = [...denied, { action: "task", resource: "*", effect: "allow" as const }]
 
       expect(yield* toolDefinitions(registry, denied)).toEqual([])
       expect((yield* toolDefinitions(registry, allowed)).map((definition) => definition.name)).toEqual([

@@ -8,13 +8,16 @@ export class SubagentLimitReached extends Schema.TaggedErrorClass<SubagentLimitR
   { limit: Schema.Number },
 ) {}
 
-export type Reservation = {
-  readonly kind: "new" | "existing"
-  readonly key: string
-}
+export type Reservation =
+  | { readonly kind: "new"; readonly key: string }
+  | { readonly kind: "existing"; readonly key: string }
 
 export interface Interface {
   readonly acquire: (key: string) => Effect.Effect<Reservation, SubagentLimitReached>
+  readonly rekey: (
+    reservation: Extract<Reservation, { readonly kind: "new" }>,
+    key: string,
+  ) => Effect.Effect<Reservation>
   readonly release: (key: string) => Effect.Effect<void>
   readonly active: Effect.Effect<ReadonlySet<string>>
 }
@@ -38,6 +41,17 @@ export const make = (options: { readonly limit: number | undefined }) =>
         ),
       ),
     )
+    const rekey = Effect.fn("SubagentPermit.rekey")(
+      (reservation: Extract<Reservation, { readonly kind: "new" }>, key: string) =>
+        Ref.modify(ref, (active): readonly [Reservation, Set<string>] => {
+          if (reservation.key === key) return [reservation, active]
+          const next = new Set(active)
+          next.delete(reservation.key)
+          if (active.has(key)) return [{ kind: "existing", key }, next]
+          next.add(key)
+          return [{ kind: "new", key }, next]
+        }),
+    )
     const release = Effect.fn("SubagentPermit.release")((key: string) =>
       Ref.update(ref, (active) => {
         const next = new Set(active)
@@ -46,7 +60,7 @@ export const make = (options: { readonly limit: number | undefined }) =>
       }),
     )
     const active = Ref.get(ref)
-    return Service.of({ acquire, release, active })
+    return Service.of({ acquire, rekey, release, active })
   })
 
 export const layer = (limit: number | undefined) => Layer.effect(Service, make({ limit }))

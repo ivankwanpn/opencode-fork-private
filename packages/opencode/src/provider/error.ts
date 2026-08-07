@@ -107,7 +107,7 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
   const responseBody = JSON.stringify(body)
   if (body.type !== "error") return
 
-  switch (body?.error?.code) {
+  switch (body?.error?.code ?? body?.error?.type) {
     case "context_length_exceeded":
       return {
         type: "context_overflow",
@@ -137,9 +137,10 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
       }
     case "server_is_overloaded":
     case "server_error":
+    case "stream_read_error":
       return {
         type: "api_error",
-        message: typeof body?.error?.message === "string" ? body?.error?.message : "Server error.",
+        message: typeof body?.error?.message === "string" ? body?.error?.message : "Provider stream failed.",
         isRetryable: true,
         responseBody,
       }

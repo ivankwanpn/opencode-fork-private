@@ -17,6 +17,7 @@ import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionHistory } from "@opencode-ai/core/session/history"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionRunner } from "@opencode-ai/core/session/runner"
@@ -184,6 +185,104 @@ describe("SessionExecution recovery", () => {
         resultText: "accepted result",
       })
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("settles a task from durable rows after compaction hides the child input", () =>
+    Effect.gen(function* () {
+      yield* setupProject([
+        { id: parentSessionID },
+        { id: childSessionID, parentID: parentSessionID },
+      ])
+      const { db } = yield* Database.Service
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit(invocation)
+      yield* submissions.claim(submitted.id)
+
+      const input = yield* db
+        .select({ admittedSeq: SessionInputTable.admitted_seq })
+        .from(SessionInputTable)
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .get()
+        .pipe(Effect.orDie)
+      expect(input).toBeDefined()
+      const promotedSeq = input!.admittedSeq + 1
+      const compactionSeq = promotedSeq + 1
+      const resultSeq = compactionSeq + 1
+      const followupSeq = resultSeq + 1
+      const followupResultSeq = followupSeq + 1
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_execution_compacted_result"),
+        type: "assistant",
+        agent: "general",
+        model,
+        content: [{ type: "text", id: "text_execution_compacted_result", text: "durable compacted result" }],
+        time: { created: DateTime.makeUnsafe(resultSeq), completed: DateTime.makeUnsafe(resultSeq + 1) },
+      })
+      const followup = SessionMessage.User.make({
+        id: SessionMessage.ID.make("msg_execution_compacted_followup"),
+        type: "user",
+        text: "follow-up input",
+        time: { created: DateTime.makeUnsafe(followupSeq) },
+      })
+      const followupAssistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_execution_compacted_followup_result"),
+        type: "assistant",
+        agent: "general",
+        model,
+        content: [{ type: "text", id: "text_execution_compacted_followup_result", text: "later result" }],
+        time: {
+          created: DateTime.makeUnsafe(followupResultSeq),
+          completed: DateTime.makeUnsafe(followupResultSeq + 1),
+        },
+      })
+      const compaction = SessionMessage.Compaction.make({
+        id: SessionMessage.ID.make("msg_execution_compacted_summary"),
+        type: "compaction",
+        reason: "auto",
+        summary: "Earlier child input was compacted.",
+        recent: "",
+        time: { created: DateTime.makeUnsafe(compactionSeq) },
+      })
+
+      yield* db
+        .insert(SessionMessageTable)
+        .values([
+          messageRow(
+            SessionMessage.User.make({
+              id: submitted.childInputID,
+              type: "user",
+              text: submitted.prompt.text,
+              time: { created: DateTime.makeUnsafe(promotedSeq) },
+            }),
+            childSessionID,
+            promotedSeq,
+          ),
+          messageRow(compaction, childSessionID, compactionSeq),
+          messageRow(assistant, childSessionID, resultSeq),
+          messageRow(followup, childSessionID, followupSeq),
+          messageRow(followupAssistant, childSessionID, followupResultSeq),
+        ])
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionInputTable)
+        .set({ promoted_seq: promotedSeq })
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+
+      const compactedHistory = yield* SessionHistory.load(db, childSessionID)
+      expect(compactedHistory.map((message) => message.id)).not.toContain(submitted.childInputID)
+      expect(compactedHistory.map((message) => message.id)).toContain(assistant.id)
+
+      const settled = yield* submissions.terminalizeFromChild(submitted.id)
+      expect(settled).toMatchObject({
+        outcome: "completed",
+        resultMessageID: assistant.id,
+        resultText: "durable compacted result",
+      })
+      expect(yield* submissions.get(submitted.id)).toMatchObject({ outcome: "completed" })
     }),
   )
 

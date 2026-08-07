@@ -27,9 +27,20 @@ import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/se
 import { Session } from "@/session/session"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
-import { MessageTable, SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
+import { BackgroundJob } from "@opencode-ai/core/background-job"
+import { Prompt } from "@opencode-ai/core/session/prompt"
+import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
+import {
+  MessageTable,
+  SessionInputTable,
+  SessionMessageTable,
+  SessionTable,
+  TaskNotificationOutboxTable,
+  TaskSubmissionTable,
+} from "@opencode-ai/core/session/sql"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { SessionStatus } from "../../src/session/status"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -47,7 +58,17 @@ const noopBootstrapLayer = Layer.succeed(
   InstanceBootstrapService.Service.of({ run: Effect.void }),
 )
 const appLayer = AppNodeBuilder.build(
-  LayerNode.group([InstanceStore.node, Project.node, Session.node, Workspace.node, Database.node, Ripgrep.node]),
+  LayerNode.group([
+    InstanceStore.node,
+    Project.node,
+    Session.node,
+    Workspace.node,
+    Database.node,
+    Ripgrep.node,
+    BackgroundJob.node,
+    TaskSubmission.node,
+    TaskCancellation.node,
+  ]),
   [
     [InstanceStore.bootstrapNode, noopBootstrapLayer],
     [LocationServiceMap.node, locationServiceMapLayer],
@@ -1043,6 +1064,72 @@ describe("session HttpApi", () => {
         )
       }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
     30_000,
+  )
+
+  it.instance(
+    "aborts an idle parent and durably cancels its background task",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const parent = yield* createSession({ title: "background cancellation parent" })
+        const child = yield* createSession({ parentID: parent.id, title: "background cancellation child" })
+        const submissions = yield* TaskSubmission.Service
+        const submitted = yield* submissions.submit({
+          parentSessionID: parent.id,
+          assistantMessageID: SessionMessage.ID.make("msg_http_background_parent_assistant"),
+          toolCallID: "call_http_background_cancel",
+          childSessionID: child.id,
+          description: "cancel background task",
+          prompt: Prompt.make({ text: "run a background task" }),
+          agent: "general",
+          completionDelivery: "parent",
+        })
+        const jobs = yield* BackgroundJob.Service
+        yield* jobs.start({
+          id: child.id,
+          type: "task",
+          metadata: { sessionID: child.id, background: true },
+          run: Effect.never,
+        })
+
+        const abort = yield* request(pathFor(SessionPaths.abort, { sessionID: parent.id }), {
+          method: "POST",
+          headers: { "x-opencode-directory": test.directory },
+        })
+        expect(abort.status).toBe(200)
+        expect(yield* json<boolean>(abort)).toBe(true)
+
+        const rows = yield* Database.Service.use(({ db }) =>
+          Effect.all({
+            submission: db
+              .select()
+              .from(TaskSubmissionTable)
+              .where(eq(TaskSubmissionTable.id, submitted.id))
+              .get()
+              .pipe(Effect.orDie),
+            input: db
+              .select()
+              .from(SessionInputTable)
+              .where(eq(SessionInputTable.id, submitted.childInputID))
+              .get()
+              .pipe(Effect.orDie),
+            notifications: db
+              .select()
+              .from(TaskNotificationOutboxTable)
+              .where(eq(TaskNotificationOutboxTable.submission_id, submitted.id))
+              .all()
+              .pipe(Effect.orDie),
+          }),
+        )
+        expect(rows.submission).toMatchObject({ status: "cancelled", outcome: "cancelled" })
+        expect(rows.input).toMatchObject({ terminal_outcome: "cancelled" })
+        expect(rows.notifications).toMatchObject([
+          {
+            payload: expect.objectContaining({ state: "cancelled", taskID: child.id }),
+          },
+        ])
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
   )
 
   it.live("commits canonical no-reply async prompts without waking execution", () =>

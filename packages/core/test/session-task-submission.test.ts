@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Queue, Result, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -340,6 +340,72 @@ describe("TaskSubmission", () => {
     }),
   )
 
+  it.effect("signals subscribers after a durable terminal transition", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Inspect lifecycle",
+        agent: "general",
+      })
+      const activity = yield* Queue.sliding<void>(1)
+      yield* submissions.subscribe().pipe(
+        Stream.runForEach(() => Queue.offer(activity, undefined)),
+        Effect.forkScoped({ startImmediately: true }),
+      )
+
+      yield* submissions.terminalize({ submissionID: submitted.id, outcome: "completed", resultText: "done" })
+
+      expect(yield* Queue.take(activity)).toBeUndefined()
+    }),
+  )
+
+  it.effect("falls back to provider errors when an error result has no useful text", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const error = { message: "server_is_overloaded: try again later" }
+      const empty = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        toolCallID: "call_task_empty_error",
+        description: "Empty error result",
+        agent: "general",
+      })
+      const whitespace = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        toolCallID: "call_task_whitespace_error",
+        description: "Whitespace error result",
+        agent: "general",
+      })
+      const success = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        toolCallID: "call_task_empty_success",
+        description: "Empty successful result",
+        agent: "general",
+      })
+
+      yield* submissions.terminalize({ submissionID: empty.id, outcome: "error", resultText: "", error })
+      yield* submissions.terminalize({ submissionID: whitespace.id, outcome: "error", resultText: "   ", error })
+      yield* submissions.terminalize({
+        submissionID: success.id,
+        outcome: "completed",
+        resultText: "",
+        error: { message: "must not replace successful empty output" },
+      })
+
+      const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
+      expect(
+        outbox.map((row) => Schema.decodeUnknownSync(Schema.Struct({ text: Schema.String }))(row.payload).text),
+      ).toEqual([error.message, error.message, ""])
+    }),
+  )
+
   it.effect("does not enqueue parent delivery for a terminal tool-owned submission", () =>
     Effect.gen(function* () {
       yield* setup
@@ -385,32 +451,34 @@ describe("TaskSubmission", () => {
     }),
   )
 
-  it.effect("enqueues one parent delivery when a running tool-owned submission is promoted before terminalization", () =>
-    Effect.gen(function* () {
-      yield* setup
-      const submissions = yield* TaskSubmission.Service
-      const { db } = yield* Database.Service
-      const submitted = yield* submissions.submit({
-        ...invocation,
-        childSessionID,
-        description: "Promoted running task",
-        agent: "general",
-        completionDelivery: "tool",
-      })
-      yield* submissions.claim(submitted.id)
+  it.effect(
+    "enqueues one parent delivery when a running tool-owned submission is promoted before terminalization",
+    () =>
+      Effect.gen(function* () {
+        yield* setup
+        const submissions = yield* TaskSubmission.Service
+        const { db } = yield* Database.Service
+        const submitted = yield* submissions.submit({
+          ...invocation,
+          childSessionID,
+          description: "Promoted running task",
+          agent: "general",
+          completionDelivery: "tool",
+        })
+        yield* submissions.claim(submitted.id)
 
-      expect(yield* submissions.promoteDelivery(submitted.id)).toMatchObject({
-        status: "running",
-        completionDelivery: "parent",
-      })
-      yield* submissions.terminalize({
-        submissionID: submitted.id,
-        outcome: "completed",
-        resultText: "promoted result",
-      })
+        expect(yield* submissions.promoteDelivery(submitted.id)).toMatchObject({
+          status: "running",
+          completionDelivery: "parent",
+        })
+        yield* submissions.terminalize({
+          submissionID: submitted.id,
+          outcome: "completed",
+          resultText: "promoted result",
+        })
 
-      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
-    }),
+        expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+      }),
   )
 
   it.effect("enqueues one parent delivery when a terminal tool-owned submission is promoted repeatedly", () =>

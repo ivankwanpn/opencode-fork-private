@@ -2014,6 +2014,8 @@ ToolRegistry.register({
       return value
     })
     const running = createMemo(() => props.status === "pending" || props.status === "running")
+    const cancellable = createMemo(() => running() && !!data.cancelSession && !!childSessionId())
+    const [cancelling, setCancelling] = createSignal(false)
 
     const href = createMemo(() => sessionLink(childSessionId(), location.pathname, data.sessionHref))
     const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
@@ -2041,6 +2043,57 @@ ToolRegistry.register({
       event.preventDefault()
       open()
     }
+
+    const cancel = (event: MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!running() || cancelling()) return
+      const id = childSessionId()
+      const cancelSession = data.cancelSession
+      if (!id || !cancelSession) return
+      setCancelling(true)
+      void Promise.resolve()
+        .then(() => cancelSession(id))
+        .then(
+          () => setCancelling(false),
+          () => setCancelling(false),
+        )
+    }
+
+    const cancelAction = () => (
+      <Show when={cancellable()}>
+        <div data-component="task-tool-cancel">
+          <Show
+            when={newLayout()}
+            fallback={
+              <Tooltip value={i18n.t("ui.common.cancel")} placement="top" gutter={4}>
+                <IconButton
+                  icon="stop"
+                  size="normal"
+                  variant="ghost"
+                  disabled={cancelling()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={cancel}
+                  aria-label={i18n.t("ui.common.cancel")}
+                />
+              </Tooltip>
+            }
+          >
+            <TooltipV2 value={i18n.t("ui.common.cancel")} placement="top" gutter={4}>
+              <IconButtonV2
+                icon={<IconV2 name="stop" size="small" />}
+                size="normal"
+                variant="ghost-muted"
+                disabled={cancelling()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={cancel}
+                aria-label={i18n.t("ui.common.cancel")}
+              />
+            </TooltipV2>
+          </Show>
+        </div>
+      </Show>
+    )
 
     const trigger = () => (
       <div
@@ -2087,17 +2140,20 @@ ToolRegistry.register({
     )
 
     return (
-      <BasicTool
-        icon="task"
-        status={props.status}
-        trigger={trigger()}
-        hideDetails
-        triggerAsLink
-        triggerHref={href()}
-        clickable={clickable()}
-        onTriggerClick={navigate}
-        onTriggerKeyDown={navigateKey}
-      />
+      <div data-component="task-tool-wrapper" data-task-running={cancellable() ? "true" : undefined}>
+        <BasicTool
+          icon="task"
+          status={props.status}
+          trigger={trigger()}
+          hideDetails
+          triggerAsLink
+          triggerHref={href()}
+          clickable={clickable()}
+          onTriggerClick={navigate}
+          onTriggerKeyDown={navigateKey}
+        />
+        {cancelAction()}
+      </div>
     )
   },
 })

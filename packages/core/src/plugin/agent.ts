@@ -208,6 +208,11 @@ export const Plugin = define({
               { action: "webfetch", resource: "*", effect: "allow" },
               { action: "websearch", resource: "*", effect: "allow" },
               { action: "read", resource: "*", effect: "allow" },
+              // Browser MCP tools are observational when exposed by the
+              // configured Playwright server; keep all other MCP tools denied.
+              { action: "playwright_*", resource: "*", effect: "allow" },
+              { action: "mcp_playwright_*", resource: "*", effect: "allow" },
+              { action: "claude_claude-plugins-official_playwright_playwright_*", resource: "*", effect: "allow" },
             ],
             readonlyExternalDirectory,
           ),

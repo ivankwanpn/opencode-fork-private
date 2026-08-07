@@ -1,6 +1,8 @@
 import { FinishReason, LLMEvent, ProviderMetadata, ToolResultValue } from "@opencode-ai/llm"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { Effect, Schema } from "effect"
-import { type streamText } from "ai"
+import { APICallError, type streamText } from "ai"
+import { ProviderError } from "@/provider/error"
 import { errorMessage } from "@/util/error"
 
 type Result = Awaited<ReturnType<typeof streamText>>
@@ -73,9 +75,39 @@ function currentReasoningID(state: ReturnType<typeof adapterState>, id: string |
   return state.currentReasoningID
 }
 
+function providerFailure(error: unknown, providerID: ProviderV2.ID | undefined) {
+  const streamed = ProviderError.parseStreamError(
+    APICallError.isInstance(error) ? (error.responseBody ?? error) : error,
+  )
+  if (streamed?.type === "context_overflow")
+    return LLMEvent.providerError({ message: streamed.message, classification: "context-overflow" })
+  if (streamed?.isRetryable) return LLMEvent.providerError({ message: streamed.message, retryable: true })
+  if (streamed) return
+
+  if (APICallError.isInstance(error)) {
+    const parsed = ProviderError.parseAPICallError({
+      providerID: providerID ?? ProviderV2.ID.make("unknown"),
+      error,
+    })
+    if (parsed.type === "context_overflow")
+      return LLMEvent.providerError({ message: parsed.message, classification: "context-overflow" })
+    if (parsed.isRetryable) return LLMEvent.providerError({ message: parsed.message, retryable: true })
+    return
+  }
+
+  if (error instanceof ProviderError.HeaderTimeoutError || error instanceof ProviderError.ResponseStreamError)
+    return LLMEvent.providerError({ message: error.message, retryable: true })
+  if (typeof error !== "object" || error === null || !("code" in error)) return
+  if (error.code === "ECONNRESET")
+    return LLMEvent.providerError({ message: "Connection reset by server", retryable: true })
+  if (error.code === "ZlibError")
+    return LLMEvent.providerError({ message: "Response decompression failed", retryable: true })
+}
+
 export function toLLMEvents(
   state: ReturnType<typeof adapterState>,
   event: AISDKEvent,
+  providerID?: ProviderV2.ID,
 ): Effect.Effect<ReadonlyArray<LLMEvent>, unknown> {
   switch (event.type) {
     case "start":
@@ -261,8 +293,10 @@ export function toLLMEvents(
         ]
       })
 
-    case "error":
-      return Effect.fail(event.error)
+    case "error": {
+      const failure = providerFailure(event.error, providerID)
+      return failure ? Effect.succeed([failure]) : Effect.fail(event.error)
+    }
 
     case "abort":
     case "source":

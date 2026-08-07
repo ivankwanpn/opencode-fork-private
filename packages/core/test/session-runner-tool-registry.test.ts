@@ -11,6 +11,7 @@ import { SessionCommand } from "@opencode-ai/core/session/command"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { McpCatalog } from "@opencode-ai/core/mcp/catalog"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
@@ -99,6 +100,29 @@ describe("ToolRegistry", () => {
         ]),
       ).toEqual([])
       expect(yield* names([{ action: "edit", resource: "*", effect: "deny" }])).toEqual(["question", "bash"])
+    }),
+  )
+
+  it.effect("materializes managed Playwright tools without exposing other managed MCP tools", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      const managedPlaywright = McpCatalog.toolName(
+        "claude:claude-plugins-official:playwright:playwright",
+        "browser_take_screenshot",
+      )
+      const managedOther = McpCatalog.toolName("claude:claude-plugins-official:context7:context7", "resolve-library-id")
+      yield* service.register({ [managedPlaywright]: make(), [managedOther]: make() })
+
+      const definitions = yield* toolDefinitions(service, [
+        { action: "*", resource: "*", effect: "deny" },
+        {
+          action: "claude_claude-plugins-official_playwright_playwright_*",
+          resource: "*",
+          effect: "allow",
+        },
+      ])
+
+      expect(definitions.map((definition) => definition.name)).toEqual([managedPlaywright])
     }),
   )
 

@@ -256,6 +256,28 @@
   }
 }
 
+[data-component="task-tool-wrapper"] {
+  position: relative;
+  width: 100%;
+
+  &[data-task-running="true"] {
+    [data-component="task-tool-card"] {
+      padding-right: 32px;
+    }
+  }
+}
+
+[data-component="task-tool-cancel"] {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+}
+
 body[data-new-layout] {
   [data-component="task-tool-card"] {
     gap: 8px;

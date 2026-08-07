@@ -1,7 +1,7 @@
 export * as TaskTool from "./task"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Cause, Effect, Layer, Ref, Schema } from "effect"
+import { Cause, Effect, Exit, Layer, Ref, Schema } from "effect"
 import { AgentV2 } from "../agent"
 import { BackgroundJob } from "../background-job"
 import { Config } from "../config"
@@ -11,7 +11,6 @@ import { PermissionV2 } from "../permission"
 import { SessionCommand } from "../session/command"
 import { SessionExecution } from "../session/execution"
 import { SessionAttempt } from "../session/attempt"
-import { SessionMessage } from "../session/message"
 import { Prompt } from "../session/prompt"
 import { SessionSchema } from "../session/schema"
 import { SessionStore } from "../session/store"
@@ -237,25 +236,34 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         const requested = input.task_id ? SessionSchema.ID.make(input.task_id) : undefined
         const resumed = requested ? yield* sessions.get(requested) : undefined
         const model = agent.model ?? parent.model
-        const child =
-          resumed ??
-          (yield* commands.create({
-            parentID: context.sessionID,
-            title: `${input.description} (@${agent.id} subagent)`,
-            agent: agent.id,
-            model,
-            location: parent.location,
-          }))
-        if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
-        if (model) yield* commands.switchModel({ sessionID: child.id, model })
-
-        const reservation = yield* permits.acquire(child.id).pipe(
-          Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })),
-        )
-        // Until background.start succeeds and the job record owns the permit, a
-        // failure (submit conflict, checkpoint, interrupt) must release the
-        // reservation or the key leaks out of the concurrency budget forever.
+        const acquired = yield* permits
+          .acquire(resumed?.id ?? SessionSchema.ID.create())
+          .pipe(Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })))
+        if (!resumed && acquired.kind === "existing")
+          return yield* Effect.die(`Subagent provisional reservation collision: ${acquired.key}`)
+        const reservationRef = yield* Ref.make(acquired)
         const ownedByJob = yield* Ref.make(false)
+        const releaseReservation = Ref.get(reservationRef).pipe(
+          Effect.flatMap((reservation) =>
+            reservation.kind === "new" ? permits.release(reservation.key) : Effect.void,
+          ),
+        )
+        const child = yield* Effect.gen(function* () {
+          const child =
+            resumed ??
+            (yield* commands.create({
+              parentID: context.sessionID,
+              title: `${input.description} (@${agent.id} subagent)`,
+              agent: agent.id,
+              model,
+              location: parent.location,
+            }))
+          if (!resumed && acquired.kind === "new")
+            yield* permits.rekey(acquired, child.id).pipe(Effect.flatMap((next) => Ref.set(reservationRef, next)))
+          if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
+          if (model) yield* commands.switchModel({ sessionID: child.id, model })
+          return child
+        }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseReservation : Effect.void)))
 
         const baseMetadata = {
           parentSessionId: context.sessionID,
@@ -274,85 +282,74 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             content: text ? [{ type: "text", text }] : [],
           })
 
-        const runTask = (submission: TaskSubmission.Info) => Effect.gen(function* () {
-          const claim = yield* submissions.claim(submission.id)
-          if (!claim.acquired) {
-            yield* execution.wait(child.id)
-            const existing = yield* submissions.get(submission.id)
-            if (existing?.outcome === "completed") return existing.resultText ?? ""
-            if (existing?.outcome === "cancelled") return yield* new ToolFailure({ message: "Task cancelled" })
-            return yield* new ToolFailure({ message: String(existing?.error ?? "Task did not complete") })
-          }
-
-          yield* execution.resume(child.id)
-          yield* execution.wait(child.id)
-          const messages = yield* sessions.context(child.id)
-          const inputIndex = messages.findIndex((message) => message.id === submission.childInputID)
-          if (inputIndex < 0)
-            return yield* Effect.fail(new Error(`Child input not visible: ${submission.childInputID}`))
-          const afterInput = messages.slice(inputIndex + 1)
-          const nextInputIndex = afterInput.findIndex((message) => message.type === "user")
-          const assistant = afterInput
-            .slice(0, nextInputIndex < 0 ? undefined : nextInputIndex)
-            .findLast((message) => message.type === "assistant" && message.time.completed !== undefined)
-          if (!assistant || assistant.type !== "assistant")
-            return yield* Effect.fail(
-              new Error(`Child input has no completed assistant result: ${submission.childInputID}`),
-            )
-          const text = assistant.content
-            .filter((part): part is SessionMessage.AssistantText => part.type === "text")
-            .map((part) => part.text)
-            .join("")
-          const outcome: TaskSubmission.Outcome =
-            assistant.error || assistant.finish === "error" ? "error" : "completed"
-          const settled = yield* submissions.terminalize({
-            submissionID: submission.id,
-            outcome,
-            resultMessageID: assistant.id,
-            resultText: text,
-            error: assistant.error,
-          })
-          if (!settled) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
-          yield* notifications.drain({
+        const drainNotifications = () =>
+          notifications.drain({
             admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
             wake: execution.wake,
           })
-          if (outcome === "error") return yield* new ToolFailure({ message: text || "Task failed" })
-          return text
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.uninterruptible(
-              submissions
-                .terminalize({
-                  submissionID: submission.id,
-                  outcome: Cause.hasInterrupts(cause)
-                    ? "cancelled"
-                    : Cause.squash(cause) instanceof SessionAttempt.RecoveryRequiredError
-                      ? "recovery-required"
-                      : "error",
-                  error: { message: String(Cause.squash(cause)) },
-                })
-                .pipe(
-                  Effect.andThen(
-                    notifications.drain({
-                      admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
-                      wake: execution.wake,
-                    }),
-                  ),
-                  Effect.ignore,
-                ),
-            ).pipe(Effect.andThen(Effect.failCause(cause))),
-          ),
-          Effect.onInterrupt(() =>
-            cancellation
-              .cancelTree({
-                rootSessionID: child.id,
-                interrupt: execution.interrupt,
-                wait: execution.wait,
+
+        const settleResult = (submission: TaskSubmission.Info, info: TaskSubmission.Info | undefined) =>
+          Effect.gen(function* () {
+            if (!info) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
+            if (!info.outcome)
+              return yield* Effect.fail(
+                new Error(`Child input has no completed assistant result: ${submission.childInputID}`),
+              )
+            yield* drainNotifications()
+            if (info.outcome === "cancelled") return yield* new ToolFailure({ message: "Task cancelled" })
+            if (info.outcome !== "completed")
+              return yield* new ToolFailure({
+                message:
+                  taskErrorText(info.error) ?? (info.resultText?.trim() ? info.resultText : undefined) ?? "Task failed",
               })
-              .pipe(Effect.asVoid),
-          ),
-        )
+            return info.resultText ?? ""
+          })
+
+        const runTask = (submission: TaskSubmission.Info) =>
+          Effect.gen(function* () {
+            const claim = yield* submissions.claim(submission.id)
+            if (!claim.acquired) {
+              yield* execution.wait(child.id)
+              return yield* settleResult(submission, yield* submissions.terminalizeFromChild(submission.id))
+            }
+
+            yield* execution.resume(child.id)
+            yield* execution.wait(child.id)
+            return yield* settleResult(submission, yield* submissions.terminalizeFromChild(submission.id))
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.uninterruptible(
+                submissions
+                  .terminalize({
+                    submissionID: submission.id,
+                    outcome: Cause.hasInterrupts(cause)
+                      ? "cancelled"
+                      : Cause.squash(cause) instanceof SessionAttempt.RecoveryRequiredError
+                        ? "recovery-required"
+                        : "error",
+                    error: { message: String(Cause.squash(cause)) },
+                  })
+                  .pipe(
+                    Effect.andThen(
+                      notifications.drain({
+                        admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+                        wake: execution.wake,
+                      }),
+                    ),
+                    Effect.ignore,
+                  ),
+              ).pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+            Effect.onInterrupt(() =>
+              cancellation
+                .cancelTree({
+                  rootSessionID: child.id,
+                  interrupt: execution.interrupt,
+                  wait: execution.wait,
+                })
+                .pipe(Effect.asVoid),
+            ),
+          )
 
         const backgroundMetadata = {
           ...baseMetadata,
@@ -411,9 +408,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             yield* Ref.set(ownedByJob, true)
             return { info: started, submissionID: submission.id }
           }),
-          Effect.flatMap(Ref.get(ownedByJob), (owned) =>
-            owned ? Effect.void : permits.release(child.id),
-          ),
+          Effect.flatMap(Ref.get(ownedByJob), (owned) => (owned ? Effect.void : releaseReservation)),
         )
         const info = started.info
 
@@ -503,9 +498,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
           // The job-scope onRelease owns the permit for the background path; the
           // foreground path releases explicitly once the observed task settles
           // (never while it keeps running in the background after promotion).
-          Effect.tap((result) =>
-            "background" in result.metadata ? Effect.void : permits.release(child.id),
-          ),
+          Effect.tap((result) => ("background" in result.metadata ? Effect.void : releaseReservation)),
           Effect.onInterrupt(() => background.cancel(child.id).pipe(Effect.asVoid)),
         )
       })
@@ -534,6 +527,13 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
         .pipe(Effect.orDie)
     }),
   )
+
+function taskErrorText(error: unknown) {
+  if (typeof error === "string" && error.trim()) return error
+  if (typeof error !== "object" || error === null || !("message" in error)) return undefined
+  const message = String(error.message)
+  return message.trim() ? message : undefined
+}
 
 const deps = [
   AgentV2.node,

@@ -260,6 +260,7 @@ import type {
   SessionGetResponses,
   SessionInitErrors,
   SessionInitResponses,
+  SessionInputIntent,
   SessionListErrors,
   SessionListResponses,
   SessionMessageErrors,
@@ -6086,6 +6087,7 @@ export class Session3 extends HeyApiClient {
       prompt?: PromptInput
       model?: ModelRef
       delivery?: "steer" | "queue"
+      intent?: SessionInputIntent
       expectedActiveAttemptID?: string
       resume?: boolean
     },
@@ -6101,6 +6103,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "prompt" },
             { in: "body", key: "model" },
             { in: "body", key: "delivery" },
+            { in: "body", key: "intent" },
             { in: "body", key: "expectedActiveAttemptID" },
             { in: "body", key: "resume" },
           ],
@@ -6185,6 +6188,7 @@ export class Session3 extends HeyApiClient {
       model?: ModelRef
       files?: Array<PromptInputFileAttachment>
       delivery?: "steer" | "queue"
+      intent?: SessionInputIntent
       expectedActiveAttemptID?: string
       resume?: boolean
       commit?: boolean
@@ -6204,6 +6208,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "model" },
             { in: "body", key: "files" },
             { in: "body", key: "delivery" },
+            { in: "body", key: "intent" },
             { in: "body", key: "expectedActiveAttemptID" },
             { in: "body", key: "resume" },
             { in: "body", key: "commit" },

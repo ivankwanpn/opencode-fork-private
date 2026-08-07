@@ -50,6 +50,15 @@ export type ConflictError = {
     readonly resource?: string | undefined;
 };
 export declare const isConflictError: (value: unknown) => value is ConflictError;
+export type SessionTurnConflictError = {
+    readonly _tag: "SessionTurnConflictError";
+    readonly sessionID: string;
+    readonly reason: "already-active" | "no-active" | "mismatch";
+    readonly turnID?: string | undefined;
+    readonly expectedTurnID?: string | undefined;
+    readonly message: string;
+};
+export declare const isSessionTurnConflictError: (value: unknown) => value is SessionTurnConflictError;
 export type SessionInputNotFoundError = {
     readonly _tag: "SessionInputNotFoundError";
     readonly sessionID: string;
@@ -510,6 +519,8 @@ export type SessionsActiveOutput = {
     readonly data: {
         readonly [x: string]: {
             readonly type: "running";
+            readonly turnID?: string | undefined;
+            readonly phase?: "pending" | "active" | undefined;
         };
     };
 }["data"];
@@ -867,6 +878,14 @@ export type SessionsPromptInput = {
             readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
         } | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
     }["id"];
@@ -924,6 +943,14 @@ export type SessionsPromptInput = {
             readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
         } | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
     }["prompt"];
@@ -981,6 +1008,14 @@ export type SessionsPromptInput = {
             readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
         } | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
     }["model"];
@@ -1038,9 +1073,82 @@ export type SessionsPromptInput = {
             readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
         } | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
     }["delivery"];
+    readonly intent?: {
+        readonly id?: string | null;
+        readonly prompt: {
+            readonly text: string;
+            readonly context?: ReadonlyArray<{
+                readonly text: string;
+                readonly metadata?: {
+                    readonly [x: string]: JsonValue;
+                };
+            }>;
+            readonly files?: ReadonlyArray<{
+                readonly uri: string;
+                readonly mime?: string;
+                readonly name?: string;
+                readonly description?: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+                readonly resource?: {
+                    readonly clientName: string;
+                    readonly uri: string;
+                };
+            }>;
+            readonly agents?: ReadonlyArray<{
+                readonly name: string;
+                readonly source?: {
+                    readonly start: number;
+                    readonly end: number;
+                    readonly text: string;
+                };
+            }>;
+            readonly system?: string;
+            readonly tools?: {
+                readonly [x: string]: boolean;
+            };
+            readonly format?: {
+                readonly type: "text";
+            } | {
+                readonly type: "json_schema";
+                readonly schema: {
+                    readonly [x: string]: JsonValue;
+                };
+                readonly retryCount?: number;
+            };
+        };
+        readonly model?: {
+            readonly id: string;
+            readonly providerID: string;
+            readonly variant?: string;
+            readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
+        } | null;
+        readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
+        readonly expectedActiveAttemptID?: string | null;
+        readonly resume?: boolean | null;
+    }["intent"];
     readonly expectedActiveAttemptID?: {
         readonly id?: string | null;
         readonly prompt: {
@@ -1095,6 +1203,14 @@ export type SessionsPromptInput = {
             readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
         } | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
     }["expectedActiveAttemptID"];
@@ -1152,6 +1268,14 @@ export type SessionsPromptInput = {
             readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
         } | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
     }["resume"];
@@ -1223,6 +1347,14 @@ export type SessionsPromptOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
         readonly timeCreated: number;
         readonly promotedSeq?: number;
     };
@@ -1319,6 +1451,14 @@ export type SessionsInputListOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
         readonly timeCreated: number;
         readonly promotedSeq?: number;
     }>;
@@ -1400,6 +1540,14 @@ export type SessionsInputGetOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
         readonly timeCreated: number;
         readonly promotedSeq?: number;
     };
@@ -1481,6 +1629,14 @@ export type SessionsInputPromoteOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
         readonly timeCreated: number;
         readonly promotedSeq?: number;
     };
@@ -1533,6 +1689,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1564,6 +1728,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1595,6 +1767,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1626,6 +1806,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1657,6 +1845,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1688,6 +1884,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1719,10 +1923,57 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
     }["delivery"];
+    readonly intent?: {
+        readonly id?: string | null;
+        readonly command: string;
+        readonly arguments: string;
+        readonly agent?: string | null;
+        readonly model?: {
+            readonly id: string;
+            readonly providerID: string;
+            readonly variant?: string;
+            readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
+        } | null;
+        readonly files?: ReadonlyArray<{
+            readonly uri: string;
+            readonly mime?: string;
+            readonly name?: string;
+            readonly description?: string;
+            readonly source?: {
+                readonly start: number;
+                readonly end: number;
+                readonly text: string;
+            };
+            readonly resource?: {
+                readonly clientName: string;
+                readonly uri: string;
+            };
+        }> | null;
+        readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
+        readonly expectedActiveAttemptID?: string | null;
+        readonly resume?: boolean | null;
+        readonly commit?: boolean | null;
+    }["intent"];
     readonly expectedActiveAttemptID?: {
         readonly id?: string | null;
         readonly command: string;
@@ -1750,6 +2001,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1781,6 +2040,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1812,6 +2079,14 @@ export type SessionsCommandInput = {
             };
         }> | null;
         readonly delivery?: "steer" | "queue" | null;
+        readonly intent?: ({
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        }) | null;
         readonly expectedActiveAttemptID?: string | null;
         readonly resume?: boolean | null;
         readonly commit?: boolean | null;
@@ -1884,6 +2159,14 @@ export type SessionsCommandOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
         readonly timeCreated: number;
         readonly promotedSeq?: number;
     };
@@ -3024,6 +3307,14 @@ export type SessionsHistoryOutput = {
                 readonly description: string;
             };
             readonly delivery: "steer" | "queue";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            };
         };
     } | {
         readonly id: string;
@@ -3106,6 +3397,54 @@ export type SessionsHistoryOutput = {
                 readonly description: string;
             };
             readonly delivery: "steer" | "queue";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            };
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.turn.started";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly turnID: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.turn.ended";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly turnID: string;
         };
     } | {
         readonly id: string;
@@ -4477,6 +4816,14 @@ export type SessionsEventsOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
     };
 } | {
     readonly id: string;
@@ -4559,6 +4906,54 @@ export type SessionsEventsOutput = {
             readonly description: string;
         };
         readonly delivery: "steer" | "queue";
+        readonly intent?: {
+            readonly type: "start";
+        } | {
+            readonly type: "steer";
+            readonly expectedTurnID: string;
+        } | {
+            readonly type: "queue";
+        };
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.turn.started";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly turnID: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.turn.ended";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly turnID: string;
     };
 } | {
     readonly id: string;
@@ -6196,6 +6591,7 @@ export type MessagesListOutput = {
         readonly previous?: string | null;
         readonly next?: string | null;
     };
+    readonly watermark?: number | null;
 };
 export type ModelsListInput = {
     readonly location?: {

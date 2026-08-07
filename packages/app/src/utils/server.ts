@@ -4,6 +4,7 @@ import { decode64 } from "@/utils/base64"
 import { createCustomProviderApi, type CustomProviderApi } from "./custom-provider-api"
 import { OpenCode } from "../../../client/src"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
+import type { SessionInput } from "@opencode-ai/schema/session-input"
 
 export function authTokenFromCredentials(input: { username?: string; password: string }) {
   return btoa(`${input.username ?? "opencode"}:${input.password}`)
@@ -42,6 +43,7 @@ export function createApiForServer(input: {
     value: Parameters<OpenCodeClient["session"]["prompt"]>[0] & {
       context?: Parameters<CurrentClient["sessions"]["prompt"]>[0]["prompt"]["context"]
       expectedActiveAttemptID?: string
+      intent?: SessionInput.Intent
       model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
       variant?: string
     },
@@ -74,6 +76,7 @@ export function createApiForServer(input: {
             }
           : undefined,
         delivery: value.delivery,
+        intent: value.intent,
         expectedActiveAttemptID: value.expectedActiveAttemptID,
         resume: value.resume,
       },

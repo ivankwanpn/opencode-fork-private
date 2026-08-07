@@ -15,7 +15,7 @@
 
 ---
 
-本仓库是 [OpenCode](https://opencode.ai)（MIT 协议）的**功能增强 Fork**，基于上游 `1.18.3` 分叉，并持续演进为 `999.0.11`。它保留了上游的终端界面（TUI）、桌面应用、Web 应用、无头 API 服务器和 SDK，同时将核心 agent loop 重构为**事件驱动、持久化、异步**的架构，并加入了一系列可靠性、兼容性与开发者体验改进。
+本仓库是 [OpenCode](https://opencode.ai)（MIT 协议）的**功能增强 Fork**，基于上游 `1.18.3` 分叉，并持续演进为 `999.0.13`。它保留了上游的终端界面（TUI）、桌面应用、Web 应用、无头 API 服务器和 SDK，同时将核心 agent loop 重构为**事件驱动、持久化、异步**的架构，并加入了一系列可靠性、兼容性与开发者体验改进。
 
 > **注意：** 本项目并非 OpenCode 团队开发，也与 OpenCode 官方没有任何隶属关系。"OpenCode" 是各自所有者的商标；本 Fork 以 MIT 协议分发。
 
@@ -216,7 +216,7 @@ bun install -g @vscode/vsce     # 全局安装 vsce（或直接用下面的 bunx
 vsce package --no-dependencies --skip-license
 ```
 
-`vsce` 会自动执行 `vscode:prepublish` 钩子（类型检查 + lint + esbuild 生产构建），并在 `sdks/vscode/` 下生成 **`opencode-999.0.11.vsix`**。
+`vsce` 会自动执行 `vscode:prepublish` 钩子（类型检查 + lint + esbuild 生产构建），并在 `sdks/vscode/` 下生成 **`opencode-999.0.13.vsix`**。
 
 如果 `vsce` 对仓库或版本元数据报错，可以加上发布流水线使用的同样参数：
 
@@ -229,7 +229,7 @@ vsce package --no-dependencies --skip-license --no-git-tag-version --no-update-p
 命令行方式：
 
 ```bash
-code --install-extension opencode-999.0.11.vsix
+code --install-extension opencode-999.0.13.vsix
 ```
 
 或通过 VS Code 界面：
@@ -237,7 +237,7 @@ code --install-extension opencode-999.0.11.vsix
 1. 打开**扩展**面板（`Ctrl+Shift+X` / `Cmd+Shift+X`）
 2. 点击 **...**（更多操作）菜单
 3. 选择 **Install from VSIX...**（从 VSIX 安装...）
-4. 选择 `opencode-999.0.11.vsix`
+4. 选择 `opencode-999.0.13.vsix`
 
 如果扩展没有立即激活，请重载窗口。
 

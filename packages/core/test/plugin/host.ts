@@ -313,6 +313,7 @@ function modelInfo(value: ModelV2.Info | ModelV2.MutableInfo) {
       headers: { ...variant.headers },
       body: { ...variant.body },
     })),
+    protocols: value.protocols && [...value.protocols],
     time: { ...value.time },
     cost: value.cost.map((cost) => ({ ...cost, tier: cost.tier && { ...cost.tier }, cache: { ...cost.cache } })),
     limit: { ...value.limit },

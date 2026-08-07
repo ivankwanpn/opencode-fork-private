@@ -23,6 +23,8 @@ import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
+import type { SessionInput } from "@opencode-ai/schema/session-input"
+import { SessionMessage } from "@opencode-ai/schema/session-message"
 import { runServerSessionMutation, type ServerSessionApi } from "@/utils/session-mutation"
 
 type PendingPrompt = {
@@ -42,6 +44,7 @@ export type FollowupDraft = {
   model: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
   variant?: string
   delivery?: "queue" | "steer"
+  intent?: SessionInput.Intent
 }
 
 type FollowupSendInput = {
@@ -50,6 +53,7 @@ type FollowupSendInput = {
   sync: DirectorySync
   draft: FollowupDraft
   delivery?: "queue" | "steer"
+  intent?: SessionInput.Intent
   messageID?: string
   optimisticBusy?: boolean
   before?: () => Promise<boolean> | boolean
@@ -59,6 +63,48 @@ type FollowupSendInput = {
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
 
 const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
+
+type TurnAwareSession = ServerSync["session"] & {
+  activeTurn?: (sessionID: string) => string | undefined
+}
+
+type FollowupRouting = {
+  delivery: "queue" | "steer"
+  intent: SessionInput.Intent
+}
+
+function followupRouting(input: {
+  requestedDelivery: "queue" | "steer"
+  explicitDelivery?: "queue" | "steer"
+  working: boolean
+  activeTurnID?: SessionMessage.ID
+  fallbackTurnID: SessionMessage.ID
+}): FollowupRouting {
+  if (input.requestedDelivery === "queue") {
+    return { delivery: "queue", intent: { type: "queue" } }
+  }
+
+  if (input.working && input.activeTurnID) {
+    return { delivery: "steer", intent: { type: "steer", expectedTurnID: input.activeTurnID } }
+  }
+
+  if (input.explicitDelivery === "steer") {
+    // Keep an explicit steer from silently becoming a new turn. The generated
+    // message ID is a valid but stale identity, so the server rejects it and
+    // the caller can restore the draft instead of changing turn semantics.
+    return {
+      delivery: "steer",
+      intent: { type: "steer", expectedTurnID: input.fallbackTurnID },
+    }
+  }
+
+  if (input.working) {
+    // A busy session without a known turn identity is not safe to steer.
+    return { delivery: "queue", intent: { type: "queue" } }
+  }
+
+  return { delivery: "steer", intent: { type: "start" } }
+}
 
 export function followupDelivery(
   event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey" | "repeat" | "isComposing">,
@@ -107,6 +153,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
 
       const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
       const delivery = input.delivery ?? input.draft.delivery ?? "steer"
+      const intent = input.intent ?? input.draft.intent
       await input.api.command({
         sessionID: input.draft.sessionID,
         id: messageID,
@@ -124,6 +171,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
           name: attachment.filename,
         })),
         delivery,
+        intent,
       })
       input.onSubmitted?.(messageID, delivery)
       return true
@@ -188,6 +236,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     }
 
     const delivery = input.delivery ?? input.draft.delivery ?? "steer"
+    const intent = input.intent ?? input.draft.intent
     await input.api.prompt({
       sessionID: input.draft.sessionID,
       id: messageID,
@@ -195,6 +244,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       model: input.draft.model,
       variant: input.draft.variant,
       delivery,
+      intent,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
         if (part.type !== "file") return []
@@ -351,7 +401,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
     const images = input.imageAttachments().slice()
     const mode = input.mode()
-    const delivery = explicitDelivery ?? input.defaultDelivery?.() ?? "steer"
+    const requestedDelivery = explicitDelivery ?? input.defaultDelivery?.() ?? "steer"
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) void abort()
@@ -480,6 +530,18 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
+    const messageID = Identifier.ascending("message")
+    const activeTurn = (submissionServerSync.session as TurnAwareSession).activeTurn?.(session.id)
+    const activeTurnID = activeTurn ? SessionMessage.ID.make(activeTurn) : undefined
+    const routing = followupRouting({
+      requestedDelivery,
+      explicitDelivery,
+      working: input.working(),
+      activeTurnID,
+      fallbackTurnID: SessionMessage.ID.make(messageID),
+    })
+    const delivery = routing.delivery
+    const intent = routing.intent
     const model = {
       modelID: currentModel.id,
       providerID: currentModel.provider.id,
@@ -494,9 +556,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
+      delivery,
+      intent,
     }
-
-    const messageID = Identifier.ascending("message")
 
     const clearInput = () => {
       submission.clear()
@@ -569,6 +631,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
               name: attachment.filename,
             })),
             delivery,
+            intent,
           })
           .catch((err) => {
             submissionServerSync.session.set("session_status", session.id, { type: "idle" })
@@ -659,6 +722,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       serverSync: submissionServerSync,
       draft,
       delivery,
+      intent,
       messageID,
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,

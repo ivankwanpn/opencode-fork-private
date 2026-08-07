@@ -210,6 +210,38 @@ describe("v2 session reducer", () => {
     ])
   })
 
+  test("does not reopen a completed assistant for a repeated step start", () => {
+    const reducer = createV2SessionReducer()
+    const completed = [
+      {
+        id: "msg_assistant",
+        type: "assistant",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+        content: [{ type: "text", text: "Complete answer" }],
+        finish: "stop",
+        time: { created: 2, completed: 7 },
+      },
+    ] as SessionMessageInfo[]
+
+    const result = reducer.reduce(
+      completed,
+      event({
+        ...base,
+        id: "evt_repeated_step",
+        type: "session.step.started",
+        data: {
+          sessionID: "ses_1",
+          assistantMessageID: "msg_assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+        },
+      }),
+    )
+
+    expect(result?.messages).toEqual(completed)
+  })
+
   test("requests hydration when a current assistant start event was missed", () => {
     const result = createV2SessionReducer().reduce(
       [],

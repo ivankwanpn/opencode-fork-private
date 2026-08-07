@@ -1059,12 +1059,13 @@ describe("SessionRunnerLLM", () => {
       const session = yield* SessionV2.Service
       yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "First" }), resume: false })
       yield* session.resume(sessionID)
-      const stale = EventV2.ID.create()
+      const attempt = yield* SessionAttempt.get((yield* Database.Service).db, sessionID)
+      expect(attempt?.status).toBe("ended")
       const error = yield* session
         .prompt({
           sessionID,
           prompt: Prompt.make({ text: "Steer to stale attempt" }),
-          expectedActiveAttemptID: stale,
+          expectedActiveAttemptID: attempt?.attempt_id,
         })
         .pipe(Effect.flip)
       expect(error).toBeInstanceOf(ActiveAttemptConflictError)

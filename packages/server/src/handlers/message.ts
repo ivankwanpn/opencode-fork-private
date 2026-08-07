@@ -1,4 +1,6 @@
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
 import { Effect, Schema } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
@@ -27,6 +29,7 @@ const cursor = {
 export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handlers) =>
   Effect.gen(function* () {
     const read = yield* SessionRead.Service
+    const database = yield* Database.Service
 
     return handlers.handle(
       "session.messages",
@@ -38,6 +41,9 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
           catch: () => new InvalidCursorError({ message: "Invalid cursor" }),
         })
         const order = decoded?.order ?? ctx.query.order ?? "desc"
+        // Read the watermark before the page so events committed after this
+        // point remain eligible for live replay instead of being skipped.
+        const latest = yield* EventV2.latestSequence(database.db, ctx.params.sessionID)
         const messages = yield* read
           .messages({
             sessionID: ctx.params.sessionID,
@@ -74,6 +80,7 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
             previous: first ? cursor.encode(first, order, "previous") : undefined,
             next: last ? cursor.encode(last, order, "next") : undefined,
           },
+          watermark: latest >= 0 ? latest : undefined,
         }
       }),
     )

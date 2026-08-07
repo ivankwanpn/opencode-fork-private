@@ -184,6 +184,7 @@ export default {
           \`session_id\` text NOT NULL,
           \`prompt\` text NOT NULL,
           \`delivery\` text NOT NULL,
+          \`intent\` text,
           \`admitted_seq\` integer NOT NULL,
           \`promoted_seq\` integer,
           \`terminal_outcome\` text,
@@ -239,6 +240,16 @@ export default {
           \`time_compacting\` integer,
           \`time_archived\` integer,
           CONSTRAINT \`fk_session_project_id_project_id_fk\` FOREIGN KEY (\`project_id\`) REFERENCES \`project\`(\`id\`) ON DELETE CASCADE
+        );
+      `)
+      yield* tx.run(`
+        CREATE TABLE \`session_turn\` (
+          \`session_id\` text PRIMARY KEY,
+          \`turn_id\` text NOT NULL,
+          \`status\` text NOT NULL,
+          \`seq\` integer NOT NULL,
+          \`time_updated\` integer NOT NULL,
+          CONSTRAINT \`fk_session_turn_session_id_session_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session\`(\`id\`) ON DELETE CASCADE
         );
       `)
       yield* tx.run(`
@@ -343,6 +354,7 @@ export default {
       yield* tx.run(`CREATE INDEX \`session_project_idx\` ON \`session\` (\`project_id\`);`)
       yield* tx.run(`CREATE INDEX \`session_workspace_idx\` ON \`session\` (\`workspace_id\`);`)
       yield* tx.run(`CREATE INDEX \`session_parent_idx\` ON \`session\` (\`parent_id\`);`)
+      yield* tx.run(`CREATE INDEX \`session_turn_status_idx\` ON \`session_turn\` (\`status\`,\`time_updated\`);`)
       yield* tx.run(
         `CREATE UNIQUE INDEX \`task_notification_outbox_message_idx\` ON \`task_notification_outbox\` (\`message_id\`);`,
       )

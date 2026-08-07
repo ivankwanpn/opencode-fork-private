@@ -22,6 +22,7 @@ import {
   ServiceUnavailableError,
   SessionInputConflictError,
   SessionInputNotFoundError,
+  SessionTurnConflictError,
   SessionNotFoundError,
   UnknownError,
 } from "../errors"
@@ -97,6 +98,8 @@ export type SessionsCursor = typeof SessionsCursor.Type
 
 const SessionActive = Schema.Struct({
   type: Schema.Literal("running"),
+  turnID: Schema.optional(SessionMessage.ID),
+  phase: Schema.optional(Schema.Literals(["pending", "active"])),
 }).annotate({ identifier: "SessionActive" })
 
 const SessionHistoryLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(100))
@@ -334,11 +337,12 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
           prompt: PromptInput.Prompt,
           model: Model.Ref.pipe(Schema.optional),
           delivery: SessionInput.Delivery.pipe(Schema.optional),
+          intent: SessionInput.Intent.pipe(Schema.optional),
           expectedActiveAttemptID: Event.ID.pipe(Schema.optional),
           resume: Schema.Boolean.pipe(Schema.optional),
         }),
         success: Schema.Struct({ data: SessionInput.Admitted }),
-        error: [ConflictError, SessionNotFoundError],
+        error: [ConflictError, SessionTurnConflictError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(
@@ -452,12 +456,13 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
           model: Model.Ref.pipe(Schema.optional),
           files: Schema.Array(PromptInput.FileAttachment).pipe(Schema.optional),
           delivery: SessionInput.Delivery.pipe(Schema.optional),
+          intent: SessionInput.Intent.pipe(Schema.optional),
           expectedActiveAttemptID: Event.ID.pipe(Schema.optional),
           resume: Schema.Boolean.pipe(Schema.optional),
           commit: Schema.Boolean.pipe(Schema.optional),
         }),
         success: Schema.Struct({ data: SessionInput.Admitted }),
-        error: [ConflictError, InvalidRequestError, SessionNotFoundError],
+        error: [ConflictError, SessionTurnConflictError, InvalidRequestError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(

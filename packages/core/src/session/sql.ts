@@ -15,6 +15,7 @@ import { AgentV2 } from "../agent"
 import type { Revert } from "@opencode-ai/schema/revert"
 import type { ID as EventID } from "@opencode-ai/schema/event"
 import type { RetryError } from "@opencode-ai/schema/session-event"
+import type { Intent as SessionInputIntent } from "@opencode-ai/schema/session-input"
 import { ModelV2 } from "../model"
 
 type SessionMessageData = Omit<(typeof SessionMessage.Message)["Encoded"], "type" | "id">
@@ -150,6 +151,7 @@ export const SessionInputTable = sqliteTable(
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     prompt: text({ mode: "json" }).notNull().$type<unknown>(),
     delivery: text().$type<SessionInput.Delivery>().notNull(),
+    intent: text({ mode: "json" }).$type<SessionInputIntent>(),
     admitted_seq: integer().notNull(),
     promoted_seq: integer(),
     terminal_outcome: text().$type<"completed" | "error" | "cancelled" | "recovery-required">(),
@@ -280,6 +282,23 @@ export const SessionAttemptTable = sqliteTable(
     time_updated: integer().notNull(),
   },
   (table) => [index("session_provider_attempt_status_retry_idx").on(table.status, table.retry_at)],
+)
+
+export type SessionTurnStatus = "pending" | "active" | "ended"
+
+export const SessionTurnTable = sqliteTable(
+  "session_turn",
+  {
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .primaryKey()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    turn_id: text().$type<SessionMessage.ID>().notNull(),
+    status: text().$type<SessionTurnStatus>().notNull(),
+    seq: integer().notNull(),
+    time_updated: integer().notNull(),
+  },
+  (table) => [index("session_turn_status_idx").on(table.status, table.time_updated)],
 )
 
 export const SessionContextEpochTable = sqliteTable("session_context_epoch", {

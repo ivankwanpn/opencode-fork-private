@@ -77,6 +77,8 @@ export declare function make(options: ClientOptions): {
         active: (requestOptions?: RequestOptions | undefined) => Promise<{
             readonly [x: string]: {
                 readonly type: "running";
+                readonly turnID?: string | undefined;
+                readonly phase?: "active" | "pending" | undefined;
             };
         }>;
         get: (input: SessionsGetInput, requestOptions?: RequestOptions | undefined) => Promise<{
@@ -357,6 +359,14 @@ export declare function make(options: ClientOptions): {
                 readonly description: string;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: number;
             readonly promotedSeq?: number | undefined;
         }>;
@@ -433,6 +443,14 @@ export declare function make(options: ClientOptions): {
                 readonly description: string;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: number;
             readonly promotedSeq?: number | undefined;
         }[]>;
@@ -502,6 +520,14 @@ export declare function make(options: ClientOptions): {
                 readonly description: string;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: number;
             readonly promotedSeq?: number | undefined;
         }>;
@@ -571,6 +597,14 @@ export declare function make(options: ClientOptions): {
                 readonly description: string;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: number;
             readonly promotedSeq?: number | undefined;
         }>;
@@ -642,6 +676,14 @@ export declare function make(options: ClientOptions): {
                 readonly description: string;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: number;
             readonly promotedSeq?: number | undefined;
         }>;
@@ -3206,6 +3248,14 @@ export declare function make(options: ClientOptions): {
                     readonly description: string;
                 } | undefined;
                 readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
             };
         } | {
             readonly id: string;
@@ -3288,6 +3338,14 @@ export declare function make(options: ClientOptions): {
                     readonly description: string;
                 } | undefined;
                 readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
             };
         } | {
             readonly id: string;
@@ -4069,6 +4127,46 @@ export declare function make(options: ClientOptions): {
                         };
                     } | undefined;
                 };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.turn.ended";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly turnID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.turn.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly turnID: string;
             };
         } | {
             readonly id: string;

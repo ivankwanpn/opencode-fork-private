@@ -22,6 +22,8 @@ export type Event =
   | EventSessionNextMessageImported
   | EventSessionNextPrompted
   | EventSessionNextPromptAdmitted
+  | EventSessionNextTurnStarted
+  | EventSessionNextTurnEnded
   | EventSessionNextContextUpdated
   | EventSessionNextSynthetic
   | EventSessionNextShellStarted
@@ -880,6 +882,7 @@ export type GlobalEvent = {
           prompt: Prompt
           synthetic?: SessionInputSynthetic
           delivery: "steer" | "queue"
+          intent?: SessionInputIntent
         }
       }
     | {
@@ -892,6 +895,25 @@ export type GlobalEvent = {
           prompt: Prompt
           synthetic?: SessionInputSynthetic
           delivery: "steer" | "queue"
+          intent?: SessionInputIntent
+        }
+      }
+    | {
+        id: string
+        type: "session.next.turn.started"
+        properties: {
+          timestamp: number
+          sessionID: string
+          turnID: string
+        }
+      }
+    | {
+        id: string
+        type: "session.next.turn.ended"
+        properties: {
+          timestamp: number
+          sessionID: string
+          turnID: string
         }
       }
     | {
@@ -1676,7 +1698,7 @@ export type GlobalEvent = {
         id: string
         type: "global.disposed"
         properties: {
-          [key: string]: unknown
+          reason?: "agent-config"
         }
       }
     | EventServerInstanceDisposed
@@ -1693,6 +1715,8 @@ export type GlobalEvent = {
     | SyncEventSessionNextMessageImported
     | SyncEventSessionNextPrompted
     | SyncEventSessionNextPromptAdmitted
+    | SyncEventSessionNextTurnStarted
+    | SyncEventSessionNextTurnEnded
     | SyncEventSessionNextContextUpdated
     | SyncEventSessionNextSynthetic
     | SyncEventSessionNextShellStarted
@@ -2771,6 +2795,8 @@ export type InvalidCursorError = {
 
 export type SessionActive = {
   type: "running"
+  turnID?: string
+  phase?: "pending" | "active"
 }
 
 export type SessionNotFoundError = {
@@ -2816,6 +2842,15 @@ export type ConflictError = {
   resource?: string
 }
 
+export type SessionTurnConflictError = {
+  _tag: "SessionTurnConflictError"
+  sessionID: string
+  reason: "already-active" | "no-active" | "mismatch"
+  turnID?: string
+  expectedTurnID?: string
+  message: string
+}
+
 export type SessionInputNotFoundError = {
   _tag: "SessionInputNotFoundError"
   sessionID: string
@@ -2837,6 +2872,8 @@ export type SessionDurableEvent =
   | SessionNextMessageImported
   | SessionNextPrompted
   | SessionNextPromptAdmitted
+  | SessionNextTurnStarted
+  | SessionNextTurnEnded
   | SessionNextContextUpdated
   | SessionNextSynthetic
   | SessionNextShellStarted
@@ -2879,6 +2916,7 @@ export type SessionMessagesResponse = {
     previous?: string
     next?: string
   }
+  watermark?: number
 }
 
 export type ProviderNotFoundError = {
@@ -3052,6 +3090,8 @@ export type V2Event =
   | SessionNextMessageImported
   | SessionNextPrompted
   | SessionNextPromptAdmitted
+  | SessionNextTurnStarted
+  | SessionNextTurnEnded
   | SessionNextContextUpdated
   | SessionNextSynthetic
   | SessionNextShellStarted
@@ -3579,6 +3619,18 @@ export type SessionInputSynthetic = {
   description: string
 }
 
+export type SessionInputIntent =
+  | {
+      type: "start"
+    }
+  | {
+      type: "steer"
+      expectedTurnID: string
+    }
+  | {
+      type: "queue"
+    }
+
 export type SessionNextRetryError = {
   message: string
   statusCode?: number
@@ -3869,6 +3921,7 @@ export type SyncEventSessionNextPrompted = {
       prompt: Prompt
       synthetic?: SessionInputSynthetic
       delivery: "steer" | "queue"
+      intent?: SessionInputIntent
     }
   }
 }
@@ -3888,6 +3941,39 @@ export type SyncEventSessionNextPromptAdmitted = {
       prompt: Prompt
       synthetic?: SessionInputSynthetic
       delivery: "steer" | "queue"
+      intent?: SessionInputIntent
+    }
+  }
+}
+
+export type SyncEventSessionNextTurnStarted = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.turn.started.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      turnID: string
+    }
+  }
+}
+
+export type SyncEventSessionNextTurnEnded = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.turn.ended.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      turnID: string
     }
   }
 }
@@ -4557,6 +4643,7 @@ export type SessionInputAdmitted = {
   prompt: Prompt
   synthetic?: SessionInputSynthetic
   delivery: "steer" | "queue"
+  intent?: SessionInputIntent
   timeCreated: number
   promotedSeq?: number
 }
@@ -4659,6 +4746,7 @@ export type SessionNextPrompted = {
     prompt: Prompt
     synthetic?: SessionInputSynthetic
     delivery: "steer" | "queue"
+    intent?: SessionInputIntent
   }
 }
 
@@ -4681,6 +4769,45 @@ export type SessionNextPromptAdmitted = {
     prompt: Prompt
     synthetic?: SessionInputSynthetic
     delivery: "steer" | "queue"
+    intent?: SessionInputIntent
+  }
+}
+
+export type SessionNextTurnStarted = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.turn.started"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    turnID: string
+  }
+}
+
+export type SessionNextTurnEnded = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.turn.ended"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    turnID: string
   }
 }
 
@@ -6793,7 +6920,7 @@ export type GlobalDisposed = {
   }
   location?: LocationRef
   data: {
-    [key: string]: unknown
+    reason?: "agent-config"
   }
 }
 
@@ -7027,6 +7154,7 @@ export type EventSessionNextPrompted = {
     prompt: Prompt
     synthetic?: SessionInputSynthetic
     delivery: "steer" | "queue"
+    intent?: SessionInputIntent
   }
 }
 
@@ -7040,6 +7168,27 @@ export type EventSessionNextPromptAdmitted = {
     prompt: Prompt
     synthetic?: SessionInputSynthetic
     delivery: "steer" | "queue"
+    intent?: SessionInputIntent
+  }
+}
+
+export type EventSessionNextTurnStarted = {
+  id: string
+  type: "session.next.turn.started"
+  properties: {
+    timestamp: number
+    sessionID: string
+    turnID: string
+  }
+}
+
+export type EventSessionNextTurnEnded = {
+  id: string
+  type: "session.next.turn.ended"
+  properties: {
+    timestamp: number
+    sessionID: string
+    turnID: string
   }
 }
 
@@ -7845,7 +7994,7 @@ export type EventGlobalDisposed = {
   id: string
   type: "global.disposed"
   properties: {
-    [key: string]: unknown
+    reason?: "agent-config"
   }
 }
 
@@ -12673,6 +12822,7 @@ export type V2SessionPromptData = {
     prompt: PromptInput
     model?: ModelRef
     delivery?: "steer" | "queue"
+    intent?: SessionInputIntent
     expectedActiveAttemptID?: string
     resume?: boolean
   }
@@ -12697,9 +12847,9 @@ export type V2SessionPromptErrors = {
    */
   404: SessionNotFoundError
   /**
-   * ConflictError
+   * ConflictError | SessionTurnConflictError
    */
-  409: ConflictError
+  409: ConflictError | SessionTurnConflictError
 }
 
 export type V2SessionPromptError = V2SessionPromptErrors[keyof V2SessionPromptErrors]
@@ -12957,6 +13107,7 @@ export type V2SessionCommandData = {
     model?: ModelRef
     files?: Array<PromptInputFileAttachment>
     delivery?: "steer" | "queue"
+    intent?: SessionInputIntent
     expectedActiveAttemptID?: string
     resume?: boolean
     commit?: boolean
@@ -12982,9 +13133,9 @@ export type V2SessionCommandErrors = {
    */
   404: SessionNotFoundError
   /**
-   * ConflictError
+   * ConflictError | SessionTurnConflictError
    */
-  409: ConflictError
+  409: ConflictError | SessionTurnConflictError
 }
 
 export type V2SessionCommandError = V2SessionCommandErrors[keyof V2SessionCommandErrors]

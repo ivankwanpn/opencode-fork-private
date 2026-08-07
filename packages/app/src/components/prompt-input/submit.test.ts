@@ -53,6 +53,7 @@ let variant: string | undefined
 let protocol: "openai-responses" | "openai-compatible" | "anthropic-messages" | undefined
 let permissionServer = "server-a"
 let createSessionGate: Promise<void> | undefined
+let activeTurnID: string | undefined
 
 let promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
 const [promptStore, setPromptStore] = createStore<PromptStore>({
@@ -266,6 +267,7 @@ beforeAll(async () => {
       session: {
         remember: () => undefined,
         set: () => undefined,
+        activeTurn: () => activeTurnID,
         sync: async () => {
           serverSessionSyncs++
         },
@@ -335,6 +337,7 @@ beforeEach(() => {
   protocol = undefined
   permissionServer = "server-a"
   createSessionGate = undefined
+  activeTurnID = undefined
   serverSessionSyncs = 0
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
@@ -660,6 +663,115 @@ describe("prompt submit worktree selection", () => {
     ])
   })
 
+  test("steers a normal follow-up only when the active turn identity is known", async () => {
+    params = { id: "session-1" }
+    activeTurnID = "msg_turn"
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await Bun.sleep(0)
+
+    expect(promptInputs[0]).toMatchObject({
+      delivery: "steer",
+      intent: { type: "steer", expectedTurnID: "msg_turn" },
+    })
+  })
+
+  test("queues a busy follow-up when the active turn identity is unavailable", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await Bun.sleep(0)
+
+    expect(promptInputs[0]).toMatchObject({ delivery: "queue", intent: { type: "queue" } })
+  })
+
+  test("keeps an explicit steer from becoming a new turn without an active identity", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event, "steer")
+    await Bun.sleep(0)
+
+    expect(promptInputs[0]).toMatchObject({
+      delivery: "steer",
+      intent: { type: "steer" },
+    })
+    expect((promptInputs[0] as { intent: { expectedTurnID: string } }).intent.expectedTurnID).toMatch(/^msg_/)
+  })
+
+  test("starts a new turn when idle status has a stale active identity", async () => {
+    params = { id: "session-1" }
+    activeTurnID = "msg_stale"
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await Bun.sleep(0)
+
+    expect(promptInputs[0]).toMatchObject({ delivery: "steer", intent: { type: "start" } })
+  })
+
   test("reuses the persisted follow-up message id when sending a retry", async () => {
     commands.push({ name: "review" })
     const draft: FollowupDraft = {
@@ -759,6 +871,7 @@ describe("prompt submit worktree selection", () => {
         sessionID: "session-1",
         id: expect.stringMatching(/^msg_/),
         delivery: "steer",
+        intent: { type: "start" },
         command: "review",
         arguments: "staged changes",
         agent: "agent",

@@ -598,25 +598,9 @@ export async function bootstrapDirectory(input: {
             ),
           )),
       () =>
-        resolveApi()
-          .then((api) =>
-            input.queryClient.fetchQuery(
-              loadProvidersQuery(
-                input.scope,
-                input.directory,
-                api,
-                input.apiForGeneration,
-              ),
-            ),
-          )
-          .catch((err) => {
-            const project = getFilename(input.directory)
-            showToast({
-              variant: "error",
-              title: input.translate("toast.project.reloadFailed.title", { project }),
-              description: formatServerError(err, input.translate),
-            })
-          }),
+        resolveApi().then((api) =>
+          input.queryClient.fetchQuery(loadProvidersQuery(input.scope, input.directory, api, input.apiForGeneration)),
+        ),
     ].filter(Boolean) as (() => Promise<any>)[]
 
     await waitForPaint()

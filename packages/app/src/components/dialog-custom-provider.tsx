@@ -14,6 +14,7 @@ import { Link } from "@/components/link"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
+import { formatServerError } from "@/utils/server-errors"
 import { showToast } from "@/utils/toast"
 import {
   canDiscoverModels,
@@ -171,7 +172,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
     onError: (error) => {
       batch(() => {
         setDiscovery("attempted", true)
-        setDiscovery("error", safeError(error, language.t("provider.custom.discovery.failure")))
+        setDiscovery("error", formatServerError(error, language.t, language.t("provider.custom.discovery.failure")))
       })
     },
   }))
@@ -238,7 +239,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
       })
     },
     onError: (error) => {
-      setDiscovery("saveError", safeError(error, language.t("common.requestFailed")))
+      setDiscovery("saveError", formatServerError(error, language.t, language.t("common.requestFailed")))
     },
   }))
 
@@ -507,18 +508,4 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
       </form>
     </div>
   )
-}
-
-function safeError(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.trim()) return error.message
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string" &&
-    error.message.trim()
-  ) {
-    return error.message
-  }
-  return fallback
 }

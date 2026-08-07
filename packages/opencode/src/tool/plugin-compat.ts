@@ -11,6 +11,7 @@ import z from "zod"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import { Plugin } from "@/plugin"
+import { errorMessage } from "@/util/error"
 
 export type Definition = Omit<ToolDefinition, "args"> & {
   readonly args?: ToolDefinition["args"] | null
@@ -45,11 +46,24 @@ const discover = Effect.fn("PluginToolCompat.discover")(function* (config: Confi
   if (matches.length > 0) yield* config.waitForDependencies()
   for (const match of matches) {
     const namespace = path.basename(match, path.extname(match))
-    const module = yield* Effect.promise(() => import(pathToFileURL(match).href))
-    for (const [name, definition] of Object.entries(module)) {
-      if (!isPluginTool(definition)) continue
-      contributions.push(compile(name === "default" ? namespace : `${namespace}_${name}`, definition))
-    }
+    const loaded = yield* Effect.tryPromise({
+      try: async () => {
+        const module = await import(pathToFileURL(match).href)
+        return Object.entries(module).flatMap(([name, definition]) =>
+          isPluginTool(definition)
+            ? [compile(name === "default" ? namespace : `${namespace}_${name}`, definition)]
+            : [],
+        )
+      },
+      catch: (error) => error,
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("custom tool load failed", { path: match, error: errorMessage(error) }),
+      ),
+      Effect.option,
+    )
+    if (Option.isNone(loaded)) continue
+    contributions.push(...loaded.value)
   }
 
   for (const hooks of yield* plugin.list()) {

@@ -255,7 +255,20 @@ export function emitPromise(
       },
       {
         path: "client.ts",
-        content: renderPromiseClient(groups).replace("let next: ReadableStreamReadResult<Uint8Array>", "let next"),
+        content: renderPromiseClient(groups)
+          .replace("let next: ReadableStreamReadResult<Uint8Array>", "let next")
+          .replace(
+            [
+              "    try {",
+              "      await response.body?.cancel()",
+              "    } catch {}",
+              '    throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })',
+            ].join("\n"),
+            [
+              "    const body = await json(response).catch(() => undefined)",
+              '    throw new ClientError("UnexpectedStatus", { cause: { status: response.status, body } })',
+            ].join("\n"),
+          ),
       },
       {
         path: "index.ts",

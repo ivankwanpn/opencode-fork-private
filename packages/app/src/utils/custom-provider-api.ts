@@ -54,7 +54,11 @@ export function createCustomProviderApi(options: {
         `Provider response was not valid JSON: ${method} ${path} (${response.status}, ${response.headers.get("content-type") ?? "no content type"})`,
       )
     })
-    if (!response.ok) throw value
+    if (!response.ok) {
+      throw new Error(`Provider request failed: ${method} ${path} (${response.status})`, {
+        cause: { status: response.status, body: value },
+      })
+    }
     return value as T
   }
 

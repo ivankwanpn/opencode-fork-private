@@ -296,10 +296,8 @@ export function make(options: ClientOptions) {
 
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
-    try {
-      await response.body?.cancel()
-    } catch {}
-    throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
+    const body = await json(response).catch(() => undefined)
+    throw new ClientError("UnexpectedStatus", { cause: { status: response.status, body } })
   }
 
   const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {

@@ -29,15 +29,42 @@ export function formatServerError(error: unknown, translate?: Translator, fallba
   const unwrapped = unwrapNamedError(error)
   if (isConfigInvalidErrorLike(unwrapped)) return parseReadableConfigInvalidError(unwrapped, translate)
   if (isProviderModelNotFoundErrorLike(unwrapped)) return parseReadableProviderModelNotFoundError(unwrapped, translate)
+  const message = readMessage(unwrapped)
+  if (message) return message
+  const status = readStatus(error)
+  if (status !== undefined) return tr(translate, "error.chain.status", `Status: ${status}`, { status })
   if (error instanceof Error && error.message) return error.message
   if (typeof error === "string" && error) return error
   if (fallback) return fallback
   return tr(translate, "error.chain.unknown", "Unknown error")
 }
 
+function readMessage(error: unknown): string | undefined {
+  if (typeof error === "string") return error.trim() || undefined
+  if (error instanceof Error || typeof error !== "object" || error === null) return undefined
+  if ("message" in error && typeof error.message === "string" && error.message.trim()) return error.message.trim()
+  if (!("data" in error) || typeof error.data !== "object" || error.data === null) return undefined
+  if ("message" in error.data && typeof error.data.message === "string" && error.data.message.trim()) {
+    return error.data.message.trim()
+  }
+  return undefined
+}
+
+function readStatus(error: unknown): number | undefined {
+  if (
+    !(error instanceof Error) ||
+    typeof error.cause !== "object" ||
+    error.cause === null ||
+    !("status" in error.cause)
+  ) {
+    return undefined
+  }
+  return typeof error.cause.status === "number" ? error.cause.status : undefined
+}
+
 function unwrapNamedError(error: unknown): unknown {
   if (error instanceof Error && error.cause && typeof error.cause === "object" && "body" in error.cause) {
-    return (error.cause as Record<string, unknown>).body
+    return error.cause.body
   }
   return error
 }

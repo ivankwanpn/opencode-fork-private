@@ -10,6 +10,7 @@ import { SessionStore } from "../store"
 import { SessionExecution } from "../execution"
 import { SessionAttempt } from "../attempt"
 import { SessionInput } from "../input"
+import { SessionTurn } from "../turn"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
@@ -45,10 +46,15 @@ const unresolvedTaskInputID = Effect.fn("SessionExecutionLocal.unresolvedTaskInp
 })
 
 export const startupCandidates = Effect.fn("SessionExecutionLocal.startupCandidates")(function* (db: DB, now: number) {
-  const [scheduled, input] = yield* Effect.all([SessionAttempt.scheduled(db, now), SessionInput.startupCandidates(db)])
+  const [scheduled, input, turns] = yield* Effect.all([
+    SessionAttempt.scheduled(db, now),
+    SessionInput.startupCandidates(db),
+    SessionTurn.open(db),
+  ])
   const candidates = new Set<SessionSchema.ID>([
     ...scheduled.map((row: { sessionID: SessionSchema.ID }) => row.sessionID),
     ...input.map((row: { sessionID: SessionSchema.ID }) => row.sessionID),
+    ...turns.map((row) => row.session_id),
   ])
   const safe: SessionSchema.ID[] = []
   for (const sessionID of candidates) {

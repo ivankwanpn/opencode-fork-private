@@ -90,6 +90,18 @@ export class SessionInputConflictError extends Schema.TaggedErrorClass<SessionIn
   { httpApiStatus: 409 },
 ) {}
 
+export class SessionTurnConflictError extends Schema.TaggedErrorClass<SessionTurnConflictError>()(
+  "SessionTurnConflictError",
+  {
+    sessionID: Schema.String,
+    reason: Schema.Literals(["already-active", "no-active", "mismatch"]),
+    turnID: Schema.optional(Schema.String),
+    expectedTurnID: Schema.optional(Schema.String),
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
 export class MessageNotFoundError extends Schema.TaggedErrorClass<MessageNotFoundError>()(
   "MessageNotFoundError",
   {

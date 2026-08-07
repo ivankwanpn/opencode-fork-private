@@ -137,6 +137,8 @@ export const PromptConflictError = SessionCommand.PromptConflictError
 export type PromptConflictError = SessionCommand.PromptConflictError
 export const ActiveAttemptConflictError = SessionCommand.ActiveAttemptConflictError
 export type ActiveAttemptConflictError = SessionCommand.ActiveAttemptConflictError
+export const TurnConflictError = SessionCommand.TurnConflictError
+export type TurnConflictError = SessionCommand.TurnConflictError
 export class InputConflictError extends Schema.TaggedErrorClass<InputConflictError>()("Session.InputConflictError", {
   sessionID: SessionSchema.ID,
   inputID: SessionMessage.ID,
@@ -156,6 +158,7 @@ export type Error =
   | MessageDecodeError
   | PromptConflictError
   | ActiveAttemptConflictError
+  | TurnConflictError
   | InputConflictError
   | CommandExpansionError
   | BusyError
@@ -214,10 +217,12 @@ export interface Interface {
     prompt: PromptInput.Prompt
     model?: ModelV2.Ref
     delivery?: SessionInput.Delivery
+    intent?: SessionInput.Intent
     expectedActiveAttemptID?: EventV2.ID
     resume?: boolean
     commit?: boolean
-  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | ActiveAttemptConflictError>
+  }) =>
+    Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | ActiveAttemptConflictError | TurnConflictError>
   readonly command: (input: {
     id?: SessionMessage.ID
     sessionID: SessionSchema.ID
@@ -228,12 +233,13 @@ export interface Interface {
     variant?: ModelV2.VariantID
     files?: readonly PromptInput.FileAttachment[]
     delivery?: SessionInput.Delivery
+    intent?: SessionInput.Intent
     expectedActiveAttemptID?: EventV2.ID
     resume?: boolean
     commit?: boolean
   }) => Effect.Effect<
     SessionInput.Admitted,
-    NotFoundError | PromptConflictError | ActiveAttemptConflictError | CommandExpansionError
+    NotFoundError | PromptConflictError | ActiveAttemptConflictError | TurnConflictError | CommandExpansionError
   >
   readonly pending: (input: {
     sessionID: SessionSchema.ID
@@ -577,6 +583,7 @@ const layer = Layer.effect(
               prompt: prepared.prompt,
               model: input.model,
               delivery: input.delivery,
+              intent: input.intent,
               expectedActiveAttemptID: input.expectedActiveAttemptID,
               plugins: prepared.plugins,
               materialize: (prompt, agent) =>
@@ -632,6 +639,7 @@ const layer = Layer.effect(
               sessionID: input.sessionID,
               prompt: resolved.prompt,
               delivery: input.delivery,
+              intent: input.intent,
               expectedActiveAttemptID: input.expectedActiveAttemptID,
               plugins: prepared.plugins,
               agent: resolved.agent,
@@ -688,6 +696,7 @@ const layer = Layer.effect(
                   prompt: existing.prompt,
                   synthetic: existing.synthetic,
                   delivery: existing.delivery,
+                  intent: existing.intent,
                 },
                 { id: promptedEventID(existing.id) },
               )

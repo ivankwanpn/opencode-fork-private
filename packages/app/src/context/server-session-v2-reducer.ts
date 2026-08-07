@@ -255,6 +255,9 @@ export function createV2SessionReducer() {
               )
             : [...source]
         const existing = completed.find((item) => item.id === event.data.assistantMessageID)
+        // A terminal assistant message is immutable. A delayed/replayed start marker
+        // must not turn a completed answer back into an in-flight row.
+        if (existing?.type === "assistant" && existing.time.completed !== undefined) return result([...source])
         if (existing?.type === "assistant")
           return result(
             update(completed, existing.id, (item) =>

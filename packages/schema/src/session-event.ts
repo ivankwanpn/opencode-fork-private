@@ -35,6 +35,7 @@ const PromptFields = {
   prompt: Prompt,
   synthetic: SessionInput.Synthetic.pipe(optional),
   delivery: Delivery,
+  intent: SessionInput.Intent.pipe(optional),
 }
 
 const options = {
@@ -109,6 +110,28 @@ export const PromptAdmitted = Event.define({
   schema: PromptFields,
 })
 export type PromptAdmitted = typeof PromptAdmitted.Type
+
+export namespace Turn {
+  export const Started = Event.define({
+    type: "session.next.turn.started",
+    ...options,
+    schema: {
+      ...Base,
+      turnID: SessionMessage.ID,
+    },
+  })
+  export type Started = typeof Started.Type
+
+  export const Ended = Event.define({
+    type: "session.next.turn.ended",
+    ...options,
+    schema: {
+      ...Base,
+      turnID: SessionMessage.ID,
+    },
+  })
+  export type Ended = typeof Ended.Type
+}
 
 export const ContextUpdated = Event.define({
   type: "session.next.context.updated",
@@ -545,6 +568,8 @@ export const DurableDefinitions = Event.inventory(
   MessageImported,
   Prompted,
   PromptAdmitted,
+  Turn.Started,
+  Turn.Ended,
   ContextUpdated,
   Synthetic,
   Shell.Started,
@@ -582,6 +607,8 @@ export const Definitions = Event.inventory(
   MessageImported,
   Prompted,
   PromptAdmitted,
+  Turn.Started,
+  Turn.Ended,
   ContextUpdated,
   Synthetic,
   Shell.Started,

@@ -56,7 +56,7 @@ describe("contract hygiene", () => {
 
   test("current source avoids Any and mutable contract wrappers", async () => {
     const files = [...new Bun.Glob("*.ts").scanSync(fileURLToPath(new URL("../src", import.meta.url)))].filter(
-      (file) => !file.endsWith("-v1.ts"),
+      (file) => !file.endsWith("-v1.ts") && !file.replaceAll("\\", "/").startsWith("v1/"),
     )
     const source = await Promise.all(
       files.map((file) => Bun.file(new URL(`../src/${file}`, import.meta.url)).text()),

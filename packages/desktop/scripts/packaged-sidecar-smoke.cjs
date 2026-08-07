@@ -329,7 +329,7 @@ async function startSidecar(port, configContent) {
 async function run() {
   assert(fs.existsSync(sidecarPath), `Packaged sidecar not found: ${sidecarPath}`)
   const packagedMetadata = JSON.parse(fs.readFileSync(path.join(asarPath, "package.json"), "utf8"))
-  assert(packagedMetadata.version === "999.0.11", `Packaged Desktop version is ${packagedMetadata.version}, expected 999.0.11`)
+  assert(packagedMetadata.version === "999.0.13", `Packaged Desktop version is ${packagedMetadata.version}, expected 999.0.13`)
   const port = await getPort()
   const base = `http://127.0.0.1:${port}`
   const llm = await startFakeLlm()

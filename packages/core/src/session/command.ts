@@ -28,6 +28,7 @@ import { Prompt, dematerialize } from "./prompt"
 import { SessionProjector } from "./projector"
 import { SessionSchema } from "./schema"
 import { SessionCancellationTable, SessionTable } from "./sql"
+import { SessionTurn } from "./turn"
 import { SessionV1 } from "../v1/session"
 import { Slug } from "../util/slug"
 
@@ -48,6 +49,9 @@ export class ActiveAttemptConflictError extends Schema.TaggedErrorClass<ActiveAt
     expectedAttemptID: EventV2.ID,
   },
 ) {}
+
+export const TurnConflictError = SessionTurn.ConflictError
+export type TurnConflictError = SessionTurn.ConflictError
 
 export class Cancelled extends Schema.TaggedErrorClass<Cancelled>()("Session.Cancelled", {
   sessionID: SessionSchema.ID,
@@ -87,12 +91,17 @@ export interface Interface {
     sessionID: SessionSchema.ID
     prompt: PromptInput.Prompt
     delivery?: SessionInput.Delivery
+    intent?: SessionInput.Intent
     expectedActiveAttemptID?: EventV2.ID
     plugins?: PluginRuntime.Interface
     agent?: AgentV2.ID
     model?: ModelV2.Ref
     materialize?: (prompt: Prompt, activeAgent?: AgentV2.ID) => Effect.Effect<Prompt>
-  }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | ActiveAttemptConflictError>
+  }) =>
+    Effect.Effect<
+      SessionInput.Admitted,
+      NotFoundError | PromptConflictError | ActiveAttemptConflictError | TurnConflictError
+    >
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionCommand") {}
@@ -317,7 +326,7 @@ const layer = Layer.effect(
             if (transformedMessage.id !== messageID || transformedMessage.sessionID !== session.id)
               return yield* new PromptConflictError({ sessionID: input.sessionID, messageID })
             const unresolved = restorePrompt(initialPrompt, messageID, transformedMessage, parts.get())
-            const delivery = input.delivery ?? "steer"
+            const delivery = input.intent?.type === "queue" ? "queue" : input.intent ? "steer" : (input.delivery ?? "steer")
             const existing = yield* SessionInput.find(db, messageID)
             let admitted: SessionInput.Admitted
             if (existing) {
@@ -325,7 +334,8 @@ const layer = Layer.effect(
                 existing.sessionID !== input.sessionID ||
                 existing.delivery !== delivery ||
                 existing.synthetic !== undefined ||
-                !SessionInput.samePrompt(dematerialize(existing.prompt), unresolved)
+                !SessionInput.samePrompt(dematerialize(existing.prompt), unresolved) ||
+                JSON.stringify(existing.intent) !== JSON.stringify(input.intent)
               )
                 return yield* new PromptConflictError({
                   sessionID: input.sessionID,
@@ -344,13 +354,15 @@ const layer = Layer.effect(
                 messageID,
                 prompt,
                 delivery,
+                intent: input.intent,
               }
               const expectedActiveAttemptID = input.expectedActiveAttemptID
               const commit = expectedActiveAttemptID
                 ? (seq: number) =>
                     SessionAttempt.get(db, input.sessionID).pipe(
                       Effect.flatMap((row) =>
-                        row?.attempt_id === expectedActiveAttemptID
+                        row?.attempt_id === expectedActiveAttemptID &&
+                        (row.status === "started" || row.status === "responding")
                           ? Effect.void
                           : Effect.die(
                               new ActiveAttemptConflictError({
@@ -367,13 +379,18 @@ const layer = Layer.effect(
                 sessionID: input.sessionID,
                 prompt,
                 delivery,
+                intent: input.intent,
                 expectedActiveAttemptID,
                 commit,
               }).pipe(
                 Effect.catchDefect(
-                  (defect): Effect.Effect<never, ActiveAttemptConflictError | PromptConflictError> =>
+                  (
+                    defect,
+                  ): Effect.Effect<never, ActiveAttemptConflictError | PromptConflictError | TurnConflictError> =>
                     defect instanceof ActiveAttemptConflictError
                       ? Effect.fail(defect)
+                      : defect instanceof SessionTurn.ConflictError
+                        ? Effect.fail(defect)
                       : defect instanceof SessionInput.LifecycleConflict
                         ? Effect.fail(new PromptConflictError({ sessionID: input.sessionID, messageID }))
                         : Effect.die(defect),

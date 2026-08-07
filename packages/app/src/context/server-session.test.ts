@@ -298,6 +298,46 @@ describe("server session", () => {
     expect(store.data.part[assistant.id]).toEqual([expect.objectContaining({ text: "complete answer live" })])
   })
 
+  test("refreshes the active turn snapshot after a durable event gap", async () => {
+    const refreshed = Promise.withResolvers<unknown>()
+    const messageApi = {
+      list: async () => refreshed.promise,
+    } as unknown as MessageApi
+    const sessionApi = { get: async () => session("child") } as unknown as SessionApi
+    const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
+      retry: retryImmediately,
+      activeSessions: async () => ({
+        child: { type: "running", turnID: "msg_current_turn", phase: "active" },
+      }),
+    })
+    store.remember(session("child"))
+    store.setTurn("child", "msg_stale_turn", "active")
+
+    const event = (seq: number, id: string) =>
+      ({
+        id,
+        created: seq,
+        type: "session.step.started",
+        durable: { aggregateID: "child", seq, version: 1 },
+        location: { directory: "/repo" },
+        data: {
+          sessionID: "child",
+          assistantMessageID: "msg_assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+        },
+      }) as unknown as V2Event
+
+    store.applyV2(event(1, "evt_turn_before_gap"))
+    store.applyV2(event(3, "evt_turn_after_gap"))
+    refreshed.resolve({ data: [], cursor: { previous: null, next: null } })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(store.activeTurn("child")).toBe("msg_current_turn")
+    expect(store.turnPhase("child")).toBe("active")
+  })
+
   test("refreshes V2 history when an idle boundary follows missing terminal events", async () => {
     const user = userMessage("msg_1_user")
     const assistant = assistantMessage("msg_2_assistant", user.id)

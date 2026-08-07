@@ -1,5 +1,7 @@
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionTurn } from "@opencode-ai/core/session/turn"
+import { Database } from "@opencode-ai/core/database/database"
 import { DateTime, Effect, Stream } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
@@ -12,6 +14,7 @@ import {
   ServiceUnavailableError,
   SessionInputConflictError,
   SessionInputNotFoundError,
+  SessionTurnConflictError,
   SessionNotFoundError,
   UnknownError,
 } from "@opencode-ai/protocol/errors"
@@ -21,6 +24,8 @@ import { SessionShareCapability } from "../session-share"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { SessionTodo } from "@opencode-ai/core/session/todo"
 import { SessionDiffCapability } from "../session-diff"
+import { Session } from "@opencode-ai/schema/session"
+import { SessionMessage } from "@opencode-ai/schema/session-message"
 
 const DefaultSessionsLimit = 50
 const DefaultSessionHistoryLimit = 50
@@ -34,9 +39,16 @@ function originalMessageID(message: { readonly metadata?: Readonly<Record<string
   return typeof id === "string" ? id : undefined
 }
 
+function turnConflictMessage(error: SessionV2.TurnConflictError) {
+  if (error.reason === "already-active") return `Session already has an open turn: ${error.turnID ?? "unknown"}`
+  if (error.reason === "no-active") return "Session no longer has an open turn for this steer"
+  return `Session turn changed since steer submission: expected ${error.expectedTurnID ?? "unknown"}, found ${error.turnID ?? "none"}`
+}
+
 export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* SessionV2.Service
+    const database = yield* Database.Service
     const read = yield* SessionRead.Service
     const share = yield* SessionShareCapability.Service
     const todo = yield* SessionTodo.Service
@@ -102,10 +114,24 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.active",
         Effect.fn(function* () {
+          const statuses = new Map<
+            Session.ID,
+            { readonly type: "running"; readonly turnID?: SessionMessage.ID; readonly phase?: "pending" | "active" }
+          >(
+            (yield* SessionTurn.open(database.db)).map((turn) => [
+              Session.ID.make(turn.session_id),
+              {
+                type: "running" as const,
+                turnID: SessionMessage.ID.make(turn.turn_id),
+                phase: turn.status === "pending" ? ("pending" as const) : ("active" as const),
+              } as const,
+            ]),
+          )
+          for (const sessionID of yield* session.active) {
+            if (!statuses.has(sessionID)) statuses.set(sessionID, { type: "running" })
+          }
           return {
-            data: Object.fromEntries(
-              Array.from(yield* session.active, (sessionID) => [sessionID, { type: "running" as const }]),
-            ),
+            data: Object.fromEntries(statuses),
           }
         }),
       )
@@ -339,6 +365,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 prompt: ctx.payload.prompt,
                 model: ctx.payload.model,
                 delivery: ctx.payload.delivery,
+                intent: ctx.payload.intent,
                 expectedActiveAttemptID: ctx.payload.expectedActiveAttemptID,
                 resume: ctx.payload.resume,
               })
@@ -364,6 +391,17 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                     new ConflictError({
                       message: `Active provider attempt changed since steer submission: expected ${error.expectedAttemptID}, found ${error.attemptID}`,
                       resource: error.sessionID,
+                    }),
+                  ),
+                ),
+                Effect.catchTag("Session.TurnConflictError", (error) =>
+                  Effect.fail(
+                    new SessionTurnConflictError({
+                      sessionID: error.sessionID,
+                      reason: error.reason,
+                      turnID: error.turnID,
+                      expectedTurnID: error.expectedTurnID,
+                      message: turnConflictMessage(error),
                     }),
                   ),
                 ),
@@ -587,6 +625,17 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                     new ConflictError({
                       message: `Active provider attempt changed since command submission: expected ${error.expectedAttemptID}, found ${error.attemptID}`,
                       resource: error.sessionID,
+                    }),
+                  ),
+                ),
+                Effect.catchTag("Session.TurnConflictError", (error) =>
+                  Effect.fail(
+                    new SessionTurnConflictError({
+                      sessionID: error.sessionID,
+                      reason: error.reason,
+                      turnID: error.turnID,
+                      expectedTurnID: error.expectedTurnID,
+                      message: turnConflictMessage(error),
                     }),
                   ),
                 ),

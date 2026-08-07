@@ -70,6 +70,7 @@ type MessagePage = {
   projectSource?: boolean
   cursor?: string
   complete: boolean
+  watermark?: number
 }
 
 function legacyMessageSource(items: { info: Message; parts: Part[] }[]): SessionMessageInfo[] {
@@ -199,6 +200,16 @@ type ServerSessionOptions = {
   api?: CompatibleApi
   apiForGeneration?: () => Promise<CompatibleImplementation>
   currentSession?: Pick<ServerApi["session"], "todo">
+  activeSessions?: () => Promise<unknown>
+}
+
+function activeTurnFromSnapshot(snapshot: unknown, sessionID: string) {
+  if (!snapshot || typeof snapshot !== "object") return
+  const status = (snapshot as Record<string, unknown>)[sessionID]
+  if (!status || typeof status !== "object") return null
+  if (!("turnID" in status) || typeof status.turnID !== "string") return null
+  if (!("phase" in status) || (status.phase !== "pending" && status.phase !== "active")) return null
+  return { turnID: status.turnID, phase: status.phase } as const
 }
 
 type ProjectedSessionClient = {
@@ -225,6 +236,11 @@ type PendingV2Hydration = {
 type PendingV2Recovery = {
   events: V2InputEvent[]
   baseline: Map<string, number>
+}
+
+type SessionTurnState = {
+  turnID: string
+  phase: "pending" | "active"
 }
 
 export function createServerSession(
@@ -272,6 +288,7 @@ export function createServerSession(
   const pendingV2Hydrations = new Map<string, PendingV2Hydration>()
   const durableSequences = new Map<string, number>()
   const pendingV2Recoveries = new Map<string, PendingV2Recovery>()
+  const turns = new Map<string, SessionTurnState>()
   const v2SettlementRefreshes = new Map<string, Promise<void>>()
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
@@ -338,6 +355,7 @@ export function createServerSession(
         ...Object.entries(data.session_status)
           .filter(([, status]) => status.type !== "idle")
           .map(([sessionID]) => sessionID),
+        ...turns.keys(),
       ])
       for (const sessionID of preserve) {
         let current = data.info[sessionID]
@@ -558,6 +576,7 @@ export function createServerSession(
       v2Hydrations.delete(sessionID)
       pendingV2Hydrations.delete(sessionID)
       pendingV2Recoveries.delete(sessionID)
+      turns.delete(sessionID)
       v2SettlementRefreshes.delete(sessionID)
       durableSequences.delete(sessionID)
       messageLoads.delete(sessionID)
@@ -643,6 +662,8 @@ export function createServerSession(
         projectSource: true,
         cursor: response.cursor.next ?? undefined,
         complete: response.data.length === 0,
+        watermark:
+          "watermark" in first && typeof first.watermark === "number" ? first.watermark : undefined,
       }
     }
     const response = await (options?.retry ?? retry)(() => {
@@ -786,6 +807,8 @@ export function createServerSession(
           })()
         : page
     const merged = mergeOptimisticPage(projected, [...(optimistic.get(sessionID)?.values() ?? [])])
+    if (page.watermark !== undefined)
+      durableSequences.set(sessionID, Math.max(durableSequences.get(sessionID) ?? -1, page.watermark))
     merged.observed.forEach((item) => {
       if (!load?.clearedMessageParts.has(item.messageID)) confirmOptimistic(sessionID, item.messageID, item.parts)
     })
@@ -1086,7 +1109,7 @@ export function createServerSession(
     if (!v2Hydrations.has(sessionID)) hydrateV2Message(sessionID, pending?.messageID ?? messageID)
   }
 
-  const applyV2 = (event: V2InputEvent) => {
+  const applyV2 = (event: V2InputEvent, recovering = false) => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
     const sessionID = event.data.sessionID
     const pendingRecovery = pendingV2Recoveries.get(sessionID)
@@ -1098,30 +1121,41 @@ export function createServerSession(
       const durable = event.durable
       const previous = durableSequences.get(sessionID)
       if (previous !== undefined && durable.seq <= previous) return
-      if (previous !== undefined && durable.seq > previous + 1 && hasCurrentApi) {
-        const baseline = new Map([[sessionID, durable.seq]])
+      if (!recovering && previous !== undefined && durable.seq > previous + 1 && hasCurrentApi) {
+        const baseline = new Map([[sessionID, previous]])
         const recovery: PendingV2Recovery = { events: [event], baseline }
         pendingV2Recoveries.set(sessionID, recovery)
-        durableSequences.set(sessionID, durable.seq)
         void sync(sessionID, { force: true })
-          .then(() => {
+          .then(async () => {
             if (pendingV2Recoveries.get(sessionID) !== recovery) return
+            const snapshot = await options?.activeSessions?.().catch(() => undefined)
+            if (pendingV2Recoveries.get(sessionID) !== recovery) return
+            if (snapshot !== undefined) {
+              const turn = activeTurnFromSnapshot(snapshot, sessionID)
+              if (turn) turns.set(sessionID, turn)
+              else turns.delete(sessionID)
+            }
             pendingV2Recoveries.delete(sessionID)
-            for (const pending of recovery.events) {
+            const watermark = durableSequences.get(sessionID)
+            const baseline = recovery.baseline.get(sessionID) ?? -1
+            const events = recovery.events
+              .slice()
+              .sort((a, b) => ("durable" in a && a.durable ? a.durable.seq : -1) - ("durable" in b && b.durable ? b.durable.seq : -1))
+            for (const pending of events) {
               if (
                 "durable" in pending &&
                 pending.durable &&
-                pending.durable.seq <= (recovery.baseline.get(sessionID) ?? -1)
+                pending.durable.seq <= (watermark ?? baseline)
               )
                 continue
-              applyV2(pending)
+              applyV2(pending, true)
             }
           })
           .catch((error) => {
             if (pendingV2Recoveries.get(sessionID) !== recovery) return
             pendingV2Recoveries.delete(sessionID)
             durableSequences.delete(sessionID)
-            for (const pending of recovery.events) applyV2(pending)
+            for (const pending of recovery.events) applyV2(pending, true)
             console.error("Failed to recover V2 session history after a durable event gap", {
               sessionID,
               aggregateID: durable.aggregateID,
@@ -1133,6 +1167,19 @@ export function createServerSession(
         return
       }
       durableSequences.set(sessionID, durable.seq)
+    }
+
+    // Turn identity is separate from provider attempts. Keep it monotonic while
+    // replaying durable markers so a late completion cannot reopen a new turn.
+    if (event.type === "session.next.prompt.admitted") {
+      const intent = event.data.intent
+      if (intent?.type === "start") turns.set(sessionID, { turnID: event.data.messageID, phase: "pending" })
+    }
+    if (event.type === "session.next.turn.started")
+      turns.set(sessionID, { turnID: event.data.turnID, phase: "active" })
+    if (event.type === "session.next.turn.ended") {
+      const current = turns.get(sessionID)
+      if (!current || current.turnID === event.data.turnID) turns.delete(sessionID)
     }
     if (v2Hydrations.has(sessionID)) {
       pendingV2Hydrations.get(sessionID)?.events.push(event)
@@ -1716,6 +1763,18 @@ export function createServerSession(
       const count = pinned.get(sessionID)
       if (!count || count === 1) pinned.delete(sessionID)
       if (count && count > 1) pinned.set(sessionID, count - 1)
+    },
+    activeTurn(sessionID: string) {
+      return turns.get(sessionID)?.turnID
+    },
+    turnPhase(sessionID: string) {
+      return turns.get(sessionID)?.phase
+    },
+    setTurn(sessionID: string, turnID: string, phase: "pending" | "active") {
+      turns.set(sessionID, { turnID, phase })
+    },
+    clearTurn(sessionID: string) {
+      turns.delete(sessionID)
     },
     apply,
     applyV2,

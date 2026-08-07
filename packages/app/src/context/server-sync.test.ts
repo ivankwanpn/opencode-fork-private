@@ -107,10 +107,23 @@ describe("active session query", () => {
     })
   })
 
+  test("captures V2 turn identity from an active status without trusting its shape", () => {
+    const session = createServerSession({} as OpencodeClient)
+
+    seedActiveSessionStatuses(session, {
+      ses_running: { type: "running", turnID: "msg_turn", phase: "active" },
+    })
+
+    expect(session.activeTurn("ses_running")).toBe("msg_turn")
+    expect(session.turnPhase("ses_running")).toBe("active")
+    expect(session.data.session_status.ses_running).toEqual({ type: "busy" })
+  })
+
   test("clears stale busy status and preserves retry state during reconnect recovery", () => {
     const session = createServerSession({} as OpencodeClient)
     session.set("session_status", "ses_done", { type: "busy" })
     session.set("session_status", "ses_retry", { type: "retry", attempt: 2, message: "retrying", next: 10 })
+    session.setTurn("ses_done", "msg_stale", "active")
 
     const reload = reconcileActiveSessionStatuses(session, { ses_running: { type: "running" } })
 
@@ -119,6 +132,7 @@ describe("active session query", () => {
       ses_retry: { type: "retry", attempt: 2, message: "retrying", next: 10 },
       ses_running: { type: "busy" },
     })
+    expect(session.activeTurn("ses_done")).toBeUndefined()
     expect(reload.sort()).toEqual(["ses_done", "ses_retry", "ses_running"])
   })
 })

@@ -15,7 +15,7 @@
 
 ---
 
-This repository is a **feature fork of [OpenCode](https://opencode.ai)** (MIT-licensed), forked from upstream `1.18.3` and built forward as `999.0.11`. It keeps the upstream terminal UI (TUI), desktop app, web app, headless API server, and SDK, while reworking the core agent loop into an **event-driven, durable, asynchronous** architecture and adding a wide range of reliability, compatibility, and developer-experience improvements.
+This repository is a **feature fork of [OpenCode](https://opencode.ai)** (MIT-licensed), forked from upstream `1.18.3` and built forward as `999.0.13`. It keeps the upstream terminal UI (TUI), desktop app, web app, headless API server, and SDK, while reworking the core agent loop into an **event-driven, durable, asynchronous** architecture and adding a wide range of reliability, compatibility, and developer-experience improvements.
 
 > **Note:** This project is not built by, and is not affiliated with, the OpenCode team. "OpenCode" is a trademark of its respective owners; this fork is distributed under the MIT license.
 
@@ -216,7 +216,7 @@ bun install -g @vscode/vsce     # install vsce once (or use `bunx @vscode/vsce` 
 vsce package --no-dependencies --skip-license
 ```
 
-`vsce` automatically runs the `vscode:prepublish` hook (type-check + lint + esbuild production build) and produces **`opencode-999.0.11.vsix`** in `sdks/vscode/`.
+`vsce` automatically runs the `vscode:prepublish` hook (type-check + lint + esbuild production build) and produces **`opencode-999.0.13.vsix`** in `sdks/vscode/`.
 
 If `vsce` complains about the repository or version metadata, you can pass the same flags the release pipeline uses:
 
@@ -229,7 +229,7 @@ vsce package --no-dependencies --skip-license --no-git-tag-version --no-update-p
 From the command line:
 
 ```bash
-code --install-extension opencode-999.0.11.vsix
+code --install-extension opencode-999.0.13.vsix
 ```
 
 Or from the VS Code UI:
@@ -237,7 +237,7 @@ Or from the VS Code UI:
 1. Open the **Extensions** panel (`Ctrl+Shift+X` / `Cmd+Shift+X`)
 2. Click the **...** (More Actions) menu
 3. Choose **Install from VSIX...**
-4. Select `opencode-999.0.11.vsix`
+4. Select `opencode-999.0.13.vsix`
 
 Reload the window if the extension does not activate immediately.
 

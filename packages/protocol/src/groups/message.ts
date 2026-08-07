@@ -1,5 +1,6 @@
 import { Session } from "@opencode-ai/schema/session"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
+import { NonNegativeInt } from "@opencode-ai/schema/schema"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { InvalidCursorError, SessionNotFoundError, UnknownError } from "../errors"
@@ -32,6 +33,7 @@ export const MessageGroup = HttpApiGroup.make("server.message")
           previous: Schema.String.pipe(Schema.optional),
           next: Schema.String.pipe(Schema.optional),
         }),
+        watermark: NonNegativeInt.pipe(Schema.optional),
       }).annotate({ identifier: "SessionMessagesResponse" }),
       error: [InvalidCursorError, SessionNotFoundError, UnknownError],
     }).annotateMerge(

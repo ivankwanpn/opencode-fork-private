@@ -12,6 +12,7 @@ import type {
 } from "@opencode-ai/client/promise"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import type { Prompt } from "@opencode-ai/schema/prompt"
+import type { SessionInput } from "@opencode-ai/schema/session-input"
 
 type CompatibleModel = {
   id: string
@@ -20,13 +21,17 @@ type CompatibleModel = {
   protocol?: CustomProvider.Protocol
 }
 type CompatibleCreateInput = Omit<SessionCreateInput, "model"> & { model?: CompatibleModel | null }
-type CompatibleCommandInput = Omit<SessionCommandInput, "model"> & { model?: CompatibleModel | null }
+type CompatibleCommandInput = Omit<SessionCommandInput, "model"> & {
+  model?: CompatibleModel | null
+  intent?: SessionInput.Intent
+}
 type CompatiblePromptInput = SessionPromptInput & {
   agent?: string
   model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
   variant?: string
   context?: Prompt["context"]
   expectedActiveAttemptID?: string
+  intent?: SessionInput.Intent
 }
 type CompatibleShellInput = SessionShellInput & {
   agent?: string

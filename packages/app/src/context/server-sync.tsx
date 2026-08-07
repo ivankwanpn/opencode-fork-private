@@ -99,8 +99,18 @@ type ApiQueryOptions<T, K extends readonly unknown[]> = SolidQueryOptions<T, Err
   queryKey: K
 }
 
+// The app still accepts the legacy client package, whose SessionActive type
+// only declares `{ type: "running" }`. V2 servers may include the turn
+// identity in that same value, so widen the local boundary without trusting
+// unvalidated network data (activeSessionTurn performs the runtime check).
+type ActiveSessionStatus = SessionActiveOutput[string] & {
+  readonly turnID?: string
+  readonly phase?: "pending" | "active"
+}
+type ActiveSessionMap = Record<string, ActiveSessionStatus>
+
 type SessionActiveApi = {
-  readonly active: () => Promise<SessionActiveOutput>
+  readonly active: () => Promise<ActiveSessionMap>
 }
 
 export const loadMcpQuery = (
@@ -173,8 +183,8 @@ export const loadLspQuery = (
 export const loadActiveSessionsQuery = (
   scope: ServerScope,
   api: SessionActiveApi,
-): ApiQueryOptions<SessionActiveOutput, readonly [ServerScope, "activeSessions"]> =>
-  queryOptions<SessionActiveOutput, Error, SessionActiveOutput, readonly [ServerScope, "activeSessions"]>({
+): ApiQueryOptions<ActiveSessionMap, readonly [ServerScope, "activeSessions"]> =>
+  queryOptions<ActiveSessionMap, Error, ActiveSessionMap, readonly [ServerScope, "activeSessions"]>({
     queryKey: [scope, "activeSessions"] as const,
     queryFn: () => api.active(),
     enabled: true,
@@ -212,20 +222,34 @@ export function isProviderCatalogEvent(type: string) {
   return type === "catalog.updated" || type === "integration.updated" || type === "integration.connection.updated"
 }
 
+function activeSessionTurn(status: unknown) {
+  if (!status || typeof status !== "object") return
+  if (!("turnID" in status) || typeof status.turnID !== "string") return
+  if (!("phase" in status) || (status.phase !== "pending" && status.phase !== "active")) return
+  return { turnID: status.turnID, phase: status.phase } as const
+}
+
 export function seedActiveSessionStatuses(
-  session: Pick<ServerSession, "data" | "set">,
-  active: SessionActiveOutput | Record<string, SessionStatus>,
+  session: Pick<ServerSession, "data" | "set"> & {
+    setTurn?: (sessionID: string, turnID: string, phase: "pending" | "active") => void
+  },
+  active: ActiveSessionMap | Record<string, SessionStatus>,
 ) {
   for (const sessionID of Object.keys(active)) {
-    if (session.data.session_status[sessionID] !== undefined) continue
     const status = active[sessionID]
+    const turn = activeSessionTurn(status)
+    if (turn) session.setTurn?.(sessionID, turn.turnID, turn.phase)
+    if (session.data.session_status[sessionID] !== undefined) continue
     session.set("session_status", sessionID, status?.type === "running" ? { type: "busy" } : status)
   }
 }
 
 export function reconcileActiveSessionStatuses(
-  session: Pick<ServerSession, "data" | "set">,
-  active: SessionActiveOutput | Record<string, SessionStatus>,
+  session: Pick<ServerSession, "data" | "set"> & {
+    setTurn?: (sessionID: string, turnID: string, phase: "pending" | "active") => void
+    clearTurn?: (sessionID: string) => void
+  },
+  active: ActiveSessionMap | Record<string, SessionStatus>,
 ) {
   const reload = new Set([
     ...Object.keys(active),
@@ -233,6 +257,15 @@ export function reconcileActiveSessionStatuses(
       .filter(([, status]) => status.type !== "idle")
       .map(([sessionID]) => sessionID),
   ])
+
+  for (const [sessionID, status] of Object.entries(active)) {
+    const turn = activeSessionTurn(status)
+    if (turn) session.setTurn?.(sessionID, turn.turnID, turn.phase)
+    else session.clearTurn?.(sessionID)
+  }
+  for (const sessionID of Object.keys(session.data.session_status)) {
+    if (!active[sessionID]) session.clearTurn?.(sessionID)
+  }
 
   session.set(
     "session_status",
@@ -311,6 +344,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const session = createServerSession(undefined, serverSDK.api.session, serverSDK.api.message, {
     api: serverSDK.api,
     apiForGeneration: serverSDK.apiForGeneration,
+    activeSessions: () => serverSDK.apiForGeneration().then((api) => api.session.active()),
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,

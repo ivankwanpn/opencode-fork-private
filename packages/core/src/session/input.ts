@@ -2,7 +2,7 @@ export * as SessionInput from "./input"
 
 import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
-import { Admitted, Delivery, Synthetic } from "@opencode-ai/schema/session-input"
+import { Admitted, Delivery, Intent, Synthetic } from "@opencode-ai/schema/session-input"
 import type { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -13,7 +13,7 @@ import { SessionAttemptTable, SessionInputTable, SessionMessageTable } from "./s
 
 type DatabaseService = Database.Interface["db"]
 
-export { Admitted, Delivery, Synthetic }
+export { Admitted, Delivery, Intent, Synthetic }
 
 const StoredPrompt = Schema.Union([
   Prompt,
@@ -49,6 +49,7 @@ const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted => {
     prompt: stored.prompt,
     synthetic: stored.synthetic,
     delivery: row.delivery,
+    ...(row.intent === null ? {} : { intent: row.intent }),
     timeCreated: DateTime.makeUnsafe(row.time_created),
     ...(row.promoted_seq === null ? {} : { promotedSeq: row.promoted_seq }),
   })
@@ -146,6 +147,7 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
     readonly prompt: Prompt
     readonly synthetic?: Synthetic
     readonly delivery: Delivery
+    readonly intent?: Intent
     readonly expectedActiveAttemptID?: EventV2.ID
     readonly commit?: (seq: number) => Effect.Effect<void>
   },
@@ -161,6 +163,7 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
       prompt: input.prompt,
       synthetic: input.synthetic,
       delivery: input.delivery,
+      intent: input.intent,
     },
     input.commit ? { commit: input.commit } : undefined,
     )
@@ -176,6 +179,7 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
                 prompt: input.prompt,
                 synthetic: input.synthetic,
                 delivery: input.delivery,
+                ...(input.intent === undefined ? {} : { intent: input.intent }),
                 timeCreated: timestamp,
               }),
             ),
@@ -195,6 +199,7 @@ export const projectAdmitted = Effect.fn("SessionInput.projectAdmitted")(functio
     readonly prompt: Prompt
     readonly synthetic?: Synthetic
     readonly delivery: Delivery
+    readonly intent?: Intent
     readonly timeCreated: DateTime.Utc
   },
 ) {
@@ -213,6 +218,7 @@ export const projectAdmitted = Effect.fn("SessionInput.projectAdmitted")(functio
       admitted_seq: input.admittedSeq,
       prompt: encodeRowPrompt(input.prompt, input.synthetic),
       delivery: input.delivery,
+      intent: input.intent,
       time_created: DateTime.toEpochMillis(input.timeCreated),
     })
     .onConflictDoNothing()
@@ -230,6 +236,7 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
     readonly prompt: Prompt
     readonly synthetic?: Synthetic
     readonly delivery: Delivery
+    readonly intent?: Intent
     readonly timeCreated: DateTime.Utc
     readonly promotedSeq: number
   },
@@ -268,6 +275,7 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
       session_id: input.sessionID,
       prompt: encodeRowPrompt(input.prompt, input.synthetic),
       delivery: input.delivery,
+      intent: input.intent,
       admitted_seq: input.promotedSeq,
       promoted_seq: input.promotedSeq,
       time_created: DateTime.toEpochMillis(input.timeCreated),
@@ -371,11 +379,13 @@ export const equivalent = (
     readonly prompt: Prompt
     readonly synthetic?: Synthetic
     readonly delivery: Delivery
+    readonly intent?: Intent
   },
 ) =>
   input.delivery === expected.delivery &&
   matchesPrompt(input, expected) &&
-  sameSynthetic(input.synthetic, expected.synthetic)
+  sameSynthetic(input.synthetic, expected.synthetic) &&
+  sameIntent(input.intent, expected.intent)
 
 export const samePrompt = (left: Prompt, right: Prompt) =>
   JSON.stringify(encodePrompt(left)) === JSON.stringify(encodePrompt(right))
@@ -386,6 +396,9 @@ const matchesPrompt = (input: Admitted, expected: { readonly sessionID: SessionS
 const sameSynthetic = (left: Synthetic | undefined, right: Synthetic | undefined) =>
   left?.description === right?.description
 
+const sameIntent = (left: Intent | undefined, right: Intent | undefined) =>
+  JSON.stringify(left) === JSON.stringify(right)
+
 const matchesProjection = (
   input: Admitted,
   expected: {
@@ -393,6 +406,7 @@ const matchesProjection = (
     readonly prompt: Prompt
     readonly synthetic?: Synthetic
     readonly delivery: Delivery
+    readonly intent?: Intent
     readonly timeCreated: DateTime.Utc
   },
 ) =>
@@ -416,6 +430,7 @@ const publish = Effect.fn("SessionInput.publish")(function* (
         prompt: stored.prompt,
         synthetic: stored.synthetic,
         delivery: row.delivery,
+        intent: row.intent === null ? undefined : row.intent,
       })
       .pipe(
         Effect.catchDefect((defect) =>

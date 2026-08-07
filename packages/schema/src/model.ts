@@ -86,7 +86,7 @@ export const Info = Schema.Struct({
     id: VariantID,
     ...Provider.Request.fields,
   }).pipe(Schema.Array),
-  protocols: Schema.mutable(Schema.Array(Protocol)).pipe(optional),
+  protocols: Schema.Array(Protocol).pipe(optional),
   time: Schema.Struct({
     released: Schema.Finite,
   }),

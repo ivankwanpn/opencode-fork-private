@@ -14,6 +14,7 @@ import { SessionInput } from "./input"
 import { WorkspaceV2 } from "../workspace"
 import { SessionContextEpoch } from "./context-epoch"
 import { SessionAttempt } from "./attempt"
+import { SessionTurn } from "./turn"
 import { MessageTable, PartTable, SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
 import type { DeepMutable } from "../schema"
 
@@ -358,6 +359,7 @@ const layer = Layer.effectDiscard(
           prompt: event.data.prompt,
           synthetic: event.data.synthetic,
           delivery: event.data.delivery,
+          intent: event.data.intent,
           timeCreated: event.data.timestamp,
           promotedSeq: event.durable.seq,
         })
@@ -374,8 +376,10 @@ const layer = Layer.effectDiscard(
           prompt: event.data.prompt,
           synthetic: event.data.synthetic,
           delivery: event.data.delivery,
+          intent: event.data.intent,
           timeCreated: event.data.timestamp,
         })
+        yield* SessionTurn.projectAdmitted(db, event)
       }),
     )
     yield* events.project(SessionEvent.ContextUpdated, (event) => run(db, event))
@@ -400,6 +404,8 @@ const layer = Layer.effectDiscard(
       SessionAttempt.projectResponseStarted(db, event),
     )
     yield* events.project(SessionEvent.ProviderAttempt.Ended, (event) => SessionAttempt.projectEnded(db, event))
+    yield* events.project(SessionEvent.Turn.Started, (event) => SessionTurn.projectStarted(db, event))
+    yield* events.project(SessionEvent.Turn.Ended, (event) => SessionTurn.projectEnded(db, event))
     yield* events.project(SessionEvent.ProviderAttempt.Recovery.Decided, (event) =>
       SessionAttempt.projectRecoveryDecided(db, event),
     )

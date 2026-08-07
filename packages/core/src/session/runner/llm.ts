@@ -43,6 +43,7 @@ import { SessionHistory } from "../history"
 import { SessionMessage } from "../message"
 import { STRUCTURED_OUTPUT_TOOL_NAME } from "../prompt"
 import { SessionInput } from "../input"
+import { SessionTurn } from "../turn"
 import { SessionReminder } from "../reminder"
 import { SessionSchema } from "../schema"
 import { SessionStore } from "../store"
@@ -284,6 +285,11 @@ const layer = Layer.effect(
       let needsContinuation = false
       let structuredOutputCaptured = false
       let currentStep = step
+      const pendingForPromotion =
+        promotion === undefined
+          ? undefined
+          : (yield* SessionInput.pending(db, session.id, promotion))[0]
+      const latestPromoted = yield* SessionInput.latestPromoted(db, session.id)
       if (promotion) {
         const cutoff = yield* EventV2.latestSequence(db, session.id)
         let promoted = 0
@@ -294,6 +300,28 @@ const layer = Layer.effect(
         }
         if (promoted > 0) currentStep = 1
       }
+      const turnAfterPromotion = yield* SessionTurn.get(db, session.id)
+      const turnCandidate =
+        (turnAfterPromotion?.status === "pending" || turnAfterPromotion?.status === "active"
+          ? turnAfterPromotion.turn_id
+          : undefined) ?? pendingForPromotion?.id ?? latestPromoted?.id
+      const turnAware =
+        turnAfterPromotion !== undefined ||
+        pendingForPromotion?.intent !== undefined ||
+        latestPromoted?.intent !== undefined
+      const promotedAfterEndedTurn =
+        latestPromoted?.promotedSeq !== undefined &&
+        (turnAfterPromotion === undefined || latestPromoted.promotedSeq > turnAfterPromotion.seq)
+      if (turnAware && turnAfterPromotion?.status === "pending")
+        yield* SessionTurn.start(events, { sessionID: session.id, turnID: turnAfterPromotion.turn_id })
+      else if (
+        turnAware &&
+        turnCandidate &&
+        (promotion !== undefined || latestPromoted !== undefined) &&
+        (!turnAfterPromotion ||
+          (turnAfterPromotion.status === "ended" && (promotion !== undefined || promotedAfterEndedTurn)))
+      )
+        yield* SessionTurn.start(events, { sessionID: session.id, turnID: turnCandidate })
       const preparedContext =
         initialized ??
         (yield* SessionContextEpoch.prepare(db, events, loadSystemContext(agent, session.id), session.id))
@@ -976,7 +1004,14 @@ const layer = Layer.effect(
         projectedAttempt?.status === "continuation" || projectedAttempt?.status === "retrying"
       const hasSteer = yield* SessionInput.hasPending(db, input.sessionID, "steer")
       const hasQueue = hasSteer ? false : yield* SessionInput.hasPending(db, input.sessionID, "queue")
-      if (!force && !hasSteer && !hasQueue && !hasDurableContinuation) return
+      const currentTurn = yield* SessionTurn.get(db, input.sessionID)
+      const latestPromoted = yield* SessionInput.latestPromoted(db, input.sessionID)
+      const hasPromoted =
+        latestPromoted !== undefined &&
+        latestPromoted.promotedSeq !== undefined &&
+        (projectedAttempt === undefined || latestPromoted.promotedSeq > projectedAttempt.seq)
+      const hasOpenTurn = currentTurn?.status === "pending" || currentTurn?.status === "active"
+      if (!force && !hasSteer && !hasQueue && !hasDurableContinuation && !hasPromoted && !hasOpenTurn) return
       yield* failInterruptedTools(input.sessionID)
       let promotion: SessionInput.Delivery | undefined = initialPhysical
         ? undefined
@@ -985,7 +1020,7 @@ const layer = Layer.effect(
           : hasQueue
             ? "queue"
             : undefined
-      let shouldRun = force || hasSteer || hasQueue || hasDurableContinuation
+      let shouldRun = force || hasSteer || hasQueue || hasDurableContinuation || hasPromoted || hasOpenTurn
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
@@ -1014,6 +1049,18 @@ const layer = Layer.effect(
             if (!needsContinuation) needsContinuation = yield* SessionInput.hasPending(db, input.sessionID, "steer")
           }
         }).pipe(Effect.ensuring(pool.closeAll))
+        const turn = yield* SessionTurn.get(db, input.sessionID)
+        if (turn?.status === "active") {
+          const ended = yield* SessionTurn.end(events, {
+            sessionID: input.sessionID,
+            turnID: turn.turn_id,
+          })
+          if (!ended) {
+            shouldRun = true
+            promotion = "steer"
+            continue
+          }
+        }
         shouldRun = yield* SessionInput.hasPending(db, input.sessionID, "queue")
         promotion = shouldRun ? "queue" : undefined
       }

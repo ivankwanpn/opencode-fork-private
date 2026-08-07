@@ -23,6 +23,7 @@ test("exposes every standard HTTP API group", () => {
     "mcps",
     "lsp",
     "projects",
+    "worktrees",
     "capabilities",
     "vcs",
     "formatters",
@@ -30,6 +31,7 @@ test("exposes every standard HTTP API group", () => {
     "config",
     "workspaces",
     "controlPlane",
+    "server.plugins",
     "events",
     "ptys",
     "questions",
@@ -46,7 +48,7 @@ test("exposes every standard HTTP API group", () => {
     "attemptComplete",
     "attemptCancel",
   ])
-  expect(Object.keys(client.files)).toEqual(["list", "find"])
+  expect(Object.keys(client.files)).toEqual(["read", "list", "find"])
   expect(Object.keys(client.ptys)).toEqual(["shells", "list", "create", "get", "update", "remove"])
   expect(Object.keys(client.providers)).toEqual(["catalog", "list", "get", "discoverCustom", "configureCustom"])
 })

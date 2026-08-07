@@ -234,6 +234,7 @@ const layer = Layer.effect(
                 read: "allow",
                 "playwright_*": "allow",
                 "mcp_playwright_*": "allow",
+                "claude_claude-plugins-official_playwright_playwright_*": "allow",
                 external_directory: readonlyExternalDirectory,
               }),
               user,

@@ -3,6 +3,7 @@ import { Effect, Exit, Scope } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Location } from "@opencode-ai/core/location"
+import { McpCatalog } from "@opencode-ai/core/mcp/catalog"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AgentPlugin } from "@opencode-ai/core/plugin/agent"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -147,6 +148,15 @@ describe("AgentV2", () => {
       )
 
       const research = yield* agent.get(AgentV2.ID.make("research"))
+      const managedPlaywright = McpCatalog.toolName(
+        "claude:claude-plugins-official:playwright:playwright",
+        "browser_take_screenshot",
+      )
+      const managedThirdPartyPlaywright = McpCatalog.toolName(
+        "claude:third-party:playwright:playwright",
+        "browser_take_screenshot",
+      )
+      const managedOther = McpCatalog.toolName("claude:claude-plugins-official:context7:context7", "resolve-library-id")
       expect(research).toMatchObject({ id: "research", mode: "subagent" })
       expect(research?.permissions).toEqual(
         expect.arrayContaining([
@@ -157,11 +167,18 @@ describe("AgentV2", () => {
           expect.objectContaining({ action: "websearch", effect: "allow" }),
           expect.objectContaining({ action: "playwright_*", effect: "allow" }),
           expect.objectContaining({ action: "mcp_playwright_*", effect: "allow" }),
+          expect.objectContaining({
+            action: "claude_claude-plugins-official_playwright_playwright_*",
+            effect: "allow",
+          }),
         ]),
       )
       expect(PermissionV2.evaluate("playwright_browser_navigate", "*", research?.permissions ?? []).effect).toBe(
         "allow",
       )
+      expect(PermissionV2.evaluate(managedPlaywright, "*", research?.permissions ?? []).effect).toBe("allow")
+      expect(PermissionV2.evaluate(managedThirdPartyPlaywright, "*", research?.permissions ?? []).effect).toBe("deny")
+      expect(PermissionV2.evaluate(managedOther, "*", research?.permissions ?? []).effect).toBe("deny")
       expect(PermissionV2.evaluate("mcp_other_tool", "*", research?.permissions ?? []).effect).toBe("deny")
       expect(research?.permissions.some((rule) => rule.action === "edit" && rule.effect !== "deny")).toBe(false)
     }),

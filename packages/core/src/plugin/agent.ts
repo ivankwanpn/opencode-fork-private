@@ -212,6 +212,7 @@ export const Plugin = define({
               // configured Playwright server; keep all other MCP tools denied.
               { action: "playwright_*", resource: "*", effect: "allow" },
               { action: "mcp_playwright_*", resource: "*", effect: "allow" },
+              { action: "claude_claude-plugins-official_playwright_playwright_*", resource: "*", effect: "allow" },
             ],
             readonlyExternalDirectory,
           ),

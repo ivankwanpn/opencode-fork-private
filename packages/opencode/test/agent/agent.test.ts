@@ -10,6 +10,7 @@ import { Auth } from "../../src/auth"
 import { Config } from "../../src/config/config"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { Global } from "@opencode-ai/core/global"
+import { McpCatalog } from "@opencode-ai/core/mcp/catalog"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Reference } from "@opencode-ai/core/reference"
 import { Permission } from "../../src/permission"
@@ -151,6 +152,18 @@ it.instance("research agent is read-only", () =>
     expect(evalPerm(research, "websearch")).toBe("allow")
     expect(evalPerm(research, "playwright_browser_navigate")).toBe("allow")
     expect(evalPerm(research, "mcp_playwright_browser_navigate")).toBe("allow")
+    expect(
+      evalPerm(
+        research,
+        McpCatalog.toolName("claude:claude-plugins-official:playwright:playwright", "browser_take_screenshot"),
+      ),
+    ).toBe("allow")
+    expect(
+      evalPerm(research, McpCatalog.toolName("claude:third-party:playwright:playwright", "browser_take_screenshot")),
+    ).toBe("deny")
+    expect(
+      evalPerm(research, McpCatalog.toolName("claude:claude-plugins-official:context7:context7", "resolve-library-id")),
+    ).toBe("deny")
     expect(evalPerm(research, "mcp_other_tool")).toBe("deny")
     const explore = yield* load((svc) => svc.get("explore"))
     expect(evalPerm(explore, "playwright_browser_navigate")).toBe("deny")

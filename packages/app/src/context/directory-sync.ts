@@ -150,7 +150,7 @@ export const createDirSyncContext = (
           sessionMutations: serverSDK.sessionMutations,
           sessionID,
           apiForGeneration: serverSDK.apiForGeneration,
-          run: (api) => api.archive({ sessionID, directory }),
+          run: (api) => api.archive({ sessionID }),
         })
         serverSync.session.evict(sessionID)
         current()[1](

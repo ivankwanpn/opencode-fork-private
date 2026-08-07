@@ -229,7 +229,6 @@ describe("server session", () => {
     } as unknown as MessageApi
     const sessionApi = { get: async () => session("child") } as unknown as SessionApi
     const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
     store.remember(session("child"))
@@ -312,7 +311,6 @@ describe("server session", () => {
     } as unknown as MessageApi
     const sessionApi = { get: async () => session("child") } as unknown as SessionApi
     const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
     store.remember(session("child"))
@@ -377,7 +375,6 @@ describe("server session", () => {
     } as unknown as MessageApi
     const sessionApi = { get: async () => session("child") } as unknown as SessionApi
     const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
     await store.sync("child")
@@ -408,7 +405,6 @@ describe("server session", () => {
     } as unknown as MessageApi
     const sessionApi = { get: async () => session("child") } as unknown as SessionApi
     const store = createServerSession({} as OpencodeClient, sessionApi, messageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
     store.pin("child")
@@ -432,82 +428,6 @@ describe("server session", () => {
 
     second.resolve({ data: [], cursor: { previous: null, next: null } })
     await new Promise((resolve) => setTimeout(resolve, 0))
-  })
-
-  test("does not hydrate a stale V2 event through a V1 generation", async () => {
-    let calls = 0
-    const api = createV2OnlyApi({
-      protocol: Promise.resolve("v1" as const),
-      current: {
-        session: {
-          message: async () => {
-            calls++
-            return {
-              id: "message",
-              type: "user",
-              text: "hello",
-              time: { created: 1 },
-            }
-          },
-        },
-      } as unknown as ServerApi,
-    })
-    const store = createServerSession({} as OpencodeClient, {
-      protocol: Promise.resolve("v1" as const),
-      api,
-    })
-
-    store.applyV2({
-      id: "event",
-      created: 1,
-      type: "session.next.message.imported",
-      data: {
-        sessionID: "child",
-        message: { id: "message", type: "user", text: "hello", time: { created: 1 } },
-      },
-    } as unknown as V2Event)
-    await Promise.resolve()
-
-    expect(calls).toBe(0)
-  })
-
-  test("does not hydrate through V1 when both API selectors are provided", async () => {
-    let calls = 0
-    const api = createV2OnlyApi({
-      protocol: Promise.resolve("v1" as const),
-      current: {
-        session: {
-          message: async () => {
-            calls++
-            return {
-              id: "message",
-              type: "user",
-              text: "hello",
-              time: { created: 1 },
-            }
-          },
-        },
-      } as unknown as ServerApi,
-    })
-    const store = createServerSession({} as OpencodeClient, {
-      protocol: Promise.resolve("v1" as const),
-      api,
-      apiForGeneration: async () => api,
-      generationFor: async () => ({ protocol: "v1", api }),
-    })
-
-    store.applyV2({
-      id: "event",
-      created: 1,
-      type: "session.next.message.imported",
-      data: {
-        sessionID: "child",
-        message: { id: "message", type: "user", text: "hello", time: { created: 1 } },
-      },
-    } as unknown as V2Event)
-    await Promise.resolve()
-
-    expect(calls).toBe(0)
   })
 
   test("projects current move, retry, provider attempt, and revert state", () => {
@@ -643,7 +563,7 @@ describe("server session", () => {
     expect(store.data.session_message.root.map((message) => message.id)).toEqual([user.id, assistant.id])
   })
 
-  test("keeps a V2 history read on its selected protocol generation", async () => {
+  test("keeps a V2 history read on its selected API generation", async () => {
     let protocol: "v1" | "v2" = "v2"
     const readProtocol = (): "v1" | "v2" => protocol
     const resolveProtocol = (): Promise<"v1" | "v2"> => Promise.resolve(readProtocol())
@@ -662,8 +582,10 @@ describe("server session", () => {
       } as unknown as ServerApi,
     })
     const store = createServerSession({} as OpencodeClient, api.session, api.message, {
-      protocol: resolveProtocol,
-      api,
+      apiForGeneration: () => resolveProtocol().then((value) => {
+        if (value !== "v2") throw new Error("V2 server protocol unavailable")
+        return api
+      }),
     })
     store.remember(session("root"))
 
@@ -739,7 +661,7 @@ describe("server session", () => {
     expect(assistants.map((item) => store.data.part[item.id]?.[0]?.type)).toEqual(["text", "text", "text"])
   })
 
-  test("indexes V1 messages for the current timeline projection", async () => {
+  test("indexes projected messages for the current timeline", async () => {
     const user = userMessage("message-1", { sessionID: "root" })
     const assistant = assistantMessage("message-2", user.id, { sessionID: "root" })
     const client = messageClient(
@@ -748,14 +670,7 @@ describe("server session", () => {
         { info: assistant, parts: [textPart(assistant.id, { sessionID: "root" })] },
       ]),
     )
-    const messageApi = {
-      list: () => {
-        throw new Error("current message endpoint called")
-      },
-    } as unknown as MessageApi
-    const store = createServerSession(client, {} as SessionApi, messageApi, {
-      protocol: Promise.resolve("v1"),
-    })
+    const store = createServerSession(client)
     store.remember(session("root"))
 
     await store.sync("root")
@@ -2083,7 +1998,6 @@ describe("server session", () => {
     } as unknown as SessionApi
     const messageApi = {} as MessageApi
     const store = createServerSession(client, sessionApi, messageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
 
@@ -2104,7 +2018,6 @@ describe("server session", () => {
       },
     } as unknown as SessionApi
     const store = createServerSession(client, sessionApi, {} as MessageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
     })
     const current = { id: "evt_compaction", metadata: {}, location: { directory: "/repo" } }
@@ -2182,7 +2095,6 @@ describe("server session", () => {
       },
     } as Pick<ServerApi["session"], "todo">
     const store = createServerSession({} as OpencodeClient, {} as SessionApi, {} as MessageApi, {
-      protocol: Promise.resolve("v2" as const),
       retry: retryImmediately,
       currentSession,
     })
@@ -2192,22 +2104,14 @@ describe("server session", () => {
     expect(store.data.todo.child).toEqual(todos)
   })
 
-  test("loads a V1 todo through the selected compatibility API", async () => {
+  test("loads todo through the selected API generation", async () => {
     const todos = [{ content: "finish migration", status: "pending", priority: "high" }] as Todo[]
     const api = {
       session: {
         todo: async () => todos,
       },
     } as unknown as CompatibleApi
-    const client = {
-      session: {
-        todo: async () => {
-          throw new Error("direct V1 todo endpoint should not be called")
-        },
-      },
-    } as unknown as OpencodeClient
-    const store = createServerSession(client, api.session, {} as MessageApi, {
-      protocol: Promise.resolve("v1" as const),
+    const store = createServerSession(undefined, {
       api,
       retry: retryImmediately,
     })

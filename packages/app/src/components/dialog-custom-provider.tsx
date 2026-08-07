@@ -144,10 +144,7 @@ export function CustomProviderForm(props: { autofocus?: boolean; providerID?: st
   }
 
   const available = async () => {
-    const target = serverSDK()
-    const generation = await target.generationFor()
-    if (generation.protocol === "v2") return generation.api
-    setDiscovery("saveError", language.t("provider.custom.unavailable"))
+    return serverSDK().apiForGeneration()
   }
 
   const discoverMutation = useMutation(() => ({

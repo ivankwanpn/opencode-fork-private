@@ -16,7 +16,6 @@ import { type ServerHealth } from "@/utils/server-health"
 import { useGlobal } from "@/context/global"
 import { useSettings } from "@/context/settings"
 import { useMcpToggle } from "@/context/mcp"
-import { useServerProtocol } from "@/context/server-sdk"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -258,7 +257,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const language = useLanguage()
   const navigate = useNavigate()
   const settings = useSettings()
-  const protocol = useServerProtocol()
 
   const fail = (err: unknown) => {
     showToast({
@@ -279,10 +277,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     dialogRun += 1
   })
   const sortedServers = createMemo(() => {
-    const list = settings.general.newLayoutDesigns()
-      ? global.servers.list()
-      : global.servers.list().filter((x) => global.ensureServerCtx(x).sdk.protocolKind() !== "v2")
-    return listServersByHealth(list, server.key, global.servers.health)
+    return listServersByHealth(global.servers.list(), server.key, global.servers.health)
   })
   const toggleMcp = useMcpToggle()
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)

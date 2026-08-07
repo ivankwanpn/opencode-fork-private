@@ -1,5 +1,5 @@
 import type { ServerApi } from "./server"
-import { resolveCompatibleApi, type CompatibleApi, type CompatibleImplementation } from "./server-compat"
+import type { CompatibleApi, CompatibleImplementation } from "./server-compat"
 
 export type ServerSessionApi = CompatibleApi["session"] | ServerApi["session"]
 
@@ -20,7 +20,6 @@ export function createSessionMutationQueue() {
 }
 
 export function resolveServerSessionApi(input: {
-  protocol?: Promise<"v1" | "v2">
   api?: CompatibleApi
   apiForGeneration?: () => Promise<CompatibleImplementation>
 }): Promise<ServerSessionApi> {
@@ -28,18 +27,15 @@ export function resolveServerSessionApi(input: {
 }
 
 export function resolveServerApi(input: {
-  protocol?: Promise<"v1" | "v2">
   api?: CompatibleApi
   apiForGeneration?: () => Promise<CompatibleImplementation>
 }): Promise<CompatibleImplementation> {
   if (input.apiForGeneration) return input.apiForGeneration()
-  const api = input.api
-  if (!input.protocol || !api) return Promise.reject(new Error("Server session API is unavailable"))
-  return input.protocol.then((protocol) => resolveCompatibleApi(api, protocol))
+  if (input.api) return Promise.resolve(input.api)
+  return Promise.reject(new Error("Server session API is unavailable"))
 }
 
 export function runServerMutation<T>(input: {
-  protocol?: Promise<"v1" | "v2">
   api?: CompatibleApi
   sessionMutations: ReturnType<typeof createSessionMutationQueue>
   sessionID: string
@@ -50,7 +46,6 @@ export function runServerMutation<T>(input: {
 }
 
 export function runServerSessionMutation<T>(input: {
-  protocol?: Promise<"v1" | "v2">
   api?: CompatibleApi
   sessionMutations: ReturnType<typeof createSessionMutationQueue>
   sessionID: string
@@ -58,7 +53,6 @@ export function runServerSessionMutation<T>(input: {
   run: (api: ServerSessionApi) => Promise<T>
 }) {
   return runServerMutation({
-    protocol: input.protocol,
     api: input.api,
     sessionMutations: input.sessionMutations,
     sessionID: input.sessionID,

@@ -4,7 +4,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
-import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
+import { createApiForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
 import { usePlatform } from "./platform"
 import { ServerConnection, useServer } from "./server"
@@ -238,7 +238,6 @@ type ServerSDKBase = {
   apiForGeneration: () => Promise<CompatibleImplementation>
   protocolKind: Accessor<ServerProtocol | undefined>
   url: string
-  legacyClient: ReturnType<typeof createSdkForServer>
   api: CompatibleApi
   currentApi: ServerApi
   sessionMutations: ReturnType<typeof createSessionMutationQueue>
@@ -247,9 +246,6 @@ type ServerSDKBase = {
     listen: ServerEventEmitter["listen"]
     start: () => Promise<void> | undefined
   }
-  createLegacyClient: (
-    opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">,
-  ) => ReturnType<typeof createSdkForServer>
 }
 
 function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerScope): ServerSDKBase {
@@ -451,14 +447,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     flush()
   })
 
-  const legacyClient = createSdkForServer({
-    server: server.http,
-    fetch: platform.fetch,
-    throwOnError: true,
-  })
   const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: platform.fetch })
-  // Every connection fails closed on a non-V2 generation. Legacy clients remain
-  // available only to presentation paths that have not yet migrated.
   const api = createV2OnlyApi({ protocol: protocolForGeneration, current: currentApi })
   const generationFor = () => protocolForGeneration().then((value) => resolveCompatibleGeneration(api, value))
   const apiForGeneration = () => generationFor().then((value) => value.api)
@@ -493,7 +482,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     }),
     protocolKind,
     url: server.http.url,
-    legacyClient,
     api,
     currentApi,
     sessionMutations,
@@ -501,13 +489,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       on: emitter.on.bind(emitter),
       listen: emitter.listen.bind(emitter),
       start,
-    },
-    createLegacyClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
-      return createSdkForServer({
-        server: server.http,
-        fetch: platform.fetch,
-        ...opts,
-      })
     },
   }
 }
@@ -580,9 +561,6 @@ function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
     event: emitter,
     get url() {
       return serverSDK.url
-    },
-    createLegacyClient(opts: Parameters<typeof serverSDK.createLegacyClient>[0]) {
-      return serverSDK.createLegacyClient(opts)
     },
   }
 }

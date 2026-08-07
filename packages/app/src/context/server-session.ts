@@ -10,7 +10,6 @@ import type {
 import type { V2Event } from "@opencode-ai/sdk/v2/client"
 import type {
   Message,
-  OpencodeClient,
   Part,
   PermissionRequest,
   QuestionRequest,
@@ -29,14 +28,11 @@ import { normalizeSessionInfo } from "@/utils/session"
 import { normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
-import { resolveServerProtocol, type ServerProtocolResolver } from "@/utils/server-protocol"
 import { extractArray } from "@/utils/response-helpers"
 import type { ServerApi } from "@/utils/server"
 import {
-  resolveCompatibleApi,
   type CompatibleApi,
   type CompatibleImplementation,
-  type ServerGeneration,
 } from "@/utils/server-compat"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -200,11 +196,23 @@ function reconcileFetched<T extends { id: string }>(
 
 type ServerSessionOptions = {
   retry?: typeof retry
-  protocol?: ServerProtocolResolver
   api?: CompatibleApi
   apiForGeneration?: () => Promise<CompatibleImplementation>
-  generationFor?: () => Promise<ServerGeneration>
   currentSession?: Pick<ServerApi["session"], "todo">
+}
+
+type ProjectedSessionClient = {
+  session: {
+    get(input: { sessionID: string }): Promise<{ data?: Session | null }>
+    messages(input: { sessionID: string; limit: number; before?: string }): Promise<{
+      data?: { info: Message; parts: Part[] }[]
+      response: { headers: Headers }
+    }>
+    message(input: { sessionID: string; messageID: string }): Promise<{
+      data?: { info: Message; parts: Part[] }
+    }>
+    todo(input: { sessionID: string }): Promise<{ data?: Todo[] }>
+  }
 }
 
 type V2InputEvent = OpenCodeEvent | LegacyV2Event | V2Event
@@ -220,13 +228,24 @@ type PendingV2Recovery = {
 }
 
 export function createServerSession(
-  client: OpencodeClient,
+  projectedClient: unknown,
   sessionApiOrOptions?: SessionApi | ServerSessionOptions,
   messageApi?: MessageApi,
   currentOptions?: ServerSessionOptions,
 ) {
+  const projection = projectedClient as ProjectedSessionClient | undefined
   const sessionApi = messageApi ? (sessionApiOrOptions as SessionApi) : undefined
   const options = messageApi ? currentOptions : (sessionApiOrOptions as ServerSessionOptions | undefined)
+  const resolveCurrentApi = () => {
+    if (options?.apiForGeneration) return options.apiForGeneration()
+    if (options?.api) return Promise.resolve(options.api)
+  }
+  const resolveCurrentSessionApi = () => {
+    const current = resolveCurrentApi()
+    if (current) return current.then((api) => api.session)
+    if (sessionApi) return Promise.resolve(sessionApi)
+  }
+  const hasCurrentApi = !!options?.apiForGeneration || !!options?.api || !!sessionApi || !!messageApi
   const [data, setData] = createStore({
     info: {} as Record<string, Session | undefined>,
     session_status: {} as Record<string, SessionStatus>,
@@ -351,18 +370,10 @@ export function createServerSession(
     const request = options?.apiForGeneration
       ? options.apiForGeneration().then((api) => api.session.get({ sessionID }).then(normalizeSessionInfo))
       : options?.api
-        ? resolveServerProtocol(options.protocol).then((protocol) => {
-            if (protocol)
-              return resolveCompatibleApi(options.api!, protocol).session.get({ sessionID }).then(normalizeSessionInfo)
-            if (sessionApi) return sessionApi.get({ sessionID }).then(normalizeSessionInfo)
-            return client.session.get({ sessionID }).then((result) => {
-              if (!result.data) throw sessionNotFoundError(sessionID)
-              return result.data
-            })
-          })
+        ? options.api.session.get({ sessionID }).then(normalizeSessionInfo)
       : sessionApi
         ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
-        : client.session.get({ sessionID }).then((result) => {
+        : projection!.session.get({ sessionID }).then((result) => {
             if (!result.data) throw sessionNotFoundError(sessionID)
             return result.data
           })
@@ -598,16 +609,10 @@ export function createServerSession(
     )
 
   const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
-    const generation = options?.generationFor ? await options.generationFor() : undefined
-    const protocol = messageApi ? (generation?.protocol ?? (await resolveServerProtocol(options?.protocol))) : undefined
-    if (messageApi && protocol !== "v1") {
-      const currentMessageApi =
-        generation?.api.message ??
-        (options?.apiForGeneration
-          ? (await options.apiForGeneration()).message
-          : options?.api && protocol
-            ? resolveCompatibleApi(options.api, protocol).message
-            : messageApi)
+    const currentMessageApi = options?.apiForGeneration
+      ? (await options.apiForGeneration()).message
+      : (options?.api?.message ?? messageApi)
+    if (currentMessageApi) {
       const pageLimit = Math.min(limit, messageApiPageSize)
       const request = (cursor?: string) =>
         (options?.retry ?? retry)(() => {
@@ -642,7 +647,7 @@ export function createServerSession(
     }
     const response = await (options?.retry ?? retry)(() => {
       onAttempt?.()
-      return client.session.messages({ sessionID, limit, before })
+      return projection!.session.messages({ sessionID, limit, before })
     })
     const items = (response.data ?? []).filter((item) => !!item?.info?.id)
     return {
@@ -659,16 +664,10 @@ export function createServerSession(
   }
 
   const fetchMessage = async (sessionID: string, messageID: string, onAttempt?: () => void) => {
-    const generation = options?.generationFor ? await options.generationFor() : undefined
-    const protocol = sessionApi ? (generation?.protocol ?? (await resolveServerProtocol(options?.protocol))) : undefined
-    if (sessionApi && protocol !== "v1") {
-      const currentSessionApi =
-        generation?.api.session ??
-        (options?.apiForGeneration
-          ? (await options.apiForGeneration()).session
-          : options?.api && protocol
-            ? resolveCompatibleApi(options.api, protocol).session
-            : sessionApi)
+    const currentSessionApi = options?.apiForGeneration
+      ? (await options.apiForGeneration()).session
+      : (options?.api?.session ?? sessionApi)
+    if (currentSessionApi) {
       const response = await (options?.retry ?? retry)(() => {
         onAttempt?.()
         return currentSessionApi.message({ sessionID, messageID })
@@ -680,7 +679,7 @@ export function createServerSession(
     }
     const response = await (options?.retry ?? retry)(() => {
       onAttempt?.()
-      return client.session.message({ sessionID, messageID })
+      return projection!.session.message({ sessionID, messageID })
     })
     if (!response.data?.info?.id) throw new Error(`Message not found: ${messageID}`)
     return {
@@ -951,25 +950,12 @@ export function createServerSession(
   }
 
   const refreshContext = (sessionID: string) => {
-    if ((!sessionApi && !options?.api && !options?.apiForGeneration && !options?.generationFor) || !options?.protocol)
-      return Promise.resolve()
+    const currentSessionApi = resolveCurrentSessionApi()
+    if (!currentSessionApi) return Promise.resolve()
     return runInflight(contextLoads, sessionID, async () => {
-      const selected = options.generationFor ? await options.generationFor() : undefined
-      const protocol = selected?.protocol ?? (await resolveServerProtocol(options.protocol))
-      if (protocol === "v1") return
-      const currentSessionApi =
-        selected?.api.session ??
-        (options.apiForGeneration
-          ? (await options.apiForGeneration()).session
-          : options.api && protocol
-            ? resolveCompatibleApi(options.api, protocol).session
-            : sessionApi)
-      if (!currentSessionApi) return
       const active = generation(sessionID)
-      const result = await (options.retry ?? retry)(() => currentSessionApi.context({ sessionID }))
+      const result = await (options?.retry ?? retry)(() => currentSessionApi.then((api) => api.context({ sessionID })))
       if (generations.get(sessionID) !== active) return
-      // The injected current API returns the V2 protocol shape; the shared
-      // legacy client type predates the V2 content identifiers.
       setData("session_context", sessionID, result as unknown as readonly SessionMessage[])
     })
   }
@@ -1066,23 +1052,12 @@ export function createServerSession(
 
   const hydrateV2Message = (sessionID: string, messageID: string) => {
     if (v2Hydrations.has(sessionID)) return
-    const currentSessionApi = options?.generationFor
-      ? options
-          .generationFor()
-          .then((generation) => (generation.protocol === "v1" ? undefined : generation.api.session))
-      : options?.api
-        ? resolveServerProtocol(options.protocol).then((protocol) => {
-            if (protocol === "v1") return
-            return resolveCompatibleApi(options.api!, "v2").session
-          })
-        : options?.apiForGeneration
-          ? options.apiForGeneration().then((api) => api.session)
-          : Promise.resolve(sessionApi)
-    if (!options?.generationFor && !options?.apiForGeneration && !options?.api && !sessionApi) return
+    const currentSessionApi = resolveCurrentSessionApi()
+    if (!currentSessionApi) return
     const active = generation(sessionID)
     let retryMessageID: string | undefined
     const request = currentSessionApi
-      .then((api) => api?.message({ sessionID, messageID }))
+      .then((api) => api.message({ sessionID, messageID }))
       .then((message) => {
         if (!message) return
         if (generations.get(sessionID) !== active) return
@@ -1123,7 +1098,7 @@ export function createServerSession(
       const durable = event.durable
       const previous = durableSequences.get(sessionID)
       if (previous !== undefined && durable.seq <= previous) return
-      if (previous !== undefined && durable.seq > previous + 1 && messageApi && options?.protocol) {
+      if (previous !== undefined && durable.seq > previous + 1 && hasCurrentApi) {
         const baseline = new Map([[sessionID, durable.seq]])
         const recovery: PendingV2Recovery = { events: [event], baseline }
         pendingV2Recoveries.set(sessionID, recovery)
@@ -1261,8 +1236,7 @@ export function createServerSession(
       void resolve(sessionID, { force: true }).catch(() => {})
     const eventType = event.type as string
     const settled =
-      messageApi &&
-      options?.protocol &&
+      hasCurrentApi &&
       ((event.type === "session.status" && event.data.status.type === "idle") ||
         eventType === "session.idle" ||
         eventType === "session.execution.succeeded" ||
@@ -1689,30 +1663,28 @@ export function createServerSession(
     async todo(sessionID: string, request?: { force?: boolean }) {
       touch(sessionID)
       if (data.todo[sessionID] !== undefined && !request?.force) return
-      const selected = options?.generationFor ? await options.generationFor() : undefined
-      const protocol = selected?.protocol ?? (await resolveServerProtocol(options?.protocol))
-      const currentSession =
-        selected?.api.session ??
-        (options?.apiForGeneration
-          ? (await options.apiForGeneration()).session
-          : options?.api && protocol
-            ? resolveCompatibleApi(options.api, protocol).session
-            : options?.currentSession)
+      const currentSession = options?.apiForGeneration
+        ? options.apiForGeneration().then((api) => api.session)
+        : options?.api
+          ? Promise.resolve(options.api.session)
+          : options?.currentSession
+            ? Promise.resolve(options.currentSession)
+            : undefined
       if (currentSession) {
         return runInflight(inflightTodo, sessionID, async () => {
           const active = generation(sessionID)
-          const result = await (options?.retry ?? retry)(() => currentSession.todo({ sessionID }))
+          const result = await (options?.retry ?? retry)(() => currentSession.then((api) => api.todo({ sessionID })))
           if (generations.get(sessionID) !== active) return
           setData("todo", sessionID, reconcile(extractArray<Todo>(result)))
         })
       }
-      if (protocol === "v2") {
+      if (!projection) {
         setData("todo", sessionID, [])
         return
       }
       return runInflight(inflightTodo, sessionID, () => {
         const active = generation(sessionID)
-        return (options?.retry ?? retry)(() => client.session.todo({ sessionID })).then((result) => {
+        return (options?.retry ?? retry)(() => projection.session.todo({ sessionID })).then((result) => {
           if (generations.get(sessionID) !== active) return
           setData("todo", sessionID, reconcile(result.data ?? [], { key: "id" }))
         })

@@ -1,13 +1,10 @@
 import type { ServerApi } from "./server"
 import type { ServerProtocol, ServerProtocolResolver } from "./server-protocol"
-import type { AgentPartInput, FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client"
 import type {
   SessionCreateInput,
   SessionCreateOutput,
   SessionCommandInput,
   SessionCommandOutput,
-  SessionCompactInput,
-  SessionCompactOutput,
   SessionPromptInput,
   SessionPromptOutput,
   SessionShellInput,
@@ -24,10 +21,20 @@ type CompatibleModel = {
 }
 type CompatibleCreateInput = Omit<SessionCreateInput, "model"> & { model?: CompatibleModel | null }
 type CompatibleCommandInput = Omit<SessionCommandInput, "model"> & { model?: CompatibleModel | null }
-type CompatibleSessionApi = Omit<
-  ServerApi["session"],
-  "create" | "prompt" | "command" | "shell" | "compact" | "todo" | "rename" | "archive" | "remove"
-> & {
+type CompatiblePromptInput = SessionPromptInput & {
+  agent?: string
+  model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
+  variant?: string
+  context?: Prompt["context"]
+  expectedActiveAttemptID?: string
+}
+type CompatibleShellInput = SessionShellInput & {
+  agent?: string
+  model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
+  variant?: string
+  resume?: boolean
+}
+type CompatibleSessionApi = Omit<ServerApi["session"], "create" | "prompt" | "command" | "shell"> & {
   create: (
     input?: CompatibleCreateInput,
     requestOptions?: Parameters<ServerApi["session"]["create"]>[1],
@@ -37,40 +44,11 @@ type CompatibleSessionApi = Omit<
     input: CompatibleCommandInput,
     requestOptions?: Parameters<ServerApi["session"]["command"]>[1],
   ) => Promise<SessionCommandOutput>
-  shell: (input: SessionShellInput & LegacyPrompt & { resume?: boolean }) => Promise<SessionShellOutput>
-  compact: (input: SessionCompactInput & { model?: LegacyPrompt["model"] }) => Promise<SessionCompactOutput>
-  todo: (input: Parameters<ServerApi["session"]["todo"]>[0]) => ReturnType<ServerApi["session"]["todo"]>
-  rename: (
-    input: Parameters<ServerApi["session"]["rename"]>[0] & LegacyLocation,
-  ) => ReturnType<ServerApi["session"]["rename"]>
-  archive: (
-    input: Parameters<ServerApi["session"]["archive"]>[0] & LegacyLocation,
-  ) => ReturnType<ServerApi["session"]["archive"]>
-  remove: (
-    input: Parameters<ServerApi["session"]["remove"]>[0] & LegacyLocation,
-  ) => ReturnType<ServerApi["session"]["remove"]>
+  shell: (input: CompatibleShellInput) => Promise<SessionShellOutput>
 }
-type CompatiblePermissionApi = Omit<ServerApi["permission"], "reply"> & {
-  reply: (
-    input: Parameters<ServerApi["permission"]["reply"]>[0] & { location?: { directory?: string } },
-  ) => ReturnType<ServerApi["permission"]["reply"]>
-}
-export type CompatibleApi = Omit<ServerApi, "session" | "permission"> & {
+export type CompatibleApi = Omit<ServerApi, "session"> & {
   readonly session: CompatibleSessionApi
-  readonly permission: CompatiblePermissionApi
 }
-type LegacyPrompt = {
-  agent?: string
-  model?: { providerID: string; modelID: string; protocol?: CustomProvider.Protocol }
-  variant?: string
-  legacyParts?: (TextPartInput | FilePartInput | AgentPartInput)[]
-}
-type CompatiblePromptInput = SessionPromptInput &
-  LegacyPrompt & {
-    context?: Prompt["context"]
-    expectedActiveAttemptID?: string
-  }
-type LegacyLocation = { directory?: string }
 type CompatibleInput = {
   protocol: Promise<ServerProtocol> | (() => Promise<ServerProtocol>)
   current: ServerApi
@@ -78,7 +56,7 @@ type CompatibleInput = {
 
 export type CompatibleImplementation = CompatibleApi | ServerApi
 export type ServerGeneration = {
-  protocol: ServerProtocol
+  protocol: "v2"
   api: CompatibleImplementation
 }
 const compatibleResolvers = new WeakMap<object, (protocol: ServerProtocol) => CompatibleImplementation>()
@@ -98,7 +76,7 @@ export function resolveCompatibleApi(api: CompatibleApi, protocol: ServerProtoco
 }
 
 export function resolveCompatibleGeneration(api: CompatibleApi, protocol: ServerProtocol): ServerGeneration {
-  return { protocol, api: resolveCompatibleApi(api, protocol) }
+  return { protocol: "v2", api: resolveCompatibleApi(api, protocol) }
 }
 
 export function resolveCompatibleApiForProtocol(

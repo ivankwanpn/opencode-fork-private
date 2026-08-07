@@ -138,12 +138,6 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       return selected().sync.session.lineage.peek(params.id)?.session.directory
     })
 
-    createEffect(() => {
-      const directory = activeDirectory()
-      if (!directory) return
-      selected().enableConfiguredDirectory(directory)
-    })
-
     const permissionsEnabled = createMemo(() => {
       const directory = activeDirectory()
       if (!directory) return false
@@ -213,20 +207,6 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
     }),
   )
 
-  function enableConfiguredDirectory(directory: string) {
-    if (input.sdk.protocolKind() !== "v1") return
-    if (meta.disposed || !ready()) return
-    const [childStore] = input.sync.child(directory)
-    if (childStore.config.permission !== "allow") return
-    const key = directoryAcceptKey(directory)
-    if (store.autoAccept[key] !== undefined) return
-    setStore(
-      produce((draft) => {
-        draft.autoAccept[key] = true
-      }),
-    )
-  }
-
   const MAX_RESPONDED = 1000
   const RESPONDED_TTL_MS = 60 * 60 * 1000
   const responded = new Map<string, number>()
@@ -256,7 +236,6 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
           sessionID: request.sessionID,
           requestID: request.permissionID,
           reply: request.response,
-          location: request.directory ? { directory: request.directory } : undefined,
         }),
     })
       .catch(() => {
@@ -477,7 +456,6 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
     ...api,
     api,
     sync: input.sync,
-    enableConfiguredDirectory,
     permissionsEnabled(directory: string) {
       if (meta.disposed) return false
       const [childStore] = input.sync.child(directory)

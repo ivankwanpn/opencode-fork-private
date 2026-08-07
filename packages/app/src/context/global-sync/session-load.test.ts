@@ -1,26 +1,35 @@
 import { describe, expect, test } from "bun:test"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
-import { loadRootSessionsV1 } from "./session-load"
+import type { ServerApi } from "@/utils/server"
+import { loadRootSessions } from "./session-load"
 
-describe("loadRootSessionsV1", () => {
-  test("retries without a limit when an older server rejects the limited query", async () => {
+describe("loadRootSessions", () => {
+  test("loads one limited page of root sessions from the V2 API", async () => {
     const calls: unknown[] = []
-    const list = async (input: { directory: string; roots: boolean; limit?: number }) => {
-      calls.push(input)
-      if (input.limit !== undefined) throw new Error("limit is unsupported")
-      return { data: [{ id: "session-1" }] }
-    }
-    const client = { session: { list } } as unknown as OpencodeClient
+    const api = {
+      list: async (input: unknown) => {
+        calls.push(input)
+        return {
+          data: [
+            {
+              id: "session-1",
+              projectID: "project",
+              title: "Session 1",
+              location: { directory: "/repo" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: 1, updated: 1 },
+            },
+          ],
+          cursor: {},
+        }
+      },
+    } as unknown as Pick<ServerApi["session"], "list">
 
-    const result = await loadRootSessionsV1({ client, directory: "/repo", limit: 20 })
+    const result = await loadRootSessions({ api, directory: "/repo", limit: 20 })
 
-    expect(calls).toEqual([
-      { directory: "/repo", roots: true, limit: 20 },
-      { directory: "/repo", roots: true },
-    ])
-    expect(result.data).toHaveLength(1)
-    expect(result.data[0]?.id).toBe("session-1")
+    expect(calls).toEqual([{ directory: "/repo", parentID: null, limit: 20, order: "desc" }])
+    expect(result.data).toEqual([expect.objectContaining({ id: "session-1", directory: "/repo" })])
     expect(result.limit).toBe(20)
-    expect(result.limited).toBe(false)
+    expect(result.limited).toBe(true)
   })
 })

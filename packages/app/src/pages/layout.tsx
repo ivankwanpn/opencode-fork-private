@@ -875,7 +875,7 @@ export default function LegacyLayout(props: ParentProps) {
       sessionMutations: target.sessionMutations,
       sessionID: session.id,
       apiForGeneration: target.apiForGeneration,
-      run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
+      run: (api) => api.archive({ sessionID: session.id }),
     })
     setStore(
       produce((draft) => {
@@ -1504,7 +1504,7 @@ export default function LegacyLayout(props: ParentProps) {
             sessionMutations: target.sessionMutations,
             sessionID: session.id,
             apiForGeneration: target.apiForGeneration,
-            run: (api) => api.archive({ sessionID: session.id, directory: session.directory }),
+            run: (api) => api.archive({ sessionID: session.id }),
           }).catch(() => undefined)
         }),
     )

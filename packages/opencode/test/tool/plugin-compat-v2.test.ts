@@ -635,6 +635,41 @@ describe("plugin tool compatibility v2", () => {
     }),
   )
 
+  discovery.instance("skips a broken config tool without blocking valid tools", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      yield* writeTool(
+        test.directory,
+        "tools",
+        "broken.ts",
+        [
+          "import 'opencode-missing-plugin-tool-dependency'",
+          "export default { description: 'broken', args: {}, execute: async () => 'broken' }",
+          "",
+        ].join("\n"),
+      )
+      yield* writeTool(
+        test.directory,
+        "tools",
+        "healthy.ts",
+        "export default { description: 'healthy', args: {}, execute: async () => 'ready' }\n",
+      )
+
+      yield* initialize()
+
+      yield* withLocation(
+        test.directory,
+        Effect.gen(function* () {
+          const registry = yield* ToolRegistry.Service
+          const materialized = yield* registry.materialize()
+          expect(materialized.definitions.find((item) => item.name === "broken")).toBeUndefined()
+          expect(materialized.definitions.find((item) => item.name === "healthy")?.description).toBe("healthy")
+          expect((yield* materialized.settle(call("healthy"))).result).toEqual({ type: "text", value: "ready" })
+        }),
+      )
+    }),
+  )
+
   discovery.instance("decodes Zod transforms, coercions, and defaults and preserves issue diagnostics", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance

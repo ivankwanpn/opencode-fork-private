@@ -121,12 +121,16 @@ describe("InstanceStore", () => {
     }),
   )
 
-  it.live("removes failed loads from the cache", () =>
+  it.live("cleans failed loads before retrying", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
       const store = yield* InstanceStore.Service
+      const disposed: string[] = []
       let attempts = 0
 
+      yield* registerDisposerScoped(async (directory) => {
+        disposed.push(directory)
+      })
       yield* setBootstrap(
         Effect.sync(() => {
           attempts++
@@ -139,6 +143,7 @@ describe("InstanceStore", () => {
       )
 
       expect(failed).toBe(true)
+      expect(disposed).toEqual([dir])
 
       yield* setBootstrap(
         Effect.sync(() => {

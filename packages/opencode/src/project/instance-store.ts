@@ -72,7 +72,10 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     const completeLoad = (directory: string, input: LoadInput, entry: Entry) =>
       Effect.gen(function* () {
         const exit = yield* Effect.exit(boot({ ...input, directory }))
-        if (Exit.isFailure(exit)) yield* removeEntry(directory, entry)
+        if (Exit.isFailure(exit)) {
+          yield* Effect.promise(() => runDisposers(directory))
+          yield* removeEntry(directory, entry)
+        }
         yield* Deferred.done(entry.deferred, exit).pipe(Effect.asVoid)
       })
 

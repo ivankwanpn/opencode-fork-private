@@ -253,6 +253,14 @@ describe("HttpApiCodegen.generate", () => {
     expect(output.files.find((file) => file.path === "client.ts")?.content).toContain("declaredStatuses: [500]")
   })
 
+  test("preserves JSON bodies for undeclared Promise response statuses", () => {
+    const output = emitPromise(compileContract(api(HttpApiEndpoint.get("get", "/session", { success: Schema.String }))))
+    const client = output.files.find((file) => file.path === "client.ts")?.content
+
+    expect(client).toContain("const body = await json(response).catch(() => undefined)")
+    expect(client).toContain('new ClientError("UnexpectedStatus", { cause: { status: response.status, body } })')
+  })
+
   test("erases brands from Promise wire types", () => {
     const output = emitPromise(
       compileContract(
@@ -411,6 +419,28 @@ describe("HttpApiCodegen.generate", () => {
       expect(await client.session.get({ sessionID: "a/b" })).toBe("hello")
       expect(request?.method).toBe("GET")
       expect(request?.url).toBe("https://example.com/session/a%2Fb")
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test("exposes undeclared JSON error bodies at runtime", async () => {
+    const output = emitPromise(compileContract(api(HttpApiEndpoint.get("get", "/session", { success: Schema.String }))))
+    const directory = await mkdtemp(join(tmpdir(), "opencode-httpapi-codegen-"))
+
+    try {
+      await Promise.all(output.files.map((file) => Bun.write(join(directory, file.path), file.content)))
+      const generated = await import(`${join(directory, "index.ts")}?t=${crypto.randomUUID()}`)
+      const body = { _tag: "UnknownError", message: "Instance bootstrap failed" }
+      const client = generated.OpenCode.make({
+        baseUrl: "https://example.com",
+        fetch: async () => Response.json(body, { status: 500 }),
+      })
+
+      const error = await client.session.get().catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(generated.ClientError)
+      expect(error.reason).toBe("UnexpectedStatus")
+      expect(error.cause).toEqual({ status: 500, body })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

@@ -38,11 +38,10 @@ const layer = Layer.effect(
       yield* config.get()
       // Plugin can mutate config so it has to be initialized before anything else.
       yield* plugin.init()
-      yield* pluginTools.init()
       // Each service self-manages its own slow work via Effect.forkScoped against
       // its per-instance state scope. We just await materialization here.
       yield* Effect.forEach(
-        [lsp, shareNext, format, vcs, snapshot, project],
+        [pluginTools, lsp, shareNext, format, vcs, snapshot, project],
         (s) => s.init().pipe(Effect.catchCause((cause) => Effect.logWarning("init failed", { cause }))),
         { concurrency: "unbounded", discard: true },
       ).pipe(Effect.withSpan("InstanceBootstrap.init"))

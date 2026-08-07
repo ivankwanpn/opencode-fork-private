@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
 import type { Config, PermissionRequest, Project, QuestionRequest } from "@opencode-ai/sdk/v2/client"
@@ -134,6 +134,57 @@ describe("bootstrapDirectory", () => {
     await new Promise((resolve) => setTimeout(resolve, 80))
 
     expect(store.session_status).toEqual({ ses_running: { type: "busy" } })
+  })
+
+  test("routes provider failures through one common error path and keeps the directory partial", async () => {
+    const [store, setStore] = directoryState()
+    let resolveReported!: () => void
+    const reported = new Promise<void>((resolve) => {
+      resolveReported = resolve
+    })
+    const errorLog = spyOn(console, "error").mockImplementation((message) => {
+      if (message === "Failed to finish bootstrap instance") resolveReported()
+    })
+
+    try {
+      await bootstrapDirectory({
+        directory: "/project",
+        scope: ServerScope.local,
+        mcp: false,
+        global: {
+          config: {} satisfies Config,
+          path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+          project: [{ id: "project", worktree: "/project" } as Project],
+          provider,
+        },
+        api: {
+          ...api,
+          providers: {
+            catalog: async () => {
+              throw new Error("Instance bootstrap failed")
+            },
+          },
+        } as unknown as ServerApi,
+        store,
+        setStore,
+        vcsCache: { setStore() {} } as unknown as VcsCache,
+        loadSessions() {},
+        translate: (key) => key,
+        queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+      })
+
+      await Promise.race([
+        reported,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("provider bootstrap error was not reported")), 2_000),
+        ),
+      ])
+
+      expect(store.status).toBe("partial")
+      expect(errorLog.mock.calls.filter((call) => call[0] === "Failed to finish bootstrap instance")).toHaveLength(1)
+    } finally {
+      errorLog.mockRestore()
+    }
   })
 
   test("does not overwrite requests changed while list snapshots are in flight", async () => {

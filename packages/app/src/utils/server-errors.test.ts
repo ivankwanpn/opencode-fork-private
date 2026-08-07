@@ -15,6 +15,7 @@ function fill(text: string, vars?: Record<string, string | number>) {
 function useLanguageMock() {
   const dict: Record<string, string> = {
     "error.chain.unknown": "Erro desconhecido",
+    "error.chain.status": "Status: {{status}}",
     "error.chain.configInvalid": "Arquivo de config em {{path}} invalido",
     "error.chain.configInvalidWithMessage": "Arquivo de config em {{path}} invalido: {{message}}",
     "error.chain.modelNotFound": "Modelo nao encontrado: {{provider}}/{{model}}",
@@ -99,6 +100,19 @@ describe("formatServerError", () => {
     expect(formatServerError({ name: "ServerTimeoutError", data: { seconds: 30 } }, language.t)).toBe(
       "Erro desconhecido",
     )
+  })
+
+  test("returns messages from raw and wrapped server errors", () => {
+    const body = { _tag: "UnknownError", message: "Instance bootstrap failed" }
+
+    expect(formatServerError(body, language.t)).toBe("Instance bootstrap failed")
+    expect(formatServerError(new Error("UnexpectedStatus", { cause: { status: 500, body } }), language.t)).toBe(
+      "Instance bootstrap failed",
+    )
+  })
+
+  test("uses the localized status when an unexpected response has no JSON body", () => {
+    expect(formatServerError(new Error("UnexpectedStatus", { cause: { status: 502 } }), language.t)).toBe("Status: 502")
   })
 
   test("formats provider model errors using provider/model", () => {

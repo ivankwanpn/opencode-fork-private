@@ -110,7 +110,7 @@ describe("createCustomProviderApi", () => {
     })
   })
 
-  test("throws typed JSON errors unchanged", async () => {
+  test("preserves typed JSON errors with their response status", async () => {
     const error = {
       _tag: "CustomProviderValidationError",
       field: "baseURL",
@@ -121,13 +121,19 @@ describe("createCustomProviderApi", () => {
       fetch: async () => Response.json(error, { status: 400 }),
     })
 
-    expect(
-      api.discoverCustom({
+    const result = await api
+      .discoverCustom({
         protocol: "openai-compatible",
         baseURL: "invalid",
         headers: [],
-      }),
-    ).rejects.toEqual(error)
+      })
+      .then(
+        () => undefined,
+        (cause) => cause,
+      )
+
+    expect(result).toBeInstanceOf(Error)
+    expect((result as Error).cause).toEqual({ status: 400, body: error })
   })
 
   test("reports transport failures without leaking request payloads or secrets", async () => {

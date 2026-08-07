@@ -2,8 +2,14 @@ import fsNode from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap, type LocationServices } from "@opencode-ai/core/location-services"
+import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { Effect, Layer, LayerMap } from "effect"
+import { Config } from "../config/config"
 import { ClaudeMarketplaceManager, type MarketplacePaths } from "./claude-marketplace"
+import { NativeClaudeMarketplace } from "./native-claude-marketplace"
 import { Process } from "../util/process"
 
 let temporaryDirectory: string
@@ -132,5 +138,56 @@ describe("ClaudeMarketplaceManager", () => {
     expect(
       await fsNode.stat(path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo", "demo", "SKILL.md")),
     ).toBeTruthy()
+  })
+})
+
+describe("NativeClaudeMarketplace", () => {
+  test("invalidates V2 locations after managed MCP changes", async () => {
+    const marketplace = path.join(temporaryDirectory, "source")
+    await writeMarketplace(marketplace, "./plugins/demo")
+    const manager = new ClaudeMarketplaceManager(testPaths())
+    const key = "claude:local-marketplace:demo:demo"
+    const observations: boolean[] = []
+    let current: Config.Info = {}
+
+    const config = Layer.mock(Config.Service)({
+      getGlobal: () => Effect.succeed(current),
+      updateGlobal: (next) =>
+        Effect.sync(() => {
+          const changed = JSON.stringify(current) !== JSON.stringify(next)
+          current = next
+          return { info: next, changed }
+        }),
+    })
+    const locations = Layer.effect(
+      LocationServiceMap.Service,
+      Effect.map(
+        LayerMap.make((_ref: Location.Ref) => Layer.empty as Layer.Layer<LocationServices>, {
+          idleTimeToLive: "1 minute",
+        }),
+        (map) =>
+          LocationServiceMap.Service.of({
+            ...map,
+            invalidateAll: () =>
+              Effect.sync(() => {
+                observations.push(Boolean(current.mcp?.[key]))
+              }),
+          }),
+      ),
+    )
+    const runtime = NativeClaudeMarketplace.layerWith(manager).pipe(Layer.provide(Layer.mergeAll(config, locations)))
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const plugins = yield* PluginCapability.Service
+        yield* plugins.addMarketplace(marketplace)
+        observations.length = 0
+        yield* plugins.install("demo@local-marketplace")
+        yield* plugins.disable("demo@local-marketplace")
+      }).pipe(Effect.provide(runtime)),
+    )
+
+    expect(observations).toEqual([true, false])
+    expect(current.mcp).toBeUndefined()
   })
 })

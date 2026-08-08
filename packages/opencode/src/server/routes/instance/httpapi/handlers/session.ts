@@ -1,16 +1,14 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { Agent } from "@/agent/agent"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
-import { EventV2Bridge } from "@/event-v2-bridge"
-import { Command } from "@/command"
 import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
+import { LegacySessionExecution } from "@/session/legacy-session-execution"
+import { LegacySessionRead } from "@/session/legacy-session-read"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionRevert } from "@/session/revert"
@@ -19,8 +17,7 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
-import { NamedError } from "@opencode-ai/core/util/error"
-import { Cause, Effect, Option, Schema, Scope } from "effect"
+import { Effect, Option, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { InstanceState } from "@/effect/instance-state"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -40,25 +37,21 @@ import {
   SummarizePayload,
   UpdatePayload,
 } from "../groups/session"
-import { PermissionNotFoundError } from "../errors"
+import { ApiNotFoundError, PermissionNotFoundError } from "../errors"
 import * as SessionError from "./session-errors"
+
+const mapExecutionBadRequest = <A, E, R>(self: Effect.Effect<A, E, R>) =>
+  self.pipe(
+    SessionError.mapStorageNotFound,
+    SessionError.mapSessionNotFound,
+    Effect.mapError((error) => (Schema.is(ApiNotFoundError)(error) ? error : new HttpApiError.BadRequest({}))),
+  )
 
 const tryParseJson = (text: string) =>
   Effect.try({
     try: () => JSON.parse(text) as unknown,
     catch: () => new HttpApiError.BadRequest({}),
   })
-
-type CanonicalSelection = {
-  agent?: string
-  model?: {
-    providerID: ProviderV2.ID
-    modelID: ModelV2.ID
-    protocol?: ModelV2.Protocol
-  }
-  variant?: string
-  tools?: Record<string, boolean>
-}
 
 const hasUnsupportedPromptShape = (input: typeof PromptPayload.Type) => {
   if (input.parts[0]?.type !== "text") return true
@@ -139,22 +132,15 @@ const toCanonicalPrompt = (input: typeof PromptPayload.Type): PromptInput.Prompt
 export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
-    const sessionV2 = yield* SessionV2.Service
+    const sessionRead = yield* LegacySessionRead.Service
+    const sessionExecution = yield* LegacySessionExecution.Service
     const shareSvc = yield* SessionShare.Service
     const revertSvc = yield* SessionRevert.Service
     const runState = yield* SessionRunState.Service
-    const agentSvc = yield* Agent.Service
     const permissionSvc = yield* Permission.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
     const summary = yield* SessionSummary.Service
-    const events = yield* EventV2Bridge.Service
-    const scope = yield* Scope.Scope
-
-    const resumeCanonical = (legacyID: SessionID, canonicalID: SessionV2.ID) =>
-      statusSvc
-        .set(legacyID, { type: "busy" })
-        .pipe(Effect.andThen(sessionV2.resume(canonicalID)), Effect.ensuring(statusSvc.set(legacyID, { type: "idle" })))
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
@@ -175,92 +161,6 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const requireSession = Effect.fn("SessionHttpApi.requireSession")(function* (sessionID: SessionID) {
       return yield* SessionError.mapStorageNotFound(session.get(sessionID))
-    })
-
-    const requireCanonicalSession = Effect.fn("SessionHttpApi.requireCanonicalSession")(function* (
-      sessionID: SessionID,
-    ) {
-      return yield* SessionError.mapSessionNotFound(sessionV2.get(SessionV2.ID.make(sessionID)))
-    })
-
-    const cleanupRevert = Effect.fn("SessionHttpApi.cleanupRevert")(function* (legacy: Session.Info) {
-      if (!legacy.revert) return
-      const sessionID = SessionV2.ID.make(legacy.id)
-      const messageID = SessionMessage.ID.make(legacy.revert.messageID)
-      const boundary = yield* sessionV2.message({ sessionID, messageID })
-      if (boundary) yield* sessionV2.revert.commit(sessionID).pipe(SessionError.mapSessionNotFound)
-      yield* revertSvc.cleanup(legacy)
-    })
-
-    const selectCanonical = Effect.fn("SessionHttpApi.selectCanonical")(function* (
-      sessionID: SessionID,
-      input: CanonicalSelection,
-    ) {
-      let current = yield* requireCanonicalSession(sessionID)
-      const selectedAgent = input.agent === undefined ? undefined : yield* agentSvc.get(input.agent)
-      if (input.agent !== undefined && !selectedAgent) return yield* new HttpApiError.BadRequest({})
-
-      if (input.agent !== undefined && current.agent !== input.agent) {
-        yield* SessionError.mapSessionNotFound(
-          sessionV2.switchAgent({
-            sessionID: current.id,
-            agent: input.agent,
-          }),
-        )
-        current = yield* requireCanonicalSession(sessionID)
-      }
-
-      const requestedModel = input.model ?? selectedAgent?.model
-      const selectedVariant = input.variant ?? (input.model === undefined ? selectedAgent?.variant : undefined)
-      const baseModel =
-        requestedModel ??
-        (selectedVariant !== undefined && current.model
-          ? {
-              providerID: current.model.providerID,
-              modelID: current.model.id,
-              protocol: current.model.protocol,
-            }
-          : undefined)
-      if (baseModel) {
-        const protocol = "protocol" in baseModel ? baseModel.protocol : undefined
-        yield* SessionError.mapSessionNotFound(
-          sessionV2.switchModel({
-            sessionID: current.id,
-            model: {
-              providerID: baseModel.providerID,
-              id: baseModel.modelID,
-              variant: selectedVariant === undefined ? undefined : ModelV2.VariantID.make(selectedVariant),
-              protocol,
-            },
-          }),
-        )
-        current = yield* requireCanonicalSession(sessionID)
-      }
-
-      const permissions: PermissionV1.Rule[] = []
-      for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
-        permissions.push({ permission: tool, action: enabled ? "allow" : "deny", pattern: "*" })
-      }
-      if (permissions.length > 0) {
-        yield* session.setPermission({ sessionID, permission: permissions })
-        current = yield* requireCanonicalSession(sessionID)
-      }
-
-      return current
-    })
-
-    const legacyHistory = Effect.fn("SessionHttpApi.legacyHistory")(function* (sessionID: SessionID) {
-      const current = yield* requireCanonicalSession(sessionID)
-      const canonical = yield* sessionV2
-        .messages({
-          sessionID: current.id,
-          order: "asc",
-        })
-        .pipe(Effect.catchTag("Session.MessageDecodeError", Effect.die), SessionError.mapSessionNotFound)
-      const legacy = yield* SessionError.mapStorageNotFound(session.messages({ sessionID }))
-      const merged = new Map(legacy.map((message) => [message.info.id, message]))
-      for (const message of MessageV2.toLegacy(current, canonical)) merged.set(message.info.id, message)
-      return Array.from(merged.values()).sort((left, right) => left.info.time.created - right.info.time.created)
     })
 
     const get = Effect.fn("SessionHttpApi.get")(function* (ctx: { params: { sessionID: SessionID } }) {
@@ -296,7 +196,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
           })
         : undefined
       yield* requireSession(ctx.params.sessionID)
-      const history = yield* legacyHistory(ctx.params.sessionID)
+      const history = yield* sessionRead
+        .history(ctx.params.sessionID)
+        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)
       if (ctx.query.limit === undefined || ctx.query.limit === 0) return history
 
       const boundary = before ? history.findIndex((message) => message.info.id === before.id) : history.length
@@ -340,7 +242,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID; messageID: MessageID }
     }) {
       yield* requireSession(ctx.params.sessionID)
-      const found = (yield* legacyHistory(ctx.params.sessionID)).find(
+      const found = (yield* sessionRead
+        .history(ctx.params.sessionID)
+        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)).find(
         (message) => message.info.id === ctx.params.messageID,
       )
       if (found) return found
@@ -428,10 +332,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
       const sessionID = SessionID.make(ctx.params.sessionID)
-      yield* sessionV2.interrupt(SessionV2.ID.make(sessionID))
-      // Cancellation must reach durable TaskSubmission ownership even when the
-      // parent session is idle after returning a background task handle.
-      yield* runState.cancel(sessionID)
+      yield* sessionExecution.abort(sessionID)
       return true
     })
 
@@ -440,24 +341,13 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof InitPayload.Type
     }) {
       const legacySession = yield* requireSession(ctx.params.sessionID)
-      yield* cleanupRevert(legacySession)
-      const current = yield* requireCanonicalSession(ctx.params.sessionID)
-      yield* sessionV2
-        .command({
-          id: SessionMessage.ID.make(ctx.payload.messageID),
-          sessionID: current.id,
-          command: Command.Default.INIT,
-          arguments: "",
-          model: {
-            providerID: ctx.payload.providerID,
-            id: ctx.payload.modelID,
-          },
-          resume: false,
-        })
-        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
-      yield* session.touch(ctx.params.sessionID)
-      yield* resumeCanonical(ctx.params.sessionID, current.id).pipe(
-        Effect.mapError(() => new HttpApiError.BadRequest({})),
+      yield* mapExecutionBadRequest(
+        sessionExecution.init({
+          session: legacySession,
+          messageID: SessionMessage.ID.make(ctx.payload.messageID),
+          providerID: ctx.payload.providerID,
+          modelID: ctx.payload.modelID,
+        }),
       )
       return true
     })
@@ -486,24 +376,21 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof SummarizePayload.Type
     }) {
       const legacySession = yield* requireSession(ctx.params.sessionID)
-      yield* cleanupRevert(legacySession)
-      const history = yield* legacyHistory(ctx.params.sessionID)
-      const defaultAgent = yield* agentSvc.defaultAgent()
-      const currentAgent = history.findLast((message) => message.info.role === "user")?.info.agent ?? defaultAgent
-      const current = yield* selectCanonical(ctx.params.sessionID, {
-        agent: currentAgent,
-        model: {
+      yield* sessionExecution
+        .summarize({
+          session: legacySession,
           providerID: ctx.payload.providerID,
           modelID: ctx.payload.modelID,
-        },
-      })
-
-      yield* sessionV2
-        .compact({
-          sessionID: current.id,
-          reason: ctx.payload.auto === true ? "auto" : "manual",
+          auto: ctx.payload.auto,
         })
-        .pipe(SessionError.mapSessionNotFound, SessionError.mapExecutionBusy)
+        .pipe(
+          SessionError.mapStorageNotFound,
+          SessionError.mapSessionNotFound,
+          SessionError.mapExecutionBusy,
+          Effect.catchTag("LegacySessionExecution.InvalidSelectionError", () =>
+            Effect.fail(new HttpApiError.BadRequest({})),
+          ),
+        )
       return true
     })
 
@@ -512,66 +399,20 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof PromptPayload.Type
     }) {
       const legacySession = yield* requireSession(ctx.params.sessionID)
-      yield* cleanupRevert(legacySession)
-      let current = yield* selectCanonical(ctx.params.sessionID, {
-        agent: ctx.payload.agent,
-        model: ctx.payload.model,
-        variant: ctx.payload.variant,
-        tools: ctx.payload.tools,
-      })
-      const admitted = yield* sessionV2
-        .prompt({
+      return yield* mapExecutionBadRequest(
+        sessionExecution.prompt({
+          session: legacySession,
           id: ctx.payload.messageID ? SessionMessage.ID.make(ctx.payload.messageID) : undefined,
-          sessionID: current.id,
           prompt: toCanonicalPrompt(ctx.payload),
-          model: ctx.payload.model
-            ? {
-                id: ctx.payload.model.modelID,
-                providerID: ctx.payload.model.providerID,
-                variant: ctx.payload.variant === undefined ? undefined : ModelV2.VariantID.make(ctx.payload.variant),
-                protocol: ctx.payload.model.protocol,
-              }
-            : undefined,
-          resume: false,
-          commit: ctx.payload.noReply === true,
-        })
-        .pipe(
-          SessionError.mapSessionNotFound,
-          Effect.catchTag("Session.PromptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-          Effect.catchTag("Session.ActiveAttemptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-          Effect.catchTag("Session.TurnConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-        )
-      yield* session.touch(ctx.params.sessionID)
-
-      if (ctx.payload.noReply === true) {
-        current = yield* requireCanonicalSession(ctx.params.sessionID)
-        const user = SessionMessage.User.make({
-          id: admitted.id,
-          type: "user",
-          text: admitted.prompt.text,
-          files: admitted.prompt.files,
-          agents: admitted.prompt.agents,
-          system: admitted.prompt.system,
-          tools: admitted.prompt.tools,
-          format: admitted.prompt.format,
-          time: { created: admitted.timeCreated },
-        })
-        const projected = MessageV2.toLegacy(current, [user])[0]
-        if (!projected) return yield* Effect.die("Admitted prompt did not project to a legacy user message")
-        return projected
-      }
-
-      yield* resumeCanonical(ctx.params.sessionID, current.id).pipe(
-        Effect.mapError(() => new HttpApiError.BadRequest({})),
+          selection: {
+            agent: ctx.payload.agent,
+            model: ctx.payload.model,
+            variant: ctx.payload.variant,
+            tools: ctx.payload.tools,
+          },
+          noReply: ctx.payload.noReply,
+        }),
       )
-      const history = yield* legacyHistory(ctx.params.sessionID)
-      const userID = MessageID.ascending(admitted.id)
-      const userIndex = history.findIndex((message) => message.info.id === userID)
-      const response = history.findLast(
-        (message, index) => index > userIndex && message.info.role === "assistant" && message.info.parentID === userID,
-      )
-      if (!response) return yield* new HttpApiError.BadRequest({})
-      return response
     })
 
     const prompt = Effect.fn("SessionHttpApi.prompt")(function* (ctx: {
@@ -589,46 +430,23 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload: typeof PromptPayload.Type
     }) {
-      yield* requireSession(ctx.params.sessionID)
       if (hasUnsupportedPromptShape(ctx.payload)) return yield* new HttpApiError.BadRequest({})
 
       const legacySession = yield* requireSession(ctx.params.sessionID)
-      yield* cleanupRevert(legacySession)
-      const current = yield* selectCanonical(ctx.params.sessionID, {
-        agent: ctx.payload.agent,
-        model: ctx.payload.model,
-        variant: ctx.payload.variant,
-        tools: ctx.payload.tools,
-      })
-      yield* sessionV2
-        .prompt({
+      yield* mapExecutionBadRequest(
+        sessionExecution.promptAsync({
+          session: legacySession,
           id: ctx.payload.messageID ? SessionMessage.ID.make(ctx.payload.messageID) : undefined,
-          sessionID: current.id,
           prompt: toCanonicalPrompt(ctx.payload),
-          resume: false,
-          commit: ctx.payload.noReply === true,
-        })
-        .pipe(
-          SessionError.mapSessionNotFound,
-          Effect.catchTag("Session.PromptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-          Effect.catchTag("Session.ActiveAttemptConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-          Effect.catchTag("Session.TurnConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-        )
-      yield* session.touch(ctx.params.sessionID)
-      if (ctx.payload.noReply !== true) {
-        yield* resumeCanonical(ctx.params.sessionID, current.id).pipe(
-          Effect.catchCause((cause) =>
-            Effect.gen(function* () {
-              yield* Effect.logError("prompt_async failed", { sessionID: ctx.params.sessionID, cause })
-              yield* events.publish(Session.Event.Error, {
-                sessionID: ctx.params.sessionID,
-                error: new NamedError.Unknown({ message: Cause.pretty(cause) }).toObject(),
-              })
-            }),
-          ),
-          Effect.forkIn(scope, { startImmediately: true }),
-        )
-      }
+          selection: {
+            agent: ctx.payload.agent,
+            model: ctx.payload.model,
+            variant: ctx.payload.variant,
+            tools: ctx.payload.tools,
+          },
+          noReply: ctx.payload.noReply,
+        }),
+      )
       return HttpApiSchema.NoContent.make()
     })
 
@@ -639,8 +457,6 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const legacySession = yield* requireSession(ctx.params.sessionID)
       if (hasUnsupportedCommandShape(ctx.payload)) return yield* new HttpApiError.BadRequest({})
 
-      yield* cleanupRevert(legacySession)
-      const current = yield* requireCanonicalSession(ctx.params.sessionID)
       const model = ctx.payload.model
         ? (() => {
             const [providerID, ...modelID] = ctx.payload.model.split("/")
@@ -650,32 +466,18 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
             }
           })()
         : undefined
-      const admitted = yield* sessionV2
-        .command({
+      return yield* mapExecutionBadRequest(
+        sessionExecution.command({
+          session: legacySession,
           id: ctx.payload.messageID ? SessionMessage.ID.make(ctx.payload.messageID) : undefined,
-          sessionID: current.id,
           command: ctx.payload.command,
           arguments: ctx.payload.arguments,
           agent: ctx.payload.agent === undefined ? undefined : AgentV2.ID.make(ctx.payload.agent),
           model,
           variant: ctx.payload.variant ? ModelV2.VariantID.make(ctx.payload.variant) : undefined,
           files: ctx.payload.parts?.map(toCanonicalFile),
-          resume: false,
-        })
-        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
-      yield* session.touch(ctx.params.sessionID)
-      yield* resumeCanonical(ctx.params.sessionID, current.id).pipe(
-        Effect.mapError(() => new HttpApiError.BadRequest({})),
+        }),
       )
-
-      const history = yield* legacyHistory(ctx.params.sessionID)
-      const userID = MessageID.ascending(admitted.id)
-      const userIndex = history.findIndex((message) => message.info.id === userID)
-      const response = history.findLast(
-        (message, index) => index > userIndex && message.info.role === "assistant" && message.info.parentID === userID,
-      )
-      if (!response) return yield* new HttpApiError.BadRequest({})
-      return response
     })
 
     const shell = Effect.fn("SessionHttpApi.shell")(function* (ctx: {
@@ -683,31 +485,23 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof ShellPayload.Type
     }) {
       const legacySession = yield* requireSession(ctx.params.sessionID)
-      yield* cleanupRevert(legacySession)
-      let current = yield* selectCanonical(ctx.params.sessionID, {
-        agent: ctx.payload.agent,
-        model: ctx.payload.model,
-      })
-      yield* sessionV2
+      return yield* sessionExecution
         .shell({
+          session: legacySession,
           userID: ctx.payload.messageID ? SessionMessage.ID.make(ctx.payload.messageID) : undefined,
-          sessionID: current.id,
           command: ctx.payload.command,
-          resume: false,
+          selection: {
+            agent: ctx.payload.agent,
+            model: ctx.payload.model,
+          },
         })
-        .pipe(SessionError.mapSessionNotFound, SessionError.mapExecutionBusy)
-      current = yield* requireCanonicalSession(ctx.params.sessionID)
-      const canonical = yield* sessionV2
-        .messages({
-          sessionID: current.id,
-          order: "desc",
-        })
-        .pipe(Effect.catchTag("Session.MessageDecodeError", Effect.die), SessionError.mapSessionNotFound)
-      const message = canonical.find((message) => message.type === "shell")
-      if (!message) return yield* Effect.die("Completed shell command did not project a canonical message")
-      const projected = MessageV2.toLegacy(current, [message]).at(-1)
-      if (!projected) return yield* Effect.die("Canonical shell message did not project to a legacy response")
-      return projected
+        .pipe(
+          SessionError.mapSessionNotFound,
+          SessionError.mapExecutionBusy,
+          Effect.catchTag("LegacySessionExecution.InvalidSelectionError", () =>
+            Effect.fail(new HttpApiError.BadRequest({})),
+          ),
+        )
     })
 
     const revert = Effect.fn("SessionHttpApi.revert")(function* (ctx: {

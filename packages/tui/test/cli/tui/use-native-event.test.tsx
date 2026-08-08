@@ -328,7 +328,10 @@ test("converges buffered streaming and tool lifecycle events after rebuild", asy
     await bufferDrained.promise
 
     expect(messageReads).toBe(2)
-    expect(data.session.message.list("ses_test")?.some((message) => message.id === "msg_cursor")).toBe(false)
+    expect(data.session.message.list("ses_test")?.find((message) => message.id === "msg_cursor")).toMatchObject({
+      type: "model-switched",
+      model: { id: "cursor-model", providerID: "provider" },
+    })
     expect(data.session.message.list("ses_test")?.find((message) => message.id === "msg_buffer_marker")).toMatchObject({
       type: "system",
       text: "buffer drained",

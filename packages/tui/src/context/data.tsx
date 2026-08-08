@@ -6,6 +6,7 @@ import type {
   ModelV2Info,
   PermissionSavedInfo,
   PermissionV2Request,
+  ProviderCatalogInfo,
   ProviderV2Info,
   QuestionV2Request,
   ReferenceInfo,
@@ -18,7 +19,7 @@ import type {
   SkillV2Info,
 } from "@opencode-ai/sdk/v2"
 import type { OpenCodeEvent as V2Event } from "@opencode-ai/client"
-import { createStore, produce } from "solid-js/store"
+import { createStore, produce, reconcile, unwrap } from "solid-js/store"
 import { useNativeEvent } from "./event"
 import { createSimpleContext } from "./helper"
 import { useSDK } from "./sdk"
@@ -27,6 +28,7 @@ import { createNativeEventRecovery } from "./native-event-recovery"
 
 type LocationData = {
   agent?: AgentV2Info[]
+  catalog?: ProviderCatalogInfo
   command?: CommandV2Info[]
   integration?: IntegrationInfo[]
   model?: ModelV2Info[]
@@ -84,9 +86,15 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     const [defaultLocation, setDefaultLocation] = createSignal<LocationRef>({
       directory: sdk.directory ?? process.cwd(),
     })
+    const hydratingMessages = new Map<string, Set<string>>()
+    const refreshingMessages = new Map<string, Promise<void>>()
 
     const message = {
       update(sessionID: string, fn: (messages: SessionMessage[]) => void) {
+        const tracker = hydratingMessages.get(sessionID)
+        const before = tracker
+          ? new Map((store.session.message[sessionID] ?? []).map((item) => [item.id, JSON.stringify(item)]))
+          : undefined
         setStore(
           "session",
           "message",
@@ -94,6 +102,13 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
             fn((draft[sessionID] ??= []))
           }),
         )
+        if (!before || !tracker) return
+        const after = store.session.message[sessionID] ?? []
+        for (const item of after) {
+          if (before.get(item.id) !== JSON.stringify(item)) tracker.add(item.id)
+          before.delete(item.id)
+        }
+        for (const id of before.keys()) tracker.add(id)
       },
       prepend(messages: SessionMessage[], item: SessionMessage) {
         if (messages.some((existing) => existing.id === item.id)) return
@@ -133,6 +148,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       switch (event.type) {
         case "catalog.updated":
           void Promise.all([
+            result.location.catalog.refresh(event.location),
             result.location.model.refresh(event.location),
             result.location.provider.refresh(event.location),
           ])
@@ -164,7 +180,9 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
               mutable<SessionMessage>({
                 id: event.data.messageID,
                 type: event.data.synthetic ? "synthetic" : "user",
-                ...(event.data.synthetic ? { sessionID: event.data.sessionID, description: event.data.synthetic.description } : {}),
+                ...(event.data.synthetic
+                  ? { sessionID: event.data.sessionID, description: event.data.synthetic.description }
+                  : {}),
                 text: event.data.prompt.text,
                 ...(!event.data.synthetic
                   ? {
@@ -420,6 +438,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
           break
         case "integration.updated":
           void Promise.all([
+            result.location.catalog.refresh(event.location),
             result.location.integration.refresh(event.location),
             result.location.model.refresh(event.location),
             result.location.provider.refresh(event.location),
@@ -442,8 +461,44 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
             return store.session.message[sessionID]
           },
           async refresh(sessionID: string) {
-            const result = await sdk.native.messages.list({ sessionID })
-            setStore("session", "message", sessionID, mutable<SessionMessage[]>(result.data))
+            const refreshing = refreshingMessages.get(sessionID)
+            if (refreshing) return refreshing
+            const tracker = new Set<string>()
+            hydratingMessages.set(sessionID, tracker)
+            const task = sdk.native.messages
+              .list({ sessionID })
+              .then((result) => {
+                const current = new Map(
+                  (store.session.message[sessionID] ?? []).map((item) => [
+                    item.id,
+                    mutable<SessionMessage>(unwrap(item)),
+                  ]),
+                )
+                const merged = mutable<SessionMessage[]>(result.data).flatMap((item) => {
+                  if (!tracker.has(item.id)) return [item]
+                  const live = current.get(item.id)
+                  return live ? [live] : []
+                })
+                merged.push(
+                  ...[...current.values()].filter((item) => !merged.some((existing) => existing.id === item.id)),
+                )
+                setStore(
+                  "session",
+                  "message",
+                  sessionID,
+                  reconcile(
+                    merged.toSorted(
+                      (left, right) => left.time.created - right.time.created || left.id.localeCompare(right.id),
+                    ),
+                  ),
+                )
+              })
+              .finally(() => {
+                refreshingMessages.delete(sessionID)
+                if (hydratingMessages.get(sessionID) === tracker) hydratingMessages.delete(sessionID)
+              })
+            refreshingMessages.set(sessionID, task)
+            return task
           },
         },
         permission: {
@@ -494,6 +549,16 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
             const result = await sdk.native.agents.list({ location: locationQuery(ref) })
             const key = locationKey(result.location)
             setStore("location", key, "agent", mutable<AgentV2Info[]>(result.data))
+          },
+        },
+        catalog: {
+          get(location?: LocationRef) {
+            return store.location[locationKey(location ?? defaultLocation())]?.catalog
+          },
+          async refresh(ref?: LocationRef) {
+            const result = await sdk.native.providers.catalog({ location: locationQuery(ref) })
+            const key = locationKey(result.location)
+            setStore("location", key, "catalog", mutable<ProviderCatalogInfo>(result.data))
           },
         },
         command: {
@@ -574,7 +639,10 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
         if (store.session.info[sessionID])
           tasks.push({ resource: `Session info (${sessionID})`, promise: result.session.refresh(sessionID) })
         if (store.session.message[sessionID])
-          tasks.push({ resource: `Session messages (${sessionID})`, promise: result.session.message.refresh(sessionID) })
+          tasks.push({
+            resource: `Session messages (${sessionID})`,
+            promise: result.session.message.refresh(sessionID),
+          })
         if (store.session.permission[sessionID])
           tasks.push({
             resource: `Session permissions (${sessionID})`,
@@ -596,6 +664,11 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
         tasks.push({ resource: `Location catalog (${key})`, promise: result.location.refresh(location) })
         if (data.agent)
           tasks.push({ resource: `Location agent catalog (${key})`, promise: result.location.agent.refresh(location) })
+        if (data.catalog)
+          tasks.push({
+            resource: `Location provider catalog (${key})`,
+            promise: result.location.catalog.refresh(location),
+          })
         if (data.command)
           tasks.push({
             resource: `Location command catalog (${key})`,
@@ -626,8 +699,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
           ? [new Error(`Failed to rebuild ${tasks[index]!.resource}`, { cause: item.reason })]
           : [],
       )
-      if (failures.length > 0)
-        throw new AggregateError(failures, "Failed to rebuild native TUI state")
+      if (failures.length > 0) throw new AggregateError(failures, "Failed to rebuild native TUI state")
     }
 
     const recovery = createNativeEventRecovery({
@@ -655,6 +727,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       void Promise.allSettled([
         result.location.refresh(),
         result.location.agent.refresh(),
+        result.location.catalog.refresh(),
         result.location.integration.refresh(),
         result.location.model.refresh(),
         result.location.provider.refresh(),

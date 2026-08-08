@@ -3,36 +3,6 @@ import type { Session } from "@opencode-ai/sdk/v2"
 
 type NativeSession = SessionsListOutput["data"][number]
 
-export type SessionListFilter = { scope?: "project"; path?: string }
-
-export function nativeSessionListQuery(input: {
-  filter: SessionListFilter
-  projectID?: string
-  workspaceID?: string
-  directory?: string
-  search?: string
-  limit: number
-}) {
-  const search = input.search?.trim()
-  return {
-    limit: input.limit,
-    order: "desc" as const,
-    ...(search ? { search } : {}),
-    ...(input.workspaceID ? { workspace: input.workspaceID } : {}),
-    ...(input.projectID
-      ? {
-          project: input.projectID,
-          ...(input.filter.path ? { subpath: input.filter.path } : {}),
-        }
-      : input.directory
-        ? { directory: input.directory }
-        : {}),
-  }
-}
-
-// Transitional boundary for views that still consume the legacy TUI Session
-// store shape. Do not add host-only fields here: they remain unavailable until
-// the central session store itself moves to SessionV2.Info.
 export function legacySessionFromNative(info: NativeSession): Session {
   return {
     id: info.id,
@@ -47,10 +17,7 @@ export function legacySessionFromNative(info: NativeSession): Session {
       input: info.tokens.input,
       output: info.tokens.output,
       reasoning: info.tokens.reasoning,
-      cache: {
-        read: info.tokens.cache.read,
-        write: info.tokens.cache.write,
-      },
+      cache: { read: info.tokens.cache.read, write: info.tokens.cache.write },
     },
     title: info.title,
     share: info.share,
@@ -79,3 +46,5 @@ export function legacySessionFromNative(info: NativeSession): Session {
       : undefined,
   }
 }
+
+export * as NativeV1Session from "./native-v1-session"

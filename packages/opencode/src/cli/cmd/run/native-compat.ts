@@ -1,8 +1,8 @@
 import type { Event, GlobalEvent, OpencodeClient, PermissionRequest } from "@opencode-ai/sdk/v2"
 import { legacyEventPayloads, legacyEventProjection } from "@/event-v2-bridge"
-import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@opencode-ai/tui/context/catalog-compat"
-import { legacySessionFromNative } from "@opencode-ai/tui/context/session-compat"
-import { legacyTranscriptFromNative } from "@opencode-ai/tui/context/transcript-compat"
+import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
+import { legacySessionFromNative } from "@/compat/native-v1-session"
+import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"
 import type { NativeClient } from "./types"
 
 type RequestOptions = { signal?: AbortSignal; throwOnError?: boolean }
@@ -170,7 +170,9 @@ export function createNativeCompatClient(input: { native: NativeClient; director
           model: model(value.model),
           location: input.directory ? { directory: input.directory } : undefined,
         })
-        const updated = value.title ? await native.sessions.update({ sessionID: created.id, title: value.title }) : created
+        const updated = value.title
+          ? await native.sessions.update({ sessionID: created.id, title: value.title })
+          : created
         return { data: legacySessionFromNative(updated) }
       },
       messages: async (value: Input) => {
@@ -285,42 +287,28 @@ export function createNativeCompatClient(input: { native: NativeClient; director
     },
     experimental: {
       resource: {
-        list: async (value?: Input) => ({ data: (await native.mcps.resources({ location: loc(value?.directory) })).data }),
+        list: async (value?: Input) => ({
+          data: (await native.mcps.resources({ location: loc(value?.directory) })).data,
+        }),
       },
       session: {
-        background: async (value: Input) => ({ data: await native.sessions.background({ sessionID: value.sessionID }) }),
+        background: async (value: Input) => ({
+          data: await native.sessions.background({ sessionID: value.sessionID }),
+        }),
       },
     },
     config: {
       get: async () => ({ data: (await native.config.get({ location: loc() })).data }),
       providers: async (value?: Input) => {
         const target = { location: loc(value?.directory) }
-        const [providers, models, integrations] = await Promise.all([
-          native.providers.list(target),
-          native.models.list(target),
-          native.integrations.list(target),
-        ])
-        const result = legacyProvidersFromNative({
-          providers: providers.data,
-          models: models.data,
-          integrations: integrations.data,
-        })
+        const result = legacyProvidersFromNative((await native.providers.catalog(target)).data)
         return { data: { providers: result.providers, default: result.defaults } }
       },
     },
     provider: {
       list: async (value?: Input) => {
         const target = { location: loc(value?.directory) }
-        const [providers, models, integrations] = await Promise.all([
-          native.providers.list(target),
-          native.models.list(target),
-          native.integrations.list(target),
-        ])
-        const result = legacyProvidersFromNative({
-          providers: providers.data,
-          models: models.data,
-          integrations: integrations.data,
-        })
+        const result = legacyProvidersFromNative((await native.providers.catalog(target)).data)
         return { data: { all: result.providers, connected: result.providers, default: result.defaults } }
       },
     },

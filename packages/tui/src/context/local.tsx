@@ -13,6 +13,7 @@ import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
 import { usePermission } from "./permission"
+import { useData } from "./data"
 
 export type LocalTheme = {
   secondary: RGBA
@@ -52,6 +53,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
   init: () => {
     const sync = useSync()
+    const data = useData()
     const sdk = useSDK()
     const toast = useToast()
     const theme = useTheme().theme
@@ -61,9 +63,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const event = useEvent()
     const permission = usePermission()
 
+    const catalog = createMemo(() => data.location.catalog.get())
+    const models = createMemo(() => catalog()?.models ?? data.location.model.list() ?? [])
+    const providers = createMemo(() => catalog()?.providers ?? [])
+
     function isModelValid(model: { providerID: string; modelID: string }) {
-      const provider = sync.data.provider.find((item) => item.id === model.providerID)
-      return !!provider?.models[model.modelID]
+      return models().some((item) => item.providerID === model.providerID && item.id === model.modelID && item.enabled)
     }
 
     function getFirstValidModel(...modelFns: (() => { providerID: string; modelID: string } | undefined)[]) {
@@ -75,8 +80,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     }
 
     function createAgent() {
-      const agents = createMemo(() => sync.data.agent.filter((agent) => agent.mode !== "subagent" && !agent.hidden))
-      const visibleAgents = createMemo(() => sync.data.agent.filter((agent) => !agent.hidden))
+      const agents = createMemo(() =>
+        (data.location.agent.list() ?? []).filter((agent) => agent.mode !== "subagent" && !agent.hidden),
+      )
+      const visibleAgents = createMemo(() => (data.location.agent.list() ?? []).filter((agent) => !agent.hidden))
       const [agentStore, setAgentStore] = createStore({
         current: undefined as string | undefined,
       })
@@ -94,10 +101,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return agents()
         },
         current() {
-          return agents().find((x) => x.name === agentStore.current) ?? agents().at(0)
+          return agents().find((item) => item.id === agentStore.current) ?? agents().at(0)
         },
         set(name: string) {
-          if (!agents().some((x) => x.name === name))
+          if (!agents().some((item) => item.id === name))
             return toast.show({
               variant: "warning",
               message: `Agent not found: ${name}`,
@@ -109,15 +116,15 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           batch(() => {
             const current = this.current()
             if (!current) return
-            let next = agents().findIndex((x) => x.name === current.name) + direction
+            let next = agents().findIndex((item) => item.id === current.id) + direction
             if (next < 0) next = agents().length - 1
             if (next >= agents().length) next = 0
             const value = agents()[next]
-            setAgentStore("current", value.name)
+            setAgentStore("current", value.id)
           })
         },
         color(name: string) {
-          const index = visibleAgents().findIndex((x) => x.name === name)
+          const index = visibleAgents().findIndex((item) => item.id === name)
           if (index === -1) return colors()[0]
           const agent = visibleAgents()[index]
 
@@ -221,11 +228,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           }
         }
 
-        const provider = sync.data.provider[0]
+        const provider = providers().find((item) => !item.info.disabled)?.info
         if (!provider) return undefined
-        const defaultModel = sync.data.provider_default[provider.id]
-        const firstModel = Object.values(provider.models)[0]
-        const model = defaultModel ?? firstModel?.id
+        const firstModel = models().find((item) => item.providerID === provider.id && item.enabled)
+        const model = catalog()?.default[provider.id] ?? firstModel?.id
         if (!model) return undefined
         return {
           providerID: provider.id,
@@ -237,8 +243,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const a = agent.current()
         return (
           getFirstValidModel(
-            () => a && modelStore.model[a.name],
-            () => a && a.model,
+            () => a && modelStore.model[a.id],
+            () => (a?.model ? { providerID: a.model.providerID, modelID: a.model.id } : undefined),
             fallbackModel,
           ) ?? undefined
         )
@@ -264,8 +270,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               reasoning: false,
             }
           }
-          const provider = sync.data.provider.find((item) => item.id === value.providerID)
-          const info = provider?.models[value.modelID]
+          const provider = providers().find((item) => item.info.id === value.providerID)?.info
+          const info = models().find((item) => item.providerID === value.providerID && item.id === value.modelID)
           return {
             provider: provider?.name ?? value.providerID,
             model: info?.name ?? value.modelID,
@@ -285,7 +291,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!val) return
           const a = agent.current()
           if (!a) return
-          setModelStore("model", a.name, { ...val })
+          setModelStore("model", a.id, { ...val })
         },
         cycleFavorite(direction: 1 | -1) {
           const favorites = modelStore.favorite.filter((item) => isModelValid(item))
@@ -313,7 +319,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!next) return
           const a = agent.current()
           if (!a) return
-          setModelStore("model", a.name, { ...next })
+          setModelStore("model", a.id, { ...next })
           setModelStore("recent", recentModels(next, modelStore.recent))
           save()
         },
@@ -329,7 +335,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
             const a = agent.current()
             if (!a) return
-            setModelStore("model", a.name, model)
+            setModelStore("model", a.id, model)
             if (options?.recent) {
               setModelStore("recent", recentModels(model, modelStore.recent))
               save()
@@ -375,10 +381,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           list() {
             const m = currentModel()
             if (!m) return []
-            const provider = sync.data.provider.find((item) => item.id === m.providerID)
-            const info = provider?.models[m.modelID]
-            if (!info?.variants) return []
-            return Object.keys(info.variants)
+            const info = models().find((item) => item.providerID === m.providerID && item.id === m.modelID)
+            return info?.variants.map((variant) => variant.id) ?? []
           },
           set(value: string | undefined) {
             const m = currentModel()
@@ -522,10 +526,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     createEffect(() => {
       const value = agent.current()
       if (!value?.model) return
-      if (isModelValid(value.model)) return
+      if (isModelValid({ providerID: value.model.providerID, modelID: value.model.id })) return
       toast.show({
         variant: "warning",
-        message: `Agent ${value.name}'s configured model ${value.model.providerID}/${value.model.modelID} is not valid`,
+        message: `Agent ${value.id}'s configured model ${value.model.providerID}/${value.model.id} is not valid`,
         duration: 3000,
       })
     })

@@ -1,20 +1,25 @@
 import { createMemo } from "solid-js"
-import { useSync } from "../../context/sync"
+import { useData } from "../../context/data"
 import { DialogSelect } from "../../ui/dialog-select"
 import { useSDK } from "../../context/sdk"
 import { useRoute } from "../../context/route"
 import { useClipboard } from "../../context/clipboard"
-import type { PromptInfo } from "../../component/prompt/history"
-import { stripPromptPartIDs as strip } from "../../prompt/part"
+import { promptInfo } from "../../util/native-transcript"
+import type { PromptInfo } from "../../prompt/history"
+import type { SessionMessageUser } from "@opencode-ai/sdk/v2"
 
 export function DialogMessage(props: {
   messageID: string
   sessionID: string
   setPrompt?: (prompt: PromptInfo) => void
 }) {
-  const sync = useSync()
+  const data = useData()
   const sdk = useSDK()
-  const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
+  const message = createMemo(() =>
+    data.session.message
+      .list(props.sessionID)
+      ?.find((item): item is SessionMessageUser => item.id === props.messageID && item.type === "user"),
+  )
   const route = useRoute()
   const clipboard = useClipboard()
 
@@ -35,20 +40,7 @@ export function DialogMessage(props: {
               messageID: msg.id,
             })
 
-            if (props.setPrompt) {
-              const parts = sync.data.part[msg.id]
-              const promptInfo = parts.reduce(
-                (agg, part) => {
-                  if (part.type === "text") {
-                    if (!part.synthetic) agg.input += part.text
-                  }
-                  if (part.type === "file") agg.parts.push(strip(part))
-                  return agg
-                },
-                { input: "", parts: [] as PromptInfo["parts"] },
-              )
-              props.setPrompt(promptInfo)
-            }
+            props.setPrompt?.(promptInfo(msg))
 
             dialog.clear()
           },
@@ -61,15 +53,7 @@ export function DialogMessage(props: {
             const msg = message()
             if (!msg) return
 
-            const parts = sync.data.part[msg.id]
-            const text = parts.reduce((agg, part) => {
-              if (part.type === "text" && !part.synthetic) {
-                agg += part.text
-              }
-              return agg
-            }, "")
-
-            await clipboard.write?.(text)
+            await clipboard.write?.(msg.text)
             dialog.clear()
           },
         },
@@ -83,18 +67,7 @@ export function DialogMessage(props: {
               messageID: props.messageID,
             })
             const msg = message()
-            const prompt = msg
-              ? sync.data.part[msg.id].reduce(
-                  (agg, part) => {
-                    if (part.type === "text") {
-                      if (!part.synthetic) agg.input += part.text
-                    }
-                    if (part.type === "file") agg.parts.push(part)
-                    return agg
-                  },
-                  { input: "", parts: [] as PromptInfo["parts"] },
-                )
-              : undefined
+            const prompt = msg ? promptInfo(msg) : undefined
             route.navigate({
               sessionID: forked.id,
               type: "session",

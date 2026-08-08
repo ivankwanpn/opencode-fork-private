@@ -1,22 +1,23 @@
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "../context/local"
-import { map, pipe, flatMap, entries, filter, sortBy, take } from "remeda"
+import { map, pipe, flatMap, filter, sortBy, take } from "remeda"
 import { DialogSelect } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
 import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
 import { DialogVariant } from "./dialog-variant"
 import * as fuzzysort from "fuzzysort"
 import { useConnected } from "./use-connected"
-import { useSync } from "../context/sync"
+import { useData } from "../context/data"
 
 export function DialogModel(props: { providerID?: string }) {
   const local = useLocal()
-  const sync = useSync()
+  const data = useData()
   const dialog = useDialog()
   const [query, setQuery] = createSignal("")
 
   const connected = useConnected()
   const providers = createDialogProviderOptions()
+  const catalog = createMemo(() => data.location.catalog.get())
 
   const showExtra = createMemo(() => connected() && !props.providerID)
 
@@ -25,14 +26,19 @@ export function DialogModel(props: { providerID?: string }) {
     const showSections = showExtra() && needle.length === 0
     const favorites = connected() ? local.model.favorite() : []
     const recents = local.model.recent()
+    const connectedProviders = new Set(catalog()?.connected ?? [])
+    const models = (catalog()?.models ?? []).filter(
+      (model) => connectedProviders.has(model.providerID) && model.enabled,
+    )
 
     function toOptions(items: typeof favorites, category: string) {
       if (!showSections) return []
       return items.flatMap((item) => {
-        const provider = sync.data.provider.find((provider) => provider.id === item.providerID)
+        const provider = catalog()?.providers.find((provider) => provider.info.id === item.providerID)?.info
         if (!provider) return []
-        const model = provider.models[item.modelID]
+        const model = models.find((model) => model.providerID === item.providerID && model.id === item.modelID)
         if (!model) return []
+        const cost = model.cost.find((item) => item.tier === undefined) ?? model.cost[0]
         return [
           {
             key: item,
@@ -41,7 +47,7 @@ export function DialogModel(props: { providerID?: string }) {
             description: provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
-            footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+            footer: cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
             onSelect: () => {
               onSelect(provider.id, model.id)
             },
@@ -59,29 +65,33 @@ export function DialogModel(props: { providerID?: string }) {
     )
 
     const providerOptions = pipe(
-      sync.data.provider,
+      catalog()?.providers ?? [],
+      filter((provider) => connectedProviders.has(provider.info.id)),
       sortBy(
-        (provider) => provider.id !== "opencode",
-        (provider) => provider.name,
+        (provider) => provider.info.id !== "opencode",
+        (provider) => provider.info.name,
       ),
       flatMap((provider) =>
         pipe(
-          provider.models,
-          entries(),
-          filter(([_, info]) => info.status !== "deprecated"),
-          filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-          map(([model, info]) => ({
-            value: { providerID: provider.id, modelID: model },
-            title: info.name ?? model,
-            releaseDate: info.release_date,
-            description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
+          models,
+          filter((model) => model.providerID === provider.info.id && model.status !== "deprecated"),
+          filter((model) => (props.providerID ? model.providerID === props.providerID : true)),
+          map((model) => ({
+            value: { providerID: provider.info.id, modelID: model.id },
+            title: model.name,
+            releaseDate: model.time.released,
+            description: favorites.some((item) => item.providerID === provider.info.id && item.modelID === model.id)
               ? "(Favorite)"
               : undefined,
-            category: connected() ? provider.name : undefined,
-            disabled: provider.id === "opencode" && model.includes("-nano"),
-            footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+            category: connected() ? provider.info.name : undefined,
+            disabled: provider.info.id === "opencode" && model.id.includes("-nano"),
+            footer:
+              (model.cost.find((item) => item.tier === undefined) ?? model.cost[0])?.input === 0 &&
+              provider.info.id === "opencode"
+                ? "Free"
+                : undefined,
             onSelect() {
-              onSelect(provider.id, model)
+              onSelect(provider.info.id, model.id)
             },
           })),
           filter((option) => {
@@ -130,7 +140,7 @@ export function DialogModel(props: { providerID?: string }) {
   })
 
   const provider = createMemo(() =>
-    props.providerID ? sync.data.provider.find((item) => item.id === props.providerID) : null,
+    props.providerID ? catalog()?.providers.find((item) => item.info.id === props.providerID)?.info : null,
   )
 
   const title = createMemo(() => {

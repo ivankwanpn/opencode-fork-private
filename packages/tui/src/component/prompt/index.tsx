@@ -24,6 +24,7 @@ import { useSDK } from "../../context/sdk"
 import { useRoute } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
+import { useData } from "../../context/data"
 import { useEvent } from "../../context/event"
 import { editorSelectionKey, useEditorContext, type EditorSelection } from "../../context/editor"
 import { normalizePromptContent, openEditor } from "../../editor"
@@ -37,7 +38,7 @@ import { usePromptStash } from "../../prompt/stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
-import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
+import type { FilePart } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
 import { errorMessage } from "../../util/error"
 import { formatDuration } from "../../util/format"
@@ -57,6 +58,7 @@ import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
+import { timeline } from "../../util/native-transcript"
 
 registerOpencodeSpinner()
 
@@ -157,6 +159,7 @@ export function Prompt(props: PromptProps) {
   const route = useRoute()
   const project = useProject()
   const sync = useSync()
+  const data = useData()
   const tuiConfig = useTuiConfig()
   const dialog = useDialog()
   const toast = useToast()
@@ -219,7 +222,7 @@ export function Prompt(props: PromptProps) {
       message: "Connect a provider to send prompts",
       duration: 3000,
     })
-    if (sync.data.provider.length === 0) {
+    if ((data.location.catalog.get()?.connected.length ?? 0) === 0) {
       dialog.replace(() => <DialogProviderConnect />)
     }
   }
@@ -255,23 +258,30 @@ export function Prompt(props: PromptProps) {
 
   const lastUserMessage = createMemo(() => {
     if (!props.sessionID) return undefined
-    const messages = sync.data.message[props.sessionID]
+    const messages = data.session.message.list(props.sessionID)
     if (!messages) return undefined
-    return messages.findLast((m): m is UserMessage => m.role === "user")
+    return timeline(sync.session.get(props.sessionID), messages).findLast((entry) => entry.type === "user")
   })
 
   const usage = createMemo(() => {
     if (!props.sessionID) return
     const session = sync.session.get(props.sessionID)
-    const msg = sync.data.message[props.sessionID] ?? []
-    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
-    if (!last) return
+    const last = timeline(session, data.session.message.list(props.sessionID) ?? []).findLast(
+      (entry) => entry.type === "assistant" && (entry.message.tokens?.output ?? 0) > 0,
+    )
+    if (!last || last.type !== "assistant" || !last.message.tokens) return
 
     const tokens =
-      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
+      last.message.tokens.input +
+      last.message.tokens.output +
+      last.message.tokens.reasoning +
+      last.message.tokens.cache.read +
+      last.message.tokens.cache.write
     if (tokens <= 0) return
 
-    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+    const model = data.location.catalog
+      .get()
+      ?.models.find((item) => item.providerID === last.message.model.providerID && item.id === last.message.model.id)
     const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
     const cost = session?.cost ?? 0
     return {
@@ -319,14 +329,12 @@ export function Prompt(props: PromptProps) {
       syncedSessionID = sessionID
 
       // Only set agent if it's a primary agent (not a subagent)
-      const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
+      const isPrimaryAgent = local.agent.list().some((item) => item.id === msg.agent)
       if (msg.agent && isPrimaryAgent) {
         // Keep command line --agent if specified.
         if (!args.agent) local.agent.set(msg.agent)
-        if (msg.model) {
-          local.model.set(msg.model)
-          local.model.variant.set(msg.model.variant)
-        }
+        local.model.set({ providerID: msg.model.providerID, modelID: msg.model.id })
+        local.model.variant.set(msg.model.variant)
       }
     }
   })
@@ -971,7 +979,7 @@ export function Prompt(props: PromptProps) {
     }
 
     const workspaceSession = props.sessionID ? sync.session.get(props.sessionID) : undefined
-    const workspaceID = workspaceSession?.workspaceID
+    const workspaceID = workspaceSession?.location.workspaceID
     const workspaceStatus = workspaceID ? (project.workspace.status(workspaceID) ?? "error") : undefined
     if (props.sessionID && workspaceID && workspaceStatus !== "connected") {
       dialog.replace(() => (
@@ -1002,7 +1010,7 @@ export function Prompt(props: PromptProps) {
             directory: directory ?? sdk.directory ?? process.cwd(),
             workspaceID,
           },
-          agent: agent.name,
+          agent: agent.id,
           model: {
             providerID: selectedModel.providerID,
             id: selectedModel.modelID,
@@ -1060,7 +1068,7 @@ export function Prompt(props: PromptProps) {
       move.startSubmit()
       void sdk.native.sessions.shell({
         sessionID,
-        agent: agent.name,
+        agent: agent.id,
         model: {
           providerID: selectedModel.providerID,
           id: selectedModel.modelID,
@@ -1072,7 +1080,9 @@ export function Prompt(props: PromptProps) {
       setStore("mode", "normal")
     } else if (
       inputText.startsWith("/") &&
-      sync.data.command.some((x) => x.name === inputText.split("\n")[0].split(" ")[0].slice(1))
+      (data.location.command.list() ?? []).some(
+        (command) => command.name === inputText.split("\n")[0].split(" ")[0].slice(1),
+      )
     ) {
       move.startSubmit()
       // Parse command from first line, preserve multi-line content in arguments
@@ -1086,7 +1096,7 @@ export function Prompt(props: PromptProps) {
         sessionID,
         command: command.slice(1),
         arguments: args,
-        agent: agent.name,
+        agent: agent.id,
         model: {
           providerID: selectedModel.providerID,
           id: selectedModel.modelID,
@@ -1104,16 +1114,14 @@ export function Prompt(props: PromptProps) {
               }
             : undefined,
           resource:
-            part.source?.type === "resource"
-              ? { clientName: part.source.clientName, uri: part.source.uri }
-              : undefined,
+            part.source?.type === "resource" ? { clientName: part.source.clientName, uri: part.source.uri } : undefined,
         })),
       })
     } else {
       move.startSubmit()
       const current = sync.session.get(sessionID)
       const send = async () => {
-        if (current?.agent !== agent.name) await sdk.native.sessions.switchAgent({ sessionID, agent: agent.name })
+        if (current?.agent !== agent.id) await sdk.native.sessions.switchAgent({ sessionID, agent: agent.id })
         if (
           current?.model?.providerID !== selectedModel.providerID ||
           current.model.id !== selectedModel.modelID ||
@@ -1158,12 +1166,12 @@ export function Prompt(props: PromptProps) {
         })
       }
       void send().catch((error) => {
-          toast.show({
-            title: "Failed to send prompt",
-            message: errorMessage(error),
-            variant: "error",
-          })
+        toast.show({
+          title: "Failed to send prompt",
+          message: errorMessage(error),
+          variant: "error",
         })
+      })
       if (editorParts.length > 0) editor.markSelectionSent()
     }
     history.append({
@@ -1337,7 +1345,7 @@ export function Prompt(props: PromptProps) {
     if (store.mode === "shell") return theme.primary
     const agent = local.agent.current()
     if (!agent) return theme.border
-    return local.agent.color(agent.name)
+    return local.agent.color(agent.id)
   })
 
   const showVariant = createMemo(() => {
@@ -1369,9 +1377,9 @@ export function Prompt(props: PromptProps) {
   const spinnerDef = createMemo(() => {
     const agent =
       status().type !== "idle"
-        ? (local.agent.list().find((a) => a.name === lastUserMessage()?.agent) ?? local.agent.current())
+        ? (local.agent.list().find((item) => item.id === lastUserMessage()?.agent) ?? local.agent.current())
         : local.agent.current()
-    const color = agent ? local.agent.color(agent.name) : theme.border
+    const color = agent ? local.agent.color(agent.id) : theme.border
     return {
       frames: createFrames({
         color,
@@ -1492,7 +1500,7 @@ export function Prompt(props: PromptProps) {
                   {(agent) => (
                     <>
                       <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
+                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().id)}
                       </text>
                       <Show when={store.mode === "normal" && local.permission.mode === "auto"}>
                         <text fg={fadeColor(theme.textMuted, agentMetaAlpha())}>auto</text>

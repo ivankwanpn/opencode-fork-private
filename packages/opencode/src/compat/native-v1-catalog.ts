@@ -1,17 +1,15 @@
 import type {
-  AgentsListOutput,
-  CommandsListOutput,
-  IntegrationsListOutput,
-  ModelsListOutput,
-  ProvidersListOutput,
-} from "@opencode-ai/client"
-import type { Agent, Command, Model, Provider } from "@opencode-ai/sdk/v2"
+  Agent,
+  AgentV2Info,
+  Command,
+  CommandV2Info,
+  Model,
+  ModelV2Info,
+  Provider,
+  ProviderCatalogInfo,
+} from "@opencode-ai/sdk/v2"
 
-type NativeAgent = AgentsListOutput["data"][number]
-type NativeCommand = CommandsListOutput["data"][number]
-type NativeModel = ModelsListOutput["data"][number]
-
-export function legacyAgentFromNative(info: NativeAgent): Agent {
+export function legacyAgentFromNative(info: AgentV2Info): Agent {
   const topP = info.request.body.topP
   const temperature = info.request.body.temperature
   return {
@@ -31,7 +29,7 @@ export function legacyAgentFromNative(info: NativeAgent): Agent {
   }
 }
 
-export function legacyCommandFromNative(info: NativeCommand): Command {
+export function legacyCommandFromNative(info: CommandV2Info): Command {
   return {
     name: info.name,
     description: info.description,
@@ -43,7 +41,7 @@ export function legacyCommandFromNative(info: NativeCommand): Command {
   }
 }
 
-function legacyModelFromNative(info: NativeModel): Model {
+function legacyModelFromNative(info: ModelV2Info): Model {
   const base = info.cost.find((item) => item.tier === undefined) ?? info.cost[0]
   const tiers = info.cost.flatMap((item) =>
     item.tier
@@ -108,33 +106,37 @@ function legacyModelFromNative(info: NativeModel): Model {
   }
 }
 
-export function legacyProvidersFromNative(input: {
-  providers: ProvidersListOutput["data"]
-  models: ModelsListOutput["data"]
-  integrations: IntegrationsListOutput["data"]
-}): {
+export function legacyProvidersFromNative(catalog: ProviderCatalogInfo): {
   providers: Provider[]
   defaults: Record<string, string>
-  integrations: IntegrationsListOutput["data"]
 } {
-  const byProvider = new Map<string, NativeModel[]>()
-  for (const model of input.models) {
-    const list = byProvider.get(model.providerID)
-    if (list) list.push(model)
-    else byProvider.set(model.providerID, [model])
+  const connected = new Set(catalog.connected)
+  const models = catalog.models
+    .filter((model) => connected.has(model.providerID) && model.enabled)
+    .reduce((result, model) => {
+      const list = result.get(model.providerID)
+      if (list) list.push(model)
+      if (!list) result.set(model.providerID, [model])
+      return result
+    }, new Map<string, ModelV2Info[]>())
+
+  return {
+    providers: catalog.providers.flatMap((provider) => {
+      if (!connected.has(provider.info.id)) return []
+      return [
+        {
+          id: provider.info.id,
+          name: provider.info.name,
+          source: provider.source,
+          auth: provider.auth,
+          env: [...provider.env],
+          options: { ...provider.info.request.body },
+          models: Object.fromEntries(
+            (models.get(provider.info.id) ?? []).map((model) => [model.id, legacyModelFromNative(model)]),
+          ),
+        },
+      ]
+    }),
+    defaults: Object.fromEntries(Object.entries(catalog.default).filter(([providerID]) => connected.has(providerID))),
   }
-  const defaults: Record<string, string> = {}
-  const providers = input.providers.map((provider): Provider => {
-    const models = byProvider.get(provider.id) ?? []
-    if (models[0]) defaults[provider.id] = models[0].id
-    return {
-      id: provider.id,
-      name: provider.name,
-      source: "config",
-      env: [],
-      options: { ...provider.request.body },
-      models: Object.fromEntries(models.map((model) => [model.id, legacyModelFromNative(model)])),
-    }
-  })
-  return { providers, defaults, integrations: input.integrations }
 }

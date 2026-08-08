@@ -1,288 +1,160 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
-import type { GlobalEvent } from "@opencode-ai/sdk/v2"
 import { tmpdir } from "../../../fixture/fixture"
-import { json, mount, wait } from "./sync-fixture"
+import { directory, json, mount, wait } from "./sync-fixture"
 
 const sessionID = "ses_hydration_race"
 const messageID = "msg_hydration_race"
-const partID = "prt_hydration_race"
-const session = {
-  id: sessionID,
-  title: "race",
-  time: { created: 0, updated: 0 },
-  version: "1.15.13",
-  directory: "/tmp/opencode/packages/opencode",
-}
-const assistant = {
-  id: messageID,
-  sessionID,
-  role: "assistant" as const,
-  agent: "build",
-  modelID: "model",
-  providerID: "test",
-  mode: "build",
-  parentID: "msg_user",
-  path: { cwd: session.directory, root: session.directory },
-  cost: 0,
-  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-  time: { created: 1, completed: 2 },
-}
-
+const location = { directory }
 const nativeSession = {
   id: sessionID,
   projectID: "proj_test",
   cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-  time: session.time,
-  title: session.title,
-  location: { directory: session.directory },
+  time: { created: 0, updated: 0 },
+  title: "race",
+  location,
 }
 
-function transcript(data: Array<{ info: typeof assistant; parts: unknown[] }>) {
+function messages(content: string) {
   return json({
-    data: data.toReversed().map(({ info, parts }) => ({
-      id: info.id,
-      type: "assistant",
-      agent: info.agent,
-      model: { id: info.modelID, providerID: info.providerID },
-      content: [],
-      time: info.time,
-      metadata: { legacy: { info, parts } },
-    })),
+    data: [
+      {
+        id: messageID,
+        type: "assistant",
+        agent: "build",
+        model: { id: "model", providerID: "test" },
+        content: [{ id: "text_1", type: "text", text: content }],
+        time: { created: 1 },
+      },
+    ],
     cursor: {},
   })
 }
 
-function global(payload: GlobalEvent["payload"]): GlobalEvent {
-  return { directory: "/tmp/other", project: "proj_test", payload }
+function delayedMount(response: Promise<Response>, state: string) {
+  let requested = false
+  return {
+    requested: () => requested,
+    mounted: mount((url) => {
+      if (url.pathname === `/api/session/${sessionID}`) return json({ data: nativeSession })
+      if (url.pathname === `/api/session/${sessionID}/message`) {
+        requested = true
+        return response
+      }
+      if (url.pathname === `/api/session/${sessionID}/todo`) return json({ data: [] })
+      return undefined
+    }, state),
+  }
 }
 
-test("stale session hydration does not overwrite live message parts", async () => {
+test("stale native hydration does not overwrite text streamed while the request is pending", async () => {
   await using tmp = await tmpdir()
   await Bun.write(`${tmp.path}/kv.json`, "{}")
-
   let resolveMessages!: (response: Response) => void
-  const messages = new Promise<Response>((resolve) => {
+  const response = new Promise<Response>((resolve) => {
     resolveMessages = resolve
   })
-  let requested = false
-  const { app, emit, sync } = await mount((url) => {
-    if (url.pathname === `/api/session/${sessionID}`) return json({ data: nativeSession })
-    if (url.pathname === `/api/session/${sessionID}/message`) {
-      requested = true
-      return messages
-    }
-    if (url.pathname === `/api/session/${sessionID}/todo`) return json({ data: [] })
-    return undefined
-  }, tmp.path)
+  const pending = delayedMount(response, tmp.path)
+  const { app, data, emitNative, sync } = await pending.mounted
 
   try {
     const hydrate = sync.session.sync(sessionID)
-    await wait(() => requested)
-    emit(global({ id: "evt_message", type: "message.updated", properties: { sessionID, info: assistant } }))
-    emit(
-      global({
-        id: "evt_part",
-        type: "message.part.updated",
-        properties: {
-          sessionID,
-          time: 2,
-          part: { id: partID, sessionID, messageID, type: "text", text: "visible live content" },
-        },
-      }),
-    )
-    await wait(() => sync.data.part[messageID]?.[0]?.type === "text")
+    await wait(pending.requested)
+    emitNative({
+      id: "evt_step",
+      type: "session.next.step.started",
+      data: {
+        sessionID,
+        assistantMessageID: messageID,
+        timestamp: 1,
+        agent: "build",
+        model: { id: "model", providerID: "test" },
+      },
+      location,
+    })
+    emitNative({
+      id: "evt_text_started",
+      type: "session.next.text.started",
+      data: { sessionID, assistantMessageID: messageID, textID: "text_1", timestamp: 2 },
+      location,
+    })
+    emitNative({
+      id: "evt_text_delta",
+      type: "session.next.text.delta",
+      data: {
+        sessionID,
+        assistantMessageID: messageID,
+        textID: "text_1",
+        delta: "visible live content",
+        timestamp: 3,
+      },
+      location,
+    })
+    await wait(() => {
+      const message = data.session.message.list(sessionID)?.find((item) => item.id === messageID)
+      return message?.type === "assistant" && message.content[0]?.type === "text" && message.content[0].text.length > 0
+    })
 
-    resolveMessages(
-      transcript([
-        {
-          info: assistant,
-          parts: [{ id: partID, sessionID, messageID, type: "text", text: "" }],
-        },
-      ]),
-    )
+    resolveMessages(messages(""))
     await hydrate
 
-    expect(sync.data.part[messageID][0]).toMatchObject({ text: "visible live content" })
+    const message = data.session.message.list(sessionID)?.find((item) => item.id === messageID)
+    expect(message?.type).toBe("assistant")
+    if (message?.type !== "assistant") return
+    expect(message.content[0]).toMatchObject({ type: "text", text: "visible live content" })
   } finally {
     app.renderer.destroy()
   }
 })
 
-test("orphan live deltas do not suppress hydrated parts", async () => {
+test("hydration retains a native message received before refresh starts", async () => {
   await using tmp = await tmpdir()
   await Bun.write(`${tmp.path}/kv.json`, "{}")
-
-  let resolveMessages!: (response: Response) => void
-  const messages = new Promise<Response>((resolve) => {
-    resolveMessages = resolve
-  })
-  let requested = false
-  const { app, emit, sync } = await mount((url) => {
+  let requests = 0
+  const { app, data } = await mount((url) => {
     if (url.pathname === `/api/session/${sessionID}`) return json({ data: nativeSession })
     if (url.pathname === `/api/session/${sessionID}/message`) {
-      requested = true
-      return messages
+      requests++
+      if (requests > 1) return messages("hydrated assistant")
+      return json({
+        data: [{ id: "msg_live_user", type: "user", text: "live prompt", time: { created: 2 } }],
+        cursor: {},
+      })
     }
     if (url.pathname === `/api/session/${sessionID}/todo`) return json({ data: [] })
     return undefined
   }, tmp.path)
 
   try {
-    const hydrate = sync.session.sync(sessionID)
-    await wait(() => requested)
-    emit(
-      global({
-        id: "evt_delta",
-        type: "message.part.delta",
-        properties: { sessionID, messageID, partID, field: "text", delta: "ignored until part exists" },
-      }),
-    )
-    resolveMessages(
-      transcript([{ info: assistant, parts: [{ id: partID, sessionID, messageID, type: "text", text: "hydrated" }] }]),
-    )
-    await hydrate
+    await data.session.message.refresh(sessionID)
+    await data.session.message.refresh(sessionID)
 
-    expect(sync.data.part[messageID][0]).toMatchObject({ text: "hydrated" })
+    expect(requests).toBe(2)
+    expect(data.session.message.list(sessionID)?.map((message) => message.id)).toEqual([messageID, "msg_live_user"])
   } finally {
     app.renderer.destroy()
   }
 })
 
-test("hydration does not clear text streamed before it starts", async () => {
+test("concurrent session sync calls share one native message request", async () => {
   await using tmp = await tmpdir()
   await Bun.write(`${tmp.path}/kv.json`, "{}")
-
-  let resolveMessages!: (response: Response) => void
-  const messages = new Promise<Response>((resolve) => {
-    resolveMessages = resolve
-  })
-  let requested = false
-  const { app, emit, sync } = await mount((url) => {
+  let requests = 0
+  const { app, data, sync } = await mount((url) => {
     if (url.pathname === `/api/session/${sessionID}`) return json({ data: nativeSession })
     if (url.pathname === `/api/session/${sessionID}/message`) {
-      requested = true
-      return messages
+      requests++
+      return messages("hydrated")
     }
     if (url.pathname === `/api/session/${sessionID}/todo`) return json({ data: [] })
     return undefined
   }, tmp.path)
 
   try {
-    emit(global({ id: "evt_message", type: "message.updated", properties: { sessionID, info: assistant } }))
-    emit(
-      global({
-        id: "evt_part",
-        type: "message.part.updated",
-        properties: {
-          sessionID,
-          time: 1,
-          part: { id: partID, sessionID, messageID, type: "text", text: "" },
-        },
-      }),
-    )
-    emit(
-      global({
-        id: "evt_delta",
-        type: "message.part.delta",
-        properties: { sessionID, messageID, partID, field: "text", delta: "visible streamed content" },
-      }),
-    )
-    await wait(() => sync.data.part[messageID]?.[0]?.type === "text" && sync.data.part[messageID][0].text !== "")
-    const hydrate = sync.session.sync(sessionID)
-    await wait(() => requested)
-    resolveMessages(
-      transcript([{ info: assistant, parts: [{ id: partID, sessionID, messageID, type: "text", text: "" }] }]),
-    )
-    await hydrate
-
-    expect(sync.data.part[messageID][0]).toMatchObject({ text: "visible streamed content" })
-  } finally {
-    app.renderer.destroy()
-  }
-})
-
-test("live messages merged during hydration retain the 100 message window", async () => {
-  await using tmp = await tmpdir()
-  await Bun.write(`${tmp.path}/kv.json`, "{}")
-
-  let resolveMessages!: (response: Response) => void
-  const messages = new Promise<Response>((resolve) => {
-    resolveMessages = resolve
-  })
-  let requested = false
-  const { app, emit, sync } = await mount((url) => {
-    if (url.pathname === `/api/session/${sessionID}`) return json({ data: nativeSession })
-    if (url.pathname === `/api/session/${sessionID}/message`) {
-      requested = true
-      return messages
-    }
-    if (url.pathname === `/api/session/${sessionID}/todo`) return json({ data: [] })
-    return undefined
-  }, tmp.path)
-
-  try {
-    const hydrate = sync.session.sync(sessionID)
-    await wait(() => requested)
-    const live = { ...assistant, id: "msg_z_live" }
-    emit(global({ id: "evt_live", type: "message.updated", properties: { sessionID, info: live } }))
-    await wait(() => sync.data.message[sessionID]?.some((message) => message.id === live.id) ?? false)
-    resolveMessages(
-      transcript(
-        Array.from({ length: 100 }, (_, index) => {
-          const id = `msg_${String(index).padStart(3, "0")}`
-          return {
-            info: { ...assistant, id },
-            parts: [{ id: `prt_${id}`, sessionID, messageID: id, type: "text", text: id }],
-          }
-        }),
-      ),
-    )
-    await hydrate
-
-    expect(sync.data.message[sessionID]).toHaveLength(100)
-    expect(sync.data.message[sessionID].at(-1)?.id).toBe(live.id)
-    expect(sync.data.message[sessionID].some((message) => message.id === "msg_000")).toBe(false)
-    expect(sync.data.part.msg_000).toBeUndefined()
-  } finally {
-    app.renderer.destroy()
-  }
-})
-
-test("a message removed during hydration does not regain stale parts", async () => {
-  await using tmp = await tmpdir()
-  await Bun.write(`${tmp.path}/kv.json`, "{}")
-
-  let resolveMessages!: (response: Response) => void
-  const messages = new Promise<Response>((resolve) => {
-    resolveMessages = resolve
-  })
-  let requested = false
-  const { app, emit, sync } = await mount((url) => {
-    if (url.pathname === `/api/session/${sessionID}`) return json({ data: nativeSession })
-    if (url.pathname === `/api/session/${sessionID}/message`) {
-      requested = true
-      return messages
-    }
-    if (url.pathname === `/api/session/${sessionID}/todo`) return json({ data: [] })
-    return undefined
-  }, tmp.path)
-
-  try {
-    emit(global({ id: "evt_message", type: "message.updated", properties: { sessionID, info: assistant } }))
-    await wait(() => sync.data.message[sessionID]?.length === 1)
-    const hydrate = sync.session.sync(sessionID)
-    await wait(() => requested)
-    emit(global({ id: "evt_removed", type: "message.removed", properties: { sessionID, messageID } }))
-    await wait(() => sync.data.message[sessionID]?.length === 0)
-    resolveMessages(
-      transcript([{ info: assistant, parts: [{ id: partID, sessionID, messageID, type: "text", text: "stale" }] }]),
-    )
-    await hydrate
-
-    expect(sync.data.message[sessionID]).toEqual([])
-    expect(sync.data.part[messageID]).toBeUndefined()
+    await Promise.all([sync.session.sync(sessionID), sync.session.sync(sessionID)])
+    expect(requests).toBe(1)
+    expect(data.session.message.list(sessionID)?.[0]).toMatchObject({ id: messageID, type: "assistant" })
   } finally {
     app.renderer.destroy()
   }

@@ -4,10 +4,13 @@ import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { type Component, For, Show, createMemo, createSignal, onMount } from "solid-js"
+import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
+import { useSync } from "@/context/sync"
 import type { ServerApi } from "@/utils/server"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
+import { pluginMcpRuntimeStatus } from "./plugin-runtime-status"
 import "./settings-v2.css"
 
 type Catalog = Awaited<ReturnType<ServerApi["plugins"]["list"]>>
@@ -25,6 +28,8 @@ function errorMessage(error: unknown) {
 
 export const SettingsPluginsV2: Component = () => {
   const sdk = useServerSDK()
+  const sync = useSync()
+  const language = useLanguage()
   const [catalog, setCatalog] = createSignal<Catalog>({ marketplaces: [], plugins: [] })
   const [view, setView] = createSignal<"plugins" | "marketplaces">("plugins")
   const [filter, setFilter] = createSignal("")
@@ -32,11 +37,12 @@ export const SettingsPluginsV2: Component = () => {
   const [busy, setBusy] = createSignal<string>()
   const [error, setError] = createSignal<string>()
 
-  const run = async (key: string, action: () => Promise<Catalog>) => {
+  const run = async (key: string, action: () => Promise<Catalog>, refreshMcp = false) => {
     setBusy(key)
     setError(undefined)
     try {
       setCatalog(await action())
+      if (refreshMcp) await sync().mcp.refresh()
     } catch (reason) {
       setError(errorMessage(reason))
     } finally {
@@ -66,36 +72,51 @@ export const SettingsPluginsV2: Component = () => {
     const value = source().trim()
     if (!value) return
     const target = sdk()
-    void run("add-marketplace", () =>
-      target
-        .apiForGeneration()
-        .then((api) => api.plugins.add({ source: value }))
-        .then((result) => {
-          setSource("")
-          return result
-        }),
+    void run(
+      "add-marketplace",
+      () =>
+        target
+          .apiForGeneration()
+          .then((api) => api.plugins.add({ source: value }))
+          .then((result) => {
+            setSource("")
+            return result
+          }),
+      true,
     )
   }
 
   const install = (item: PluginItem) =>
-    void run(`install:${item.id}`, () => {
-      const target = sdk()
-      return target.apiForGeneration().then((api) => api.plugins.install({ id: item.id }))
-    })
+    void run(
+      `install:${item.id}`,
+      () => {
+        const target = sdk()
+        return target.apiForGeneration().then((api) => api.plugins.install({ id: item.id }))
+      },
+      true,
+    )
 
   const toggle = (item: PluginItem, enabled: boolean) =>
-    void run(`${enabled ? "enable" : "disable"}:${item.id}`, () => {
-      const target = sdk()
-      return target
-        .apiForGeneration()
-        .then((api) => (enabled ? api.plugins.enable({ id: item.id }) : api.plugins.disable({ id: item.id })))
-    })
+    void run(
+      `${enabled ? "enable" : "disable"}:${item.id}`,
+      () => {
+        const target = sdk()
+        return target
+          .apiForGeneration()
+          .then((api) => (enabled ? api.plugins.enable({ id: item.id }) : api.plugins.disable({ id: item.id })))
+      },
+      true,
+    )
 
   const uninstall = (item: PluginItem) =>
-    void run(`uninstall:${item.id}`, () => {
-      const target = sdk()
-      return target.apiForGeneration().then((api) => api.plugins.uninstall({ id: item.id }))
-    })
+    void run(
+      `uninstall:${item.id}`,
+      () => {
+        const target = sdk()
+        return target.apiForGeneration().then((api) => api.plugins.uninstall({ id: item.id }))
+      },
+      true,
+    )
 
   onMount(() => void load())
 
@@ -193,10 +214,13 @@ export const SettingsPluginsV2: Component = () => {
                             icon={<IconV2 name="reset" size="small" />}
                             disabled={Boolean(busy())}
                             onClick={() =>
-                              void run(`refresh:${marketplace.name}`, () =>
-                                sdk()
-                                  .apiForGeneration()
-                                  .then((api) => api.plugins.refresh({ name: marketplace.name })),
+                              void run(
+                                `refresh:${marketplace.name}`,
+                                () =>
+                                  sdk()
+                                    .apiForGeneration()
+                                    .then((api) => api.plugins.refresh({ name: marketplace.name })),
+                                true,
                               )
                             }
                           />
@@ -206,10 +230,13 @@ export const SettingsPluginsV2: Component = () => {
                             icon="close"
                             disabled={Boolean(busy())}
                             onClick={() =>
-                              void run(`remove:${marketplace.name}`, () =>
-                                sdk()
-                                  .apiForGeneration()
-                                  .then((api) => api.plugins.remove({ name: marketplace.name })),
+                              void run(
+                                `remove:${marketplace.name}`,
+                                () =>
+                                  sdk()
+                                    .apiForGeneration()
+                                    .then((api) => api.plugins.remove({ name: marketplace.name })),
+                                true,
                               )
                             }
                           >
@@ -229,7 +256,20 @@ export const SettingsPluginsV2: Component = () => {
               <h3 class="settings-v2-section-title">Installed</h3>
               <SettingsListV2>
                 <For each={installed()}>
-                  {(item) => <PluginRow item={item} busy={busy()} onToggle={toggle} onUninstall={uninstall} />}
+                  {(item) => (
+                    <PluginRow
+                      item={item}
+                      busy={busy()}
+                      mcp={sync().data.mcp}
+                      mcpReady={sync().data.mcp_ready}
+                      enabledLabel={language.t("plugin.status.enabled")}
+                      disabledLabel={language.t("plugin.status.disabled")}
+                      connectedLabel={language.t("mcp.status.connected")}
+                      disconnectedLabel={language.t("mcp.status.disconnected")}
+                      onToggle={toggle}
+                      onUninstall={uninstall}
+                    />
+                  )}
                 </For>
               </SettingsListV2>
             </div>
@@ -273,15 +313,46 @@ export const SettingsPluginsV2: Component = () => {
 const PluginRow: Component<{
   item: PluginItem
   busy?: string
+  mcp: Readonly<Record<string, { readonly status: string } | undefined>>
+  mcpReady: boolean
+  enabledLabel: string
+  disabledLabel: string
+  connectedLabel: string
+  disconnectedLabel: string
   onToggle: (item: PluginItem, enabled: boolean) => void
   onUninstall: (item: PluginItem) => void
 }> = (props) => {
+  const runtime = createMemo(() =>
+    props.mcpReady ? pluginMcpRuntimeStatus(props.item.mcpServers, props.mcp) : undefined,
+  )
   return (
     <SettingsRowV2
       title={props.item.name}
-      description={`${props.item.marketplace}${props.item.description ? ` - ${props.item.description}` : ""}`}
+      description={
+        <span class="settings-v2-plugin-description">
+          <span>{`${props.item.marketplace}${props.item.description ? ` - ${props.item.description}` : ""}`}</span>
+          <Show when={runtime()}>
+            {(status) => (
+              <span class="settings-v2-plugin-runtime">
+                <span
+                  class="settings-v2-plugin-status-dot"
+                  classList={{ "settings-v2-plugin-status-dot--connected": status() === "connected" }}
+                />
+                MCP {status() === "connected" ? props.connectedLabel : props.disconnectedLabel}
+              </span>
+            )}
+          </Show>
+        </span>
+      }
     >
       <div class="settings-v2-plugins-actions">
+        <span class="settings-v2-plugin-state">
+          <span
+            class="settings-v2-plugin-status-dot"
+            classList={{ "settings-v2-plugin-status-dot--connected": props.item.enabled }}
+          />
+          {props.item.enabled ? props.enabledLabel : props.disabledLabel}
+        </span>
         <Switch
           checked={props.item.enabled}
           disabled={Boolean(props.busy)}

@@ -328,10 +328,13 @@ export const dict = {
   "dialog.plugins.empty": "Eklentiler opencode.json içinde yapılandırılır",
 
   "mcp.status.connected": "bağlı",
+  "mcp.status.disconnected": "bağlı değil",
   "mcp.status.failed": "başarısız",
   "mcp.status.needs_auth": "kimlik doğrulama gerekli",
   "mcp.auth.clickToAuthenticate": "Kimlik doğrulamak için tıklayın",
   "mcp.status.disabled": "devre dışı",
+  "plugin.status.enabled": "Etkin",
+  "plugin.status.disabled": "Devre dışı",
 
   "dialog.fork.empty": "Dallandırılacak mesaj yok",
 

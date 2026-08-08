@@ -1,10 +1,9 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
-import { Event } from "@opencode-ai/schema/event"
+import { ServerEvent } from "@opencode-ai/schema/server-event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import { SessionV1 } from "@opencode-ai/schema/session-v1"
 import type {
   AssistantMessage,
-  GlobalEvent,
   Message,
   Part,
   Session,
@@ -12,6 +11,7 @@ import type {
   ToolPart,
   ToolState,
   UserMessage,
+  V2Event,
 } from "@opencode-ai/sdk/v2/client"
 import { expect, type Page } from "@playwright/test"
 import { Schema } from "effect"
@@ -28,7 +28,7 @@ export const title = "Timeline visual stability"
 export const model = { providerID: "opencode", modelID: "claude-opus-4-6", variant: "max" }
 
 type TimelinePayload = Extract<
-  GlobalEvent["payload"],
+  V2Event,
   {
     type:
       | "message.updated"
@@ -37,6 +37,7 @@ type TimelinePayload = Extract<
       | "message.part.removed"
       | "message.part.delta"
       | "session.status"
+      | "server.connected"
   }
 >
 
@@ -46,7 +47,7 @@ type DeepReadonly<Value> = Value extends readonly unknown[]
     ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }
     : Value
 
-export type TimelineEvent = DeepReadonly<Omit<GlobalEvent, "payload"> & { payload: TimelinePayload }>
+export type TimelineEvent = DeepReadonly<TimelinePayload>
 export type EventPayload = TimelineEvent
 export type ToolStatus = ToolState["status"]
 export type TimelineMessage = { info: UserMessage; parts: Part[] } | { info: AssistantMessage; parts: Part[] }
@@ -74,12 +75,13 @@ const decodeMessage = Schema.decodeUnknownSync(SessionV1.WithParts)
 const decodePart = Schema.decodeUnknownSync(SessionV1.Part)
 const decodeStatus = Schema.decodeUnknownSync(SessionStatusEvent.Info)
 const timelineEventSchema = Schema.Union([
-  eventSchema("message.updated", SessionV1.Event.MessageUpdated.data),
-  eventSchema("message.removed", SessionV1.Event.MessageRemoved.data),
-  eventSchema("message.part.updated", SessionV1.Event.PartUpdated.data),
-  eventSchema("message.part.removed", SessionV1.Event.PartRemoved.data),
-  eventSchema("message.part.delta", SessionV1.Event.PartDelta.data),
-  eventSchema("session.status", SessionStatusEvent.Status.data),
+  SessionV1.Event.MessageUpdated,
+  SessionV1.Event.MessageRemoved,
+  SessionV1.Event.PartUpdated,
+  SessionV1.Event.PartRemoved,
+  SessionV1.Event.PartDelta,
+  SessionStatusEvent.Status,
+  ServerEvent.Connected,
 ])
 const decodeEvent = Schema.decodeUnknownSync(timelineEventSchema)
 let eventSequence = 0
@@ -100,7 +102,7 @@ export async function setupTimeline(
   } = {},
 ) {
   const sessions = input.sessions ?? [session()]
-  const messages = validateTimelineMessages([
+  let messages = validateTimelineMessages([
     ...(input.seedHistory ? historyMessages(18) : []),
     ...(input.messages ?? [userMessage(), assistantMessage()]),
   ])
@@ -197,14 +199,17 @@ export async function setupTimeline(
     async waitForPart(partID: string) {
       await expect(page.locator(`[data-timeline-part-id="${partID}"]`).first()).toBeVisible()
     },
+    replaceMessages(next: TimelineMessage[]) {
+      messages = validateTimelineMessages(next)
+    },
   }
 }
 
 function describeEvent(event: EventPayload) {
-  if (event.payload.type === "message.part.updated") {
-    const part = event.payload.properties.part
+  if (event.type === "message.part.updated") {
+    const part = event.data.part
     return [
-      event.payload.type,
+      event.type,
       part.id,
       part.type === "tool" ? part.tool : part.type,
       part.type === "tool" ? part.state.status : undefined,
@@ -212,23 +217,25 @@ function describeEvent(event: EventPayload) {
       .filter(Boolean)
       .join(":")
   }
-  if (event.payload.type === "session.status") {
-    const status = event.payload.properties.status
-    return [event.payload.type, status.type, status.type === "retry" ? status.attempt : undefined]
+  if (event.type === "session.status") {
+    const status = event.data.status
+    return [event.type, status.type, status.type === "retry" ? status.attempt : undefined]
       .filter((value) => value !== undefined)
       .join(":")
   }
-  return event.payload.type
+  return event.type
 }
 
 export function event<const Type extends TimelinePayload["type"]>(
   type: Type,
-  properties: Extract<TimelinePayload, { type: Type }>["properties"],
+  data: Extract<TimelinePayload, { type: Type }>["data"],
 ): TimelineEvent
-export function event(type: TimelinePayload["type"], properties: TimelinePayload["properties"]): TimelineEvent {
+export function event(type: TimelinePayload["type"], data: TimelinePayload["data"]): TimelineEvent {
   return validateTimelineEvent({
-    directory,
-    payload: { id: `evt_timeline_${String(++eventSequence).padStart(4, "0")}`, type, properties },
+    id: `evt_timeline_${String(++eventSequence).padStart(4, "0")}`,
+    type,
+    data,
+    ...(type === "server.connected" ? {} : { location: { directory } }),
   })
 }
 
@@ -343,6 +350,10 @@ export function status(type: SessionStatus["type"], attempt = 1) {
     sessionID,
     status: type === "retry" ? { type, attempt, message: "Rate limited", next: 1700000010000 } : { type },
   })
+}
+
+export function connected() {
+  return event("server.connected", {})
 }
 
 export function userMessage(
@@ -535,18 +546,6 @@ export function session(input: Partial<Session> = {}): Session {
     time: { created: 1700000000000, updated: 1700000000000 },
     ...input,
   }
-}
-
-function eventSchema<
-  const Type extends TimelinePayload["type"],
-  const Properties extends Schema.Codec<unknown, unknown>,
->(type: Type, properties: Properties) {
-  return Schema.Struct({
-    directory: Schema.String,
-    project: Schema.optional(Schema.String),
-    workspace: Schema.optional(Schema.String),
-    payload: Schema.Struct({ id: Event.ID, type: Schema.Literal(type), properties }),
-  })
 }
 
 function provider() {

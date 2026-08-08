@@ -438,6 +438,7 @@ export class ClaudeMarketplaceManager {
             ...(entry.category ? { category: entry.category } : {}),
             tags: entry.tags,
             capabilities: await this.capabilities(marketplace.cachePath, entry).catch(() => ["plugin"]),
+            mcpServers: Object.keys(installed?.mcp ?? {}).toSorted(),
             installed: installed?.installed === true,
             enabled: installed?.enabled === true,
           })

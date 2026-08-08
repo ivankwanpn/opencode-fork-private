@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import {
   assistantMessage,
+  connected,
   partUpdated,
   setupTimeline,
   status,
@@ -34,6 +35,36 @@ test("delivers a burst from one stream chunk", async ({ page }) => {
   expect(new Set(acknowledgements.map((item) => item.deliveryID)).size).toBe(2)
 })
 
+test("delivers bounded batches over one connection", async ({ page }) => {
+  const timeline = await setupTimeline(page)
+  const parts = Array.from({ length: 5 }, (_, index) =>
+    partUpdated(textPart(`prt_transport_batch_${index}`, `batch ${index}`)),
+  )
+
+  const acknowledgements = await timeline.transport.batches(parts, { size: 2, delay: 5 })
+
+  await Promise.all(parts.map((event) => timeline.waitForPart(event.data.part.id)))
+  expect(acknowledgements).toHaveLength(5)
+  expect(acknowledgements.at(-1)!.deliveredAt - acknowledgements[0]!.deliveredAt).toBeGreaterThanOrEqual(5)
+  expect(new Set(acknowledgements.map((item) => item.connectionID))).toEqual(
+    new Set([acknowledgements[0]!.connectionID]),
+  )
+  expect(await timeline.transport.connections()).toHaveLength(1)
+})
+
+test("schedules paced batches without blocking the caller", async ({ page }) => {
+  const timeline = await setupTimeline(page)
+  const parts = Array.from({ length: 3 }, (_, index) =>
+    partUpdated(textPart(`prt_transport_scheduled_${index}`, `scheduled ${index}`)),
+  )
+
+  await timeline.transport.schedule(parts, { size: 1, delay: 20 })
+
+  expect(await timeline.transport.acknowledgements()).toHaveLength(1)
+  await Promise.all(parts.map((event) => timeline.waitForPart(event.data.part.id)))
+  expect(await timeline.transport.acknowledgements()).toHaveLength(3)
+})
+
 test("parses split JSON and a split multibyte code point", async ({ page }) => {
   const timeline = await setupTimeline(page)
   const payload = partUpdated(textPart("prt_transport_split", "split snowman \u2603\u2603\u2603"))
@@ -56,11 +87,13 @@ test("delivers server heartbeat without mutating the timeline", async ({ page })
   })
   const before = await page.locator("[data-timeline-row]").allTextContents()
 
-  await timeline.transport.heartbeat()
+  const acknowledgement = await timeline.transport.heartbeat({ marker: "heartbeat" })
   await timeline.settle()
 
   expect(await page.locator("[data-timeline-row]").allTextContents()).toEqual(before)
   expect(await timeline.transport.connections()).toHaveLength(1)
+  expect(acknowledgement.bytes).toBe(new TextEncoder().encode(": heartbeat\n\n").byteLength)
+  expect(acknowledgement.eventID).toBeUndefined()
 })
 
 test("reconnects after a clean close", async ({ page }) => {
@@ -89,28 +122,45 @@ test("reconnects after a stream error", async ({ page }) => {
   expect((await timeline.transport.connections())[0]?.endedBy).toBe("error")
 })
 
+test("refreshes an open idle session after reconnect", async ({ page }) => {
+  const partial = [userMessage(), assistantMessage([textPart("prt_transport_recovery", "partial canonical answer")])]
+  const timeline = await setupTimeline(page, { messages: partial, eventRetry: 10 })
+  await expect(page.getByText("partial canonical answer", { exact: true })).toBeVisible()
+
+  timeline.replaceMessages([
+    userMessage(),
+    assistantMessage([textPart("prt_transport_recovery", "complete canonical answer after reconnect")]),
+  ])
+  const first = await timeline.transport.waitForConnection()
+  await timeline.transport.close()
+  await timeline.transport.waitForConnection({ after: first.id })
+  await timeline.transport.send(connected())
+
+  await expect(page.getByText("complete canonical answer after reconnect", { exact: true })).toBeVisible()
+  await expect(page.getByText("partial canonical answer", { exact: true })).toHaveCount(0)
+})
+
 test("records event IDs and reconnect Last-Event-ID headers", async ({ page }) => {
   const timeline = await setupTimeline(page, { eventRetry: 10 })
-  const first = await timeline.transport.send(partUpdated(textPart("prt_transport_id", "event with id")), {
-    id: "timeline-event-7",
-  })
+  const payload = partUpdated(textPart("prt_transport_id", "event with id"))
+  const first = await timeline.transport.send(payload, { id: payload.id })
   await timeline.waitForPart("prt_transport_id")
 
   await timeline.transport.error("retry with event id")
   const connection = await timeline.transport.waitForConnection({ after: first.connectionID })
 
-  expect(first.eventID).toBe("timeline-event-7")
-  expect(connection.headers["last-event-id"]).toBe("timeline-event-7")
+  expect(first.eventID).toBe(payload.id)
+  expect(connection.headers["last-event-id"]).toBe(payload.id)
 })
 
 test("passes through non-event fetches", async ({ page }) => {
   const timeline = await setupTimeline(page)
 
-  const health = await page.evaluate(async () => {
-    const response = await fetch("/global/health")
+  const health = await page.evaluate(async (server) => {
+    const response = await fetch(new URL("/api/health", server))
     return response.json()
-  })
+  }, timeline.transport.server)
 
-  expect(health).toEqual({ healthy: true })
+  expect(health).toMatchObject({ healthy: true })
   expect(await timeline.transport.connections()).toHaveLength(1)
 })

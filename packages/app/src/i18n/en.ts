@@ -369,10 +369,14 @@ export const dict = {
   "dialog.plugins.empty": "Plugins configured in opencode.json",
 
   "mcp.status.connected": "connected",
+  "mcp.status.disconnected": "disconnected",
   "mcp.status.failed": "failed",
   "mcp.status.needs_auth": "needs auth",
   "mcp.status.disabled": "disabled",
   "mcp.auth.clickToAuthenticate": "Click to authenticate",
+
+  "plugin.status.enabled": "Enabled",
+  "plugin.status.disabled": "Disabled",
 
   "dialog.fork.empty": "No messages to fork from",
 

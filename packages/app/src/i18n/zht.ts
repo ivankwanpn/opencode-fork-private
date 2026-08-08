@@ -344,10 +344,13 @@ export const dict = {
   "dialog.plugins.empty": "在 opencode.json 中設定的外掛程式",
 
   "mcp.status.connected": "已連線",
+  "mcp.status.disconnected": "未連線",
   "mcp.status.failed": "失敗",
   "mcp.status.needs_auth": "需要授權",
   "mcp.auth.clickToAuthenticate": "點擊以進行授權",
   "mcp.status.disabled": "已停用",
+  "plugin.status.enabled": "已啟用",
+  "plugin.status.disabled": "已停用",
 
   "dialog.fork.empty": "沒有可用於分支的訊息",
 

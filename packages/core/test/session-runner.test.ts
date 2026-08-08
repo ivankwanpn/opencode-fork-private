@@ -4345,6 +4345,232 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("stops after two identical local tool calls fail with different errors", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      let executions = 0
+      yield* registry.register({
+        unstable: Tool.make({
+          description: "Always fail",
+          input: Schema.Struct({
+            path: Schema.String,
+            options: Schema.Struct({ depth: Schema.Number, force: Schema.Boolean }),
+          }),
+          output: Schema.Struct({}),
+          execute: () => {
+            executions++
+            return Effect.fail(new Tool.Failure({ message: `Failure ${executions}` }))
+          },
+        }),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Do not loop forever" }), resume: false })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-unstable-1",
+            name: "unstable",
+            input: { path: "/tmp/file", options: { depth: 1, force: true } },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-unstable-2",
+            name: "unstable",
+            input: { options: { force: true, depth: 1 }, path: "/tmp/file" },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-unstable-3",
+            name: "unstable",
+            input: { path: "/tmp/file", options: { force: true, depth: 1 } },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-never-requested" }),
+          LLMEvent.textDelta({ id: "text-never-requested", text: "Should not run" }),
+          LLMEvent.textEnd({ id: "text-never-requested" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(3)
+      expect(responses).toHaveLength(1)
+      expect(executions).toBe(2)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Do not loop forever" },
+        {
+          type: "assistant",
+          content: [{ type: "tool", state: { status: "error", error: { message: "Failure 1" } } }],
+        },
+        {
+          type: "assistant",
+          content: [{ type: "tool", state: { status: "error", error: { message: "Failure 2" } } }],
+        },
+        {
+          type: "assistant",
+          content: [
+            {
+              type: "tool",
+              id: "call-unstable-3",
+              state: { status: "error", error: { message: expect.stringContaining("infinite retry loop") } },
+            },
+          ],
+        },
+      ])
+    }),
+  )
+
+  it.effect("allows a failed tool call when its arguments change", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      let executions = 0
+      yield* registry.register({
+        unstable: Tool.make({
+          description: "Always fail with the same error",
+          input: Schema.Struct({ path: Schema.String }),
+          output: Schema.Struct({}),
+          execute: () => {
+            executions++
+            return Effect.fail(new Tool.Failure({ message: "Stable failure" }))
+          },
+        }),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Try another target" }), resume: false })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-same-1", name: "unstable", input: { path: "/tmp/first" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-same-2", name: "unstable", input: { path: "/tmp/first" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-changed", name: "unstable", input: { path: "/tmp/second" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-after-change" }),
+          LLMEvent.textDelta({ id: "text-after-change", text: "Stopped retrying" }),
+          LLMEvent.textEnd({ id: "text-after-change" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(4)
+      expect(executions).toBe(3)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Try another target" },
+        { type: "assistant" },
+        { type: "assistant" },
+        {
+          type: "assistant",
+          content: [
+            {
+              type: "tool",
+              id: "call-changed",
+              state: { status: "error", error: { message: "Stable failure" } },
+            },
+          ],
+        },
+        { type: "assistant", content: [{ type: "text", text: "Stopped retrying" }] },
+      ])
+    }),
+  )
+
+  it.effect("clears repeated tool failure state after a successful retry", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      let executions = 0
+      yield* registry.register({
+        transient: Tool.make({
+          description: "Fail once and then recover",
+          input: Schema.Struct({ value: Schema.String }),
+          output: Schema.Struct({ value: Schema.String }),
+          execute: ({ value }) => {
+            executions++
+            if (executions === 1) return Effect.fail(new Tool.Failure({ message: "Transient failure" }))
+            return Effect.succeed({ value })
+          },
+        }),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Recover and retry" }), resume: false })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-transient-1", name: "transient", input: { value: "same" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-transient-2", name: "transient", input: { value: "same" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-transient-3", name: "transient", input: { value: "same" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(4)
+      expect(executions).toBe(3)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Recover and retry" },
+        { type: "assistant", content: [{ type: "tool", state: { status: "error" } }] },
+        { type: "assistant", content: [{ type: "tool", state: { status: "completed" } }] },
+        { type: "assistant", content: [{ type: "tool", state: { status: "completed" } }] },
+        { type: "assistant", finish: "stop" },
+      ])
+    }),
+  )
+
   it.effect("returns unexpected local tool defects to the model and continues", () =>
     Effect.gen(function* () {
       yield* setup
@@ -4962,7 +5188,7 @@ describe("SessionRunnerLLM", () => {
           error: {
             type: "unknown",
             message:
-              "Provider request failed with HTTP 400\nRequest: POST https://provider.example/v1/responses\nRequest ID: req_safe\nResponse body: {\"error\":{\"code\":\"upstream_error\"}}",
+              'Provider request failed with HTTP 400\nRequest: POST https://provider.example/v1/responses\nRequest ID: req_safe\nResponse body: {"error":{"code":"upstream_error"}}',
           },
         },
       ])

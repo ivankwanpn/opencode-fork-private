@@ -76,7 +76,7 @@ benchmark.describe("performance: review pane", () => {
       vcsDiff: diffs,
     })
 
-    fixture.transport.enqueue(buildInitialStreamEvent(1))
+    await fixture.transport.enqueue(buildInitialStreamEvent(1))
     await expect(fixture.text).toBeVisible()
     await expect(fixture.text).toContainText("Implementation plan")
     await fixture.scrollToBottom()
@@ -101,10 +101,11 @@ benchmark.describe("performance: review pane", () => {
 
 async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOptions) {
   const completionTimeoutMs = Number(process.env.TIMELINE_COMPLETION_TIMEOUT_MS ?? 420_000)
-  const cpuThrottle = Number(process.env.TIMELINE_CPU_THROTTLE ?? 30)
+  const cpuThrottle = Number(process.env.TIMELINE_CPU_THROTTLE ?? 6)
   const deltaCount = Number(process.env.TIMELINE_DELTA_COUNT ?? 160)
   const historyTurns = Number(process.env.TIMELINE_HISTORY_TURNS ?? 320)
   const eventBatch = Number(process.env.TIMELINE_EVENT_BATCH ?? 1)
+  const eventDelay = Number(process.env.TIMELINE_EVENT_DELAY_MS ?? 16)
   const minimal = process.env.TIMELINE_MINIMAL === "1"
   const profileCPU = process.env.TIMELINE_CPU_PROFILE === "1"
   const profileVisual = !minimal && profileCPU && process.env.TIMELINE_VISUAL_PROFILE !== "0"
@@ -112,6 +113,7 @@ async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOpt
   const fixture = await setupTimelineBenchmark(page, {
     historyTurns,
     eventBatch,
+    eventDelay,
     newLayoutDesigns: options.newLayoutDesigns,
     // Turn diffs exercise timeline data cost; the pane-open scenario serves the same
     // diffs through the default git mode so it works across review implementations.
@@ -119,7 +121,7 @@ async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOpt
     vcsDiff: options.reviewPane ? diffs : undefined,
   })
 
-  fixture.transport.enqueue(buildInitialStreamEvent(deltaCount))
+  await fixture.transport.enqueue(buildInitialStreamEvent(deltaCount))
   const contentStart = performance.now()
   await expect(fixture.text).toBeVisible()
   await expect(fixture.text).toContainText("Implementation plan")
@@ -134,7 +136,7 @@ async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOpt
   await installTimelineStreamProbe(page, { textPartID, finalIndex: deltaCount, profileVisual, minimal })
   const deltas = buildStreamDeltaEvents(deltaCount)
   await startTimelineStreamProbe(page)
-  fixture.transport.enqueue(deltas)
+  await fixture.transport.enqueue(deltas)
 
   await page.waitForFunction(
     (finalIndex) =>
@@ -154,7 +156,8 @@ async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOpt
     finalIndex: deltaCount,
     navigations: benchmarkDiagnostics(page).navigations,
   })
-  const delivered = deltas.length - fixture.transport.pendingCount()
+  const pendingDeltas = await fixture.transport.pendingCount()
+  const delivered = deltas.length - pendingDeltas
   await profile.stop()
 
   const result = {
@@ -162,7 +165,7 @@ async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOpt
       endToEndInitialContentObservedMs: initialContentObservedMs,
       ...metrics,
       deliveredDeltas: delivered,
-      pendingDeltas: fixture.transport.pendingCount(),
+      pendingDeltas,
       reviewPane: reviewPane ?? null,
     },
     context: {
@@ -173,6 +176,7 @@ async function runTimelineStreamBenchmark(page: Page, options: TimelineStreamOpt
       queuedDeltas: deltas.length,
       historyTurns,
       eventBatch,
+      eventDelay,
       newLayoutDesigns: options.newLayoutDesigns === true,
       reviewPane: options.reviewPane === true ? "open" : "closed",
       reviewDiffs: diffs?.length ?? 0,

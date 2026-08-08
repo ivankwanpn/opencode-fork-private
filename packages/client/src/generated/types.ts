@@ -6206,6 +6206,7 @@ export type ServerPluginsListOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6230,6 +6231,7 @@ export type ServerPluginsAddOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6254,6 +6256,7 @@ export type ServerPluginsRefreshOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6278,6 +6281,7 @@ export type ServerPluginsRemoveOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6302,6 +6306,7 @@ export type ServerPluginsInstallOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6326,6 +6331,7 @@ export type ServerPluginsUninstallOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6350,6 +6356,7 @@ export type ServerPluginsEnableOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>
@@ -6374,6 +6381,7 @@ export type ServerPluginsDisableOutput = {
     readonly category?: string | undefined
     readonly tags: ReadonlyArray<string>
     readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
     readonly enabled: boolean
   }>

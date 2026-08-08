@@ -30,10 +30,7 @@ import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } fro
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
 import { extractArray } from "@/utils/response-helpers"
 import type { ServerApi } from "@/utils/server"
-import {
-  type CompatibleApi,
-  type CompatibleImplementation,
-} from "@/utils/server-compat"
+import { type CompatibleApi, type CompatibleImplementation } from "@/utils/server-compat"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
@@ -126,14 +123,12 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
     const result = Binary.search(session, item.message.id, (message) => message.id)
     if (!result.found) session.splice(result.index, 0, item.message)
     const current = part.get(item.message.id)
-    const confirmed = result.found
-      ? item.parts.filter((part) => Binary.search(current ?? [], part.id, (value) => value.id).found)
-      : []
+    const confirmed = result.found ? item.parts.filter((part) => current?.some((value) => value.id === part.id)) : []
     if (result.found) observed.push({ messageID: item.message.id, parts: confirmed })
     part.set(
       item.message.id,
-      merge(
-        result.found ? (current ?? []) : merge(item.confirmedParts ?? [], current ?? []),
+      mergeInOrder(
+        result.found ? (current ?? []) : mergeInOrder(item.confirmedParts ?? [], current ?? []),
         item.parts.filter((part) => !confirmed.includes(part)),
       ),
     )
@@ -162,6 +157,12 @@ function merge<T extends { id: string }>(a: readonly T[], b: readonly T[]) {
   return [...items.values()].sort((x, y) => cmp(x.id, y.id))
 }
 
+function mergeInOrder<T extends { id: string }>(a: readonly T[], b: readonly T[]) {
+  const items = new Map(a.map((item) => [item.id, item] as const))
+  for (const item of b) items.set(item.id, item)
+  return [...items.values()]
+}
+
 function reconcileFetched<T extends { id: string }>(
   fetched: T[],
   current: readonly T[],
@@ -170,6 +171,7 @@ function reconcileFetched<T extends { id: string }>(
     retained?: ReadonlySet<string>
     removed?: ReadonlySet<string>
     preserveUnfetched?: boolean | ((item: T) => boolean)
+    preserveOrder?: boolean
   } = {},
 ) {
   const result = new Map(fetched.map((item) => [item.id, item]))
@@ -192,7 +194,8 @@ function reconcileFetched<T extends { id: string }>(
     if (!item) result.delete(id)
   }
   for (const id of options.removed ?? emptyIDs) result.delete(id)
-  return [...result.values()].sort((a, b) => cmp(a.id, b.id))
+  const values = [...result.values()]
+  return options.preserveOrder ? values : values.sort((a, b) => cmp(a.id, b.id))
 }
 
 type ServerSessionOptions = {
@@ -389,12 +392,12 @@ export function createServerSession(
       ? options.apiForGeneration().then((api) => api.session.get({ sessionID }).then(normalizeSessionInfo))
       : options?.api
         ? options.api.session.get({ sessionID }).then(normalizeSessionInfo)
-      : sessionApi
-        ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
-        : projection!.session.get({ sessionID }).then((result) => {
-            if (!result.data) throw sessionNotFoundError(sessionID)
-            return result.data
-          })
+        : sessionApi
+          ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
+          : projection!.session.get({ sessionID }).then((result) => {
+              if (!result.data) throw sessionNotFoundError(sessionID)
+              return result.data
+            })
     const resolved = request.then((result) => {
       if (generations.get(sessionID) !== active) return result
       return remember(result)
@@ -468,7 +471,7 @@ export function createServerSession(
     items.set(messageID, {
       ...item,
       parts,
-      confirmedParts: merge(item.confirmedParts ?? [], [part]),
+      confirmedParts: mergeInOrder(item.confirmedParts ?? [], [part]),
       confirmedMessage: true,
     })
   }
@@ -486,7 +489,7 @@ export function createServerSession(
     items.set(messageID, {
       ...item,
       parts,
-      confirmedParts: merge(item.confirmedParts ?? [], confirmedParts),
+      confirmedParts: mergeInOrder(item.confirmedParts ?? [], confirmedParts),
       confirmedMessage: true,
     })
   }
@@ -637,9 +640,7 @@ export function createServerSession(
         (options?.retry ?? retry)(() => {
           onAttempt?.()
           return currentMessageApi.list(
-            cursor
-              ? { sessionID, limit: pageLimit, cursor }
-              : { sessionID, limit: pageLimit, order: "desc" },
+            cursor ? { sessionID, limit: pageLimit, cursor } : { sessionID, limit: pageLimit, order: "desc" },
           )
         })
       const first = await request(before)
@@ -654,16 +655,13 @@ export function createServerSession(
       const normalized = normalizeSessionMessages(sessionID, source)
       return {
         session: normalized.messages.sort((a, b) => cmp(a.id, b.id)),
-        part: [...normalized.parts.entries()]
-          .map(([id, part]) => ({ id, part: part.sort((a, b) => cmp(a.id, b.id)) }))
-          .sort((a, b) => cmp(a.id, b.id)),
+        part: [...normalized.parts.entries()].map(([id, part]) => ({ id, part })).sort((a, b) => cmp(a.id, b.id)),
         source,
         sourceMode: before ? ("older" as const) : ("latest" as const),
         projectSource: true,
         cursor: response.cursor.next ?? undefined,
         complete: response.data.length === 0,
-        watermark:
-          "watermark" in first && typeof first.watermark === "number" ? first.watermark : undefined,
+        watermark: "watermark" in first && typeof first.watermark === "number" ? first.watermark : undefined,
       }
     }
     const response = await (options?.retry ?? retry)(() => {
@@ -675,7 +673,7 @@ export function createServerSession(
       session: items.map((item) => cleanMessage(item.info)).sort((a, b) => cmp(a.id, b.id)),
       part: items.map((item) => ({
         id: item.info.id,
-        part: item.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id)),
+        part: item.parts.filter((part) => !!part?.id),
       })),
       source: legacyMessageSource(items),
       sourceMode: before ? ("older" as const) : ("latest" as const),
@@ -705,7 +703,7 @@ export function createServerSession(
     if (!response.data?.info?.id) throw new Error(`Message not found: ${messageID}`)
     return {
       message: cleanMessage(response.data.info),
-      parts: response.data.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id)),
+      parts: response.data.parts.filter((part) => !!part?.id),
     }
   }
 
@@ -752,7 +750,7 @@ export function createServerSession(
       for (const partID of load?.carriedDeltaParts.get(item.id) ?? []) {
         if (!fetchedIDs.has(partID)) touched.delete(partID)
       }
-      const parts = reconcileFetched(fetched, data.part[item.id] ?? [], { touched })
+      const parts = reconcileFetched(fetched, data.part[item.id] ?? [], { touched, preserveOrder: true })
       if (!parts.length) {
         orphanParts.get(sessionID)?.delete(item.id)
         setData(produce((draft) => deleteMessageParts(draft, item.id)))
@@ -800,9 +798,7 @@ export function createServerSession(
             return {
               ...page,
               session: normalized.messages.sort((a, b) => cmp(a.id, b.id)),
-              part: [...normalized.parts.entries()]
-                .map(([id, part]) => ({ id, part: part.sort((a, b) => cmp(a.id, b.id)) }))
-                .sort((a, b) => cmp(a.id, b.id)),
+              part: [...normalized.parts.entries()].map(([id, part]) => ({ id, part })).sort((a, b) => cmp(a.id, b.id)),
             }
           })()
         : page
@@ -1053,6 +1049,12 @@ export function createServerSession(
             properties: { sessionID: reduction.sessionID, messageID, partID: part.id },
           })
         }
+        const current = new Map((data.part[messageID] ?? []).map((part) => [part.id, part]))
+        const ordered = next.flatMap((part) => {
+          const value = current.get(part.id)
+          return value ? [value] : []
+        })
+        if (ordered.length) setData("part", messageID, reconcile(ordered, { key: "id" }))
       }
     })
   }
@@ -1140,14 +1142,13 @@ export function createServerSession(
             const baseline = recovery.baseline.get(sessionID) ?? -1
             const events = recovery.events
               .slice()
-              .sort((a, b) => ("durable" in a && a.durable ? a.durable.seq : -1) - ("durable" in b && b.durable ? b.durable.seq : -1))
-            for (const pending of events) {
-              if (
-                "durable" in pending &&
-                pending.durable &&
-                pending.durable.seq <= (watermark ?? baseline)
+              .sort(
+                (a, b) =>
+                  ("durable" in a && a.durable ? a.durable.seq : -1) -
+                  ("durable" in b && b.durable ? b.durable.seq : -1),
               )
-                continue
+            for (const pending of events) {
+              if ("durable" in pending && pending.durable && pending.durable.seq <= (watermark ?? baseline)) continue
               applyV2(pending, true)
             }
           })
@@ -1175,8 +1176,7 @@ export function createServerSession(
       const intent = event.data.intent
       if (intent?.type === "start") turns.set(sessionID, { turnID: event.data.messageID, phase: "pending" })
     }
-    if (event.type === "session.next.turn.started")
-      turns.set(sessionID, { turnID: event.data.turnID, phase: "active" })
+    if (event.type === "session.next.turn.started") turns.set(sessionID, { turnID: event.data.turnID, phase: "active" })
     if (event.type === "session.next.turn.ended") {
       const current = turns.get(sessionID)
       if (!current || current.turnID === event.data.turnID) turns.delete(sessionID)
@@ -1220,8 +1220,7 @@ export function createServerSession(
     if (event.type === "session.status")
       setData("session_status", sessionID, reconcile(event.data.status as SessionStatus))
     if (event.type === "session.idle") setData("session_status", sessionID, reconcile({ type: "idle" }))
-    if (event.type === "session.execution.started")
-      setData("session_status", sessionID, reconcile({ type: "busy" }))
+    if (event.type === "session.execution.started") setData("session_status", sessionID, reconcile({ type: "busy" }))
     if (event.type === "session.next.provider.attempt.started")
       setData("session_status", sessionID, reconcile({ type: "busy" }))
     if (
@@ -1263,18 +1262,14 @@ export function createServerSession(
         },
         time: { ...info.time, updated: event.data.timestamp },
       })
-    if (
-      (event.type === "session.next.revert.cleared" || event.type === "session.next.revert.committed") &&
-      info
-    )
+    if ((event.type === "session.next.revert.cleared" || event.type === "session.next.revert.committed") && info)
       remember({
         ...info,
         revert: undefined,
         time: { ...info.time, updated: event.data.timestamp },
       })
     if (event.type === "session.forked") void resolve(sessionID, { force: true }).catch(() => {})
-    if (event.type === "session.next.revert.committed")
-      void sync(sessionID, { force: true }).catch(() => {})
+    if (event.type === "session.next.revert.committed") void sync(sessionID, { force: true }).catch(() => {})
     if (
       event.type === "session.revert.staged" ||
       event.type === "session.revert.cleared" ||
@@ -1463,12 +1458,12 @@ export function createServerSession(
           setData("part", part.messageID, [part])
           return
         }
-        const result = Binary.search(parts, part.id, (item) => item.id)
-        if (result.found) setData("part", part.messageID, result.index, reconcile(part))
-        if (!result.found)
+        const index = parts.findIndex((item) => item.id === part.id)
+        if (index !== -1) setData("part", part.messageID, index, reconcile(part))
+        if (index === -1)
           setData("part", part.messageID, (value = []) => {
             const next = value.slice()
-            next.splice(result.index, 0, part)
+            next.push(part)
             return next
           })
         return
@@ -1504,8 +1499,8 @@ export function createServerSession(
             deltaBases.delete(props.partID)
             const parts = draft.part[props.messageID]
             if (!parts) return
-            const result = Binary.search(parts, props.partID, (part) => part.id)
-            if (result.found) parts.splice(result.index, 1)
+            const index = parts.findIndex((part) => part.id === props.partID)
+            if (index !== -1) parts.splice(index, 1)
             if (parts.length === 0) delete draft.part[props.messageID]
           }),
         )
@@ -1521,8 +1516,8 @@ export function createServerSession(
         }
         const parts = data.part[props.messageID]
         if (!parts) return
-        const result = Binary.search(parts, props.partID, (part) => part.id)
-        if (!result.found) return
+        const index = parts.findIndex((part) => part.id === props.partID)
+        if (index === -1) return
         trackPartChange(props.sessionID, props.messageID, props.partID)
         const load = messageLoads.get(props.sessionID)
         if (load) {
@@ -1534,7 +1529,7 @@ export function createServerSession(
           if (carried?.size === 0) load.carriedDeltaParts.delete(props.messageID)
         }
         const field = props.field as keyof (typeof parts)[number]
-        const current = parts[result.index]?.[field]
+        const current = parts[index]?.[field]
         if (!deltaBases.has(props.partID) && typeof current === "string")
           deltaBases.set(props.partID, { base: current, sessionID: props.sessionID })
         setData(
@@ -1547,7 +1542,7 @@ export function createServerSession(
           props.messageID,
           produce((draft) => {
             if (!draft) return
-            const part = draft[result.index]
+            const part = draft[index]
             const field = props.field as keyof typeof part
             ;(part[field] as string) = ((part[field] as string | undefined) ?? "") + props.delta
           }),
@@ -1650,9 +1645,7 @@ export function createServerSession(
     },
     optimistic: {
       add(input: { sessionID: string; message: Message; parts: Part[] }) {
-        const parts = input.parts
-          .filter((part) => !!part?.id && !SKIP_PARTS.has(part.type))
-          .sort((a, b) => cmp(a.id, b.id))
+        const parts = input.parts.filter((part) => !!part?.id && !SKIP_PARTS.has(part.type))
         const load = messageLoads.get(input.sessionID)
         if (load?.clearedMessageParts.has(input.message.id)) {
           const touched = load.touchedParts.get(input.message.id) ?? new Set<string>()
@@ -1758,6 +1751,9 @@ export function createServerSession(
     pin(sessionID: string) {
       pinned.set(sessionID, (pinned.get(sessionID) ?? 0) + 1)
       touch(sessionID)
+    },
+    pinned() {
+      return [...pinned.keys()]
     },
     unpin(sessionID: string) {
       const count = pinned.get(sessionID)

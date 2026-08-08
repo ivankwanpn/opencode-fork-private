@@ -72,7 +72,7 @@ import { llmClient } from "../../effect/app-node-platform"
  *   - [ ] Mark busy, retrying, idle, interrupted, or terminal-failure status durably.
  *   - [ ] Honor interruption and reject stale work after runtime attachment replacement.
  *   - [x] Honor optional agent step limits.
- *   - [ ] Bound provider retries and repeated identical tool calls.
+ *   - [x] Bound provider retries and repeated identical tool calls.
  *
  * - Runtime context assembly
  *   - Track V1 runtime-context parity canonically in `specs/v2/session.md`.
@@ -119,6 +119,9 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
+const MAX_IDENTICAL_TOOL_FAILURES = 2
+type ToolFailureTracker = Map<string, number>
 
 const layer = Layer.effect(
   Service,
@@ -274,6 +277,7 @@ const layer = Layer.effect(
       recoverOverflow: typeof compaction.compactAfterOverflow | undefined,
       physical: PhysicalAttempt | undefined,
       stopBlockCount: PluginRuntime.Mutable<number>["value"],
+      toolFailures: ToolFailureTracker,
     ) {
       const physicalAttempt: PhysicalAttempt = physical ?? { attempt: 1 }
       const session = yield* getSession(sessionID)
@@ -283,12 +287,11 @@ const layer = Layer.effect(
       const initialized = yield* SessionContextEpoch.initialize(db, loadSystemContext(agent, session.id), session.id)
       const toolFibers = yield* FiberSet.make<void, ToolRegistry.SettlementError>()
       let needsContinuation = false
+      let toolCircuitOpen = false
       let structuredOutputCaptured = false
       let currentStep = step
       const pendingForPromotion =
-        promotion === undefined
-          ? undefined
-          : (yield* SessionInput.pending(db, session.id, promotion))[0]
+        promotion === undefined ? undefined : (yield* SessionInput.pending(db, session.id, promotion))[0]
       const latestPromoted = yield* SessionInput.latestPromoted(db, session.id)
       if (promotion) {
         const cutoff = yield* EventV2.latestSequence(db, session.id)
@@ -298,13 +301,18 @@ const layer = Layer.effect(
           promoted += Number(yield* SessionInput.promoteNextQueued(db, events, session.id))
           promoted += yield* SessionInput.promoteSteers(db, events, session.id, cutoff)
         }
-        if (promoted > 0) currentStep = 1
+        if (promoted > 0) {
+          currentStep = 1
+          toolFailures.clear()
+        }
       }
       const turnAfterPromotion = yield* SessionTurn.get(db, session.id)
       const turnCandidate =
         (turnAfterPromotion?.status === "pending" || turnAfterPromotion?.status === "active"
           ? turnAfterPromotion.turn_id
-          : undefined) ?? pendingForPromotion?.id ?? latestPromoted?.id
+          : undefined) ??
+        pendingForPromotion?.id ??
+        latestPromoted?.id
       const turnAware =
         turnAfterPromotion !== undefined ||
         pendingForPromotion?.intent !== undefined ||
@@ -667,6 +675,21 @@ const layer = Layer.effect(
             }
             needsContinuation = true
             const assistantMessageID = yield* publisher.assistantMessageID(event.id)
+            const signature = toolCallSignature(event.name, event.input)
+            if ((toolFailures.get(signature) ?? 0) >= MAX_IDENTICAL_TOOL_FAILURES) {
+              toolCircuitOpen = true
+              yield* publish(
+                LLMEvent.toolResult({
+                  id: event.id,
+                  name: event.name,
+                  result: {
+                    type: "error",
+                    value: `The same ${event.name} tool call failed twice and was blocked to prevent an infinite retry loop. Change the arguments or use a different approach.`,
+                  },
+                }),
+              )
+              return
+            }
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
                 toolMaterialization.settle({
@@ -676,6 +699,22 @@ const layer = Layer.effect(
                   call: event,
                 }),
               ).pipe(
+                Effect.tap((settlement) =>
+                  Effect.sync(() => {
+                    if (settlement.result.type !== "error") {
+                      toolFailures.delete(signature)
+                      return
+                    }
+                    recordToolFailure(toolFailures, signature)
+                  }),
+                ),
+                Effect.tapCause((cause) =>
+                  Cause.hasInterrupts(cause)
+                    ? Effect.void
+                    : Effect.sync(() => {
+                        recordToolFailure(toolFailures, signature)
+                      }),
+                ),
                 Effect.flatMap((settlement) =>
                   publish(
                     LLMEvent.toolResult({
@@ -829,6 +868,7 @@ const layer = Layer.effect(
             !publisher.hasProviderError() &&
             !structuredOutputMissing &&
             !structuredOutputCaptured &&
+            !toolCircuitOpen &&
             needsContinuation
           yield* endAttempt(
             interrupted
@@ -888,64 +928,95 @@ const layer = Layer.effect(
       step: number,
       physical: PhysicalAttempt | undefined,
       stopBlockCount: PluginRuntime.Mutable<number>["value"],
+      toolFailures: ToolFailureTracker,
     ) => Effect.Effect<{ readonly needsContinuation: boolean; readonly step: number }, RunError>
 
-    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (
-      sessionID,
-      promotion,
-      step,
-      physical,
-      stopBlockCount,
-    ) {
-      return yield* runTurnAttempt(sessionID, promotion, step, undefined, physical, stopBlockCount).pipe(
-        Effect.catchDefect(
-          Effect.fnUntraced(function* (defect) {
-            if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
-            if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* Effect.die("Post-compaction provider attempt cannot recover another overflow")
-            yield* Effect.yieldNow
-            if (defect.transition._tag === "RetryProvider")
+    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(
+      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures) {
+        return yield* runTurnAttempt(
+          sessionID,
+          promotion,
+          step,
+          undefined,
+          physical,
+          stopBlockCount,
+          toolFailures,
+        ).pipe(
+          Effect.catchDefect(
+            Effect.fnUntraced(function* (defect) {
+              if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
+              if (defect.transition._tag === "ContinueAfterOverflowCompaction")
+                return yield* Effect.die("Post-compaction provider attempt cannot recover another overflow")
+              yield* Effect.yieldNow
+              if (defect.transition._tag === "RetryProvider")
+                return yield* runAfterOverflowCompaction(
+                  sessionID,
+                  undefined,
+                  defect.transition.step,
+                  defect.transition.physical,
+                  stopBlockCount,
+                  toolFailures,
+                )
               return yield* runAfterOverflowCompaction(
                 sessionID,
                 undefined,
                 defect.transition.step,
-                defect.transition.physical,
+                physical,
                 stopBlockCount,
+                toolFailures,
               )
-            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, physical, stopBlockCount)
-          }),
-        ),
-      )
-    })
+            }),
+          ),
+        )
+      },
+    )
 
-    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, physical, stopBlockCount) {
-      return yield* runTurnAttempt(
-        sessionID,
-        promotion,
-        step,
-        compaction.compactAfterOverflow,
-        physical,
-        stopBlockCount,
-      ).pipe(
-        Effect.catchDefect(
-          Effect.fnUntraced(function* (defect) {
-            if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
-            yield* Effect.yieldNow
-            if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* runAfterOverflowCompaction(
+    const runTurn: RunTurn = Effect.fnUntraced(
+      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures) {
+        return yield* runTurnAttempt(
+          sessionID,
+          promotion,
+          step,
+          compaction.compactAfterOverflow,
+          physical,
+          stopBlockCount,
+          toolFailures,
+        ).pipe(
+          Effect.catchDefect(
+            Effect.fnUntraced(function* (defect) {
+              if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
+              yield* Effect.yieldNow
+              if (defect.transition._tag === "ContinueAfterOverflowCompaction")
+                return yield* runAfterOverflowCompaction(
+                  sessionID,
+                  undefined,
+                  defect.transition.step,
+                  undefined,
+                  stopBlockCount,
+                  toolFailures,
+                )
+              if (defect.transition._tag === "RetryProvider")
+                return yield* runTurn(
+                  sessionID,
+                  undefined,
+                  defect.transition.step,
+                  defect.transition.physical,
+                  stopBlockCount,
+                  toolFailures,
+                )
+              return yield* runTurn(
                 sessionID,
                 undefined,
                 defect.transition.step,
-                undefined,
+                physical,
                 stopBlockCount,
+                toolFailures,
               )
-            if (defect.transition._tag === "RetryProvider")
-              return yield* runTurn(sessionID, undefined, defect.transition.step, defect.transition.physical, stopBlockCount)
-            return yield* runTurn(sessionID, undefined, defect.transition.step, physical, stopBlockCount)
-          }),
-        ),
-      )
-    })
+            }),
+          ),
+        )
+      },
+    )
 
     const run = Effect.fn("SessionRunner.run")(function* (input: {
       readonly sessionID: SessionSchema.ID
@@ -1037,11 +1108,17 @@ const layer = Layer.effect(
         // shared across every provider attempt within this one turn so a hook that
         // keeps returning "continue" is still capped at MAX_BLOCKS_PER_TURN.
         const stopBlockCount = PluginRuntime.mutable(0)
+        const toolFailures: ToolFailureTracker = new Map()
         yield* Effect.gen(function* () {
           while (needsContinuation) {
-            const result = yield* runTurn(input.sessionID, promotion, step, initialPhysical, stopBlockCount.value).pipe(
-              Effect.provideService(WebSocketPool.Service, pool),
-            )
+            const result = yield* runTurn(
+              input.sessionID,
+              promotion,
+              step,
+              initialPhysical,
+              stopBlockCount.value,
+              toolFailures,
+            ).pipe(Effect.provideService(WebSocketPool.Service, pool))
             initialPhysical = undefined
             needsContinuation = result.needsContinuation
             step = result.step + 1
@@ -1071,6 +1148,25 @@ const layer = Layer.effect(
     })
   }),
 )
+
+function toolCallSignature(name: string, input: unknown) {
+  return `${name}:${canonicalToolValue(input)}`
+}
+
+function canonicalToolValue(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return JSON.stringify(value) ?? String(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalToolValue).join(",")}]`
+  if (typeof value !== "object") return `${typeof value}:${String(value)}`
+  return `{${Object.entries(value)
+    .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalToolValue(item)}`)
+    .join(",")}}`
+}
+
+function recordToolFailure(tracker: ToolFailureTracker, signature: string) {
+  tracker.set(signature, (tracker.get(signature) ?? 0) + 1)
+}
 
 export const node = makeLocationNode({
   service: Service,

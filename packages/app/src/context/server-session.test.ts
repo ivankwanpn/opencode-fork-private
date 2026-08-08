@@ -70,6 +70,42 @@ const singleResponse = (info: Message, parts: Part[] = []): SingleMessageRespons
 
 const deferredResponse = () => Promise.withResolvers<MessageResponse>()
 
+function currentMessageApi(...pages: SessionMessageInfo[][]) {
+  let index = 0
+  return {
+    list: async () => ({ data: pages[index++] ?? [], cursor: { previous: null, next: null } }),
+  } as unknown as MessageApi
+}
+
+function currentHistory(content: Extract<SessionMessageInfo, { type: "assistant" }>["content"]) {
+  return [
+    {
+      id: "msg_2_assistant",
+      type: "assistant",
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      content,
+      time: { created: 2, completed: 3 },
+    },
+    { id: "msg_1_user", type: "user", text: "hello", time: { created: 1 } },
+  ] as SessionMessageInfo[]
+}
+
+const currentText = (text: string) => ({ type: "text" as const, text })
+const currentTool = (id: string) => ({
+  type: "tool" as const,
+  id,
+  name: "read",
+  state: {
+    status: "completed" as const,
+    input: { filePath: "src/index.ts" },
+    structured: {},
+    content: [],
+    result: "done",
+  },
+  time: { created: 2, ran: 2, completed: 3 },
+})
+
 function messageClient(...responses: Array<MessageResponse | Promise<MessageResponse>>) {
   let index = 0
   const requests: unknown[] = []
@@ -161,6 +197,76 @@ function setup(sessions: Record<string, Session>) {
 }
 
 describe("server session", () => {
+  test("preserves canonical mixed content order on initial V2 history load", async () => {
+    const cases: Array<{
+      content: Extract<SessionMessageInfo, { type: "assistant" }>["content"]
+      expected: Part["type"][]
+    }> = [
+      {
+        content: [currentText("before"), currentTool("call_text_tool")],
+        expected: ["text", "tool"],
+      },
+      {
+        content: [currentTool("call_tool_text"), currentText("after")],
+        expected: ["tool", "text"],
+      },
+      {
+        content: [currentText("before"), currentTool("call_between"), currentText("after")],
+        expected: ["text", "tool", "text"],
+      },
+    ]
+
+    for (const value of cases) {
+      const store = createServerSession(
+        {} as OpencodeClient,
+        { get: async () => session("child") } as unknown as SessionApi,
+        currentMessageApi(currentHistory(value.content)),
+        { retry: retryImmediately },
+      )
+      await store.sync("child")
+      expect(store.data.part.msg_2_assistant?.map((part) => part.type)).toEqual(value.expected)
+    }
+  })
+
+  test("appends a live V2 tool after existing assistant text", () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    ctx.store.set("session_message", "child", currentHistory([currentText("before")]).toReversed())
+
+    ctx.store.applyV2({
+      id: "evt_tool_started",
+      type: "session.next.tool.input.started",
+      location: { directory: "/repo" },
+      data: {
+        timestamp: 4,
+        sessionID: "child",
+        assistantMessageID: "msg_2_assistant",
+        callID: "call_live_after_text",
+        name: "read",
+      },
+    } as V2Event)
+
+    expect(ctx.store.data.part.msg_2_assistant?.map((part) => part.type)).toEqual(["text", "tool"])
+  })
+
+  test("reorders parts to canonical content order on forced V2 refresh", async () => {
+    const store = createServerSession(
+      {} as OpencodeClient,
+      { get: async () => session("child") } as unknown as SessionApi,
+      currentMessageApi(
+        currentHistory([currentTool("call_initial"), currentText("after")]),
+        currentHistory([currentText("before"), currentTool("call_initial")]),
+      ),
+      { retry: retryImmediately },
+    )
+
+    await store.sync("child")
+    expect(store.data.part.msg_2_assistant?.map((part) => part.type)).toEqual(["tool", "text"])
+
+    await store.sync("child", { force: true })
+    expect(store.data.part.msg_2_assistant?.map((part) => part.type)).toEqual(["text", "tool"])
+  })
+
   test("projects V2 session events into current and legacy message state", () => {
     const ctx = setup({ child: session("child") })
     ctx.store.remember(session("child"))
@@ -211,9 +317,7 @@ describe("server session", () => {
       }),
     )
     expect(ctx.store.data.message.child?.map((message) => message.id)).toEqual(["msg_1_user", "msg_2_assistant"])
-    expect(ctx.store.data.part.msg_2_assistant).toEqual([
-      expect.objectContaining({ type: "text", text: "world" }),
-    ])
+    expect(ctx.store.data.part.msg_2_assistant).toEqual([expect.objectContaining({ type: "text", text: "world" })])
   })
 
   test("refreshes V2 history when durable event sequences have a gap", async () => {
@@ -232,9 +336,7 @@ describe("server session", () => {
       retry: retryImmediately,
     })
     store.remember(session("child"))
-    store.set("session_message", "child", [
-      { id: user.id, type: "user", text: "hello", time: user.time },
-    ])
+    store.set("session_message", "child", [{ id: user.id, type: "user", text: "hello", time: user.time }])
 
     store.applyV2({
       id: "evt_step_started",
@@ -399,9 +501,7 @@ describe("server session", () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(store.data.part[assistant.id]).toEqual([
-      expect.objectContaining({ text: "complete canonical answer" }),
-    ])
+    expect(store.data.part[assistant.id]).toEqual([expect.objectContaining({ text: "complete canonical answer" })])
     expect(store.data.session_status.child).toEqual({ type: "idle" })
   })
 
@@ -622,10 +722,11 @@ describe("server session", () => {
       } as unknown as ServerApi,
     })
     const store = createServerSession({} as OpencodeClient, api.session, api.message, {
-      apiForGeneration: () => resolveProtocol().then((value) => {
-        if (value !== "v2") throw new Error("V2 server protocol unavailable")
-        return api
-      }),
+      apiForGeneration: () =>
+        resolveProtocol().then((value) => {
+          if (value !== "v2") throw new Error("V2 server protocol unavailable")
+          return api
+        }),
     })
     store.remember(session("root"))
 
@@ -1753,6 +1854,26 @@ describe("server session", () => {
     expect(store.data.part[message.id]).toEqual([])
   })
 
+  test("preserves optimistic mixed part input order", () => {
+    const message = userMessage("message")
+    const before = textPart(message.id, { id: "part-z", text: "before" })
+    const file: Part = {
+      id: "part-a",
+      sessionID: "child",
+      messageID: message.id,
+      type: "file",
+      mime: "text/plain",
+      filename: "context.txt",
+      url: "data:text/plain,context",
+    }
+    const after = textPart(message.id, { id: "part-m", text: "after" })
+    const store = setup({ child: session("child") }).store
+
+    store.optimistic.add({ sessionID: "child", message, parts: [before, file, after] })
+
+    expect(store.data.part[message.id]?.map((part) => part.id)).toEqual(["part-z", "part-a", "part-m"])
+  })
+
   test("clears stale delta buffers when replacing optimistic parts", () => {
     const message = userMessage("message")
     const stale = textPart(message.id, { id: "stale", text: "stale" })
@@ -2049,8 +2170,7 @@ describe("server session", () => {
 
   test("refreshes V2 context only at stable compaction boundaries", async () => {
     const requests: string[] = []
-    const client = {
-    } as unknown as OpencodeClient
+    const client = {} as unknown as OpencodeClient
     const sessionApi = {
       context: async (input: { sessionID: string }) => {
         requests.push(input.sessionID)
@@ -2061,8 +2181,7 @@ describe("server session", () => {
       retry: retryImmediately,
     })
     const current = { id: "evt_compaction", metadata: {}, location: { directory: "/repo" } }
-    const apply = (type: string, data: object) =>
-      store.applyV2({ ...current, type, data } as unknown as V2Event)
+    const apply = (type: string, data: object) => store.applyV2({ ...current, type, data } as unknown as V2Event)
     const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
     apply("session.next.compaction.started", {
@@ -2218,9 +2337,7 @@ describe("server session", () => {
     } as unknown as V2Event)
     store.evict("child")
 
-    pending.resolve(
-      { id: "msg_imported", type: "user", text: "imported", time: { created: 1 } } as unknown as Message,
-    )
+    pending.resolve({ id: "msg_imported", type: "user", text: "imported", time: { created: 1 } } as unknown as Message)
     await Promise.resolve()
     await Promise.resolve()
 

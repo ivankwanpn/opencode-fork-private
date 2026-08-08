@@ -323,10 +323,13 @@ export const dict = {
   "dialog.plugins.empty": "Plugins configurados en opencode.json",
 
   "mcp.status.connected": "conectado",
+  "mcp.status.disconnected": "desconectado",
   "mcp.status.failed": "fallido",
   "mcp.status.needs_auth": "necesita auth",
   "mcp.auth.clickToAuthenticate": "Haz clic para autenticar",
   "mcp.status.disabled": "deshabilitado",
+  "plugin.status.enabled": "Habilitado",
+  "plugin.status.disabled": "Deshabilitado",
 
   "dialog.fork.empty": "No hay mensajes desde donde bifurcar",
 

@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test"
 export type SseConnectionRecord = {
   id: number
   url: string
-  path: "/global/event" | "/event"
+  path: "/api/event" | "/global/event" | "/event"
   headers: Record<string, string>
   openedAt: number
   endedAt?: number
@@ -27,11 +27,19 @@ export type SseEventOptions = {
   marker?: string
 }
 
+export type SseBatchOptions = {
+  size: number
+  delay?: number
+  events?: readonly SseEventOptions[]
+}
+
 export type SseTransport<T> = {
   server: string
   waitForConnection(options?: { after?: number; timeout?: number }): Promise<SseConnectionRecord>
   send(payload: T, options?: SseEventOptions): Promise<SseDeliveryAcknowledgement>
   burst(payloads: readonly T[], options?: readonly SseEventOptions[]): Promise<SseDeliveryAcknowledgement[]>
+  batches(payloads: readonly T[], options: SseBatchOptions): Promise<SseDeliveryAcknowledgement[]>
+  schedule(payloads: readonly T[], options: SseBatchOptions): Promise<void>
   split(payload: T, cuts: readonly number[], options?: SseEventOptions): Promise<SseDeliveryAcknowledgement>
   heartbeat(options?: SseEventOptions): Promise<SseDeliveryAcknowledgement>
   writeRaw(value: string | Uint8Array, cuts?: readonly number[], marker?: string): Promise<SseDeliveryAcknowledgement>
@@ -43,7 +51,15 @@ export type SseTransport<T> = {
 }
 
 type BrowserCommand<T> =
-  | { type: "send"; deliveries: { payload: T; options?: SseEventOptions }[]; burst: boolean; cuts?: number[] }
+  | {
+      type: "send"
+      deliveries: { payload: T; options?: SseEventOptions }[]
+      burst: boolean
+      batchSize?: number
+      batchDelay?: number
+      detached?: boolean
+      cuts?: number[]
+    }
   | { type: "raw"; bytes: number[]; cuts?: number[]; marker?: string }
   | { type: "end"; mode: "close" | "disconnect" | "error"; message?: string }
   | { type: "connections" }
@@ -145,6 +161,31 @@ export async function installSseTransport<T>(
           bytes: encoder.encode(frame(delivery.payload, delivery.options)),
         }))
         encoded.forEach((item) => marker(item.delivery.options?.marker))
+        const batchSize = input.batchSize
+        if (batchSize !== undefined) {
+          const batches = Array.from({ length: Math.ceil(encoded.length / batchSize) }, (_, index) =>
+            encoded.slice(index * batchSize, (index + 1) * batchSize),
+          )
+          const sendBatch = (batch: typeof encoded) => {
+            connection.controller.enqueue(
+              encoder.encode(batch.map((item) => frame(item.delivery.payload, item.delivery.options)).join("")),
+            )
+            return batch.map((item) => acknowledge(connection, item.bytes.byteLength, 1, item.delivery.options?.id))
+          }
+          const batchDelay = input.batchDelay ?? 0
+          if (batchDelay === 0) return batches.flatMap(sendBatch)
+          const deliver = async () => {
+            const result: SseDeliveryAcknowledgement[] = []
+            for (const [index, batch] of batches.entries()) {
+              if (index > 0) await new Promise((resolve) => setTimeout(resolve, batchDelay))
+              result.push(...sendBatch(batch))
+            }
+            return result
+          }
+          if (!input.detached) return deliver()
+          void deliver()
+          return []
+        }
         if (input.burst) {
           const bytes = encoder.encode(
             encoded.map((item) => frame(item.delivery.payload, item.delivery.options)).join(""),
@@ -161,7 +202,10 @@ export async function installSseTransport<T>(
       const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init)
         const url = new URL(request.url)
-        if (url.origin !== server || (url.pathname !== "/global/event" && url.pathname !== "/event"))
+        if (
+          url.origin !== server ||
+          (url.pathname !== "/api/event" && url.pathname !== "/global/event" && url.pathname !== "/event")
+        )
           return originalFetch(request)
 
         const id = ++nextConnectionID
@@ -216,6 +260,21 @@ export async function installSseTransport<T>(
       return transport.command(input as BrowserCommand<unknown>)
     }, input) as Promise<Result>
 
+  const batchCommand = (payloads: readonly T[], batchOptions: SseBatchOptions, detached: boolean) => {
+    if (!Number.isInteger(batchOptions.size) || batchOptions.size < 1)
+      throw new Error("SSE batch size must be a positive integer")
+    if (batchOptions.delay !== undefined && (!Number.isFinite(batchOptions.delay) || batchOptions.delay < 0))
+      throw new Error("SSE batch delay must be a non-negative finite number")
+    return command<SseDeliveryAcknowledgement[]>({
+      type: "send",
+      deliveries: payloads.map((payload, index) => ({ payload, options: batchOptions.events?.[index] })),
+      burst: false,
+      batchSize: batchOptions.size,
+      batchDelay: batchOptions.delay,
+      detached,
+    })
+  }
+
   return {
     server,
     async waitForConnection(input = {}) {
@@ -242,19 +301,20 @@ export async function installSseTransport<T>(
         burst: true,
       })
     },
+    batches(payloads, batchOptions) {
+      return batchCommand(payloads, batchOptions, false)
+    },
+    async schedule(payloads, batchOptions) {
+      await batchCommand(payloads, batchOptions, true)
+    },
     split(payload, cuts, eventOptions) {
       return command({ type: "send", deliveries: [{ payload, options: eventOptions }], burst: false, cuts: [...cuts] })
     },
     heartbeat(eventOptions) {
       return command({
-        type: "send",
-        deliveries: [
-          {
-            payload: { directory: "global", payload: { type: "server.heartbeat", properties: {} } } as T,
-            options: eventOptions,
-          },
-        ],
-        burst: false,
+        type: "raw",
+        bytes: Array.from(new TextEncoder().encode(": heartbeat\n\n")),
+        marker: eventOptions?.marker,
       })
     },
     writeRaw(value, cuts, marker) {

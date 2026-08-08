@@ -364,10 +364,13 @@ export const dict = {
   "dialog.plugins.empty": "在 opencode.json 中配置的插件",
 
   "mcp.status.connected": "已连接",
+  "mcp.status.disconnected": "未连接",
   "mcp.status.failed": "失败",
   "mcp.status.needs_auth": "需要授权",
   "mcp.auth.clickToAuthenticate": "点击进行授权",
   "mcp.status.disabled": "已禁用",
+  "plugin.status.enabled": "已启用",
+  "plugin.status.disabled": "已停用",
 
   "dialog.fork.empty": "没有可用于分叉的消息",
 

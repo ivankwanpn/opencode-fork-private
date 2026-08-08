@@ -325,9 +325,12 @@ export const dict = {
   "dialog.plugins.empty": "Плагіни налаштовані в opencode.json",
 
   "mcp.status.connected": "підключено",
+  "mcp.status.disconnected": "відключено",
   "mcp.status.failed": "помилка",
   "mcp.status.needs_auth": "потрібна авторизація",
   "mcp.status.disabled": "вимкнено",
+  "plugin.status.enabled": "Увімкнено",
+  "plugin.status.disabled": "Вимкнено",
   "mcp.auth.clickToAuthenticate": "Натисніть для автентифікації",
 
   "dialog.fork.empty": "Немає повідомлень для відгалуження",

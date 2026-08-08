@@ -19,6 +19,7 @@ export const Plugin = Schema.Struct({
   category: Schema.optional(Schema.String),
   tags: Schema.Array(Schema.String),
   capabilities: Schema.Array(Schema.String),
+  mcpServers: Schema.Array(Schema.String),
   installed: Schema.Boolean,
   enabled: Schema.Boolean,
 }).annotate({ identifier: "MarketplacePlugin" })

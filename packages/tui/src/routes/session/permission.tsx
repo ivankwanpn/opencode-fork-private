@@ -8,6 +8,7 @@ import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../ui/border"
 import { useSync } from "../../context/sync"
+import { useData } from "../../context/data"
 import { filetype } from "../../util/filetype"
 import { Locale } from "../../util/locale"
 import { webSearchProviderLabel } from "../../util/tool-display"
@@ -15,6 +16,7 @@ import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../config"
 import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut } from "../../keymap"
 import { usePathFormatter } from "../../context/path-format"
+import { toolInput } from "../../util/native-transcript"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -110,6 +112,7 @@ function TextBody(props: { title: string; description?: string; icon?: string })
 export function PermissionPrompt(props: { request: PermissionRequest; directory?: string }) {
   const sdk = useSDK()
   const sync = useSync()
+  const data = useData()
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
@@ -127,13 +130,12 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
   const input = createMemo(() => {
     const tool = props.request.tool
     if (!tool) return {}
-    const parts = sync.data.part[tool.messageID] ?? []
-    for (const part of parts) {
-      if (part.type === "tool" && part.callID === tool.callID && part.state.status !== "pending") {
-        return part.state.input ?? {}
-      }
-    }
-    return {}
+    const message = data.session.message
+      .list(props.request.sessionID)
+      ?.find((message) => message.type === "assistant" && message.id === tool.messageID)
+    if (message?.type !== "assistant") return {}
+    const part = message.content.find((part) => part.type === "tool" && part.id === tool.callID)
+    return part?.type === "tool" ? toolInput(part) : {}
   })
 
   const { theme } = useTheme()

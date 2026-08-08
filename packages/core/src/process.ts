@@ -23,6 +23,7 @@ export interface RunOptions {
   readonly combineOutput?: boolean
   readonly maxOutputBytes?: number
   readonly maxErrorBytes?: number
+  readonly onOutput?: (chunk: Uint8Array) => Effect.Effect<void>
   readonly signal?: AbortSignal
   readonly timeout?: Duration.Input
   readonly stdin?: string | Uint8Array | Stream.Stream<Uint8Array, PlatformError>
@@ -118,9 +119,13 @@ const normalizeStdin = (
       ? Stream.make(input)
       : input
 
-export const collectStream = (stream: Stream.Stream<Uint8Array, PlatformError>, maxOutputBytes: number | undefined) =>
+export const collectStream = (
+  stream: Stream.Stream<Uint8Array, PlatformError>,
+  maxOutputBytes: number | undefined,
+  onOutput?: (chunk: Uint8Array) => Effect.Effect<void>,
+) =>
   Stream.runFold(
-    stream,
+    onOutput ? stream.pipe(Stream.tap(onOutput)) : stream,
     () => ({ chunks: [] as Uint8Array[], bytes: 0, truncated: false }),
     (acc, chunk) => {
       if (maxOutputBytes === undefined) {
@@ -148,7 +153,7 @@ const layer = Layer.effect(
           const handle = yield* spawner.spawn(command)
           if (options?.combineOutput) {
             const [output, exitCode] = yield* Effect.all(
-              [collectStream(handle.all, options.maxOutputBytes), handle.exitCode],
+              [collectStream(handle.all, options.maxOutputBytes, options.onOutput), handle.exitCode],
               { concurrency: "unbounded" },
             )
             return {

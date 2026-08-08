@@ -44,6 +44,7 @@ import { SessionAttachment } from "@opencode-ai/core/session/attachment"
 import { AssistantErrorCodec } from "@opencode-ai/core/session/assistant-error-codec"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionTurn } from "@opencode-ai/core/session/turn"
 import { Prompt, STRUCTURED_OUTPUT_TOOL_NAME } from "@opencode-ai/core/session/prompt"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
@@ -396,6 +397,8 @@ const execution = Layer.effect(
   SessionExecution.Service,
   Effect.gen(function* () {
     const sessionRunner = yield* SessionRunner.Service
+    const { db } = yield* Database.Service
+    const events = yield* EventV2.Service
     const coordinator = yield* SessionRunCoordinator.make<SessionV2.ID, SessionRunner.RunError>({
       drain: (sessionID, force) => sessionRunner.run({ sessionID, force }),
     })
@@ -412,7 +415,16 @@ const execution = Layer.effect(
           ),
       wake: coordinator.wake,
       wait: coordinator.wait,
-      interrupt: coordinator.interrupt,
+      interrupt: Effect.fn("SessionRunnerTest.interrupt")(function* (sessionID) {
+        const turn = yield* SessionTurn.get(db, sessionID)
+        const interruption =
+          turn && turn.status !== "ended"
+            ? { turnID: turn.turn_id, cutoff: yield* EventV2.latestSequence(db, sessionID) }
+            : undefined
+        if (!(yield* coordinator.interruptOwned(sessionID)) || !interruption) return
+        const outcome = yield* SessionTurn.settleInterrupted(db, events, { sessionID, ...interruption })
+        if (outcome === "pending" || outcome === "restart") yield* coordinator.wake(sessionID)
+      }),
     })
   }),
 ).pipe(Layer.provide(runnerLayer))
@@ -2899,12 +2911,20 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
-  it.effect("preserves durable steering input for a later resume after interruption", () =>
+  it.effect("cancels turn-local steering and admits a new turn after interruption", () =>
     Effect.gen(function* () {
       yield* setup
       const session = yield* SessionV2.Service
       const { db } = yield* Database.Service
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Interrupt current work" }), resume: false })
+      const events = yield* EventV2.Service
+      const turnID = SessionMessage.ID.make("msg_task_notification_test")
+      yield* session.prompt({
+        id: turnID,
+        sessionID,
+        prompt: Prompt.make({ text: "Interrupt current work" }),
+        intent: { type: "start" },
+        resume: false,
+      })
 
       requests.length = 0
       responses = [
@@ -2920,25 +2940,131 @@ describe("SessionRunnerLLM", () => {
 
       const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
       yield* Deferred.await(streamStarted)
-      yield* session.prompt({
+      const steer = yield* session.prompt({
         sessionID,
-        prompt: Prompt.make({ text: "Steer after interrupt" }),
+        prompt: Prompt.make({ text: "Inspect the blocked shell" }),
+        intent: { type: "steer", expectedTurnID: turnID },
+      })
+      const continuation = yield* SessionInput.admit(db, events, {
+        id: SessionMessage.ID.make("msg_stop_hook_before_interrupt"),
+        sessionID,
+        prompt: Prompt.make({ text: "Continue from stop hook" }),
+        synthetic: { description: "stop hook continuation", scope: "turn" },
+        delivery: "steer",
       })
       yield* session.interrupt(sessionID)
       expect(yield* Fiber.await(run)).toMatchObject({ _tag: "Failure" })
       expect(requests).toHaveLength(1)
-      expect(yield* SessionInput.hasPending(db, sessionID, "steer")).toBe(true)
+      expect(yield* SessionInput.hasPending(db, sessionID, "steer")).toBe(false)
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, steer.id)).get().pipe(Effect.orDie),
+      ).toMatchObject({ terminal_outcome: "cancelled", promoted_seq: null })
+      expect(
+        yield* db
+          .select()
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.id, continuation.id))
+          .get()
+          .pipe(Effect.orDie),
+      ).toMatchObject({ terminal_outcome: "cancelled", promoted_seq: null })
+      expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ turn_id: turnID, status: "ended" })
 
-      const resumed = yield* session.resume(sessionID).pipe(Effect.forkChild)
-      while (requests.length < 2) yield* Effect.yieldNow
-      yield* Deferred.succeed(streamGate, undefined)
-      yield* Fiber.join(resumed)
       streamGate = undefined
       streamStarted = undefined
+      const nextTurnID = SessionMessage.ID.make("msg_after_interrupted_turn")
+      yield* session.prompt({
+        id: nextTurnID,
+        sessionID,
+        prompt: Prompt.make({ text: "Start cleanly after interrupt" }),
+        intent: { type: "start" },
+        resume: false,
+      })
+      yield* session.resume(sessionID)
 
       expect(requests).toHaveLength(2)
       expect(userTexts(requests[0]!)).toEqual(["Interrupt current work"])
-      expect(userTexts(requests[1]!)).toEqual(["Interrupt current work", "Steer after interrupt"])
+      expect(userTexts(requests[1]!)).toEqual(["Interrupt current work", "Start cleanly after interrupt"])
+      expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ turn_id: nextTurnID, status: "ended" })
+    }),
+  )
+
+  it.effect("does not interrupt a blocked tool when user steering arrives", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      const started = yield* Deferred.make<void>()
+      const interrupted = yield* Deferred.make<void>()
+      const blocked = yield* Deferred.make<void>()
+      yield* registry.register({
+        bash: Tool.make({
+          description: "Block until released",
+          input: Schema.Struct({ command: Schema.String }),
+          output: Schema.Struct({}),
+          execute: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(blocked)),
+              Effect.as({}),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid)),
+            ),
+        }),
+      })
+      const turnID = SessionMessage.ID.make("msg_shell_steer_turn")
+      yield* session.prompt({
+        id: turnID,
+        sessionID,
+        prompt: Prompt.make({ text: "Run a command" }),
+        intent: { type: "start" },
+        resume: false,
+      })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-blocked-shell", name: "bash", input: { command: "hang" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Stop and inspect why the shell is stuck" }),
+        intent: { type: "steer", expectedTurnID: turnID },
+      })
+      yield* Effect.yieldNow
+
+      expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
+      expect(run.pollUnsafe()).toBeUndefined()
+      yield* Deferred.succeed(blocked, undefined)
+      yield* Fiber.join(run)
+
+      expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
+      expect(requests).toHaveLength(2)
+      expect(userTexts(requests[1]!)).toEqual(["Run a command", "Stop and inspect why the shell is stuck"])
+      const context = yield* session.context(sessionID)
+      expect(context[0]).toMatchObject({ type: "user", text: "Run a command" })
+      expect(context[1]).toMatchObject({
+        type: "assistant",
+        content: [
+          {
+            type: "tool",
+            id: "call-blocked-shell",
+            state: {
+              status: "completed",
+            },
+          },
+        ],
+      })
+      expect(context[2]).toMatchObject({ type: "user", text: "Stop and inspect why the shell is stuck" })
     }),
   )
 
@@ -4219,6 +4345,232 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("stops after two identical local tool calls fail with different errors", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      let executions = 0
+      yield* registry.register({
+        unstable: Tool.make({
+          description: "Always fail",
+          input: Schema.Struct({
+            path: Schema.String,
+            options: Schema.Struct({ depth: Schema.Number, force: Schema.Boolean }),
+          }),
+          output: Schema.Struct({}),
+          execute: () => {
+            executions++
+            return Effect.fail(new Tool.Failure({ message: `Failure ${executions}` }))
+          },
+        }),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Do not loop forever" }), resume: false })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-unstable-1",
+            name: "unstable",
+            input: { path: "/tmp/file", options: { depth: 1, force: true } },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-unstable-2",
+            name: "unstable",
+            input: { options: { force: true, depth: 1 }, path: "/tmp/file" },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-unstable-3",
+            name: "unstable",
+            input: { path: "/tmp/file", options: { force: true, depth: 1 } },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-never-requested" }),
+          LLMEvent.textDelta({ id: "text-never-requested", text: "Should not run" }),
+          LLMEvent.textEnd({ id: "text-never-requested" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(3)
+      expect(responses).toHaveLength(1)
+      expect(executions).toBe(2)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Do not loop forever" },
+        {
+          type: "assistant",
+          content: [{ type: "tool", state: { status: "error", error: { message: "Failure 1" } } }],
+        },
+        {
+          type: "assistant",
+          content: [{ type: "tool", state: { status: "error", error: { message: "Failure 2" } } }],
+        },
+        {
+          type: "assistant",
+          content: [
+            {
+              type: "tool",
+              id: "call-unstable-3",
+              state: { status: "error", error: { message: expect.stringContaining("infinite retry loop") } },
+            },
+          ],
+        },
+      ])
+    }),
+  )
+
+  it.effect("allows a failed tool call when its arguments change", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      let executions = 0
+      yield* registry.register({
+        unstable: Tool.make({
+          description: "Always fail with the same error",
+          input: Schema.Struct({ path: Schema.String }),
+          output: Schema.Struct({}),
+          execute: () => {
+            executions++
+            return Effect.fail(new Tool.Failure({ message: "Stable failure" }))
+          },
+        }),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Try another target" }), resume: false })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-same-1", name: "unstable", input: { path: "/tmp/first" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-same-2", name: "unstable", input: { path: "/tmp/first" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-changed", name: "unstable", input: { path: "/tmp/second" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-after-change" }),
+          LLMEvent.textDelta({ id: "text-after-change", text: "Stopped retrying" }),
+          LLMEvent.textEnd({ id: "text-after-change" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(4)
+      expect(executions).toBe(3)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Try another target" },
+        { type: "assistant" },
+        { type: "assistant" },
+        {
+          type: "assistant",
+          content: [
+            {
+              type: "tool",
+              id: "call-changed",
+              state: { status: "error", error: { message: "Stable failure" } },
+            },
+          ],
+        },
+        { type: "assistant", content: [{ type: "text", text: "Stopped retrying" }] },
+      ])
+    }),
+  )
+
+  it.effect("clears repeated tool failure state after a successful retry", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const registry = yield* ToolRegistry.Service
+      let executions = 0
+      yield* registry.register({
+        transient: Tool.make({
+          description: "Fail once and then recover",
+          input: Schema.Struct({ value: Schema.String }),
+          output: Schema.Struct({ value: Schema.String }),
+          execute: ({ value }) => {
+            executions++
+            if (executions === 1) return Effect.fail(new Tool.Failure({ message: "Transient failure" }))
+            return Effect.succeed({ value })
+          },
+        }),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Recover and retry" }), resume: false })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-transient-1", name: "transient", input: { value: "same" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-transient-2", name: "transient", input: { value: "same" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-transient-3", name: "transient", input: { value: "same" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ],
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(4)
+      expect(executions).toBe(3)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Recover and retry" },
+        { type: "assistant", content: [{ type: "tool", state: { status: "error" } }] },
+        { type: "assistant", content: [{ type: "tool", state: { status: "completed" } }] },
+        { type: "assistant", content: [{ type: "tool", state: { status: "completed" } }] },
+        { type: "assistant", finish: "stop" },
+      ])
+    }),
+  )
+
   it.effect("returns unexpected local tool defects to the model and continues", () =>
     Effect.gen(function* () {
       yield* setup
@@ -4836,7 +5188,7 @@ describe("SessionRunnerLLM", () => {
           error: {
             type: "unknown",
             message:
-              "Provider request failed with HTTP 400\nRequest: POST https://provider.example/v1/responses\nRequest ID: req_safe\nResponse body: {\"error\":{\"code\":\"upstream_error\"}}",
+              'Provider request failed with HTTP 400\nRequest: POST https://provider.example/v1/responses\nRequest ID: req_safe\nResponse body: {"error":{"code":"upstream_error"}}',
           },
         },
       ])

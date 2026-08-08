@@ -79,6 +79,7 @@ describe("ClaudeMarketplaceManager", () => {
     const installed = await manager.install("demo@local-marketplace")
     expect(installed.plugins[0]?.installed).toBe(true)
     expect(installed.plugins[0]?.enabled).toBe(true)
+    expect(installed.plugins[0]?.mcpServers).toEqual(["claude:local-marketplace:demo:demo"])
     expect(
       await fsNode.stat(path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo", "demo", "SKILL.md")),
     ).toBeTruthy()
@@ -91,7 +92,9 @@ describe("ClaudeMarketplaceManager", () => {
       environment: { DEMO: "1" },
     })
 
-    await manager.disable("demo@local-marketplace")
+    const disabled = await manager.disable("demo@local-marketplace")
+    expect(disabled.plugins[0]?.enabled).toBe(false)
+    expect(disabled.plugins[0]?.mcpServers).toEqual([])
     await expect(
       fsNode.stat(path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo")),
     ).rejects.toThrow()

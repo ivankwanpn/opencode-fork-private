@@ -13,13 +13,9 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import type { Command } from "@/command"
 import type { Provider } from "@/provider/provider"
 import { legacyEventPayloads, legacyEventProjection } from "@/event-v2-bridge"
-import {
-  legacyAgentFromNative,
-  legacyCommandFromNative,
-  legacyProvidersFromNative,
-} from "@opencode-ai/tui/context/catalog-compat"
-import { legacySessionFromNative } from "@opencode-ai/tui/context/session-compat"
-import { legacyTranscriptFromNative } from "@opencode-ai/tui/context/transcript-compat"
+import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
+import { legacySessionFromNative } from "@/compat/native-v1-session"
+import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"
 import type { PromptPart } from "./content"
 
 export type SessionInfo = ReturnType<typeof legacySessionFromNative>
@@ -367,20 +363,14 @@ function catalog(native: GeneratedClients["native"]): Interface["catalog"] {
   return {
     load: async (directory) => {
       const target = { location: { directory } }
-      const [providers, models, integrations, agents, commands, skills, configured] = await Promise.all([
-        native.providers.list(target),
-        native.models.list(target),
-        native.integrations.list(target),
+      const [providerCatalog, agents, commands, skills, configured] = await Promise.all([
+        native.providers.catalog(target),
         native.agents.list(target),
         native.commands.list(target),
         native.skills.list(target),
         configuration.get(directory),
       ])
-      const projected = legacyProvidersFromNative({
-        providers: providers.data,
-        models: models.data,
-        integrations: integrations.data,
-      })
+      const projected = legacyProvidersFromNative(providerCatalog.data)
       const projectedCommands = commands.data.map(legacyCommandFromNative)
       const commandNames = new Set(projectedCommands.map((command) => command.name))
       return {

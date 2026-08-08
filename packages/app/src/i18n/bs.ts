@@ -324,10 +324,13 @@ export const dict = {
   "dialog.plugins.empty": "Plugini su konfigurisani u opencode.json",
 
   "mcp.status.connected": "povezano",
+  "mcp.status.disconnected": "nije povezano",
   "mcp.status.failed": "neuspjelo",
   "mcp.status.needs_auth": "potrebna autentifikacija",
   "mcp.auth.clickToAuthenticate": "Kliknite za autentifikaciju",
   "mcp.status.disabled": "onemogućeno",
+  "plugin.status.enabled": "Omogućen",
+  "plugin.status.disabled": "Onemogućen",
 
   "dialog.fork.empty": "Nema poruka za fork",
 

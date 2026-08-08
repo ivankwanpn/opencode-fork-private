@@ -23,6 +23,7 @@ export type Admission = {
   readonly text: string
   readonly description: string
   readonly delivery: "steer" | "queue"
+  readonly scope: "session"
 }
 
 export interface Interface {
@@ -146,6 +147,7 @@ const layer = Layer.effect(
         text: renderPayload(payload, taskID),
         description: payload.description,
         delivery: "steer",
+        scope: "session",
       })
 
       const timeDelivered = yield* Clock.currentTimeMillis

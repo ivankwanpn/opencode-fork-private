@@ -288,6 +288,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let reconnects = 0
   let lastConnectedAt: number | undefined
   let lastEventAt: number | undefined
+  let lastEventID: string | undefined
   const [protocolSource, setProtocolSource] = createSignal(protocol)
   const [protocolKind] = createResource(protocolSource, (value) => value)
   const protocolForGeneration = () => protocol
@@ -384,12 +385,16 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             eventGeneration: streamGeneration,
             reconnects,
           })
-          const events = eventApi.event.subscribe({ signal: attempt.signal })
+          const events = eventApi.event.subscribe({
+            signal: attempt.signal,
+            headers: lastEventID ? { "Last-Event-ID": lastEventID } : undefined,
+          })
           let yielded = Date.now()
           for await (const event of events) {
             if (abort.signal.aborted || !started || generation !== active || eventGeneration !== streamGeneration) break
             streamErrorLogged = false
             lastEventAt = Date.now()
+            lastEventID = event.id
             const position = durableEventPosition(event)
             if (position) {
               lastDurableAggregateID = position.aggregateID

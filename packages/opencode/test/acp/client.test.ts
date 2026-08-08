@@ -1159,16 +1159,47 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
     expect(recording.requests[0]?.url.pathname).toBe("/api/session/ses_permission/permission/per_request/reply")
   })
 
-  test("all seven catalog reads use /api and one Location; commands win duplicates and output is sorted", async () => {
+  test("one provider catalog and four supporting reads use /api and one Location", async () => {
     const location = {
       directory,
       project: { id: "project", directory },
     }
     const recording = makeFacade((request) => {
       const data = (() => {
-        if (request.url.pathname === "/api/provider") return []
-        if (request.url.pathname === "/api/model") return []
-        if (request.url.pathname === "/api/integration") return []
+        if (request.url.pathname === "/api/provider/catalog")
+          return {
+            providers: [
+              {
+                info: {
+                  id: "provider",
+                  name: "Provider",
+                  api: { type: "aisdk", package: "@ai-sdk/openai" },
+                  request: { headers: {}, body: {} },
+                },
+                source: "api",
+                auth: "key",
+                env: ["PROVIDER_API_KEY"],
+              },
+            ],
+            models: [
+              {
+                id: "model",
+                providerID: "provider",
+                name: "Model",
+                api: { id: "model", type: "aisdk", package: "@ai-sdk/openai" },
+                capabilities: { tools: true, input: ["text"], output: ["text"] },
+                request: { headers: {}, body: {} },
+                variants: [],
+                time: { released: 1 },
+                cost: [{ input: 1, output: 2, cache: { read: 0, write: 0 } }],
+                status: "active",
+                enabled: true,
+                limit: { context: 128_000, output: 8_192 },
+              },
+            ],
+            connected: ["provider"],
+            default: { provider: "model" },
+          }
         if (request.url.pathname === "/api/agent") return []
         if (request.url.pathname === "/api/command") {
           return [
@@ -1197,15 +1228,21 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
       "/api/agent",
       "/api/command",
       "/api/config",
-      "/api/integration",
-      "/api/model",
-      "/api/provider",
+      "/api/provider/catalog",
       "/api/skill",
     ])
     expect(recording.requests.every((request) => request.url.pathname.startsWith("/api"))).toBe(true)
     expect(recording.requests.map((request) => request.url.searchParams.get("location[directory]"))).toEqual(
-      Array.from({ length: 7 }, () => directory),
+      Array.from({ length: 5 }, () => directory),
     )
+    expect(catalog.providers.provider).toMatchObject({
+      id: "provider",
+      name: "Provider",
+      source: "api",
+      auth: "key",
+      env: ["PROVIDER_API_KEY"],
+      models: { model: { id: "model", name: "Model" } },
+    })
     expect(catalog.commands.map((command) => command.name)).toEqual(["alpha", "beta", "zeta"])
     expect(catalog.commands.find((command) => command.name === "beta")).toMatchObject({
       template: "beta command",

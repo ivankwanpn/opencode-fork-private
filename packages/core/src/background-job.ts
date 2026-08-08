@@ -102,9 +102,16 @@ export type WaitResult = {
   outcome: WaitOutcome
 }
 
+export type UpdateInput = {
+  id: string
+  output?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly get: (id: string) => Effect.Effect<Info | undefined>
+  readonly update: (input: UpdateInput) => Effect.Effect<Info | undefined>
   readonly start: (input: StartInput) => Effect.Effect<Info>
   readonly extend: (input: ExtendInput) => Effect.Effect<boolean>
   readonly wait: (input: WaitInput) => Effect.Effect<WaitResult>
@@ -230,6 +237,25 @@ export const make = Effect.gen(function* () {
     const job = (yield* SynchronizedRef.get(state.jobs)).get(id)
     if (!job) return
     return snapshot(job)
+  })
+
+  const update: Interface["update"] = Effect.fn("BackgroundJob.update")(function* (input) {
+    return yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [Info | undefined, Map<string, Active>] => {
+      const job = jobs.get(input.id)
+      if (!job) return [undefined, jobs]
+      if (job.info.status !== "running") return [snapshot(job), jobs]
+      const next = {
+        ...job,
+        info: {
+          ...job.info,
+          ...(input.output === undefined ? {} : { output: input.output }),
+          ...(input.metadata === undefined
+            ? {}
+            : { metadata: { ...job.info.metadata, ...input.metadata } }),
+        },
+      }
+      return [snapshot(next), new Map(jobs).set(input.id, next)]
+    })
   })
 
   const start: Interface["start"] = Effect.fn("BackgroundJob.start")(function* (input) {
@@ -432,7 +458,7 @@ export const make = Effect.gen(function* () {
     return result.info
   })
 
-  return Service.of({ list, get, start, extend, wait, waitForPromotion, promote, cancel })
+  return Service.of({ list, get, update, start, extend, wait, waitForPromotion, promote, cancel })
 })
 
 const layer = Layer.effect(Service, make)

@@ -15,8 +15,10 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionCommand } from "@opencode-ai/core/session/command"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionTurn } from "@opencode-ai/core/session/turn"
 import { SessionHistory } from "@opencode-ai/core/session/history"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Prompt } from "@opencode-ai/core/session/prompt"
@@ -41,6 +43,7 @@ const sessionID = SessionSchema.ID.make("ses_terminal_recovery")
 const nonTaskSessionID = SessionSchema.ID.make("ses_non_task_recovery")
 const parentSessionID = SessionSchema.ID.make("ses_execution_parent")
 const childSessionID = SessionSchema.ID.make("ses_execution_child")
+const interruptedSessionID = SessionSchema.ID.make("ses_interrupted_turn_restart")
 const model = ModelV2.Ref.make({ id: ModelV2.ID.make("test"), providerID: ProviderV2.ID.make("test") })
 const invocation = {
   parentSessionID,
@@ -66,7 +69,7 @@ const commandLayer = Layer.succeed(
           id: input.id ?? SessionMessage.ID.create(),
           sessionID: input.sessionID,
           prompt: { text: input.text },
-          synthetic: { description: input.description },
+          synthetic: { description: input.description, scope: input.scope ?? "turn" },
           delivery: input.delivery ?? "steer",
           timeCreated: yield* DateTime.now,
         })
@@ -152,6 +155,66 @@ const startRecovery = (runnerCalls: { count: number }, onRun?: (sessionID: Sessi
   })
 
 describe("SessionExecution recovery", () => {
+  it.effect("ends an interrupted open turn at startup instead of replaying its pending steer", () =>
+    Effect.gen(function* () {
+      yield* setupProject([{ id: interruptedSessionID }])
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const turnID = SessionMessage.ID.make("msg_task_notification_restart")
+      const steerID = SessionMessage.ID.make("msg_steer_before_restart")
+      const attemptID = EventV2.ID.make("evt_attempt_before_restart")
+      const assistantMessageID = SessionMessage.ID.make("msg_assistant_before_restart")
+      yield* events.publish(SessionEvent.PromptAdmitted, {
+        sessionID: interruptedSessionID,
+        messageID: turnID,
+        timestamp: DateTime.makeUnsafe(1),
+        prompt: Prompt.make({ text: "Start notification turn" }),
+        delivery: "steer",
+        intent: { type: "start" },
+      })
+      yield* SessionInput.promote(db, events, interruptedSessionID, turnID)
+      yield* SessionTurn.start(events, { sessionID: interruptedSessionID, turnID, timestamp: DateTime.makeUnsafe(2) })
+      yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+        sessionID: interruptedSessionID,
+        attemptID,
+        assistantMessageID,
+        attempt: 1,
+        timestamp: DateTime.makeUnsafe(3),
+      })
+      yield* events.publish(SessionEvent.PromptAdmitted, {
+        sessionID: interruptedSessionID,
+        messageID: steerID,
+        timestamp: DateTime.makeUnsafe(4),
+        prompt: Prompt.make({ text: "Inspect the blocked shell" }),
+        delivery: "steer",
+        intent: { type: "steer", expectedTurnID: turnID },
+      })
+      yield* events.publish(SessionEvent.ProviderAttempt.Ended, {
+        sessionID: interruptedSessionID,
+        attemptID,
+        assistantMessageID,
+        outcome: "interrupted",
+        continuation: false,
+        error: { type: "unknown", message: "Provider turn interrupted" },
+        timestamp: DateTime.makeUnsafe(5),
+      })
+      const runnerCalls = { count: 0 }
+
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([
+        interruptedSessionID,
+      ])
+      yield* startRecovery(runnerCalls)
+
+      expect(runnerCalls.count).toBe(0)
+      expect(yield* SessionTurn.get(db, interruptedSessionID)).toMatchObject({ turn_id: turnID, status: "ended" })
+      expect(yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, steerID)).get()).toMatchObject({
+        promoted_seq: null,
+        terminal_outcome: "cancelled",
+      })
+      expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+    }),
+  )
+
   it.effect("settles an accepted task after restart when the child completed normally", () =>
     Effect.gen(function* () {
       yield* setupProject([

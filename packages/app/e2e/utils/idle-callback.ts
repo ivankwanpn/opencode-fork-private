@@ -27,12 +27,12 @@ export async function holdIdleCallbacks(page: Page) {
 
 export function releaseIdleCallback(page: Page) {
   return page.evaluate(() =>
-    (window as Window & { __releaseIdleCallback(): boolean }).__releaseIdleCallback(),
+    (window as unknown as Window & { __releaseIdleCallback(): boolean }).__releaseIdleCallback(),
   )
 }
 
 export function pendingIdleCallbacks(page: Page) {
   return page.evaluate(() =>
-    (window as Window & { __pendingIdleCallbacks(): number }).__pendingIdleCallbacks(),
+    (window as unknown as Window & { __pendingIdleCallbacks(): number }).__pendingIdleCallbacks(),
   )
 }

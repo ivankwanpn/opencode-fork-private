@@ -10,6 +10,7 @@ import { SessionStore } from "../store"
 import { SessionExecution } from "../execution"
 import { SessionAttempt } from "../attempt"
 import { SessionInput } from "../input"
+import { SessionMessage } from "../message"
 import { SessionTurn } from "../turn"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
@@ -179,11 +180,21 @@ const layer = Layer.effect(
     const notifications = yield* TaskNotification.Service
     const submissions = yield* TaskSubmission.Service
     const current: { service?: SessionExecution.Interface } = {}
+    const interruptions = new Map<SessionSchema.ID, { readonly turnID: SessionMessage.ID; readonly cutoff: number }>()
     const drainNotifications = Effect.fn("SessionExecutionLocal.drainNotifications")(function* () {
       yield* notifications.drain({
         admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
         wake: (sessionID) => current.service?.wake(sessionID) ?? Effect.void,
       })
+    })
+    const settleInterruption = Effect.fn("SessionExecutionLocal.settleInterruption")(function* (
+      sessionID: SessionSchema.ID,
+    ) {
+      const interruption = interruptions.get(sessionID)
+      if (!interruption) return
+      interruptions.delete(sessionID)
+      const outcome = yield* SessionTurn.settleInterrupted(db, events, { sessionID, ...interruption })
+      if (outcome === "pending" || outcome === "restart") yield* current.service?.wake(sessionID) ?? Effect.void
     })
     const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, SessionRunner.RunError>({
       drain: Effect.fnUntraced(function* (sessionID: SessionSchema.ID, force) {
@@ -199,37 +210,50 @@ const layer = Layer.effect(
           Effect.andThen(events.publish(SessionStatusEvent.Idle, { sessionID }, { location: session.location })),
         )
         yield* publish("busy")
-        yield* SessionRunner.Service.use((runner) => runner.run({ sessionID, force })).pipe(
-          Effect.provide(locations.get(session.location)),
-          Effect.provideService(SessionExecution.Current, current.service),
-          Effect.tapCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.void
-              : Effect.all(
-                  [
-                    Effect.logError("Failed to drain Session", cause).pipe(Effect.annotateLogs({ sessionID })),
-                    events.publish(
-                      SessionV1.Event.Error,
-                      {
-                        sessionID,
-                        error: { name: "UnknownError", data: { message: Cause.pretty(cause) } },
-                      },
-                      { location: session.location },
-                    ),
-                  ],
-                  { discard: true },
-                ),
-          ),
-          Effect.ensuring(idle),
-        )
-        yield* recoverCompletedSubmissions(sessionID, store, submissions)
-        yield* drainNotifications()
+        yield* Effect.gen(function* () {
+          yield* SessionRunner.Service.use((runner) => runner.run({ sessionID, force })).pipe(
+            Effect.provide(locations.get(session.location)),
+            Effect.provideService(SessionExecution.Current, current.service),
+            Effect.tapCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.void
+                : Effect.all(
+                    [
+                      Effect.logError("Failed to drain Session", cause).pipe(Effect.annotateLogs({ sessionID })),
+                      events.publish(
+                        SessionV1.Event.Error,
+                        {
+                          sessionID,
+                          error: { name: "UnknownError", data: { message: Cause.pretty(cause) } },
+                        },
+                        { location: session.location },
+                      ),
+                    ],
+                    { discard: true },
+                  ),
+            ),
+          )
+          yield* recoverCompletedSubmissions(sessionID, store, submissions)
+          yield* drainNotifications()
+        }).pipe(Effect.ensuring(settleInterruption(sessionID).pipe(Effect.ensuring(idle))))
       }),
     })
 
     const service = SessionExecution.Service.of({
       active: coordinator.active,
-      interrupt: coordinator.interrupt,
+      interrupt: Effect.fn("SessionExecutionLocal.interrupt")(function* (sessionID) {
+        const turn = yield* SessionTurn.get(db, sessionID)
+        const interruption =
+          turn && turn.status !== "ended"
+            ? { turnID: turn.turn_id, cutoff: yield* EventV2.latestSequence(db, sessionID) }
+            : undefined
+        if (interruption) interruptions.set(sessionID, interruption)
+        if (!(yield* coordinator.interruptOwned(sessionID))) {
+          if (interruptions.get(sessionID) === interruption) interruptions.delete(sessionID)
+          return
+        }
+        yield* settleInterruption(sessionID)
+      }),
       resume: coordinator.run,
       exclusive: (sessionID, work) =>
         coordinator
@@ -243,6 +267,20 @@ const layer = Layer.effect(
       wait: coordinator.wait,
     })
     current.service = service
+
+    for (const turn of yield* SessionTurn.open(db)) {
+      if (turn.status !== "active") continue
+      const attempt = yield* SessionAttempt.get(db, turn.session_id)
+      if (attempt?.status !== "ended") continue
+      const ended = yield* SessionAttempt.latestEnded(db, turn.session_id)
+      if (!ended || ended.attemptID !== attempt.attempt_id || ended.outcome !== "interrupted" || ended.continuation)
+        continue
+      yield* SessionTurn.settleInterrupted(db, events, {
+        sessionID: turn.session_id,
+        turnID: turn.turn_id,
+        cutoff: ended.seq,
+      })
+    }
 
     const now = yield* Clock.currentTimeMillis
     for (const recovery of yield* startupRecoveryCandidates(db, now)) {

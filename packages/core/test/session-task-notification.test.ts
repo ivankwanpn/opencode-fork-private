@@ -132,6 +132,7 @@ describe("TaskNotification", () => {
         id: TaskSubmission.notificationID(outbox!.submission_id),
         sessionID: parentSessionID,
         delivery: "steer",
+        scope: "session",
       })
       expect(admissions[0]?.text).toContain(`<task id="${childSessionID}" state="completed">`)
       expect(wakes).toEqual([parentSessionID])

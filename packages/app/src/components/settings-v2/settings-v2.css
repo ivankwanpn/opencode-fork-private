@@ -787,6 +787,38 @@
   width: 100%;
 }
 
+.settings-v2-plugin-description {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-v2-plugin-runtime,
+.settings-v2-plugin-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.settings-v2-plugin-state {
+  color: var(--v2-text-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.settings-v2-plugin-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--v2-icon-icon-muted);
+}
+
+.settings-v2-plugin-status-dot--connected {
+  background: var(--v2-state-fg-success);
+}
+
 @media (max-width: 639px) {
   .settings-v2-plugins-add,
   .settings-v2-plugins-actions {

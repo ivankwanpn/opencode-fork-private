@@ -323,10 +323,13 @@ export const dict = {
   "dialog.plugins.empty": "Плагины настроены в opencode.json",
 
   "mcp.status.connected": "подключено",
+  "mcp.status.disconnected": "отключено",
   "mcp.status.failed": "ошибка",
   "mcp.status.needs_auth": "требуется авторизация",
   "mcp.auth.clickToAuthenticate": "Нажмите, чтобы авторизоваться",
   "mcp.status.disabled": "отключено",
+  "plugin.status.enabled": "Включён",
+  "plugin.status.disabled": "Отключён",
 
   "dialog.fork.empty": "Нет сообщений для ответвления",
 

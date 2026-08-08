@@ -357,6 +357,7 @@ describe("SessionRunCoordinator", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const coordinator = yield* SessionRunCoordinator.make({ drain: () => Effect.void })
+        expect(yield* coordinator.interruptOwned("session")).toBe(false)
         yield* coordinator.interrupt("session")
       }),
     ),
@@ -380,7 +381,7 @@ describe("SessionRunCoordinator", () => {
         const resumed = yield* coordinator.run("session").pipe(Effect.forkChild)
         yield* Deferred.await(started)
         yield* coordinator.wake("session")
-        yield* coordinator.interrupt("session")
+        expect(yield* coordinator.interruptOwned("session")).toBe(true)
         yield* Deferred.await(interrupted)
 
         const exit = yield* Fiber.await(resumed)
@@ -417,11 +418,11 @@ describe("SessionRunCoordinator", () => {
 
         yield* coordinator.wake("session")
         yield* Deferred.await(firstStarted)
-        const interrupt = yield* coordinator.interrupt("session").pipe(Effect.forkChild)
+        const interrupt = yield* coordinator.interruptOwned("session").pipe(Effect.forkChild)
         yield* Deferred.await(cleanupStarted)
         yield* coordinator.wake("session")
         yield* Deferred.succeed(cleanupGate, undefined)
-        yield* Fiber.join(interrupt)
+        expect(yield* Fiber.join(interrupt)).toBe(true)
         yield* Deferred.await(secondStarted)
 
         expect(runs).toBe(2)

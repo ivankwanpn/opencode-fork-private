@@ -1,10 +1,4 @@
-import type {
-  Config,
-  Path,
-  Project,
-  ProviderAuthResponse,
-  SessionStatus,
-} from "@opencode-ai/sdk/v2/client"
+import type { Config, Path, Project, ProviderAuthResponse, SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
@@ -288,21 +282,14 @@ export function reconcileActiveSessionStatuses(
   return [...reload]
 }
 
-function makeQueryOptionsApi(
-  scope: ServerScope,
-  serverAPI: ServerApi,
-  apiForGeneration: () => Promise<ServerApi>,
-) {
+function makeQueryOptionsApi(scope: ServerScope, serverAPI: ServerApi, apiForGeneration: () => Promise<ServerApi>) {
   return {
     globalConfig: () => loadCompatibleConfigQuery(scope, serverAPI.config, apiForGeneration),
     projects: () => loadProjectsQuery(scope, serverAPI.project, apiForGeneration),
-    providers: (directory: PathKey | null) =>
-      loadProvidersQuery(scope, directory, serverAPI, apiForGeneration),
+    providers: (directory: PathKey | null) => loadProvidersQuery(scope, directory, serverAPI, apiForGeneration),
     path: (directory: PathKey | null) => loadPathQuery(scope, directory, serverAPI.path, apiForGeneration),
-    agents: (directory: PathKey) =>
-      loadAgentsQuery(scope, directory, serverAPI.agent, apiForGeneration),
-    references: (directory: PathKey) =>
-      loadReferencesQuery(scope, directory, serverAPI.reference, apiForGeneration),
+    agents: (directory: PathKey) => loadAgentsQuery(scope, directory, serverAPI.agent, apiForGeneration),
+    references: (directory: PathKey) => loadReferencesQuery(scope, directory, serverAPI.reference, apiForGeneration),
     mcp: (directory: PathKey) => loadMcpQuery(scope, directory, serverAPI.mcp, apiForGeneration),
     mcpResources: (directory: PathKey) => loadMcpResourcesQuery(scope, directory, serverAPI.mcp, apiForGeneration),
     lsp: (directory: PathKey) => loadLspQuery(scope, directory, serverAPI.lsp, apiForGeneration),
@@ -346,11 +333,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     apiForGeneration: serverSDK.apiForGeneration,
     activeSessions: () => serverSDK.apiForGeneration().then((api) => api.session.active()),
   })
-  const queryOptionsApi = makeQueryOptionsApi(
-    serverSDK.scope,
-    serverSDK.api,
-    serverSDK.apiForGeneration,
-  )
+  const queryOptionsApi = makeQueryOptionsApi(serverSDK.scope, serverSDK.api, serverSDK.apiForGeneration)
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
     queries: [queryOptionsApi.globalConfig(), queryOptionsApi.providers(null), queryOptionsApi.path(null)],
@@ -632,7 +615,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const key = directoryKey(directory)
     const event = e.details
     const eventType: string = event.type
-    const recent = bootingRoot || Date.now() - bootedAt < 1500
+    const reconnecting = eventType === "server.connected" && serverSDK.eventGeneration() > 1
+    const recent = !reconnecting && (bootingRoot || Date.now() - bootedAt < 1500)
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
@@ -653,9 +637,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
             .refetch()
             .then((result) => {
               if (result.data === undefined) return
-              const sessionIDs = reconcileActiveSessionStatuses(session, result.data)
+              // The global stream has no replay cursor, so every mounted transcript needs an authoritative refresh.
+              const sessionIDs = new Set([...session.pinned(), ...reconcileActiveSessionStatuses(session, result.data)])
               return Promise.allSettled(
-                sessionIDs.flatMap((sessionID) => [
+                [...sessionIDs].flatMap((sessionID) => [
                   session.sync(sessionID, { force: true }),
                   session.context.refresh(sessionID),
                 ]),
@@ -814,6 +799,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     return result
   }
 
+  const refreshMcp = async (directory: string) => {
+    const key = directoryKey(directory)
+    await Promise.all([
+      queryClient.refetchQueries(queryOptionsApi.mcp(key)),
+      queryClient.refetchQueries(queryOptionsApi.mcpResources(key)),
+    ])
+  }
+
   return {
     data: globalStore,
     set,
@@ -846,12 +839,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
           authenticate: async () => {
             await api.mcp.authenticate({ name, location: { directory: key } })
           },
-          refresh: async () => {
-            await queryClient.refetchQueries(queryOptionsApi.mcp(key))
-            await queryClient.refetchQueries(queryOptionsApi.mcpResources(key))
-          },
+          refresh: () => refreshMcp(key),
         })
       },
+      refresh: refreshMcp,
     },
   }
 }

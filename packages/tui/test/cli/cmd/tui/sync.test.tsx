@@ -26,7 +26,7 @@ describe("tui sync", () => {
     const assistantID = "msg_parent_resumed"
     const description = "Background task completed: inspect flow"
     const task = '<task id="ses_child" state="completed">\n<task_result>complete</task_result>\n</task>'
-    const { app, sync } = await mount((url) => {
+    const { app, sync, data } = await mount((url) => {
       if (url.pathname === `/api/session/${sessionID}`)
         return json({
           data: {
@@ -67,17 +67,18 @@ describe("tui sync", () => {
 
     try {
       await sync.session.sync(sessionID)
-      const completion = sync.data.part[syntheticID]?.[0]
+      const completion = data.session.message.list(sessionID)?.find((message) => message.id === syntheticID)
       expect(completion).toMatchObject({
-        type: "text",
-        synthetic: true,
+        type: "synthetic",
         text: expect.stringContaining('<task id="ses_child"'),
+        description,
       })
-      if (completion?.type !== "text") return
-      expect(completion.text).toContain(description)
-      const resumed = sync.data.message[sessionID]?.find((message) => message.id === assistantID)
-      expect(resumed?.role).toBe("assistant")
-      if (resumed?.role === "assistant") expect(resumed.parentID).toBe(syntheticID)
+      if (completion?.type !== "synthetic") return
+      expect(completion.text).toContain("<task_result>complete</task_result>")
+      const resumed = data.session.message.list(sessionID)?.find((message) => message.id === assistantID)
+      expect(resumed?.type).toBe("assistant")
+      if (resumed?.type === "assistant")
+        expect(resumed.content[0]).toMatchObject({ text: "Parent resumed after the task completed." })
     } finally {
       app.renderer.destroy()
     }

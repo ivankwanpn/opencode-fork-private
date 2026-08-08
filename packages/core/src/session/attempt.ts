@@ -1,6 +1,6 @@
 export * as SessionAttempt from "./attempt"
 
-import { and, eq, lte, or, sql } from "drizzle-orm"
+import { and, desc, eq, lte, or, sql } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -97,6 +97,25 @@ export const get = Effect.fn("SessionAttempt.get")(function* (db: DB, sessionID:
     .where(eq(SessionAttemptTable.session_id, sessionID))
     .get()
     .pipe(Effect.orDie)
+})
+
+export const latestEnded = Effect.fn("SessionAttempt.latestEnded")(function* (db: DB, sessionID: SessionSchema.ID) {
+  const row = yield* db
+    .select({ data: EventTable.data, seq: EventTable.seq })
+    .from(EventTable)
+    .where(
+      and(
+        eq(EventTable.aggregate_id, sessionID),
+        eq(EventTable.type, EventV2.versionedType(SessionEvent.ProviderAttempt.Ended.type, 1)),
+      ),
+    )
+    .orderBy(desc(EventTable.seq))
+    .limit(1)
+    .get()
+    .pipe(Effect.orDie)
+  return row
+    ? { ...Schema.decodeUnknownSync(SessionEvent.ProviderAttempt.Ended.data)(row.data), seq: row.seq }
+    : undefined
 })
 
 export const recoveryDecision = Effect.fn("SessionAttempt.recoveryDecision")(function* (

@@ -18,9 +18,13 @@ export const Intent = Schema.Union([
 ]).annotate({ identifier: "SessionInput.Intent" })
 export type Intent = typeof Intent.Type
 
+export const SyntheticScope = Schema.Literals(["turn", "session"])
+export type SyntheticScope = typeof SyntheticScope.Type
+
 export interface Synthetic extends Schema.Schema.Type<typeof Synthetic> {}
 export const Synthetic = Schema.Struct({
   description: Schema.String,
+  scope: SyntheticScope.pipe(optional),
 }).annotate({ identifier: "SessionInput.Synthetic" })
 
 export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}

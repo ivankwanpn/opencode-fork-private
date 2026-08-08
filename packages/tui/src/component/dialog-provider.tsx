@@ -1,5 +1,6 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useSync } from "../context/sync"
+import { useData } from "../context/data"
 import { map, pipe, sortBy } from "remeda"
 import { DialogSelect } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
@@ -8,7 +9,7 @@ import { DialogPrompt } from "../ui/dialog-prompt"
 import { Link } from "../ui/link"
 import { useTheme } from "../context/theme"
 import { TextAttributes } from "@opentui/core"
-import type { IntegrationsConnectOauthOutput, IntegrationsListOutput } from "@opencode-ai/client"
+import type { IntegrationAttempt, IntegrationInfo } from "@opencode-ai/sdk/v2"
 import { DialogModel } from "./dialog-model"
 import { useToast } from "../ui/toast"
 import { isConsoleManagedProvider } from "../util/provider-origin"
@@ -28,10 +29,9 @@ const PROVIDER_PRIORITY: Record<string, number> = {
 
 const CUSTOM_PROVIDER_OPTION_VALUE = "__opencode_custom_provider__"
 
-type NativeIntegration = IntegrationsListOutput["data"][number]
-type NativeOAuthMethod = Extract<NativeIntegration["methods"][number], { type: "oauth" }>
+type NativeOAuthMethod = Extract<IntegrationInfo["methods"][number], { type: "oauth" }>
 type NativePrompt = NonNullable<NativeOAuthMethod["prompts"]>[number]
-type NativeAttempt = IntegrationsConnectOauthOutput["data"]
+type NativeAttempt = IntegrationAttempt
 
 type ProviderOptionBase = {
   title: string
@@ -84,15 +84,17 @@ export function providerOptions(list: readonly { id: string; name: string }[]): 
 
 export function createDialogProviderOptions() {
   const sync = useSync()
+  const data = useData()
   const dialog = useDialog()
   const sdk = useSDK()
   const toast = useToast()
   const { theme } = useTheme()
   const onboarded = useConnected()
+  const integrations = createMemo(() => data.location.integration.list() ?? [])
 
   const options = createMemo(() => {
     return pipe(
-      providerOptions(sync.data.integration),
+      providerOptions(integrations()),
       map((provider) => {
         if (provider.type === "custom") {
           return {
@@ -107,7 +109,7 @@ export function createDialogProviderOptions() {
         }
 
         const providerID = provider.providerID
-        const integration = sync.data.integration.find((item) => item.id === providerID)!
+        const integration = integrations().find((item) => item.id === providerID)!
         const consoleManaged = isConsoleManagedProvider(sync.data.console_state.consoleManagedProviders, providerID)
         const connected = integration.connections.length > 0
 
@@ -245,9 +247,7 @@ function AutoMethod(props: AutoMethodProps) {
         toast.show({
           variant: "error",
           message:
-            result.data.status === "failed"
-              ? result.data.message
-              : "OAuth authorization expired. Try /connect again.",
+            result.data.status === "failed" ? result.data.message : "OAuth authorization expired. Try /connect again.",
         })
         dialog.clear()
         return

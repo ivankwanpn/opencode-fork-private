@@ -322,10 +322,13 @@ export const dict = {
   "dialog.plugins.empty": "Plugins konfigureret i opencode.json",
 
   "mcp.status.connected": "forbundet",
+  "mcp.status.disconnected": "ikke forbundet",
   "mcp.status.failed": "mislykkedes",
   "mcp.status.needs_auth": "kræver godkendelse",
   "mcp.auth.clickToAuthenticate": "Klik for at godkende",
   "mcp.status.disabled": "deaktiveret",
+  "plugin.status.enabled": "Aktiveret",
+  "plugin.status.disabled": "Deaktiveret",
 
   "dialog.fork.empty": "Ingen beskeder at forgrene fra",
 

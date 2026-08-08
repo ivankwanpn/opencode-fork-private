@@ -433,6 +433,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                             </span>
                           </Show>
                         </span>
+                        <span class="text-11-regular text-text-weak shrink-0">
+                          {enabled() ? language.t("mcp.status.connected") : language.t("mcp.status.disconnected")}
+                        </span>
                         <div onClick={(event) => event.stopPropagation()}>
                           <Switch
                             checked={enabled()}

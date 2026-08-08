@@ -1,6 +1,8 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import type { V2Event } from "@opencode-ai/sdk/v2/client"
 import type { Page } from "@playwright/test"
 import { mockOpenCodeServer } from "../../utils/mock-server"
+import { installSseTransport } from "../../utils/sse-transport"
 import { expectAppVisible, expectSessionTitle } from "../../utils/waits"
 import { expect } from "../benchmark"
 
@@ -14,10 +16,8 @@ export const textPartID = "prt_9999_text"
 const title = "Timeline collapse state regression"
 const model = { providerID: "opencode", modelID: "claude-opus-4-6", variant: "max" }
 
-type EventPayload = {
-  directory: string
-  payload: Record<string, unknown>
-}
+type EventPayload = Extract<V2Event, { type: "message.part.updated" | "message.part.delta" }>
+let eventSequence = 0
 
 const userMessage = {
   info: {
@@ -98,13 +98,19 @@ export async function setupTimelineBenchmark(
   options: {
     historyTurns: number
     eventBatch: number
+    eventDelay?: number
     newLayoutDesigns?: boolean
     vcsDiff?: unknown[]
     turnDiffs?: unknown[]
   },
 ) {
-  const events: EventPayload[] = []
-  let eventBatch = options.eventBatch
+  const eventBatch = Math.max(1, Math.floor(options.eventBatch))
+  const eventDelay = Math.max(0, Math.floor(options.eventDelay ?? 16))
+  const stream = await installSseTransport<EventPayload>(page, {
+    server: `http://${process.env.PLAYWRIGHT_SERVER_HOST ?? "127.0.0.1"}:${process.env.PLAYWRIGHT_SERVER_PORT ?? "4096"}`,
+    retry: 16,
+  })
+  let scheduled = 0
   const currentUserMessage = options.turnDiffs
     ? { ...userMessage, info: { ...userMessage.info, summary: { diffs: options.turnDiffs } } }
     : userMessage
@@ -121,8 +127,6 @@ export async function setupTimelineBenchmark(
         assistantMessage,
       ],
     }),
-    events: () => events.splice(0, eventBatch),
-    eventRetry: 16,
   })
   await page.addInitScript(
     (input) => {
@@ -144,20 +148,20 @@ export async function setupTimelineBenchmark(
   const scroller = page.locator(".scroll-view__viewport", { has: page.locator("[data-timeline-row]") })
   const text = page.locator(`[data-timeline-part-id="${textPartID}"]`).first()
   await page.goto(`/${base64Encode(directory)}/session/${sessionID}`)
+  await stream.waitForConnection()
   await expectSessionTitle(page, title)
   await expectAppVisible(scroller)
   return {
     scroller,
     text,
     transport: {
-      enqueue(payload: EventPayload | EventPayload[]) {
-        events.push(...(Array.isArray(payload) ? payload : [payload]))
+      async enqueue(payload: EventPayload | EventPayload[]) {
+        const events = Array.isArray(payload) ? payload : [payload]
+        scheduled += events.length
+        await stream.schedule(events, { size: eventBatch, delay: eventDelay })
       },
-      pendingCount() {
-        return events.length
-      },
-      releaseAll() {
-        eventBatch = events.length
+      async pendingCount() {
+        return Math.max(0, scheduled - (await stream.acknowledgements()).length)
       },
     },
     async scrollToBottom() {
@@ -189,30 +193,31 @@ export async function setupTimelineBenchmark(
 
 export function buildInitialStreamEvent(deltaCount: number): EventPayload {
   return {
-    directory,
-    payload: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          ...streamedTextPart,
-          text: `Streaming${streamChunk(0, deltaCount + 1)}\n\n\`\`\`ts\nconst initial = true\n\`\`\``,
-        },
+    id: `evt_benchmark_${++eventSequence}`,
+    type: "message.part.updated",
+    location: { directory },
+    data: {
+      sessionID,
+      part: {
+        ...streamedTextPart,
+        text: `Streaming${streamChunk(0, deltaCount + 1)}\n\n\`\`\`ts\nconst initial = true\n\`\`\``,
       },
+      time: 1700000002000,
     },
   }
 }
 
 export function buildStreamDeltaEvents(deltaCount: number): EventPayload[] {
   return Array.from({ length: deltaCount }, (_, index) => ({
-    directory,
-    payload: {
-      type: "message.part.delta",
-      properties: {
-        messageID: assistantMessageID,
-        partID: textPartID,
-        field: "text",
-        delta: streamChunk(index + 1, deltaCount + 1),
-      },
+    id: `evt_benchmark_${++eventSequence}`,
+    type: "message.part.delta",
+    location: { directory },
+    data: {
+      sessionID,
+      messageID: assistantMessageID,
+      partID: textPartID,
+      field: "text",
+      delta: streamChunk(index + 1, deltaCount + 1),
     },
   }))
 }

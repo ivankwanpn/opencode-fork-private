@@ -38,6 +38,8 @@ import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
+import { LegacySessionExecution } from "@/session/legacy-session-execution"
+import { LegacySessionRead } from "@/session/legacy-session-read"
 import { SessionShare } from "@/share/session"
 import { ShareNext } from "@/share/share-next"
 import { Skill } from "@/skill"
@@ -149,6 +151,10 @@ const httpApiAuthLayer = authorizationLayer.pipe(Layer.provide(ServerAuth.Config
 const ptyConnectHttpApiAuthLayer = ptyConnectAuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.layer))
 const serverHttpApiAuthLayer = serverAuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.layer))
 const workspaceRoutingLive = workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal))
+const sessionCompatibilityHandlers = sessionHandlers.pipe(
+  Layer.provide(LegacySessionExecution.layer),
+  Layer.provide(LegacySessionRead.layer),
+)
 const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
   Layer.provide([controlHandlers, controlPlaneHandlers, globalHandlers]),
   Layer.provide(schemaErrorLayer),
@@ -175,7 +181,7 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
     questionHandlers,
     permissionHandlers,
     providerHandlers,
-    sessionHandlers,
+    sessionCompatibilityHandlers,
     syncHandlers,
     tuiHandlers,
     workspaceHandlers,
@@ -233,7 +239,7 @@ type RouteRequirements =
   | HttpRouter.Request<"Requires", unknown>
   | HttpRouter.Request<"GlobalRequires", never>
 
-const app = LayerNode.group([
+const hostNodes = [
   Npm.node,
   FSUtil.node,
   Database.node,
@@ -265,12 +271,7 @@ const app = LayerNode.group([
   BackgroundJob.node,
   RuntimeFlags.node,
   EventV2Bridge.node,
-  SessionRunState.node,
-  SessionProcessor.node,
-  SessionCompaction.node,
-  SessionRevert.node,
   SessionSummary.node,
-  Instruction.node,
   LLM.node,
   LSP.node,
   MCP.node,
@@ -290,7 +291,18 @@ const app = LayerNode.group([
   ProjectV2.node,
   ProjectCopy.node,
   PtyTicket.node,
-])
+] as const
+
+const legacySessionRuntimeNodes = [
+  SessionRunState.node,
+  SessionProcessor.node,
+  SessionCompaction.node,
+  SessionRevert.node,
+  Instruction.node,
+] as const
+
+const app = LayerNode.group([...hostNodes, ...legacySessionRuntimeNodes])
+const nativeApp = LayerNode.group(hostNodes)
 
 function buildV2SessionServices(locationServiceMap: typeof locationServiceMapV2Layer) {
   return AppNodeBuilderV1.build(LayerNode.group([SessionV2.node, SessionExecutionLocal.node]), [
@@ -367,7 +379,7 @@ export function createNativeRoutes(
     Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
     Layer.provide(
-      AppNodeBuilderV1.build(app, [
+      AppNodeBuilderV1.build(nativeApp, [
         [LocationServiceMap.node, locationServiceMapV2],
         [SessionExecution.node, SessionExecutionLocal.node],
       ]),

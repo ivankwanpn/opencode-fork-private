@@ -190,6 +190,90 @@ describe("GetTaskOutputTool", () => {
     }),
   )
 
+  it.effect("returns owned live shell output and hides it from other sessions", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const release = yield* Deferred.make<void>()
+      const taskID = "job_shelloutput1"
+      yield* jobs.start({
+        id: taskID,
+        type: "shell",
+        title: "build workspace",
+        metadata: { sessionID: parentID, agent: "build-agent", outputBytes: 0 },
+        run: Deferred.await(release).pipe(Effect.as("build complete")),
+      })
+      yield* jobs.update({
+        id: taskID,
+        output: "compiling package\n",
+        metadata: { outputBytes: 18, lastOutputAt: 1234 },
+      })
+      const registry = yield* ToolRegistry.Service
+
+      const settled = yield* settleTool(registry, call({ task_ids: [taskID] }))
+      expect(settled.output?.structured).toEqual([
+        {
+          taskID,
+          status: "running",
+          description: "build workspace",
+          agent: "build-agent",
+          kind: "shell",
+          timeCreated: expect.any(Number),
+          result: "compiling package\n",
+          outputBytes: 18,
+          lastOutputAt: 1234,
+          runningForMs: expect.any(Number),
+          idleForMs: expect.any(Number),
+        },
+      ])
+      expect(settled.result).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("the process is still owned and its last output was"),
+      })
+      expect(
+        yield* executeTool(registry, call({ task_ids: [taskID] }, otherParentID, "call-shell-other-owner")),
+      ).toEqual({ type: "error", value: NOT_FOUND })
+
+      yield* Deferred.succeed(release, undefined)
+      yield* jobs.wait({ id: taskID })
+    }),
+  )
+
+  it.effect("waits for a live shell owner and returns its terminal output", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const release = yield* Deferred.make<void>()
+      const taskID = "job_shellwait1"
+      yield* jobs.start({
+        id: taskID,
+        type: "shell",
+        title: "run tests",
+        metadata: { sessionID: parentID, agent: "worker", outputBytes: 0 },
+        run: Deferred.await(release).pipe(Effect.as("tests passed")),
+      })
+      const registry = yield* ToolRegistry.Service
+      const waiting = yield* settleTool(registry, call({ task_ids: [taskID], timeout_ms: 5_000 })).pipe(
+        Effect.forkScoped,
+      )
+
+      yield* Effect.yieldNow
+      expect(waiting.pollUnsafe()).toBeUndefined()
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* Fiber.join(waiting)).output?.structured).toEqual([
+        {
+          taskID,
+          status: "completed",
+          description: "run tests",
+          agent: "worker",
+          kind: "shell",
+          timeCreated: expect.any(Number),
+          timeCompleted: expect.any(Number),
+          result: "tests passed",
+          outputBytes: 0,
+        },
+      ])
+    }),
+  )
+
   it.effect("waits for all tasks and then re-reads durable task state", () =>
     Effect.gen(function* () {
       const firstID = SessionSchema.ID.make("ses_task_output_wait_first")
@@ -398,8 +482,13 @@ describe("GetTaskOutputTool", () => {
         registry,
         call({ task_ids: ["ses_task_output_unknown"] }, parentID, "call-get-task-output-unknown"),
       )
+      const missingShell = yield* executeTool(
+        registry,
+        call({ task_ids: ["job_missingowner1"] }, parentID, "call-get-task-output-missing-shell"),
+      )
       expect(nonOwned).toEqual({ type: "error", value: NOT_FOUND })
       expect(unknown).toEqual(nonOwned)
+      expect(missingShell).toEqual(nonOwned)
     }),
   )
 

@@ -301,7 +301,7 @@ const commandLayer = Layer.succeed(
           id: input.id ?? SessionMessage.ID.create(),
           sessionID: input.sessionID,
           prompt: { text: input.text },
-          synthetic: { description: input.description },
+          synthetic: { description: input.description, scope: input.scope ?? "turn" },
           delivery: input.delivery ?? "steer",
           timeCreated: yield* DateTime.now,
         })
@@ -507,6 +507,7 @@ const taskNotificationLayer = Layer.succeed(
                 }),
                 description: `${state === "completed" ? "Background task completed" : "Background task failed"}: ${submission.description}`,
                 delivery: "steer",
+                scope: "session",
               })
               yield* input.wake(submission.parentSessionID)
             }),
@@ -592,6 +593,7 @@ const foregroundFastCompletion = testEffect(
         BackgroundJob.Service.of({
           list: () => Effect.succeed([]),
           get: () => Effect.succeed(undefined),
+          update: () => Effect.succeed(undefined),
           start: (input) =>
             Effect.succeed({
               id: input.id ?? "job_fast_completion",
@@ -641,6 +643,7 @@ const foregroundStaleObservation = testEffect(
               started_at: 0,
               metadata: { background: true },
             }),
+          update: () => Effect.succeed(undefined),
           start: (input) =>
             Effect.succeed({
               id: input.id ?? "job_fresh_start",

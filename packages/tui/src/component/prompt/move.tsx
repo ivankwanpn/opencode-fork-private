@@ -5,11 +5,13 @@ import { errorMessage } from "../../util/error"
 import { useDialog } from "../../ui/dialog"
 import { useSDK } from "../../context/sdk"
 import { useSync } from "../../context/sync"
+import { useData } from "../../context/data"
 import { useToast } from "../../ui/toast"
 import { DialogMoveSession, type MoveSessionSelection } from "../dialog-move-session"
 import { DialogWorkspaceFileChanges } from "../dialog-workspace-file-changes"
 import { useHomeSessionDestination } from "../../routes/home/session-destination"
 import { useProject } from "../../context/project"
+import { chronological } from "../../util/native-transcript"
 
 function moveReminderText(directory: string) {
   return `<system-reminder>The user has changed the current working directory to "${directory}". This is still the same project but at a possibly new location; take this into account when working with any files from now on.</system-reminder>`
@@ -19,6 +21,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
   const dialog = useDialog()
   const sdk = useSDK()
   const sync = useSync()
+  const data = useData()
   const toast = useToast()
   const homeDestination = useHomeSessionDestination()
   const project = useProject()
@@ -72,8 +75,8 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
           (session
             ? {
                 type: "directory",
-                directory: session.directory,
-                subdirectory: !!session.path,
+                directory: session.location.directory,
+                subdirectory: !!session.subpath,
               }
             : {
                 type: "directory",
@@ -97,21 +100,24 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
 
   function sessionContext(sessionID: string) {
     const session = sync.session.get(sessionID)
-    const messages = (sync.data.message[sessionID] ?? [])
+    const messages = chronological(data.session.message.list(sessionID) ?? [])
       .slice(-6)
-      .map((message) =>
-        [
-          message.role + ":",
-          ...(sync.data.part[message.id] ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])),
-        ].join(" "),
-      )
+      .flatMap((message) => {
+        if (message.type === "user") return [`user: ${message.text}`]
+        if (message.type === "assistant")
+          return [
+            `assistant: ${message.content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join(" ")}`,
+          ]
+        if (message.type === "shell") return [`shell: ${message.command}\n${message.output}`]
+        return []
+      })
     return [session?.title, ...messages].filter(Boolean).join("\n") || undefined
   }
 
   async function moveExistingSession(sessionID: string, selection: MoveSessionSelection) {
     const session = sync.session.get(sessionID)
     const status = await sdk.native.vcs
-      .status({ location: { directory: session?.directory } })
+      .status({ location: { directory: session?.location.directory } })
       .catch(() => undefined)
     const choice = status?.data?.length ? await DialogWorkspaceFileChanges.show(dialog, [...status.data]) : "no"
     if (!choice) return

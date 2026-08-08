@@ -1345,6 +1345,7 @@ export type SessionsPromptOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -1449,6 +1450,7 @@ export type SessionsInputListOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -1538,6 +1540,7 @@ export type SessionsInputGetOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -1627,6 +1630,7 @@ export type SessionsInputPromoteOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -2157,6 +2161,7 @@ export type SessionsCommandOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -3305,6 +3310,7 @@ export type SessionsHistoryOutput = {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "turn" | "session";
             };
             readonly delivery: "steer" | "queue";
             readonly intent?: {
@@ -3395,6 +3401,7 @@ export type SessionsHistoryOutput = {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "turn" | "session";
             };
             readonly delivery: "steer" | "queue";
             readonly intent?: {
@@ -4814,6 +4821,7 @@ export type SessionsEventsOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -4904,6 +4912,7 @@ export type SessionsEventsOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -8652,6 +8661,7 @@ export type ServerPluginsListOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8678,6 +8688,7 @@ export type ServerPluginsAddOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8704,6 +8715,7 @@ export type ServerPluginsRefreshOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8730,6 +8742,7 @@ export type ServerPluginsRemoveOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8756,6 +8769,7 @@ export type ServerPluginsInstallOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8782,6 +8796,7 @@ export type ServerPluginsUninstallOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8808,6 +8823,7 @@ export type ServerPluginsEnableOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
@@ -8834,6 +8850,7 @@ export type ServerPluginsDisableOutput = {
         readonly category?: string | undefined;
         readonly tags: ReadonlyArray<string>;
         readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;

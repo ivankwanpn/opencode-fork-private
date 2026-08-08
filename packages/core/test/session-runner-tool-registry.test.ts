@@ -56,7 +56,7 @@ const call = (name: string, id = `call-${name}`): ToolRegistry.ExecuteInput => (
   call: { type: "tool-call", id, name, input: { text: name } },
 })
 
-const make = (permission?: string) => {
+const make = (permission?: string | readonly [string, ...string[]]) => {
   const tool = Tool.make({
     description: "Echo text",
     input: Schema.Struct({ text: Schema.String }),
@@ -64,7 +64,8 @@ const make = (permission?: string) => {
     execute: ({ text }) => Effect.succeed({ text }),
     toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
   })
-  return permission ? Tool.withPermission(tool, permission) : tool
+  if (!permission) return tool
+  return typeof permission === "string" ? Tool.withPermission(tool, permission) : Tool.withPermissions(tool, permission)
 }
 
 describe("ToolRegistry", () => {
@@ -77,6 +78,7 @@ describe("ToolRegistry", () => {
         edit: make("edit"),
         write: make("edit"),
         apply_patch: make("edit"),
+        task_status: make(["task", "bash"]),
       })
       const names = (rules: Parameters<ToolRegistry.Interface["materialize"]>[0]) =>
         toolDefinitions(service, rules).pipe(Effect.map((definitions) => definitions.map((tool) => tool.name)))
@@ -86,6 +88,7 @@ describe("ToolRegistry", () => {
         "edit",
         "write",
         "apply_patch",
+        "task_status",
       ])
       expect(
         yield* names([
@@ -99,7 +102,23 @@ describe("ToolRegistry", () => {
           { action: "*", resource: "*", effect: "deny" },
         ]),
       ).toEqual([])
-      expect(yield* names([{ action: "edit", resource: "*", effect: "deny" }])).toEqual(["question", "bash"])
+      expect(yield* names([{ action: "edit", resource: "*", effect: "deny" }])).toEqual([
+        "question",
+        "bash",
+        "task_status",
+      ])
+      expect(
+        yield* names([
+          { action: "*", resource: "*", effect: "deny" },
+          { action: "bash", resource: "*", effect: "allow" },
+        ]),
+      ).toEqual(["bash", "task_status"])
+      expect(
+        yield* names([
+          { action: "*", resource: "*", effect: "deny" },
+          { action: "task", resource: "*", effect: "allow" },
+        ]),
+      ).toEqual(["task_status"])
     }),
   )
 

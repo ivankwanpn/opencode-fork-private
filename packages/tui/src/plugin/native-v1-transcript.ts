@@ -1,8 +1,17 @@
-import type { MessagesListOutput, SessionsGetOutput } from "@opencode-ai/client"
 import { AssistantErrorCodec } from "@opencode-ai/core/session/assistant-error-codec"
-import type { AssistantMessage, Message, Part, Session, ToolPart, UserMessage } from "@opencode-ai/sdk/v2"
+import type {
+  AssistantMessage,
+  Message,
+  Part,
+  Session,
+  SessionMessage,
+  SessionV2Info,
+  ToolPart,
+  UserMessage,
+} from "@opencode-ai/sdk/v2"
 
-type NativeMessage = MessagesListOutput["data"][number]
+type NativeMessage = SessionMessage
+type NativeSession = SessionV2Info
 type LegacyMessage = { info: Message; parts: Part[] }
 
 const CONTENT_FILTER_ERROR_MESSAGE = "Response blocked by content filter"
@@ -59,7 +68,7 @@ function retained(input: {
 
 function user(input: {
   message: Extract<NativeMessage, { type: "user" }>
-  session: SessionsGetOutput
+  session: NativeSession
   agent: string
   model: { id: string; providerID: string; variant?: string }
 }): LegacyMessage {
@@ -133,9 +142,7 @@ function user(input: {
       messageID: message.id,
       type: "agent",
       name: agent.name,
-      source: agent.source
-        ? { value: agent.source.text, start: agent.source.start, end: agent.source.end }
-        : undefined,
+      source: agent.source ? { value: agent.source.text, start: agent.source.start, end: agent.source.end } : undefined,
     })
   }
   return { info, parts }
@@ -176,9 +183,7 @@ function toolPart(input: {
       state: {
         status: "completed",
         input: { ...item.state.input },
-        output: item.state.content
-          .map((content) => (content.type === "text" ? content.text : content.uri))
-          .join("\n"),
+        output: item.state.content.map((content) => (content.type === "text" ? content.text : content.uri)).join("\n"),
         title: typeof item.state.structured.title === "string" ? item.state.structured.title : "",
         metadata: { ...item.state.structured },
         time: {
@@ -209,9 +214,7 @@ function toolPart(input: {
   }
 }
 
-function assistantError(
-  message: Extract<NativeMessage, { type: "assistant" }>,
-): AssistantMessage["error"] {
+function assistantError(message: Extract<NativeMessage, { type: "assistant" }>): AssistantMessage["error"] {
   if (message.finish === "length") return { name: "MessageOutputLengthError", data: {} }
   const error = message.error ? AssistantErrorCodec.decode(message.error.message) : undefined
   if (message.finish === "content-filter")
@@ -235,7 +238,7 @@ function assistantError(
 
 function assistant(input: {
   message: Extract<NativeMessage, { type: "assistant" }>
-  session: SessionsGetOutput
+  session: NativeSession
   parentID: string
 }): LegacyMessage {
   const message = input.message
@@ -314,7 +317,7 @@ function assistant(input: {
 
 function syntheticUser(input: {
   id: string
-  session: SessionsGetOutput
+  session: NativeSession
   created: number
   text?: string
   description?: string
@@ -360,7 +363,7 @@ function syntheticUser(input: {
 
 export function legacyTranscriptFromNative(input: {
   messages: readonly NativeMessage[]
-  session: SessionsGetOutput
+  session: NativeSession
 }): LegacyMessage[] {
   let agent = input.session.agent ?? "build"
   let model = input.session.model ?? { id: "unknown", providerID: "unknown" }

@@ -79,6 +79,37 @@ describe("BackgroundJob", () => {
     }).pipe(Effect.provide(jobsLayer)),
   )
 
+  it.live("updates running output and metadata without mutating completed snapshots", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const release = yield* Deferred.make<void>()
+      const job = yield* jobs.start({
+        type: "shell",
+        metadata: { sessionID: "ses_owner", outputBytes: 0 },
+        run: Deferred.await(release).pipe(Effect.as("complete output")),
+      })
+
+      expect(
+        yield* jobs.update({
+          id: job.id,
+          output: "latest tail",
+          metadata: { outputBytes: 11, lastOutputAt: 123 },
+        }),
+      ).toMatchObject({
+        status: "running",
+        output: "latest tail",
+        metadata: { sessionID: "ses_owner", outputBytes: 11, lastOutputAt: 123 },
+      })
+
+      yield* Deferred.succeed(release, undefined)
+      const completed = (yield* jobs.wait({ id: job.id })).info!
+      expect(completed).toMatchObject({ status: "completed", output: "complete output" })
+      expect(yield* jobs.update({ id: job.id, output: "late output" })).toEqual(completed)
+      expect((yield* jobs.get(job.id))?.output).toBe("complete output")
+      expect(yield* jobs.update({ id: "missing-job", output: "ignored" })).toBeUndefined()
+    }).pipe(Effect.provide(jobsLayer)),
+  )
+
   it.live("does not publish promotion before the serialized callback completes", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service

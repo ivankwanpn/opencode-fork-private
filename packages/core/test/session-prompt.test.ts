@@ -796,15 +796,21 @@ describe("SessionV2.prompt", () => {
         text: "<task_result>complete</task_result>",
         description: "Background task completed: inspect flow",
         delivery: "steer" as const,
+        scope: "session" as const,
       }
 
       const first = yield* commands.admitSynthetic(input)
+      expect(first.synthetic?.scope).toBe("session")
       expect(yield* commands.admitSynthetic(input)).toEqual(first)
       expect(
         yield* commands
           .admitSynthetic({ ...input, description: "Background task failed: inspect flow" })
           .pipe(Effect.flip),
       ).toMatchObject({ _tag: "Session.PromptConflictError", messageID: id })
+      expect(yield* commands.admitSynthetic({ ...input, scope: "turn" }).pipe(Effect.flip)).toMatchObject({
+        _tag: "Session.PromptConflictError",
+        messageID: id,
+      })
       expect(
         yield* session
           .prompt({ id, sessionID, prompt: Prompt.make({ text: input.text }), resume: false })

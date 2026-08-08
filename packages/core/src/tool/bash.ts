@@ -2,24 +2,34 @@ export * as BashTool from "./bash"
 
 import path from "path"
 import { ToolFailure } from "@opencode-ai/llm"
-import { Duration, Effect, Layer, Schema } from "effect"
+import { Cause, Clock, Duration, Effect, Exit, Layer, Ref, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
+import { BackgroundJob } from "../background-job"
 import { Config } from "../config"
+import { Database } from "../database/database"
 import { makeLocationNode } from "../effect/app-node"
+import { EventV2 } from "../event"
 import { FSUtil } from "../fs-util"
+import { Identifier } from "../id/id"
 import { LocationMutation } from "../location-mutation"
 import { AppProcess } from "../process"
 import { PermissionV2 } from "../permission"
 import { PositiveInt } from "../schema"
+import { SessionCommand } from "../session/command"
+import { SessionExecution } from "../session/execution"
+import { SessionInput } from "../session/input"
+import { SessionMessage } from "../session/message"
 import { Shell } from "../shell"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
 export const name = "bash"
-export const DEFAULT_TIMEOUT_MS = 2 * 60 * 1_000
+export const DEFAULT_TIMEOUT_MS = 3 * 60 * 1_000
 export const MAX_TIMEOUT_MS = 10 * 60 * 1_000
 export const MAX_CAPTURE_BYTES = 1024 * 1024
+export const MAX_PROGRESS_BYTES = 32 * 1024
+export const MAX_RUNNING_PER_SESSION = 10
 
 export const Input = Schema.Struct({
   command: Schema.String.annotate({ description: "Shell command string to execute" }),
@@ -29,14 +39,19 @@ export const Input = Schema.Struct({
   timeout: PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_TIMEOUT_MS))
     .pipe(Schema.optional)
     .annotate({
-      description: `Timeout in milliseconds. Defaults to ${DEFAULT_TIMEOUT_MS} and may not exceed ${MAX_TIMEOUT_MS}.`,
+      description: `Foreground wait in milliseconds. Defaults to ${DEFAULT_TIMEOUT_MS} and may not exceed ${MAX_TIMEOUT_MS}; a command still running afterward continues as a background task.`,
     }),
+  run_in_background: Schema.Boolean.pipe(Schema.optional).annotate({
+    description: "Start the command as a background task and return its task ID immediately",
+  }),
 })
 
 const StructuredOutput = Schema.Struct({
   exit: Schema.Number.pipe(Schema.optional),
   truncated: Schema.Boolean,
-  timeout: Schema.Boolean.pipe(Schema.optional),
+  task_id: Schema.String.pipe(Schema.optional),
+  status: Schema.Literals(["running", "completed"]).pipe(Schema.optional),
+  background_reason: Schema.Literals(["requested", "timeout", "steer"]).pipe(Schema.optional),
 })
 
 const Output = Schema.Struct({
@@ -51,12 +66,11 @@ const modelOutput = (output: Output) => {
   const warnings = output.warnings?.length
     ? `\n\nWarnings:\n${output.warnings.map((warning) => `- ${warning}`).join("\n")}`
     : ""
-  if (output.timeout) return `${warnings.trimStart()}${warnings ? "\n\n" : ""}Command timed out before completion.`
+  if (output.task_id)
+    return `${warnings.trimStart()}${warnings ? "\n\n" : ""}Command is running in the background with task ID ${output.task_id}. Use get_task_output to inspect it or stop_task to stop it.`
+  if (output.exit === undefined) return `${warnings.trimStart()}${warnings ? "\n\n" : ""}Command completed.`
   return `${warnings.trimStart()}${warnings ? "\n\n" : ""}Command exited with code ${output.exit}.`
 }
-
-const isTimeout = (error: AppProcess.AppProcessError) =>
-  error.cause instanceof Error && error.cause.message === "Timed out"
 
 const processCommand = (shell: string, input: string, cwd: string) => {
   if (process.platform === "win32" && Shell.ps(shell))
@@ -76,16 +90,15 @@ const processCommand = (shell: string, input: string, cwd: string) => {
 }
 
 /**
- * Minimal V2 core shell boundary. Keep parity debt visible without pulling the
- * legacy shell runtime into core.
+ * V2 shell boundary. A process-local owner keeps execution independent from
+ * the foreground tool waiter so user steering can release the agent without
+ * terminating the command.
  */
 // TODO: Port tree-sitter bash / PowerShell parser-based approval reduction.
 // TODO: Port BashArity reusable command-prefix approvals.
 // TODO: Replace token-based command-argument path detection with parser-based detection.
 // TODO: Add plugin shell.env environment augmentation once V2 plugin hooks exist.
-// TODO: Add durable/live progress metadata streaming for long-running commands once V2 tool invocation progress context is wired.
-// TODO: Persist background job status and define restart recovery before exposing remote observation.
-// TODO: Re-add model-facing background launch only with owner-bound get/wait/cancel tools and completion delivery.
+// TODO: Persist shell task status and output manifests if cross-restart process adoption is implemented.
 // TODO: Add HTTP background-job observation only after durable status, restart recovery, and authorization are defined.
 // TODO: Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.
 // TODO: Revisit binary output handling if stdout/stderr decoding is text-only.
@@ -110,26 +123,60 @@ const externalCommandDirectories = Effect.fn("BashTool.externalCommandDirectorie
   return [...directories]
 })
 
+const foregroundOutput = (info: BackgroundJob.Info) => {
+  if (info.status === "error")
+    return Effect.fail(new ToolFailure({ message: info.error ?? "Shell command failed without an error detail" }))
+  if (info.status === "cancelled")
+    return Effect.fail(new ToolFailure({ message: "Shell command was stopped before completion" }))
+  if (info.status !== "completed")
+    return Effect.fail(new ToolFailure({ message: `Shell command has unexpected status: ${info.status}` }))
+  return Effect.succeed({
+    ...(typeof info.metadata?.exit === "number" ? { exit: info.metadata.exit } : {}),
+    output: info.output ?? "(no output)",
+    truncated: info.metadata?.truncated === true,
+  } satisfies Output)
+}
+
+const backgroundOutput = (
+  info: BackgroundJob.Info,
+  reason: "requested" | "timeout" | "steer",
+): Output => ({
+  task_id: info.id,
+  status: "running",
+  background_reason: reason,
+  output: info.output ?? "(no output yet)",
+  truncated: false,
+})
+
+const escapeXml = (value: string) =>
+  value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const tools = yield* Tools.Service
     const mutation = yield* LocationMutation.Service
     const fs = yield* FSUtil.Service
     const appProcess = yield* AppProcess.Service
+    const jobs = yield* BackgroundJob.Service
+    const { db } = yield* Database.Service
+    const events = yield* EventV2.Service
+    const commands = yield* SessionCommand.Service
     const config = yield* Config.Service
     const permission = yield* PermissionV2.Service
 
     yield* tools
       .register({
         [name]: Tool.make({
-          description: `Execute one shell command string with the host user's filesystem, process, and network authority. The active Location is the default working directory. Relative workdir values resolve from that Location. External workdir and command-argument paths require external_directory approval. Timeout values are milliseconds (default: ${DEFAULT_TIMEOUT_MS}; maximum: ${MAX_TIMEOUT_MS}). Uses the configured shell when set and the same host-shell selection as the official runtime otherwise. On Windows, configured bash resolves to Git Bash instead of WSL bash; use Windows drive paths such as D:/path with Git Bash and native paths with PowerShell or cmd.`,
+          description: `Execute one shell command string with the host user's filesystem, process, and network authority. The active Location is the default working directory. Relative workdir values resolve from that Location. External workdir and command-argument paths require external_directory approval. Commands return normally when they finish; after ${DEFAULT_TIMEOUT_MS} ms in the foreground they continue as owned background tasks instead of being killed. Set run_in_background to return a task ID immediately. Use get_task_output for status and recent output, and stop_task for explicit cancellation. A new user steer also transfers a still-running command to the background so the agent can respond without terminating it. Uses the configured shell when set and the same host-shell selection as the official runtime otherwise. On Windows, configured bash resolves to Git Bash instead of WSL bash; use Windows drive paths such as D:/path with Git Bash and native paths with PowerShell or cmd.`,
           input: Input,
           output: Output,
           structured: StructuredOutput,
           toStructuredOutput: ({ output }) => ({
             truncated: output.truncated,
             ...(output.exit === undefined ? {} : { exit: output.exit }),
-            ...(output.timeout === undefined ? {} : { timeout: output.timeout }),
+            ...(output.task_id === undefined ? {} : { task_id: output.task_id }),
+            ...(output.status === undefined ? {} : { status: output.status }),
+            ...(output.background_reason === undefined ? {} : { background_reason: output.background_reason }),
           }),
           toModelOutput: ({ output }) => [
             { type: "text", text: output.output },
@@ -176,36 +223,149 @@ const layer = Layer.effectDiscard(
               if ((yield* fs.stat(target.canonical)).type !== "Directory")
                 return yield* Effect.fail(new Error(`Working directory is not a directory: ${target.canonical}`))
 
+              const running = (yield* jobs.list()).filter(
+                (job) =>
+                  job.type === "shell" &&
+                  job.status === "running" &&
+                  job.metadata?.sessionID === context.sessionID,
+              )
+              if (running.length >= MAX_RUNNING_PER_SESSION)
+                return yield* new ToolFailure({
+                  message: `Shell task limit reached (${MAX_RUNNING_PER_SESSION}); inspect or stop an existing task first`,
+                })
+
               const shell = Shell.acceptable(Config.latest(yield* config.entries(), "shell"))
               const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS
-              const result = yield* appProcess
+              const taskID = Identifier.ascending("job")
+              const progress = yield* Ref.make({ tail: Buffer.alloc(0), bytes: 0, lastOutputAt: undefined as number | undefined })
+              const execution = yield* SessionExecution.Current
+              const onOutput = (chunk: Uint8Array) =>
+                Effect.gen(function* () {
+                  const now = yield* Clock.currentTimeMillis
+                  const next = yield* Ref.modify(progress, (current) => {
+                    const combined = Buffer.concat([current.tail, Buffer.from(chunk)])
+                    const value = {
+                      tail: combined.length > MAX_PROGRESS_BYTES ? combined.subarray(combined.length - MAX_PROGRESS_BYTES) : combined,
+                      bytes: current.bytes + chunk.length,
+                      lastOutputAt: now,
+                    }
+                    return [value, value]
+                  })
+                  yield* jobs.update({
+                    id: taskID,
+                    output: next.tail.toString("utf8"),
+                    metadata: { outputBytes: next.bytes, lastOutputAt: next.lastOutputAt },
+                  })
+                })
+              const notify = (exit: Exit.Exit<string, AppProcess.AppProcessError>) =>
+                Effect.gen(function* () {
+                  const info = yield* jobs.get(taskID)
+                  if (info?.metadata?.background !== true || info.metadata.suppressNotification === true) return
+                  const current = yield* Ref.get(progress)
+                  const state = Exit.isSuccess(exit)
+                    ? "completed"
+                    : Cause.hasInterruptsOnly(exit.cause)
+                      ? "cancelled"
+                      : "error"
+                  const detail = Exit.isSuccess(exit)
+                    ? current.tail.toString("utf8") || "(no output)"
+                    : String(Cause.squash(exit.cause))
+                  yield* commands
+                    .admitSynthetic({
+                      id: SessionMessage.ID.make(`msg_shell_${taskID.slice(4)}`),
+                      sessionID: context.sessionID,
+                      text: [
+                        `<task id="${taskID}" state="${state}">`,
+                        `<summary>${escapeXml(input.command)}</summary>`,
+                        state === "completed" ? "<task_result>" : "<task_error>",
+                        detail,
+                        state === "completed" ? "</task_result>" : "</task_error>",
+                        "</task>",
+                      ].join("\n"),
+                      description: `Background shell ${state}: ${input.command}`,
+                      delivery: "steer",
+                      scope: "session",
+                    })
+                    .pipe(Effect.ignore)
+                  if (execution) yield* execution.wake(context.sessionID).pipe(Effect.ignore)
+                })
+              const run = appProcess
                 .run(processCommand(shell, input.command, target.canonical), {
                   combineOutput: true,
-                  timeout: Duration.millis(timeout),
+                  onOutput,
                 })
                 .pipe(
-                  Effect.catchTag("AppProcessError", (error) =>
-                    isTimeout(error) ? Effect.succeed(undefined) : Effect.fail(error),
-                  ),
+                  Effect.flatMap((result) => {
+                    const output = result.output?.toString("utf8") || "(no output)"
+                    const notice = result.outputTruncated
+                      ? "[output capture truncated at the in-memory safety limit]"
+                      : undefined
+                    return jobs
+                      .update({
+                        id: taskID,
+                        metadata: {
+                          exit: result.exitCode,
+                          truncated: result.outputTruncated === true,
+                        },
+                      })
+                      .pipe(Effect.as(notice ? `${output}\n\n${notice}` : output))
+                  }),
+                  Effect.onExit(notify),
                 )
-              if (!result) {
-                return {
-                  output: `Command exceeded timeout of ${timeout} ms. Retry with a larger timeout if the command is expected to take longer.`,
-                  truncated: false,
-                  timeout: true,
-                }
-              }
+              const background = Effect.fn("BashTool.background")(function* (
+                reason: "requested" | "timeout" | "steer",
+              ) {
+                yield* jobs.update({ id: taskID, metadata: { backgroundReason: reason } })
+                const promoted = yield* jobs.promote(taskID)
+                if (promoted) return backgroundOutput(promoted, reason)
+                const current = yield* jobs.get(taskID)
+                if (!current) return yield* new ToolFailure({ message: "Shell task disappeared before settlement" })
+                return yield* foregroundOutput(current)
+              })
 
-              const output = result.output?.toString("utf8") || "(no output)"
-              const notice = result.outputTruncated
-                ? "[output capture truncated at the in-memory safety limit]"
-                : undefined
-              return {
-                exit: result.exitCode,
-                output: notice ? `${output}\n\n${notice}` : output,
-                truncated: result.outputTruncated === true,
-              }
-            }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to execute command: ${input.command}` }))),
+              return yield* Effect.uninterruptibleMask((restore) =>
+                Effect.gen(function* () {
+                  yield* jobs.start({
+                    id: taskID,
+                    type: "shell",
+                    title: input.command,
+                    metadata: {
+                      sessionID: context.sessionID,
+                      agent: context.agent,
+                      command: input.command,
+                      workdir: target.canonical,
+                      outputBytes: 0,
+                    },
+                    run,
+                  })
+                  if (input.run_in_background === true) return yield* background("requested")
+
+                  const observation = yield* restore(
+                    Effect.raceFirst(
+                      jobs.wait({ id: taskID, timeout }).pipe(
+                        Effect.map((result) => ({ type: "job" as const, result })),
+                      ),
+                      SessionInput.waitForPending(db, events, {
+                        sessionID: context.sessionID,
+                        delivery: "steer",
+                        includeSynthetic: false,
+                      }).pipe(Effect.as({ type: "steer" as const })),
+                    ),
+                  ).pipe(Effect.onInterrupt(() => jobs.cancel(taskID).pipe(Effect.asVoid)))
+                  if (observation.type === "steer") return yield* background("steer")
+                  if (observation.result.timedOut) return yield* background("timeout")
+                  if (!observation.result.info)
+                    return yield* new ToolFailure({ message: "Shell task disappeared before settlement" })
+                  return yield* foregroundOutput(observation.result.info)
+                }),
+              )
+            }).pipe(
+              Effect.mapError((error) =>
+                error instanceof ToolFailure
+                  ? error
+                  : new ToolFailure({ message: `Unable to execute command: ${input.command}` }),
+              ),
+            ),
         }),
       })
       .pipe(Effect.orDie)
@@ -215,5 +375,16 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/bash",
   layer,
-  deps: [ToolRegistry.node, LocationMutation.node, FSUtil.node, AppProcess.node, Config.node, PermissionV2.node],
+  deps: [
+    ToolRegistry.node,
+    LocationMutation.node,
+    FSUtil.node,
+    AppProcess.node,
+    BackgroundJob.node,
+    Database.node,
+    EventV2.node,
+    SessionCommand.node,
+    Config.node,
+    PermissionV2.node,
+  ],
 })

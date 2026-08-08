@@ -85,7 +85,7 @@ type Config<
 }
 
 type Runtime = {
-  readonly permission?: string
+  readonly permissions?: ReadonlyArray<string>
   readonly definition: (name: string, permissions: PermissionV2.Ruleset) => ToolDefinition | undefined
   readonly settle: (call: ToolCall, context: Context) => Effect.Effect<ToolOutput, ExecutionError>
 }
@@ -169,11 +169,20 @@ export const withPermission = <Input extends SchemaType<any>, Output extends Sch
   permission: string,
 ) => {
   const decorated = Object.freeze({}) as Definition<Input, Output>
-  runtimes.set(decorated, { ...runtimeOf(tool), permission })
+  runtimes.set(decorated, { ...runtimeOf(tool), permissions: [permission] })
   return decorated
 }
 
-export const permission = (tool: AnyTool, name: string) => runtimeOf(tool).permission ?? name
+export const withPermissions = <Input extends SchemaType<any>, Output extends SchemaType<any>>(
+  tool: Definition<Input, Output>,
+  permissions: readonly [string, ...string[]],
+) => {
+  const decorated = Object.freeze({}) as Definition<Input, Output>
+  runtimes.set(decorated, { ...runtimeOf(tool), permissions: [...new Set(permissions)] })
+  return decorated
+}
+
+export const catalogPermissions = (tool: AnyTool, name: string) => runtimeOf(tool).permissions ?? [name]
 export const definition = (name: string, tool: AnyTool, permissions: PermissionV2.Ruleset = []) =>
   runtimeOf(tool).definition(name, permissions)
 export const settle = (tool: AnyTool, call: ToolCall, context: Context) => runtimeOf(tool).settle(call, context)

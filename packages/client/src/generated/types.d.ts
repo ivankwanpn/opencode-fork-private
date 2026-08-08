@@ -1345,6 +1345,7 @@ export type SessionsPromptOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -1449,6 +1450,7 @@ export type SessionsInputListOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -1538,6 +1540,7 @@ export type SessionsInputGetOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -1627,6 +1630,7 @@ export type SessionsInputPromoteOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -2157,6 +2161,7 @@ export type SessionsCommandOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -3305,6 +3310,7 @@ export type SessionsHistoryOutput = {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "turn" | "session";
             };
             readonly delivery: "steer" | "queue";
             readonly intent?: {
@@ -3395,6 +3401,7 @@ export type SessionsHistoryOutput = {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "turn" | "session";
             };
             readonly delivery: "steer" | "queue";
             readonly intent?: {
@@ -4814,6 +4821,7 @@ export type SessionsEventsOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {
@@ -4904,6 +4912,7 @@ export type SessionsEventsOutput = {
         };
         readonly synthetic?: {
             readonly description: string;
+            readonly scope?: "turn" | "session";
         };
         readonly delivery: "steer" | "queue";
         readonly intent?: {

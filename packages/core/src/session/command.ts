@@ -80,6 +80,7 @@ export interface Interface {
     text: string
     description: string
     delivery?: SessionInput.Delivery
+    scope?: SessionInput.SyntheticScope
   }) => Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | Cancelled>
   readonly switchAgent: (input: { sessionID: SessionSchema.ID; agent: string }) => Effect.Effect<void, NotFoundError>
   readonly switchModel: (input: {
@@ -155,7 +156,7 @@ const layer = Layer.effect(
           const messageID = input.id ?? SessionMessage.ID.create()
           const prompt = Prompt.make({ text: input.text })
           const delivery = input.delivery ?? "steer"
-          const synthetic = SessionInput.Synthetic.make({ description: input.description })
+          const synthetic = SessionInput.Synthetic.make({ description: input.description, scope: input.scope ?? "turn" })
           const expected = { sessionID: input.sessionID, prompt, synthetic, delivery }
           const existing = yield* SessionInput.find(db, messageID)
           if (existing) {

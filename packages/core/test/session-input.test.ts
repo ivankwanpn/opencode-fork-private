@@ -21,6 +21,7 @@ import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionInputTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionStore } from "@opencode-ai/core/session/store"
+import { SessionTurn } from "@opencode-ai/core/session/turn"
 import { testEffect } from "./lib/effect"
 import { pluginLocationMap } from "./lib/location-service-map"
 
@@ -160,6 +161,84 @@ describe("SessionInput", () => {
       })
       expect(typeof row?.time).toBe("number")
       expect(row?.seq).toBe(cancelledSeq)
+    }),
+  )
+
+  inputIt.effect("settles only steering admitted before an interruption cutoff and preserves queued input", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const turnID = SessionMessage.ID.make("msg_interruption_cutoff_turn")
+      yield* SessionInput.admit(db, events, {
+        id: turnID,
+        sessionID,
+        prompt: Prompt.make({ text: "Start work" }),
+        delivery: "steer",
+        intent: { type: "start" },
+      })
+      yield* SessionInput.promote(db, events, sessionID, turnID)
+      yield* SessionTurn.start(events, { sessionID, turnID })
+      const before = yield* SessionInput.admit(db, events, {
+        id: SessionMessage.ID.make("msg_steer_before_stop"),
+        sessionID,
+        prompt: Prompt.make({ text: "Before stop" }),
+        delivery: "steer",
+        intent: { type: "steer", expectedTurnID: turnID },
+      })
+      const queued = yield* SessionInput.admit(db, events, {
+        id: SessionMessage.ID.make("msg_queue_during_stop"),
+        sessionID,
+        prompt: Prompt.make({ text: "Run later" }),
+        delivery: "queue",
+        intent: { type: "queue" },
+      })
+      const mailbox = yield* SessionInput.admit(db, events, {
+        id: SessionMessage.ID.make("msg_mailbox_during_stop"),
+        sessionID,
+        prompt: Prompt.make({ text: "Background task completed" }),
+        synthetic: { description: "Background task completed", scope: "session" },
+        delivery: "steer",
+      })
+      const after = yield* SessionInput.admit(db, events, {
+        id: SessionMessage.ID.make("msg_steer_after_stop"),
+        sessionID,
+        prompt: Prompt.make({ text: "After stop" }),
+        delivery: "steer",
+        intent: { type: "steer", expectedTurnID: turnID },
+      })
+
+      expect(
+        yield* SessionTurn.settleInterrupted(db, events, {
+          sessionID,
+          turnID,
+          cutoff: before.admittedSeq,
+        }),
+      ).toBe("pending")
+      expect(
+        yield* db
+          .select({ outcome: SessionInputTable.terminal_outcome })
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.id, before.id))
+          .get()
+          .pipe(Effect.orDie),
+      ).toEqual({ outcome: "cancelled" })
+      expect((yield* SessionInput.pending(db, sessionID)).map((input) => input.id)).toEqual([
+        queued.id,
+        mailbox.id,
+        after.id,
+      ])
+      expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ status: "active", turn_id: turnID })
+
+      expect(
+        yield* SessionTurn.settleInterrupted(db, events, {
+          sessionID,
+          turnID,
+          cutoff: after.admittedSeq,
+        }),
+      ).toBe("restart")
+      expect((yield* SessionInput.pending(db, sessionID)).map((input) => input.id)).toEqual([queued.id, mailbox.id])
+      expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ status: "ended", turn_id: turnID })
     }),
   )
 

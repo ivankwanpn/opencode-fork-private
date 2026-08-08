@@ -14,6 +14,7 @@ import { PlanExitTool } from "./plan-exit"
 import { QuestionTool } from "./question"
 import { ReadTool } from "./read"
 import { SkillTool } from "./skill"
+import { StopTaskTool } from "./stop-task"
 import { TaskTool } from "./task"
 import { TodoWriteTool } from "./todowrite"
 import { WebFetchTool } from "./webfetch"
@@ -47,6 +48,7 @@ export const node = makeLocationNode({
     QuestionTool.node,
     ReadTool.node,
     SkillTool.node,
+    StopTaskTool.node,
     TaskTool.node,
     GetTaskOutputTool.node,
     TodoWriteTool.node,

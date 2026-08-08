@@ -18,6 +18,8 @@ export interface Coordinator<Key, E> {
   readonly wait: (key: Key) => Effect.Effect<void>
   /** Stops active execution and waits for its cleanup. */
   readonly interrupt: (key: Key) => Effect.Effect<void>
+  /** Stops active execution and reports whether this coordinator owned it. */
+  readonly interruptOwned: (key: Key) => Effect.Effect<boolean>
 }
 
 type Entry<E> = {
@@ -140,14 +142,15 @@ export const make = <Key, E>(options: {
         )
       })
 
-    const interrupt = (key: Key): Effect.Effect<void> =>
+    const interruptOwned = (key: Key): Effect.Effect<boolean> =>
       Effect.suspend(() => {
         const entry = active.get(key)
-        if (entry?.owner === undefined) return Effect.void
+        if (entry?.owner === undefined) return Effect.succeed(false)
         entry.stopping = true
         entry.pendingWake = false
-        return Fiber.interrupt(entry.owner)
+        return Fiber.interrupt(entry.owner).pipe(Effect.as(true))
       })
+    const interrupt = (key: Key) => interruptOwned(key).pipe(Effect.asVoid)
 
-    return { active: Effect.sync(() => new Set(active.keys())), run, exclusive, wake, wait, interrupt }
+    return { active: Effect.sync(() => new Set(active.keys())), run, exclusive, wake, wait, interrupt, interruptOwned }
   })

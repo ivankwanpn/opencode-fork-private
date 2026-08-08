@@ -15,7 +15,7 @@ import { Wildcard } from "../util/wildcard"
 import { ApplicationTools } from "./application-tools"
 import {
   definition,
-  permission,
+  catalogPermissions,
   settle,
   validateName,
   type AnyTool,
@@ -210,7 +210,7 @@ const registryLayer = Layer.effect(
         for (const [name, registration] of registrations) {
           if (overrides[name] === false) continue
           if (context && !visible(name, context)) continue
-          if (whollyDisabled(permission(registration.tool, name), permissions)) continue
+          if (whollyDisabled(catalogPermissions(registration.tool, name), permissions)) continue
           const current = definition(name, registration.tool, permissions)
           if (!current) continue
           const taskAgentTypes =
@@ -280,9 +280,11 @@ const layer = Layer.effect(
   Service.use((registry) => Effect.succeed(Tools.Service.of({ register: registry.register }))),
 ).pipe(Layer.provideMerge(registryLayer))
 
-function whollyDisabled(action: string, rules: PermissionV2.Ruleset) {
-  const rule = rules.findLast((rule) => Wildcard.match(action, rule.action))
-  return rule?.resource === "*" && rule.effect === "deny"
+function whollyDisabled(actions: ReadonlyArray<string>, rules: PermissionV2.Ruleset) {
+  return actions.every((action) => {
+    const rule = rules.findLast((rule) => Wildcard.match(action, rule.action))
+    return rule?.resource === "*" && rule.effect === "deny"
+  })
 }
 
 export function visible(name: string, context: MaterializationContext) {

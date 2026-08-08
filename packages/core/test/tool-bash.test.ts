@@ -2,18 +2,27 @@ import fs from "fs/promises"
 import { realpathSync } from "node:fs"
 import path from "path"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer, Scope } from "effect"
 import { ChildProcess } from "effect/unstable/process"
+import { BackgroundJob } from "@opencode-ai/core/background-job"
+import { Database } from "@opencode-ai/core/database/database"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Config } from "@opencode-ai/core/config"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { LocationMutation } from "@opencode-ai/core/location-mutation"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AppProcess } from "@opencode-ai/core/process"
+import { Project } from "@opencode-ai/core/project"
+import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionInput } from "@opencode-ai/core/session/input"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { Prompt } from "@opencode-ai/core/session/prompt"
+import { SessionTable } from "@opencode-ai/core/session/sql"
 import { Shell } from "@opencode-ai/core/shell"
 import { BashTool } from "@opencode-ai/core/tool/bash"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
@@ -44,6 +53,12 @@ let result: AppProcess.RunResult = {
   stderrTruncated: false,
 }
 let runFailure: AppProcess.AppProcessError | undefined
+let runHandler:
+  | ((
+      command: ChildProcess.Command,
+      options?: AppProcess.RunOptions,
+    ) => Effect.Effect<AppProcess.RunResult, AppProcess.AppProcessError>)
+  | undefined
 let afterPermission = (_input: PermissionV2.AssertInput): Effect.Effect<void> => Effect.void
 
 const permission = Layer.succeed(
@@ -70,6 +85,7 @@ const appProcess = Layer.succeed(
       Effect.suspend(() => {
         if (command._tag !== "StandardCommand") throw new Error("expected standard command")
         runs.push({ command: command.command, cwd: command.options.cwd, shell: command.options.shell, options })
+        if (runHandler) return runHandler(command, options)
         return runFailure ? Effect.fail(runFailure) : Effect.succeed(result)
       }),
   } as unknown as AppProcess.Interface),
@@ -92,6 +108,7 @@ const reset = () => {
   denyAction = undefined
   configuredShell = undefined
   runFailure = undefined
+  runHandler = undefined
   afterPermission = () => Effect.void
   result = {
     command: "mock",
@@ -105,9 +122,14 @@ const reset = () => {
   }
 }
 
-const withTool = <A, E, R>(
+const withTool = <A, E>(
   directory: string,
-  body: (registry: ToolRegistry.Interface) => Effect.Effect<A, E, R>,
+  body: (
+    registry: ToolRegistry.Interface,
+    jobs: BackgroundJob.Interface,
+    database: Database.Interface,
+    events: EventV2.Interface,
+  ) => Effect.Effect<A, E, Scope.Scope>,
   processLayer: Layer.Layer<AppProcess.Service> = appProcess,
 ) => {
   const activeLocation = Layer.succeed(
@@ -115,11 +137,24 @@ const withTool = <A, E, R>(
     Location.Service.of(location({ directory: AbsolutePath.make(directory) })),
   )
   return Effect.gen(function* () {
-    return yield* body(yield* ToolRegistry.Service)
+    return yield* body(
+      yield* ToolRegistry.Service,
+      yield* BackgroundJob.Service,
+      yield* Database.Service,
+      yield* EventV2.Service,
+    )
   }).pipe(
     Effect.provide(
       AppNodeBuilder.build(
-        LayerNode.group([ToolRegistry.node, ToolRegistry.toolsNode, LocationMutation.node, BashTool.node]),
+        LayerNode.group([
+          Database.node,
+          EventV2.node,
+          BackgroundJob.node,
+          ToolRegistry.node,
+          ToolRegistry.toolsNode,
+          LocationMutation.node,
+          BashTool.node,
+        ]),
         [
           [Location.node, activeLocation],
           [PermissionV2.node, permission],
@@ -140,6 +175,29 @@ const call = (input: typeof BashTool.Input.Type, id = "call-bash") => ({
 
 const it = testEffect(Layer.empty)
 
+const setupSession = (db: Database.Interface["db"], directory: string) =>
+  Effect.gen(function* () {
+    yield* db
+      .insert(ProjectTable)
+      .values({ id: Project.ID.global, worktree: AbsolutePath.make(directory), sandboxes: [] })
+      .onConflictDoNothing()
+      .run()
+      .pipe(Effect.orDie)
+    yield* db
+      .insert(SessionTable)
+      .values({
+        id: sessionID,
+        project_id: Project.ID.global,
+        slug: "bash-tool-test",
+        directory,
+        title: "bash tool test",
+        version: "test",
+      })
+      .onConflictDoNothing()
+      .run()
+      .pipe(Effect.orDie)
+  })
+
 describe("BashTool", () => {
   it.live("registers and returns structured successful output from the active Location", () =>
     Effect.acquireUseRelease(
@@ -151,6 +209,7 @@ describe("BashTool", () => {
             const definitions = yield* toolDefinitions(registry)
             expect(definitions.map((tool) => tool.name)).toEqual(["bash"])
             expect(definitions[0]?.inputSchema).not.toHaveProperty("properties.background")
+            expect(definitions[0]?.inputSchema).toHaveProperty("properties.run_in_background")
             expect(definitions[0]?.inputSchema).not.toHaveProperty("properties.description")
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.output")
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.command")
@@ -444,25 +503,120 @@ describe("BashTool", () => {
     ),
   )
 
-  it.live("returns a useful timeout settlement", () =>
+  it.live("transfers a timed-out foreground command to the background without interrupting it", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
       (tmp) => {
         reset()
-        runFailure = new AppProcess.AppProcessError({ command: "sleep", cause: new Error("Timed out") })
-        return withTool(tmp.path, (registry) => settleTool(registry, call({ command: "sleep 60", timeout: 10 }))).pipe(
-          Effect.andThen((settled) =>
-            Effect.sync(() => {
-              expect(settled.output?.content[1]).toMatchObject({
-                type: "text",
-                text: expect.stringContaining("Command timed out"),
-              })
-              expect(settled.output?.structured).toMatchObject({
-                timeout: true,
-                truncated: false,
-              })
-            }),
-          ),
+        return withTool(tmp.path, (registry, jobs) =>
+          Effect.gen(function* () {
+            const interrupted = yield* Deferred.make<void>()
+            runHandler = () => Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)))
+            const settled = yield* settleTool(registry, call({ command: "long build", timeout: 10 }))
+            const structured = settled.output?.structured as Record<string, unknown>
+            const taskID = String(structured.task_id)
+
+            expect(structured).toMatchObject({
+              status: "running",
+              background_reason: "timeout",
+              truncated: false,
+            })
+            expect(settled.output?.content[1]).toMatchObject({
+              type: "text",
+              text: expect.stringContaining(`task ID ${taskID}`),
+            })
+            expect((yield* jobs.get(taskID))?.status).toBe("running")
+            expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
+
+            yield* jobs.cancel(taskID)
+            yield* Deferred.await(interrupted)
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("returns live output for an explicitly backgrounded command", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry, jobs) =>
+          Effect.gen(function* () {
+            const outputReported = yield* Deferred.make<void>()
+            const release = yield* Deferred.make<void>()
+            runHandler = (_command, options) =>
+              (options?.onOutput?.(Buffer.from("build step 1\n")) ?? Effect.void).pipe(
+                Effect.andThen(Deferred.succeed(outputReported, undefined)),
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(result),
+              )
+            const settled = yield* settleTool(
+              registry,
+              call({ command: "long build", run_in_background: true }, "call-explicit-background"),
+            )
+            const taskID = String((settled.output?.structured as Record<string, unknown>).task_id)
+            yield* Deferred.await(outputReported)
+
+            expect(yield* jobs.get(taskID)).toMatchObject({
+              status: "running",
+              output: "build step 1\n",
+              metadata: { outputBytes: 13, background: true, backgroundReason: "requested" },
+            })
+            yield* Deferred.succeed(release, undefined)
+            expect((yield* jobs.wait({ id: taskID })).outcome).toBe("completed")
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("backgrounds on user steering and later admits one session-scoped completion", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry, jobs, database, events) =>
+          Effect.gen(function* () {
+            yield* setupSession(database.db, tmp.path)
+            const started = yield* Deferred.make<void>()
+            const release = yield* Deferred.make<void>()
+            const interrupted = yield* Deferred.make<void>()
+            runHandler = () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(result),
+                Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+              )
+            const running = yield* settleTool(registry, call({ command: "watch build" }, "call-steered-background")).pipe(
+              Effect.forkScoped,
+            )
+            yield* Deferred.await(started)
+            yield* SessionInput.admit(database.db, events, {
+              id: SessionMessage.ID.make("msg_bash_user_steer"),
+              sessionID,
+              prompt: Prompt.make({ text: "Inspect the command instead" }),
+              delivery: "steer",
+            })
+
+            const settled = yield* Fiber.join(running)
+            const structured = settled.output?.structured as Record<string, unknown>
+            const taskID = String(structured.task_id)
+            expect(structured.background_reason).toBe("steer")
+            expect((yield* jobs.get(taskID))?.status).toBe("running")
+            expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
+
+            yield* Deferred.succeed(release, undefined)
+            expect((yield* jobs.wait({ id: taskID })).outcome).toBe("completed")
+            const pending = yield* SessionInput.pending(database.db, sessionID)
+            const completion = pending.find((input) => input.id === SessionMessage.ID.make(`msg_shell_${taskID.slice(4)}`))
+            expect(completion).toMatchObject({
+              synthetic: { scope: "session" },
+              delivery: "steer",
+            })
+          }),
         )
       },
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
@@ -470,15 +624,14 @@ describe("BashTool", () => {
   )
 })
 
-test("keeps locked deferred parity TODOs visible", async () => {
+test("keeps remaining deferred parity TODOs visible", async () => {
   const source = await fs.readFile(new URL("../src/tool/bash.ts", import.meta.url), "utf8")
   for (const todo of [
     "Port tree-sitter bash / PowerShell parser-based approval reduction.",
     "Port BashArity reusable command-prefix approvals.",
     "Replace token-based command-argument path detection with parser-based detection.",
     "Add plugin shell.env environment augmentation once V2 plugin hooks exist.",
-    "Add durable/live progress metadata streaming for long-running commands once V2 tool invocation progress context is wired.",
-    "Persist background job status and define restart recovery before exposing remote observation.",
+    "Persist shell task status and output manifests if cross-restart process adoption is implemented.",
     "Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.",
     "Revisit binary output handling if stdout/stderr decoding is text-only.",
   ]) {

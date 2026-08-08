@@ -1,12 +1,13 @@
 export * as SessionTurn from "./turn"
 
-import { and, eq, inArray, isNull } from "drizzle-orm"
+import { eq, inArray } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
 import { EventV2 } from "../event"
 import { SessionEvent } from "./event"
+import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionInputTable, SessionTurnTable, type SessionTurnStatus } from "./sql"
+import { SessionTurnTable, type SessionTurnStatus } from "./sql"
 import type { Database } from "../database/database"
 
 type DB = Database.Interface["db"]
@@ -116,20 +117,7 @@ export const projectEnded = Effect.fn("SessionTurn.projectEnded")(function* (
         expectedTurnID: event.data.turnID,
       }),
     )
-  const pending = yield* db
-    .select({ id: SessionInputTable.id })
-    .from(SessionInputTable)
-    .where(
-      and(
-        eq(SessionInputTable.session_id, event.data.sessionID),
-        eq(SessionInputTable.delivery, "steer"),
-        isNull(SessionInputTable.promoted_seq),
-        isNull(SessionInputTable.terminal_outcome),
-      ),
-    )
-    .limit(1)
-    .get()
-    .pipe(Effect.orDie)
+  const pending = (yield* SessionInput.pending(db, event.data.sessionID, "steer")).some(SessionInput.isTurnScoped)
   if (pending) return yield* Effect.die(new PendingSteerError({ sessionID: event.data.sessionID, turnID: event.data.turnID }))
   yield* db
     .update(SessionTurnTable)
@@ -167,6 +155,30 @@ export const end = Effect.fn("SessionTurn.end")(function* (
       ),
     )
   return result
+})
+
+export const settleInterrupted = Effect.fn("SessionTurn.settleInterrupted")(function* (
+  db: DB,
+  events: EventV2.Interface,
+  input: {
+    readonly sessionID: SessionSchema.ID
+    readonly turnID: SessionMessage.ID
+    readonly cutoff: number
+  },
+) {
+  const current = yield* get(db, input.sessionID)
+  if (!current || current.status === "ended" || current.turn_id !== input.turnID) return "stale" as const
+  yield* Effect.forEach(
+    (yield* SessionInput.pending(db, input.sessionID, "steer")).filter(
+      (pending) => SessionInput.isTurnScoped(pending) && pending.admittedSeq <= input.cutoff,
+    ),
+    (pending) => SessionInput.cancelPending(db, input.sessionID, pending.id),
+    { discard: true },
+  )
+  if (!(yield* end(events, { sessionID: input.sessionID, turnID: input.turnID }))) return "pending" as const
+  return (yield* SessionInput.pending(db, input.sessionID, "steer")).some(SessionInput.isSessionScoped)
+    ? ("restart" as const)
+    : ("ended" as const)
 })
 
 const upsert = Effect.fn("SessionTurn.upsert")(function* (

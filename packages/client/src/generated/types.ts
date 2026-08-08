@@ -1121,7 +1121,7 @@ export type SessionsPromptOutput = {
             readonly retryCount?: number
           }
     }
-    readonly synthetic?: { readonly description: string }
+    readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
     readonly delivery: "steer" | "queue"
     readonly intent?:
       | { readonly type: "start" }
@@ -1191,7 +1191,7 @@ export type SessionsInputListOutput = {
             readonly retryCount?: number
           }
     }
-    readonly synthetic?: { readonly description: string }
+    readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
     readonly delivery: "steer" | "queue"
     readonly intent?:
       | { readonly type: "start" }
@@ -1246,7 +1246,7 @@ export type SessionsInputGetOutput = {
             readonly retryCount?: number
           }
     }
-    readonly synthetic?: { readonly description: string }
+    readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
     readonly delivery: "steer" | "queue"
     readonly intent?:
       | { readonly type: "start" }
@@ -1301,7 +1301,7 @@ export type SessionsInputPromoteOutput = {
             readonly retryCount?: number
           }
     }
-    readonly synthetic?: { readonly description: string }
+    readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
     readonly delivery: "steer" | "queue"
     readonly intent?:
       | { readonly type: "start" }
@@ -1707,7 +1707,7 @@ export type SessionsCommandOutput = {
             readonly retryCount?: number
           }
     }
-    readonly synthetic?: { readonly description: string }
+    readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
     readonly delivery: "steer" | "queue"
     readonly intent?:
       | { readonly type: "start" }
@@ -2534,7 +2534,7 @@ export type SessionsHistoryOutput = {
                   readonly retryCount?: number
                 }
           }
-          readonly synthetic?: { readonly description: string }
+          readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
           readonly delivery: "steer" | "queue"
           readonly intent?:
             | { readonly type: "start" }
@@ -2586,7 +2586,7 @@ export type SessionsHistoryOutput = {
                   readonly retryCount?: number
                 }
           }
-          readonly synthetic?: { readonly description: string }
+          readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
           readonly delivery: "steer" | "queue"
           readonly intent?:
             | { readonly type: "start" }
@@ -3508,7 +3508,7 @@ export type SessionsEventsOutput =
                 readonly retryCount?: number
               }
         }
-        readonly synthetic?: { readonly description: string }
+        readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
         readonly delivery: "steer" | "queue"
         readonly intent?:
           | { readonly type: "start" }
@@ -3560,7 +3560,7 @@ export type SessionsEventsOutput =
                 readonly retryCount?: number
               }
         }
-        readonly synthetic?: { readonly description: string }
+        readonly synthetic?: { readonly description: string; readonly scope?: "turn" | "session" }
         readonly delivery: "steer" | "queue"
         readonly intent?:
           | { readonly type: "start" }

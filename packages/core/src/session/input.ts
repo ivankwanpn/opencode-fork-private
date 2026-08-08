@@ -1,8 +1,8 @@
 export * as SessionInput from "./input"
 
 import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm"
-import { DateTime, Effect, Schema } from "effect"
-import { Admitted, Delivery, Intent, Synthetic } from "@opencode-ai/schema/session-input"
+import { DateTime, Effect, Queue, Schema, Stream } from "effect"
+import { Admitted, Delivery, Intent, Synthetic, SyntheticScope } from "@opencode-ai/schema/session-input"
 import type { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -13,7 +13,7 @@ import { SessionAttemptTable, SessionInputTable, SessionMessageTable } from "./s
 
 type DatabaseService = Database.Interface["db"]
 
-export { Admitted, Delivery, Intent, Synthetic }
+export { Admitted, Delivery, Intent, Synthetic, SyntheticScope }
 
 const StoredPrompt = Schema.Union([
   Prompt,
@@ -21,6 +21,7 @@ const StoredPrompt = Schema.Union([
     type: Schema.Literal("synthetic"),
     prompt: Prompt,
     description: Schema.String,
+    scope: SyntheticScope.pipe(Schema.optional),
   }),
 ])
 const decodeStoredPrompt = Schema.decodeUnknownSync(StoredPrompt)
@@ -32,13 +33,17 @@ const decodeRowPrompt = (value: unknown) => {
   if ("type" in stored)
     return {
       prompt: stored.prompt,
-      synthetic: Synthetic.make({ description: stored.description }),
+      synthetic: Synthetic.make({ description: stored.description, scope: stored.scope ?? "session" }),
     }
   return { prompt: stored }
 }
 
 const encodeRowPrompt = (prompt: Prompt, synthetic?: Synthetic) =>
-  encodeStoredPrompt(synthetic ? { type: "synthetic", prompt, description: synthetic.description } : prompt)
+  encodeStoredPrompt(
+    synthetic
+      ? { type: "synthetic", prompt, description: synthetic.description, scope: synthetic.scope ?? "session" }
+      : prompt,
+  )
 
 const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted => {
   const stored = decodeRowPrompt(row.prompt)
@@ -94,6 +99,44 @@ export const pending = Effect.fn("SessionInput.pending")(function* (
     .all()
     .pipe(Effect.orDie)
   return rows.map(fromRow)
+})
+
+export const isTurnScoped = (input: Pick<Admitted, "synthetic">) =>
+  input.synthetic === undefined || input.synthetic.scope === "turn"
+
+export const isSessionScoped = (input: Pick<Admitted, "synthetic">) =>
+  input.synthetic !== undefined && input.synthetic.scope !== "turn"
+
+export const waitForPending = Effect.fn("SessionInput.waitForPending")(function* (
+  db: DatabaseService,
+  events: EventV2.Interface,
+  input: {
+    readonly sessionID: SessionSchema.ID
+    readonly delivery: Delivery
+    readonly includeSynthetic?: boolean
+  },
+) {
+  const matches = (value: { readonly synthetic?: Synthetic }) => input.includeSynthetic !== false || !value.synthetic
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const activity = yield* Queue.sliding<void>(1)
+      yield* events.subscribe(SessionEvent.PromptAdmitted).pipe(
+        Stream.filter(
+          (event) =>
+            event.data.sessionID === input.sessionID && event.data.delivery === input.delivery && matches(event.data),
+        ),
+        Stream.runForEach(() => Queue.offer(activity, undefined)),
+        Effect.forkScoped({ startImmediately: true }),
+      )
+      const wait = (): Effect.Effect<void> =>
+        pending(db, input.sessionID, input.delivery).pipe(
+          Effect.flatMap((items) =>
+            items.some(matches) ? Effect.void : Queue.take(activity).pipe(Effect.andThen(Effect.suspend(wait))),
+          ),
+        )
+      return yield* wait()
+    }),
+  )
 })
 
 export const latestPromoted = Effect.fn("SessionInput.latestPromoted")(function* (
@@ -394,7 +437,8 @@ const matchesPrompt = (input: Admitted, expected: { readonly sessionID: SessionS
   input.sessionID === expected.sessionID && samePrompt(input.prompt, expected.prompt)
 
 const sameSynthetic = (left: Synthetic | undefined, right: Synthetic | undefined) =>
-  left?.description === right?.description
+  left?.description === right?.description &&
+  (left?.scope === undefined || right?.scope === undefined || left.scope === right.scope)
 
 const sameIntent = (left: Intent | undefined, right: Intent | undefined) =>
   JSON.stringify(left) === JSON.stringify(right)

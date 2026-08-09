@@ -10,10 +10,11 @@ import { useServerProtocol, useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { DialogConnectProvider, useProviderConnectController } from "./dialog-connect-provider"
 import { DialogCustomProvider } from "./dialog-custom-provider"
+import { DialogOAuthProvider } from "./dialog-oauth-provider"
 import { SettingsList } from "./settings-list"
 import { SettingsServerPicker, SettingsServerScope } from "./settings-server-picker"
 import { disconnectProviderCredentials } from "@/utils/provider-disconnect"
-import { canEditConnectedProvider } from "@/utils/provider-edit"
+import { canEditConnectedProvider, providerEditTarget } from "@/utils/provider-edit"
 
 type ProviderSource = "env" | "api" | "config" | "custom"
 type ProviderItem = ReturnType<ReturnType<typeof useProviders>["connected"]>[number]
@@ -150,8 +151,13 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
   }
 
   const edit = (item: ProviderItem) => {
-    if (isConfigCustom(item.id)) {
+    const target = providerEditTarget(item, isConfigCustom(item.id))
+    if (target === "custom") {
       void dialog.show(() => <DialogCustomProvider providerID={item.id} onBack={dialog.close} />)
+      return
+    }
+    if (target === "oauth") {
+      void dialog.show(() => <DialogOAuthProvider providerID={item.id} providerName={item.name} onBack={dialog.close} />)
       return
     }
     connect(item.id)

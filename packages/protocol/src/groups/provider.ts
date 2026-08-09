@@ -72,6 +72,22 @@ export const ProviderGroup = HttpApiGroup.make("server.provider")
       ),
   )
   .add(
+    HttpApiEndpoint.delete("provider.disconnect", "/api/provider/:providerID", {
+      params: { providerID: Provider.ID },
+      query: LocationQuery,
+      success: Location.response(Schema.Boolean),
+      error: ServiceUnavailableError,
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.provider.disconnect",
+          summary: "Disconnect a provider",
+          description: "Remove all stored credentials for a provider.",
+        }),
+      ),
+  )
+  .add(
     HttpApiEndpoint.post("provider.custom.discover", "/api/provider/custom/discover", {
       query: LocationQuery,
       payload: CustomProvider.DiscoverInput,
@@ -105,6 +121,22 @@ export const ProviderGroup = HttpApiGroup.make("server.provider")
           identifier: "v2.provider.custom.configure",
           summary: "Configure a custom provider",
           description: "Persist a custom provider and its selected models.",
+        }),
+      ),
+  )
+  .add(
+    HttpApiEndpoint.delete("provider.custom.disconnect", "/api/provider/custom/:providerID", {
+      params: { providerID: Provider.ID },
+      query: LocationQuery,
+      success: Location.response(Schema.Boolean),
+      error: ServiceUnavailableError,
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.provider.custom.disconnect",
+          summary: "Disconnect a custom provider",
+          description: "Disable a custom provider and remove all stored credentials.",
         }),
       ),
   )

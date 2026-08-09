@@ -2925,6 +2925,13 @@ export type ProviderNotFoundError = {
   message: string
 }
 
+export type ProviderModelDiscoveryError = {
+  _tag: "ProviderModelDiscoveryError"
+  providerID: string
+  kind: "unsupported" | "missing-credential" | "authentication" | "network" | "timeout" | "invalid" | "empty"
+  message: string
+}
+
 export type CustomProviderValidationError = {
   _tag: "CustomProviderValidationError"
   message: string
@@ -2998,6 +3005,7 @@ export type MarketplacePlugin = {
   category?: string
   tags: Array<string>
   capabilities: Array<string>
+  mcpServers: Array<string>
   installed: boolean
   enabled: boolean
 }
@@ -3617,6 +3625,7 @@ export type SessionMessage =
 
 export type SessionInputSynthetic = {
   description: string
+  scope?: "turn" | "session"
 }
 
 export type SessionInputIntent =
@@ -5592,6 +5601,22 @@ export type ProviderCatalogInfo = {
   default: {
     [key: string]: string
   }
+}
+
+export type ProviderDiscoverySource = "oauth" | "compatible" | "provider"
+
+export type ProviderDiscoveryDiscoveredModel = {
+  id: string
+  name?: string
+  context?: number
+  input?: number
+  output?: number
+}
+
+export type ProviderDiscoveryResult = {
+  providerID: string
+  source: ProviderDiscoverySource
+  models: Array<ProviderDiscoveryDiscoveredModel>
 }
 
 export type CustomProviderHeader = {
@@ -13755,6 +13780,49 @@ export type V2ProviderListResponses = {
 
 export type V2ProviderListResponse = V2ProviderListResponses[keyof V2ProviderListResponses]
 
+export type V2ProviderDisconnectData = {
+  body?: never
+  path: {
+    providerID: string
+  }
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
+  url: "/api/provider/{providerID}"
+}
+
+export type V2ProviderDisconnectErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2ProviderDisconnectError = V2ProviderDisconnectErrors[keyof V2ProviderDisconnectErrors]
+
+export type V2ProviderDisconnectResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo
+    data: boolean
+  }
+}
+
+export type V2ProviderDisconnectResponse = V2ProviderDisconnectResponses[keyof V2ProviderDisconnectResponses]
+
 export type V2ProviderGetData = {
   body?: never
   path: {
@@ -13801,6 +13869,58 @@ export type V2ProviderGetResponses = {
 }
 
 export type V2ProviderGetResponse = V2ProviderGetResponses[keyof V2ProviderGetResponses]
+
+export type V2ProviderModelsDiscoverData = {
+  body?: never
+  path: {
+    providerID: string
+  }
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
+  url: "/api/provider/{providerID}/models/discover"
+}
+
+export type V2ProviderModelsDiscoverErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ProviderNotFoundError
+   */
+  404: ProviderNotFoundError
+  /**
+   * ProviderModelDiscoveryError
+   */
+  502: ProviderModelDiscoveryError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2ProviderModelsDiscoverError = V2ProviderModelsDiscoverErrors[keyof V2ProviderModelsDiscoverErrors]
+
+export type V2ProviderModelsDiscoverResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo
+    data: ProviderDiscoveryResult
+  }
+}
+
+export type V2ProviderModelsDiscoverResponse =
+  V2ProviderModelsDiscoverResponses[keyof V2ProviderModelsDiscoverResponses]
 
 export type V2ProviderCustomDiscoverData = {
   body: CustomProviderDiscoverInput
@@ -13897,6 +14017,50 @@ export type V2ProviderCustomConfigureResponses = {
 
 export type V2ProviderCustomConfigureResponse =
   V2ProviderCustomConfigureResponses[keyof V2ProviderCustomConfigureResponses]
+
+export type V2ProviderCustomDisconnectData = {
+  body?: never
+  path: {
+    providerID: string
+  }
+  query?: {
+    location?: {
+      directory?: string
+      workspace?: string
+    }
+  }
+  url: "/api/provider/custom/{providerID}"
+}
+
+export type V2ProviderCustomDisconnectErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2ProviderCustomDisconnectError = V2ProviderCustomDisconnectErrors[keyof V2ProviderCustomDisconnectErrors]
+
+export type V2ProviderCustomDisconnectResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo
+    data: boolean
+  }
+}
+
+export type V2ProviderCustomDisconnectResponse =
+  V2ProviderCustomDisconnectResponses[keyof V2ProviderCustomDisconnectResponses]
 
 export type V2IntegrationListData = {
   body?: never

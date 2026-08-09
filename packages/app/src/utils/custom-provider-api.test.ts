@@ -110,6 +110,46 @@ describe("createCustomProviderApi", () => {
     })
   })
 
+  test("disconnects a custom provider with its location query", async () => {
+    const calls: Array<{ url: URL; init?: RequestInit }> = []
+    const api = createCustomProviderApi({
+      baseUrl: "https://server.example",
+      fetch: async (input, init) => {
+        calls.push({ url: new URL(input.toString()), init })
+        return Response.json({ location, data: true })
+      },
+    })
+
+    await api.disconnectCustom({
+      providerID: "volces/custom",
+      location: { directory: "/project", workspace: "workspace-1" },
+    })
+
+    expect(calls[0]?.url.pathname).toBe("/api/provider/custom/volces%2Fcustom")
+    expect(calls[0]?.url.searchParams.toString()).toBe(
+      "location%5Bdirectory%5D=%2Fproject&location%5Bworkspace%5D=workspace-1",
+    )
+    expect(calls[0]?.init?.method).toBe("DELETE")
+    expect(calls[0]?.init?.body).toBeUndefined()
+  })
+
+  test("disconnects a standard provider by deleting stored credentials", async () => {
+    const calls: Array<{ url: URL; init?: RequestInit }> = []
+    const api = createCustomProviderApi({
+      baseUrl: "https://server.example",
+      fetch: async (input, init) => {
+        calls.push({ url: new URL(input.toString()), init })
+        return Response.json({ location, data: true })
+      },
+    })
+
+    await api.disconnect({ providerID: "openai", location: { directory: "/project" } })
+
+    expect(calls[0]?.url.pathname).toBe("/api/provider/openai")
+    expect(calls[0]?.url.searchParams.toString()).toBe("location%5Bdirectory%5D=%2Fproject")
+    expect(calls[0]?.init?.method).toBe("DELETE")
+  })
+
   test("preserves typed JSON errors with their response status", async () => {
     const error = {
       _tag: "CustomProviderValidationError",

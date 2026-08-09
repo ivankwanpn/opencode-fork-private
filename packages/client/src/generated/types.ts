@@ -4943,6 +4943,22 @@ export type ProvidersDiscoverModelsOutput = {
   }
 }
 
+export type ProvidersDisconnectInput = {
+  readonly providerID: { readonly providerID: string }["providerID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type ProvidersDisconnectOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data: boolean
+}
+
 export type ProvidersDiscoverCustomInput = {
   readonly location?: {
     readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
@@ -5137,6 +5153,22 @@ export type ProvidersConfigureCustomOutput = {
     readonly protocol: "openai-responses" | "openai-compatible" | "anthropic-messages"
     readonly models: ReadonlyArray<string>
   }
+}
+
+export type ProvidersDisconnectCustomInput = {
+  readonly providerID: { readonly providerID: string }["providerID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type ProvidersDisconnectCustomOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data: boolean
 }
 
 export type IntegrationsListInput = {

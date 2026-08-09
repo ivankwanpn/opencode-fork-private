@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Auth } from "@/auth"
-import { configureWith, type ConfigurePorts, type GlobalProviderState } from "@/provider/custom-provider/service"
+import {
+  configureWith,
+  disconnectWith,
+  type ConfigurePorts,
+  type GlobalProviderState,
+} from "@/provider/custom-provider/service"
 import { ConfigProviderV1 } from "@opencode-ai/core/v1/config/provider"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { Credential } from "@opencode-ai/core/credential"
@@ -83,7 +88,7 @@ function harness(options: {
     readGlobalProvider: () => Effect.succeed(structuredClone(state.global)),
     writeGlobalProvider: (_providerID, value) => {
       globalWrites++
-      state.order.push(value.provider?.name === "Original" ? "rollbackConfig" : "config")
+      state.order.push(globalWrites > 1 && value.provider?.name === "Original" ? "rollbackConfig" : "config")
       return fail(
         globalWrites === 1 ? "config" : "rollbackNativeCredential",
         Effect.sync(() => {
@@ -298,6 +303,50 @@ describe("configureWith", () => {
       expect(test.state.legacy).toEqual(originalLegacy)
       expect(test.state.global).toEqual(test.initial.global)
       expect(test.state.refreshes.at(-1)).toEqual(["old"])
+    }),
+  )
+})
+
+describe("disconnectWith", () => {
+  it.effect("removes inline API keys while retaining custom provider metadata", () =>
+    Effect.gen(function* () {
+      const test = harness({
+        provider: ConfigProviderV1.Info.make({
+          ...originalProvider,
+          options: {
+            ...originalProvider.options,
+            apiKey: "expired-inline-secret",
+          },
+        }),
+        legacy: originalLegacy,
+        native: originalNative,
+      })
+
+      yield* disconnectWith(test.ports, "custom")
+
+      expect(test.state.global.provider?.options?.apiKey).toBeUndefined()
+      expect(test.state.global.provider?.options?.baseURL).toBe("https://old.example/v1")
+      expect(test.state.global.provider?.models).toEqual(originalProvider.models)
+    }),
+  )
+
+  it.effect("disables the custom provider and removes every credential store", () =>
+    Effect.gen(function* () {
+      const test = harness({
+        provider: originalProvider,
+        disabledProviders: ["custom", "other"],
+        legacy: originalLegacy,
+        native: originalNative,
+      })
+
+      yield* disconnectWith(test.ports, "custom")
+
+      expect(test.state.global.provider).toEqual(originalProvider)
+      expect(test.state.global.disabledProviders).toEqual(["custom", "other"])
+      expect(test.state.legacy).toBeUndefined()
+      expect(test.state.native).toBeUndefined()
+      expect(test.state.order).toEqual(["legacyCredential", "nativeCredential", "config", "catalogRefresh"])
+      expect(test.state.refreshes.at(-1)).toBeUndefined()
     }),
   )
 })

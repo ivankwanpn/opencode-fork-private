@@ -39,6 +39,21 @@ export interface ConfigurePorts {
   ) => Effect.Effect<void, unknown>
 }
 
+export interface DisconnectPorts {
+  readonly readGlobalProvider: (providerID: string) => Effect.Effect<GlobalProviderState>
+  readonly writeGlobalProvider: (providerID: string, state: GlobalProviderState) => Effect.Effect<void, unknown>
+  readonly writeLegacyCredential: (providerID: string, value?: Auth.Info) => Effect.Effect<void, unknown>
+  readonly writeNativeCredential: (
+    providerID: string,
+    value?: Pick<Credential.Info, "label" | "value">,
+  ) => Effect.Effect<void, unknown>
+  readonly refresh: (
+    providerID: string,
+    expectedModelIDs: readonly string[] | undefined,
+    provider?: ConfigProviderV1.Info,
+  ) => Effect.Effect<void, unknown>
+}
+
 type ConfigureStage = CustomProvider.ConfigureError["stage"]
 
 export function configureWith(
@@ -132,6 +147,26 @@ export function configureWith(
   })
 }
 
+export function disconnectWith(ports: DisconnectPorts, providerID: string): Effect.Effect<void, unknown> {
+  return Effect.gen(function* () {
+    const beforeGlobal = yield* ports.readGlobalProvider(providerID)
+    yield* ports.writeLegacyCredential(providerID, undefined)
+    yield* ports.writeNativeCredential(providerID, undefined)
+    yield* ports.writeGlobalProvider(providerID, {
+      provider: removeInlineCredential(beforeGlobal.provider),
+      disabledProviders: [...new Set([...(beforeGlobal.disabledProviders ?? []), providerID])],
+    })
+    yield* ports.refresh(providerID, undefined, undefined)
+  })
+}
+
+function removeInlineCredential(provider: ConfigProviderV1.Info | undefined) {
+  if (!provider?.options || provider.options.apiKey === undefined) return provider
+  const options = { ...provider.options }
+  delete options.apiKey
+  return { ...provider, options }
+}
+
 export const make = Effect.gen(function* () {
   const config = yield* Config.Service
   const auth = yield* Auth.Service
@@ -139,86 +174,89 @@ export const make = Effect.gen(function* () {
   const locations = yield* LocationServiceMap.Service
   const modelsDev = yield* ModelsDev.Service
 
+  const makePorts = (catalog: Catalog.Interface, location: Location.Ref): ConfigurePorts & DisconnectPorts => ({
+    resolvedConfig: () => config.get(),
+    builtInProviderIDs: () => modelsDev.get().pipe(Effect.map((providers) => new Set(Object.keys(providers)))),
+    readGlobalProvider: (providerID) =>
+      config.getGlobal().pipe(
+        Effect.map((global) => ({
+          provider: global.provider?.[providerID],
+          disabledProviders: global.disabled_providers,
+        })),
+      ),
+    writeGlobalProvider: (providerID, state) =>
+      config
+        .updateGlobalProvider({
+          providerID,
+          provider: state.provider,
+          disabledProviders: state.disabledProviders,
+        })
+        .pipe(Effect.asVoid),
+    readLegacyCredential: (providerID) => auth.get(providerID),
+    writeLegacyCredential: (providerID, value) => (value ? auth.set(providerID, value) : auth.remove(providerID)),
+    readNativeCredential: (providerID) =>
+      credentials
+        .list(Integration.ID.make(providerID))
+        .pipe(
+          Effect.flatMap((items) =>
+            items.length <= 1
+              ? Effect.succeed(items[0])
+              : Effect.die(new Error("multiple credentials found for one integration")),
+          ),
+        ),
+    writeNativeCredential: (providerID, value) =>
+      Effect.gen(function* () {
+        const integrationID = Integration.ID.make(providerID)
+        if (value) {
+          yield* credentials.create({ integrationID, label: value.label, value: value.value })
+          return
+        }
+        const existing = yield* credentials.list(integrationID)
+        yield* Effect.forEach(existing, (item) => credentials.remove(item.id), { discard: true })
+      }),
+    refresh: (providerID, expectedModelIDs, provider) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* catalog.transform((draft) =>
+            Effect.sync(() => {
+              draft.provider.remove(ProviderV2.ID.make(providerID))
+              if (provider) ConfigProviderPlugin.projectV1(draft, providerID, provider)
+            }),
+          )
+          const refreshed = yield* catalog.provider.get(ProviderV2.ID.make(providerID))
+          if (expectedModelIDs === undefined) {
+            if (refreshed) return yield* Effect.die(new Error("provider remained in catalog after refresh"))
+          } else {
+            if (!refreshed) return yield* Effect.die(new Error("provider missing from refreshed catalog"))
+            yield* Effect.forEach(expectedModelIDs, (modelID) =>
+              catalog.model
+                .get(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID))
+                .pipe(
+                  Effect.flatMap((model) =>
+                    model ? Effect.void : Effect.die(new Error(`model missing from refreshed catalog: ${modelID}`)),
+                  ),
+                ),
+            )
+          }
+          if (locations.invalidateAll) return yield* locations.invalidateAll()
+          yield* locations.invalidate(location)
+        }),
+      ),
+  })
+
   const configure = (input: CustomProvider.ConfigureInput, location: Location.Ref) =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
-      return yield* configureWith(
-        {
-          resolvedConfig: () => config.get(),
-          builtInProviderIDs: () => modelsDev.get().pipe(Effect.map((providers) => new Set(Object.keys(providers)))),
-          readGlobalProvider: (providerID) =>
-            config.getGlobal().pipe(
-              Effect.map((global) => ({
-                provider: global.provider?.[providerID],
-                disabledProviders: global.disabled_providers,
-              })),
-            ),
-          writeGlobalProvider: (providerID, state) =>
-            config
-              .updateGlobalProvider({
-                providerID,
-                provider: state.provider,
-                disabledProviders: state.disabledProviders,
-              })
-              .pipe(Effect.asVoid),
-          readLegacyCredential: (providerID) => auth.get(providerID),
-          writeLegacyCredential: (providerID, value) => (value ? auth.set(providerID, value) : auth.remove(providerID)),
-          readNativeCredential: (providerID) =>
-            credentials
-              .list(Integration.ID.make(providerID))
-              .pipe(
-                Effect.flatMap((items) =>
-                  items.length <= 1
-                    ? Effect.succeed(items[0])
-                    : Effect.die(new Error("multiple credentials found for one integration")),
-                ),
-              ),
-          writeNativeCredential: (providerID, value) =>
-            Effect.gen(function* () {
-              const integrationID = Integration.ID.make(providerID)
-              if (value) {
-                yield* credentials.create({ integrationID, label: value.label, value: value.value })
-                return
-              }
-              const existing = yield* credentials.list(integrationID)
-              yield* Effect.forEach(existing, (item) => credentials.remove(item.id), { discard: true })
-            }),
-          refresh: (providerID, expectedModelIDs, provider) =>
-            Effect.scoped(
-              Effect.gen(function* () {
-                yield* catalog.transform((draft) =>
-                  Effect.sync(() => {
-                    draft.provider.remove(ProviderV2.ID.make(providerID))
-                    if (provider) ConfigProviderPlugin.projectV1(draft, providerID, provider)
-                  }),
-                )
-                const refreshed = yield* catalog.provider.get(ProviderV2.ID.make(providerID))
-                if (expectedModelIDs === undefined) {
-                  if (refreshed) return yield* Effect.die(new Error("provider remained in catalog after rollback"))
-                } else {
-                  if (!refreshed) return yield* Effect.die(new Error("provider missing from refreshed catalog"))
-                  yield* Effect.forEach(expectedModelIDs, (modelID) =>
-                    catalog.model
-                      .get(ProviderV2.ID.make(providerID), ModelV2.ID.make(modelID))
-                      .pipe(
-                        Effect.flatMap((model) =>
-                          model
-                            ? Effect.void
-                            : Effect.die(new Error(`model missing from refreshed catalog: ${modelID}`)),
-                        ),
-                      ),
-                  )
-                }
-                if (locations.invalidateAll) return yield* locations.invalidateAll()
-                yield* locations.invalidate(location)
-              }),
-            ),
-        },
-        input,
-      )
+      return yield* configureWith(makePorts(catalog, location), input)
     }).pipe(Effect.provide(locations.get(location)))
 
-  return { configure } as const
+  const disconnect = (providerID: string, location: Location.Ref) =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      return yield* disconnectWith(makePorts(catalog, location), providerID)
+    }).pipe(Effect.provide(locations.get(location)))
+
+  return { configure, disconnect } as const
 })
 
 export const configure = (
@@ -232,6 +270,19 @@ export const configure = (
   Effect.gen(function* () {
     const service = yield* make
     return yield* service.configure(input, location)
+  })
+
+export const disconnect = (
+  providerID: string,
+  location: Location.Ref,
+): Effect.Effect<
+  void,
+  unknown,
+  Config.Service | Auth.Service | Credential.Service | LocationServiceMap.Service | ModelsDev.Service
+> =>
+  Effect.gen(function* () {
+    const service = yield* make
+    return yield* service.disconnect(providerID, location)
   })
 
 function stage<A>(name: Exclude<ConfigureStage, "rollback">, effect: Effect.Effect<A, unknown>) {

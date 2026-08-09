@@ -83,10 +83,14 @@ import type {
   ProvidersGetOutput,
   ProvidersDiscoverModelsInput,
   ProvidersDiscoverModelsOutput,
+  ProvidersDisconnectInput,
+  ProvidersDisconnectOutput,
   ProvidersDiscoverCustomInput,
   ProvidersDiscoverCustomOutput,
   ProvidersConfigureCustomInput,
   ProvidersConfigureCustomOutput,
+  ProvidersDisconnectCustomInput,
+  ProvidersDisconnectCustomOutput,
   IntegrationsListInput,
   IntegrationsListOutput,
   IntegrationsGetInput,
@@ -920,6 +924,18 @@ export function make(options: ClientOptions) {
           },
           requestOptions,
         ),
+      disconnect: (input: ProvidersDisconnectInput, requestOptions?: RequestOptions) =>
+        request<ProvidersDisconnectOutput>(
+          {
+            method: "DELETE",
+            path: `/api/provider/${encodeURIComponent(input.providerID)}`,
+            query: { location: input["location"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
       discoverCustom: (input: ProvidersDiscoverCustomInput, requestOptions?: RequestOptions) =>
         request<ProvidersDiscoverCustomOutput>(
           {
@@ -956,6 +972,18 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [400, 409, 500, 503, 401],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      disconnectCustom: (input: ProvidersDisconnectCustomInput, requestOptions?: RequestOptions) =>
+        request<ProvidersDisconnectCustomOutput>(
+          {
+            method: "DELETE",
+            path: `/api/provider/custom/${encodeURIComponent(input.providerID)}`,
+            query: { location: input["location"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
             empty: false,
           },
           requestOptions,

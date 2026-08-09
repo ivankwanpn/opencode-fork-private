@@ -10,7 +10,7 @@ import path from "path"
 import { resetDatabase } from "../fixture/db"
 import { TestInstance } from "../fixture/fixture"
 import { markPluginDependenciesReady } from "../fixture/plugin"
-import { testEffect } from "../lib/effect"
+import { awaitWithTimeout, testEffect } from "../lib/effect"
 import { httpApiLayer, request } from "./httpapi-layer"
 
 const testStateLayer = Layer.effectDiscard(
@@ -419,7 +419,7 @@ describe("provider HttpApi", () => {
       expect(catalogBody.data.default[providerID]).toBe("gpt-5.4")
       const model = models.find((item) => item.providerID === providerID && item.id === "gpt-5.4")
       expect(model?.limit).toEqual({ context: 200_000, output: 32_000 })
-      expect(model?.variants.map((variant) => variant.id)).toEqual(["none", "low", "medium", "high", "max"])
+      expect(model?.variants.map((variant) => variant.id)).toEqual(["none", "low", "medium", "high", "xhigh", "max"])
 
       const malformed = yield* request("/api/provider/custom/discover", {
         method: "POST",
@@ -486,6 +486,62 @@ describe("provider HttpApi", () => {
       ]) {
         expect(JSON.stringify(failedBody)).not.toContain(secret)
       }
+
+      const disconnected = yield* awaitWithTimeout(
+        request(`/api/provider/custom/${providerID}`, {
+          method: "DELETE",
+          headers,
+        }),
+        "custom provider disconnect did not return",
+      )
+      expect(disconnected.status).toBe(200)
+      expect(yield* disconnected.json).toMatchObject({ data: true })
+
+      const afterDisconnect = yield* awaitWithTimeout(
+        request("/api/provider/catalog", { headers }),
+        "provider catalog did not refresh after disconnect",
+      )
+      expect(afterDisconnect.status).toBe(200)
+      const afterDisconnectBody = (yield* afterDisconnect.json) as {
+        data: { connected: string[]; providers: { info: { id: string } }[] }
+      }
+      expect(afterDisconnectBody.data.connected).not.toContain(providerID)
+      expect(afterDisconnectBody.data.providers.some((item) => item.info.id === providerID)).toBe(true)
+    }),
+    projectOptions,
+    30000,
+  )
+
+  it.instance(
+    "disconnects a standard provider by removing its persisted credentials",
+    Effect.gen(function* () {
+      const directory = (yield* TestInstance).directory
+      const headers = { "content-type": "application/json", "x-opencode-directory": directory }
+      const connected = yield* request("/api/integration/openai/connect/key", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "expired-provider-key", label: "Expired" }),
+      })
+      expect(connected.status).toBe(204)
+
+      const before = yield* request("/api/integration/openai", { headers })
+      expect(before.status).toBe(200)
+      expect(((yield* before.json) as { data: { connections: unknown[] } }).data.connections).toHaveLength(1)
+
+      const response = yield* awaitWithTimeout(
+        request("/api/provider/openai", {
+          method: "DELETE",
+          headers,
+        }),
+        "standard provider disconnect did not return",
+      )
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toMatchObject({ data: true })
+
+      const after = yield* request("/api/integration/openai", { headers })
+      expect(after.status).toBe(200)
+      expect(((yield* after.json) as { data: { connections: unknown[] } }).data.connections).toHaveLength(0)
     }),
     projectOptions,
     30000,

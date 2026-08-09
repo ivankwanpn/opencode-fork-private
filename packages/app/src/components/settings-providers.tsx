@@ -13,8 +13,8 @@ import { DialogCustomProvider } from "./dialog-custom-provider"
 import { DialogOAuthProvider } from "./dialog-oauth-provider"
 import { SettingsList } from "./settings-list"
 import { SettingsServerPicker, SettingsServerScope } from "./settings-server-picker"
-import { disconnectProviderCredentials } from "@/utils/provider-disconnect"
 import { canEditConnectedProvider, providerEditTarget } from "@/utils/provider-edit"
+import { disconnectProviderAndRefresh } from "@/utils/provider-disconnect"
 
 type ProviderSource = "env" | "api" | "config" | "custom"
 type ProviderItem = ReturnType<ReturnType<typeof useProviders>["connected"]>[number]
@@ -100,54 +100,28 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
     return true
   }
 
-  const disableProvider = async (providerID: string, name: string) => {
-    const before = serverSync().data.config.disabled_providers ?? []
-    const next = before.includes(providerID) ? before : [...before, providerID]
-    serverSync().set("config", "disabled_providers", next)
-
-    await serverSync()
-      .updateConfig({ disabled_providers: next })
-      .then(() => {
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        serverSync().set("config", "disabled_providers", before)
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
-  }
-
-  const disconnect = async (providerID: string, name: string) => {
+  const disconnect = (providerID: string, name: string) => {
     const target = serverSDK()
-    if (isConfigCustom(providerID)) {
-      await target
-        .apiForGeneration()
-        .then((api) => disconnectProviderCredentials(api, providerID))
-        .catch(() => undefined)
-      await disableProvider(providerID, name)
-      return
-    }
-    await target
-      .apiForGeneration()
-      .then((api) => disconnectProviderCredentials(api, providerID))
-      .then(async () => {
-        await serverSync().refreshProviders()
+    return disconnectProviderAndRefresh({
+      disconnect: async () => {
+        const api = await target.apiForGeneration()
+        if (isConfigCustom(providerID)) return api.providers.disconnectCustom({ providerID })
+        return api.providers.disconnect({ providerID })
+      },
+      refresh: () => serverSync().refreshProviders(),
+      onSuccess: () => {
         showToast({
           variant: "success",
           icon: "circle-check",
           title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
           description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
         })
-      })
-      .catch((err: unknown) => {
+      },
+      onError: (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
         showToast({ title: language.t("common.requestFailed"), description: message })
-      })
+      },
+    })
   }
 
   const edit = (item: ProviderItem) => {

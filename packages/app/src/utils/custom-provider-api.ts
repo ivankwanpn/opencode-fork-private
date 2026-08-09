@@ -19,6 +19,14 @@ export interface CustomProviderApi {
   readonly configureCustom: (
     input: CustomProvider.ConfigureInput & { location?: CustomProviderLocation },
   ) => Promise<{ location: Location.Info; data: CustomProvider.ConfigureResult }>
+  readonly disconnectCustom: (input: {
+    providerID: string
+    location?: CustomProviderLocation
+  }) => Promise<{ location: Location.Info; data: boolean }>
+  readonly disconnect: (input: {
+    providerID: string
+    location?: CustomProviderLocation
+  }) => Promise<{ location: Location.Info; data: boolean }>
 }
 
 export function createCustomProviderApi(options: {
@@ -27,7 +35,7 @@ export function createCustomProviderApi(options: {
   readonly headers?: HeadersInit
 }): CustomProviderApi {
   const request = async <T>(
-    method: "GET" | "POST",
+    method: "DELETE" | "GET" | "POST",
     path: string,
     location: CustomProviderLocation | undefined,
     payload?: unknown,
@@ -80,5 +88,8 @@ export function createCustomProviderApi(options: {
         headers: input.headers,
         models: input.models,
       }),
+    disconnectCustom: (input) =>
+      request("DELETE", `/api/provider/custom/${encodeURIComponent(input.providerID)}`, input.location),
+    disconnect: (input) => request("DELETE", `/api/provider/${encodeURIComponent(input.providerID)}`, input.location),
   }
 }

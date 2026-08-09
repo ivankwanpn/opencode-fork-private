@@ -103,6 +103,14 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
         }),
       )
       .handle(
+        "provider.disconnect",
+        Effect.fn(function* (ctx) {
+          const capability = yield* ConfigCapability.Service
+          yield* capability.disconnectProvider(ctx.params.providerID)
+          return yield* response(Effect.succeed(true))
+        }),
+      )
+      .handle(
         "provider.custom.discover",
         Effect.fn(function* (ctx) {
           const capability = yield* ConfigCapability.Service
@@ -119,6 +127,19 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
             workspaceID: location.workspaceID,
           })
           return yield* response(capability.configureCustomProvider(ctx.payload, ref))
+        }),
+      )
+      .handle(
+        "provider.custom.disconnect",
+        Effect.fn(function* (ctx) {
+          const capability = yield* ConfigCapability.Service
+          const location = yield* Location.Service
+          const ref = Location.Ref.make({
+            directory: location.directory,
+            workspaceID: location.workspaceID,
+          })
+          yield* capability.disconnectCustomProvider(ctx.params.providerID, ref)
+          return yield* response(Effect.succeed(true))
         }),
       )
   }),

@@ -1,10 +1,11 @@
 import { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { Provider } from "@opencode-ai/schema/provider"
 import { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
+import { ProviderDiscovery } from "@opencode-ai/schema/provider-discovery"
 import { Location } from "@opencode-ai/schema/location"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
-import { ProviderNotFoundError, ServiceUnavailableError } from "../errors"
+import { ProviderModelDiscoveryError, ProviderNotFoundError, ServiceUnavailableError } from "../errors"
 import { LocationQuery, locationQueryOpenApi } from "./location"
 
 export const ProviderGroup = HttpApiGroup.make("server.provider")
@@ -51,6 +52,22 @@ export const ProviderGroup = HttpApiGroup.make("server.provider")
           identifier: "v2.provider.get",
           summary: "Get provider",
           description: "Retrieve a single AI provider so clients can inspect its availability and endpoint settings.",
+        }),
+      ),
+  )
+  .add(
+    HttpApiEndpoint.post("provider.models.discover", "/api/provider/:providerID/models/discover", {
+      params: { providerID: Provider.ID },
+      query: LocationQuery,
+      success: Location.response(ProviderDiscovery.Result),
+      error: [ProviderNotFoundError, ProviderModelDiscoveryError, ServiceUnavailableError],
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.provider.models.discover",
+          summary: "Discover provider models",
+          description: "Discover models available through the provider's current connection.",
         }),
       ),
   )

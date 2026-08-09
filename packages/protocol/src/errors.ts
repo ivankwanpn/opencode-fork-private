@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { Provider } from "@opencode-ai/schema/provider"
 
 export class InvalidRequestError extends Schema.TaggedErrorClass<InvalidRequestError>()(
   "InvalidRequestError",
@@ -50,6 +51,27 @@ export class ProviderNotFoundError extends Schema.TaggedErrorClass<ProviderNotFo
     message: Schema.String,
   },
   { httpApiStatus: 404 },
+) {}
+
+export const ProviderModelDiscoveryFailureKind = Schema.Literals([
+  "unsupported",
+  "missing-credential",
+  "authentication",
+  "network",
+  "timeout",
+  "invalid",
+  "empty",
+])
+export type ProviderModelDiscoveryFailureKind = typeof ProviderModelDiscoveryFailureKind.Type
+
+export class ProviderModelDiscoveryError extends Schema.TaggedErrorClass<ProviderModelDiscoveryError>()(
+  "ProviderModelDiscoveryError",
+  {
+    providerID: Provider.ID,
+    kind: ProviderModelDiscoveryFailureKind,
+    message: Schema.String,
+  },
+  { httpApiStatus: 502 },
 ) {}
 
 export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(

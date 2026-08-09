@@ -5,16 +5,98 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { Switch } from "@opencode-ai/ui/switch"
-import { batch, createMemo, Show, type Component } from "solid-js"
+import { createMemo, Show, type Component } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { useModels } from "@/context/models"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
-import { formatServerError } from "@/utils/server-errors"
 import { DialogEditModelContext } from "./dialog-edit-model-context"
 
 type ModelRow = ReturnType<ReturnType<typeof useModels>["list"]>[number]
+
+export type OAuthDiscoveryState = {
+  attempted: boolean
+  loading: boolean
+  source?: string
+  count?: number
+  error?: string
+}
+
+type OAuthDiscoveryResponse = {
+  data: {
+    source: string
+    models: readonly unknown[]
+  }
+}
+
+type OAuthDiscoveryError = {
+  _tag: "ProviderModelDiscoveryError"
+  kind?: unknown
+}
+
+export function oauthDiscoveryErrorKey(error: unknown) {
+  const candidate = discoveryError(error)
+  if (candidate?.kind === "unsupported") return "provider.oauth.discovery.unsupported"
+  if (candidate?.kind === "empty") return "provider.oauth.discovery.empty"
+  return "provider.oauth.discovery.failure"
+}
+
+export function createOAuthDiscoveryController(input: {
+  providerID: string
+  directory: () => string
+  discoverModels: (input: { providerID: string; location: { directory: string } }) => Promise<OAuthDiscoveryResponse>
+  refreshProviders: () => Promise<void>
+  update: (patch: Partial<OAuthDiscoveryState>) => void
+}) {
+  let requestSequence = 0
+
+  const discover = async () => {
+    const sequence = ++requestSequence
+    input.update({ loading: true, error: undefined })
+
+    let result: OAuthDiscoveryResponse
+    try {
+      result = await input.discoverModels({
+        providerID: input.providerID,
+        location: { directory: input.directory() },
+      })
+    } catch (error) {
+      if (sequence !== requestSequence) return
+      input.update({ attempted: true, error: oauthDiscoveryErrorKey(error) })
+      if (sequence === requestSequence) input.update({ loading: false })
+      return
+    }
+
+    if (sequence !== requestSequence) return
+    input.update({
+      attempted: true,
+      source: result.data.source,
+      count: result.data.models.length,
+      error: undefined,
+    })
+    try {
+      await input.refreshProviders()
+    } catch {}
+    if (sequence === requestSequence) input.update({ loading: false })
+  }
+
+  return { discover }
+}
+
+function discoveryError(error: unknown): OAuthDiscoveryError | undefined {
+  if (isOAuthDiscoveryError(error)) return error
+  if (!(error instanceof Error) || !isRecord(error.cause) || !("body" in error.cause)) return
+  return isOAuthDiscoveryError(error.cause.body) ? error.cause.body : undefined
+}
+
+function isOAuthDiscoveryError(error: unknown): error is OAuthDiscoveryError {
+  return isRecord(error) && error._tag === "ProviderModelDiscoveryError"
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
 
 export function oauthModelRows<T extends { provider: { id: string } }>(input: {
   providerID: string
@@ -33,47 +115,19 @@ export const DialogOAuthProvider: Component<{
   const models = useModels()
   const serverSDK = useServerSDK()
   const serverSync = useServerSync()
-  const [discovery, setDiscovery] = createStore<{
-    attempted: boolean
-    loading: boolean
-    source?: string
-    count?: number
-    error?: string
-  }>({ attempted: false, loading: false })
-  let requestSequence = 0
+  const [discovery, setDiscovery] = createStore<OAuthDiscoveryState>({ attempted: false, loading: false })
+  const discoveryController = createOAuthDiscoveryController({
+    providerID: props.providerID,
+    directory: () => serverSync().data.path.directory,
+    discoverModels: async (input) => {
+      const api = await serverSDK().apiForGeneration()
+      return api.providers.discoverModels(input)
+    },
+    refreshProviders: () => serverSync().refreshProviders(),
+    update: (patch) => setDiscovery(patch),
+  })
 
   const rows = createMemo<ModelRow[]>(() => oauthModelRows({ providerID: props.providerID, models: models.list() }))
-
-  const discover = async () => {
-    const sequence = ++requestSequence
-    batch(() => {
-      setDiscovery("loading", true)
-      setDiscovery("error", undefined)
-    })
-
-    try {
-      const api = await serverSDK().apiForGeneration()
-      const result = await api.providers.discoverModels({
-        providerID: props.providerID,
-        location: { directory: serverSync().data.path.directory },
-      })
-      if (sequence !== requestSequence) return
-      batch(() => {
-        setDiscovery("attempted", true)
-        setDiscovery("source", result.data.source)
-        setDiscovery("count", result.data.models.length)
-      })
-      await serverSync().refreshProviders()
-    } catch (error) {
-      if (sequence !== requestSequence) return
-      batch(() => {
-        setDiscovery("attempted", true)
-        setDiscovery("error", formatServerError(error, language.t, language.t("provider.oauth.discovery.failure")))
-      })
-    } finally {
-      if (sequence === requestSequence) setDiscovery("loading", false)
-    }
-  }
 
   const toggle = (row: ModelRow, visible: boolean) => {
     models.setVisibility({ providerID: props.providerID, modelID: row.id }, visible)
@@ -101,36 +155,40 @@ export const DialogOAuthProvider: Component<{
 
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-col gap-1">
-            <span class="text-12-medium text-text-weak">{language.t("provider.custom.discovery.title")}</span>
+            <span class="text-12-medium text-text-weak">{language.t("provider.oauth.title")}</span>
             <Show
               when={discovery.attempted && !discovery.error}
-              fallback={<span class="text-12-regular text-text-weak">{language.t("provider.oauth.discovery.catalog")}</span>}
+              fallback={<span class="text-12-regular text-text-weak">{language.t("provider.oauth.discovery.cached")}</span>}
             >
               <span class="text-12-regular text-text-weak">
-                {language.t("provider.oauth.discovery.result", { source: discovery.source ?? "", count: discovery.count ?? 0 })}
+                {language.t("provider.oauth.discovery.success")} {discovery.count ?? 0} · {discovery.source ?? ""}
               </span>
             </Show>
           </div>
-          <Button type="button" size="small" variant="secondary" onClick={() => void discover()} disabled={discovery.loading}>
+          <Button
+            type="button"
+            size="small"
+            variant="secondary"
+            onClick={() => void discoveryController.discover()}
+            disabled={discovery.loading}
+          >
             {discovery.loading
-              ? language.t("provider.custom.discovery.discovering")
-              : discovery.error
-                ? language.t("provider.custom.discovery.retry")
-                : language.t("provider.custom.discovery.discover")}
+              ? language.t("provider.oauth.discovery.discovering")
+              : language.t("provider.oauth.discovery.discover")}
           </Button>
         </div>
 
         <Show when={discovery.error}>
-          <div class="text-13-regular text-icon-critical-base">{discovery.error}</div>
+          <div class="text-13-regular text-icon-critical-base">{language.t(discovery.error!)}</div>
         </Show>
 
         <List
           class="px-1 max-h-72"
-          search={{ placeholder: language.t("provider.custom.discovery.search"), autofocus: false }}
+          search={{ placeholder: language.t("provider.oauth.models.search"), autofocus: false }}
           items={rows()}
           key={(row) => row.id}
           filterKeys={["id", "name"]}
-          emptyMessage={language.t("provider.custom.discovery.empty")}
+          emptyMessage={language.t("provider.oauth.models.empty")}
           onSelect={(row) => {
             if (!row) return
             const key = { providerID: props.providerID, modelID: row.id }

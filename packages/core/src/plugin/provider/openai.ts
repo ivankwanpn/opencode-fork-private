@@ -1,19 +1,16 @@
 import { createServer } from "node:http"
 import type { IntegrationOAuthMethodRegistration } from "@opencode-ai/plugin/v2/effect/integration"
 import { define } from "@opencode-ai/plugin/v2/effect/plugin"
-import { Deferred, Effect, Stream } from "effect"
+import { Deferred, Effect } from "effect"
 import type { Scope } from "effect"
 import { Credential } from "../../credential"
-import { EventV2 } from "../../event"
 import { InstallationVersion } from "../../installation/version"
 import { Integration } from "../../integration"
 import { ModelV2 } from "../../model"
-import { ModelsDev } from "../../models-dev"
 import { OauthCallbackPage } from "../../oauth/page"
 import { ProviderV2 } from "../../provider"
-import type { ProviderModel } from "../../provider-models"
+import { ProviderModelDiscovery } from "../../provider-discovery"
 import { fetchCodexModels } from "./codex-models"
-import { applyLiveModels } from "./live-models"
 import type { PluginInternal } from "../internal"
 
 const clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -156,104 +153,96 @@ const headless = {
   refresh: (value) => refresh(headlessMethodID, value),
 } satisfies IntegrationOAuthMethodRegistration
 
-export const OpenAIPlugin = define({
-  id: "openai",
-  effect: Effect.fn(function* (ctx) {
-    const events = yield* EventV2.Service
-    const hiddenByLive = new Set<string>()
-    const addedByLive = new Set<string>()
-    let lastLiveModels: readonly ProviderModel[] | undefined
-
-    yield* ctx.integration.transform((draft) => {
-      draft.method.update(browser)
-      draft.method.update(headless)
-    })
-    yield* ctx.catalog.transform(
-      Effect.fn(function* (evt) {
-        for (const item of evt.provider.list()) {
-          if (item.provider.api.type !== "aisdk") continue
-          if (item.provider.api.package !== "@ai-sdk/openai") continue
-          if (!item.models.has(ModelV2.ID.make("gpt-5-chat-latest"))) continue
-          evt.model.update(item.provider.id, ModelV2.ID.make("gpt-5-chat-latest"), (model) => {
-            // OpenAIPlugin sends OpenAI models through Responses; this alias is a
-            // chat-completions-only model, so hide it only from OpenAI's catalog.
-            model.enabled = false
-          })
-        }
-      }),
-    )
-    yield* ctx.aisdk.sdk(
-      Effect.fn(function* (evt) {
-        if (evt.package !== "@ai-sdk/openai") return
-        const mod = yield* Effect.promise(() => import("@ai-sdk/openai"))
-        evt.sdk = mod.createOpenAI(evt.options)
-      }),
-    )
-    yield* ctx.aisdk.language(
-      Effect.fn(function* (evt) {
-        if (evt.model.providerID !== ProviderV2.ID.openai) return
-        evt.language = evt.sdk.responses(evt.model.api.id)
-      }),
-    )
-
-    const refreshLiveModels = Effect.fn("OpenAIPlugin.refreshLiveModels")(function* () {
-      const connection = yield* ctx.integration.connection.active(ProviderV2.ID.openai)
-      const credential = connection
-        ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.catch(() => Effect.succeed(undefined)))
-        : undefined
-      const fetchedLiveModels =
-        credential?.type === "oauth"
-          ? yield* Effect.tryPromise(() =>
-              fetchCodexModels({
-                access: credential.access,
-                accountId: accountID(credential.metadata),
-              }),
-            ).pipe(Effect.catch(() => Effect.succeed(undefined)))
-          : undefined
-
-      const resolved = resolveOpenAILiveModels(credential?.type === "oauth", fetchedLiveModels, lastLiveModels)
-      lastLiveModels = resolved.previous
-
-      yield* ctx.catalog.transform((catalog) =>
-        applyOpenAILiveModels(catalog, resolved.live, hiddenByLive, addedByLive),
+export function makeOpenAIPlugin(options: { fetchCodexModels?: typeof fetchCodexModels } = {}) {
+  return define({
+    id: "openai",
+    effect: Effect.fn(function* (ctx) {
+      const discovery = yield* ProviderModelDiscovery.Service
+      yield* discovery.register(
+        ProviderV2.ID.openai,
+        openAIOAuthModelStrategy(options.fetchCodexModels ?? fetchCodexModels),
       )
-    })
 
-    yield* refreshLiveModels()
-    yield* events.subscribe(Integration.Event.ConnectionUpdated).pipe(
-      Stream.filter((event) => event.data.integrationID === Integration.ID.make("openai")),
-      Stream.runForEach(() => refreshLiveModels().pipe(Effect.ignore)),
-      Effect.forkScoped({ startImmediately: true }),
-    )
-    yield* events.subscribe(ModelsDev.Event.Refreshed).pipe(
-      Stream.runForEach(() => refreshLiveModels().pipe(Effect.ignore)),
-      Effect.forkScoped({ startImmediately: true }),
-    )
-  }),
-} satisfies PluginInternal.Plugin<PluginInternal.Requirements | Scope.Scope>)
-
-export function applyOpenAILiveModels(
-  catalog: Parameters<typeof applyLiveModels>[0],
-  live: readonly ProviderModel[] | undefined,
-  hiddenByLive: Set<string>,
-  addedByLive: Set<string>,
-) {
-  applyLiveModels(catalog, ProviderV2.ID.openai, live, hiddenByLive, addedByLive)
+      yield* ctx.integration.transform((draft) => {
+        draft.method.update(browser)
+        draft.method.update(headless)
+      })
+      yield* ctx.catalog.transform(
+        Effect.fn(function* (evt) {
+          for (const item of evt.provider.list()) {
+            if (item.provider.api.type !== "aisdk") continue
+            if (item.provider.api.package !== "@ai-sdk/openai") continue
+            if (!item.models.has(ModelV2.ID.make("gpt-5-chat-latest"))) continue
+            evt.model.update(item.provider.id, ModelV2.ID.make("gpt-5-chat-latest"), (model) => {
+              // OpenAIPlugin sends OpenAI models through Responses; this alias is a
+              // chat-completions-only model, so hide it only from OpenAI's catalog.
+              model.enabled = false
+            })
+          }
+        }),
+      )
+      yield* ctx.aisdk.sdk(
+        Effect.fn(function* (evt) {
+          if (evt.package !== "@ai-sdk/openai") return
+          const mod = yield* Effect.promise(() => import("@ai-sdk/openai"))
+          evt.sdk = mod.createOpenAI(evt.options)
+        }),
+      )
+      yield* ctx.aisdk.language(
+        Effect.fn(function* (evt) {
+          if (evt.model.providerID !== ProviderV2.ID.openai) return
+          evt.language = evt.sdk.responses(evt.model.api.id)
+        }),
+      )
+    }),
+  } satisfies PluginInternal.Plugin<PluginInternal.Requirements | Scope.Scope>)
 }
 
-export function resolveOpenAILiveModels(
-  isOAuth: boolean,
-  fetched: readonly ProviderModel[] | undefined,
-  previous: readonly ProviderModel[] | undefined,
-) {
-  if (!isOAuth) return { live: undefined, previous: undefined }
-  const next = fetched ?? previous
-  return { live: next, previous: next }
+export const OpenAIPlugin = makeOpenAIPlugin()
+
+export function openAIOAuthModelStrategy(
+  models = fetchCodexModels,
+): ProviderModelDiscovery.Strategy {
+  return (input) => {
+    const credential = input.credential
+    if (credential?.type !== "oauth") return Effect.succeed(undefined)
+    return Effect.tryPromise({
+      try: () =>
+        models({
+          access: credential.access,
+          accountId: accountID(credential.metadata),
+        }),
+      catch: (cause) =>
+        new ProviderModelDiscovery.Failure({
+          providerID: ProviderV2.ID.openai,
+          kind: codexDiscoveryFailureKind(cause),
+        }),
+    }).pipe(
+      Effect.map((items) => ({
+        source: "oauth" as const,
+        sourceKey: "openai:codex",
+        models: items.map((item) => ({
+          id: item.id,
+          ...(item.name === undefined ? {} : { name: item.name }),
+          ...(item.context === undefined ? {} : { context: item.context }),
+        })),
+      })),
+    )
+  }
 }
 
 function accountID(metadata: Record<string, unknown> | undefined) {
   const value = metadata?.accountID ?? metadata?.accountId
   return typeof value === "string" ? value : undefined
+}
+
+function codexDiscoveryFailureKind(cause: unknown): ProviderModelDiscovery.FailureKind {
+  if (cause instanceof DOMException && cause.name === "TimeoutError") return "timeout"
+  if (cause instanceof Error && cause.name === "AbortError") return "timeout"
+  const message = cause instanceof Error ? cause.message : ""
+  if (/\b(401|403)\b/.test(message)) return "authentication"
+  if (cause instanceof SyntaxError || /json|parse/i.test(message)) return "invalid"
+  return "network"
 }
 
 function headers(contentType: string) {

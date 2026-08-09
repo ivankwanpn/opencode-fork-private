@@ -1,9 +1,41 @@
 import { describe, expect, test } from "bun:test"
+import { Effect, Scope, Stream } from "effect"
+import { EventV2 } from "../../src/event"
+import { LiveModelsPlugin } from "../../src/plugin/provider/live-models"
+import { ProviderModelDiscovery } from "../../src/provider-discovery"
 import { ModelV2 } from "../../src/model"
 import { ProviderV2 } from "../../src/provider"
 import { applyLiveModels, resolveLiveSnapshot } from "../../src/plugin/provider/live-models"
+import { host } from "./host"
 
 describe("live provider model projection", () => {
+  test("delegates startup and both refresh events to shared provider discovery", async () => {
+    let refreshes = 0
+    const subscriber = () => Stream.fromIterable([{}, {}] as never[])
+    const registration = () =>
+      Effect.gen(function* () {
+        yield* Scope.Scope
+        return { dispose: Effect.void }
+      })
+    const discovery = ProviderModelDiscovery.Service.of({
+      register: registration,
+      discover: () => Effect.die("unused discovery"),
+      refresh: () => Effect.die("unused refresh"),
+      refreshAll: () => Effect.sync(() => refreshes++),
+    })
+    const events = EventV2.Service.of({ subscribe: subscriber } as unknown as EventV2.Interface)
+
+    await Effect.runPromise(
+      LiveModelsPlugin.effect(host({ event: { subscribe: subscriber, all: () => Stream.empty } })).pipe(
+        Effect.provideService(ProviderModelDiscovery.Service, discovery),
+        Effect.provideService(EventV2.Service, events),
+        Effect.scoped,
+      ),
+    )
+
+    expect(refreshes).toBe(5)
+  })
+
   test("keeps a snapshot only when the provider source is unchanged", () => {
     const previous = { source: "https://old.example.com/v1", models: [{ id: "old" }] }
 

@@ -17,7 +17,9 @@ import { location } from "./fixture/location"
 import { testEffect } from "./lib/effect"
 
 const providerID = ProviderV2.ID.make("provider-a")
+const secondProviderID = ProviderV2.ID.make("provider-b")
 const configuredID = ModelV2.ID.make("configured")
+const secondConfiguredID = ModelV2.ID.make("configured-b")
 
 const locationLayer = Layer.succeed(
   Location.Service,
@@ -89,6 +91,18 @@ const configure = Effect.fn(function* () {
       model.request.headers["x-model"] = "configured"
       model.request.body.temperature = 0.7
       model.limit = { context: 123_456, input: 100_000, output: 10_000 }
+    })
+    draft.provider.update(secondProviderID, (provider) => {
+      provider.api = {
+        type: "aisdk",
+        package: "@ai-sdk/openai-compatible",
+        url: "https://provider-b.example.com/v1",
+      }
+      provider.request.body.apiKey = "test-key"
+    })
+    draft.model.update(secondProviderID, secondConfiguredID, (model) => {
+      model.name = "Second configured model"
+      model.enabled = true
     })
   })
 })
@@ -166,6 +180,66 @@ describe("ProviderModelDiscovery", () => {
       yield* Effect.all([discovery.discover(providerID), discovery.discover(providerID)], { concurrency: "unbounded" })
       expect(inFlight).toBe(0)
       expect(maxInFlight).toBe(1)
+    }),
+  )
+
+  it.effect("keeps one active projection for concurrent providers and disposes it after the final clear", () =>
+    Effect.gen(function* () {
+      const snapshots = new Map<ProviderV2.ID, ProviderModelDiscovery.LiveModelsSnapshot>()
+      let active = 0
+      let installs = 0
+      const projection = ProviderModelDiscovery.makeProjectionLifecycle({
+        install: () =>
+          Effect.sync(() => {
+            installs++
+            active++
+            return { dispose: Effect.sync(() => active--) }
+          }),
+        reload: Effect.void,
+        hasSnapshots: () => snapshots.size > 0,
+      })
+
+      yield* Effect.all(
+        [
+          projection.reconcile(() => snapshots.set(providerID, { source: "provider-a", models: [] })),
+          projection.reconcile(() => snapshots.set(secondProviderID, { source: "provider-b", models: [] })),
+        ],
+        { concurrency: "unbounded" },
+      )
+
+      expect(installs).toBe(1)
+      expect(active).toBe(1)
+      yield* projection.reconcile(() => snapshots.delete(providerID))
+      expect(active).toBe(1)
+      yield* projection.reconcile(() => snapshots.delete(secondProviderID))
+      expect(active).toBe(0)
+    }),
+  )
+
+  it.effect("keeps one live projection for concurrent providers and clears it back to the catalog", () =>
+    Effect.gen(function* () {
+      yield* configure()
+      const catalog = yield* Catalog.Service
+      const discovery = yield* ProviderModelDiscovery.Service
+      yield* Effect.all([discovery.discover(providerID), discovery.discover(secondProviderID)], { concurrency: "unbounded" })
+
+      expect(maxInFlight).toBe(2)
+      expect(yield* catalog.model.get(providerID, ModelV2.ID.make("compatible-model"))).toBeDefined()
+      expect(yield* catalog.model.get(secondProviderID, ModelV2.ID.make("compatible-model"))).toBeDefined()
+
+      yield* catalog.transform((draft) => {
+        for (const id of [providerID, secondProviderID]) {
+          draft.provider.update(id, (provider) => {
+            provider.api = { type: "native", settings: {} }
+          })
+        }
+      })
+      yield* discovery.refreshAll()
+
+      expect(yield* catalog.model.get(providerID, ModelV2.ID.make("compatible-model"))).toBeUndefined()
+      expect(yield* catalog.model.get(secondProviderID, ModelV2.ID.make("compatible-model"))).toBeUndefined()
+      expect(yield* catalog.model.get(providerID, configuredID)).toMatchObject({ enabled: true })
+      expect(yield* catalog.model.get(secondProviderID, secondConfiguredID)).toMatchObject({ enabled: true })
     }),
   )
 })

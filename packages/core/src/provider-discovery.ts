@@ -157,6 +157,37 @@ type LiveModelsCatalog = {
 
 type FetchProviderModels = NonNullable<ProviderModelDiscoveryOptions["fetch"]>
 
+export interface ProjectionLifecycle {
+  readonly reconcile: (mutate: () => void) => Effect.Effect<void>
+}
+
+export function makeProjectionLifecycle(input: {
+  readonly install: () => Effect.Effect<PluginRuntime.Registration>
+  readonly reload: Effect.Effect<void>
+  readonly hasSnapshots: () => boolean
+}): ProjectionLifecycle {
+  const locks = KeyedMutex.makeUnsafe<string>()
+  let projection: PluginRuntime.Registration | undefined
+
+  const reconcile = Effect.fn("ProviderModelDiscovery.reconcileProjection")(function* (mutate: () => void) {
+    yield* locks.withLock("projection")(
+      Effect.gen(function* () {
+        mutate()
+        if (input.hasSnapshots()) {
+          if (projection) return yield* input.reload
+          projection = yield* input.install()
+          return
+        }
+        if (!projection) return
+        yield* projection.dispose
+        projection = undefined
+      }),
+    )
+  })
+
+  return { reconcile }
+}
+
 export function makeLayer(input: { readonly fetch?: FetchProviderModels } = {}) {
   return Layer.effect(
     Service,
@@ -169,25 +200,27 @@ export function makeLayer(input: { readonly fetch?: FetchProviderModels } = {}) 
       const snapshots = new Map<ProviderV2.ID, LiveModelsSnapshot>()
       const hiddenByLive = new Set<string>()
       const addedByLive = new Set<string>()
-      let projection: PluginRuntime.Registration | undefined
-
-      const installProjection = Effect.fn("ProviderModelDiscovery.installProjection")(function* () {
-        if (projection) yield* projection.dispose
-        projection = yield* catalog
-          .transform((draft) => {
-            for (const record of draft.provider.list()) {
-              applyLiveModels(draft, record.provider.id, snapshots.get(record.provider.id)?.models, hiddenByLive, addedByLive)
-            }
-          })
-          .pipe(Scope.provide(scope))
+      const projection = makeProjectionLifecycle({
+        install: () =>
+          catalog
+            .transform((draft) => {
+              for (const record of draft.provider.list()) {
+                applyLiveModels(
+                  draft,
+                  record.provider.id,
+                  snapshots.get(record.provider.id)?.models,
+                  hiddenByLive,
+                  addedByLive,
+                )
+              }
+            })
+            .pipe(Scope.provide(scope)),
+        reload: catalog.reload(),
+        hasSnapshots: () => snapshots.size > 0,
       })
 
       const clear = Effect.fn("ProviderModelDiscovery.clear")(function* (providerID: ProviderV2.ID) {
-        snapshots.delete(providerID)
-        if (snapshots.size > 0) return yield* installProjection()
-        if (!projection) return
-        yield* projection.dispose
-        projection = undefined
+        yield* projection.reconcile(() => snapshots.delete(providerID))
       })
 
       const resolveCredential = Effect.fn("ProviderModelDiscovery.resolveCredential")(function* (provider: ProviderV2.Info) {
@@ -258,8 +291,7 @@ export function makeLayer(input: { readonly fetch?: FetchProviderModels } = {}) 
             const result = selected ?? (yield* generic(provider, credential))
             const models = uniqueModels(result.models)
             if (!models.length) return yield* new Failure({ providerID, kind: "empty" })
-            snapshots.set(providerID, { source: result.sourceKey, models })
-            yield* installProjection()
+            yield* projection.reconcile(() => snapshots.set(providerID, { source: result.sourceKey, models }))
             return ProviderDiscovery.Result.make({ providerID, source: result.source, models })
           }),
         )
@@ -277,9 +309,11 @@ export function makeLayer(input: { readonly fetch?: FetchProviderModels } = {}) 
       const refreshAll = Effect.fn("ProviderModelDiscovery.refreshAll")(function* () {
         const providers = yield* catalog.provider.all()
         const active = new Set(providers.map((provider) => provider.id))
-        for (const providerID of snapshots.keys()) {
-          if (!active.has(providerID)) snapshots.delete(providerID)
-        }
+        yield* projection.reconcile(() => {
+          for (const providerID of snapshots.keys()) {
+            if (!active.has(providerID)) snapshots.delete(providerID)
+          }
+        })
         yield* Effect.forEach(providers, (provider) => refresh(provider.id), { concurrency: "unbounded", discard: true })
       })
 

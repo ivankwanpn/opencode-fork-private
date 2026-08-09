@@ -126,9 +126,9 @@ test("selects a dynamically discovered utility model for small-model hooks", asy
           data: [
             {
               model_picker_enabled: false,
-              id: "gpt-4.1",
-              name: "GPT-4.1",
-              version: "gpt-4.1-2026-06-01",
+              id: "utility-model-2026",
+              name: "Utility Model 2026",
+              version: "utility-model-2026-2026-06-01",
               capabilities: {
                 family: "gpt",
                 limits: {
@@ -160,7 +160,7 @@ test("selects a dynamically discovered utility model for small-model hooks", asy
     output as never,
   )
 
-  expect(output.model?.id).toBe("gpt-4.1")
+  expect(output.model?.id).toBe("utility-model-2026")
 })
 
 test("converts Copilot AIC token prices to USD per million tokens", async () => {

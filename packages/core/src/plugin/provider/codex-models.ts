@@ -1,9 +1,11 @@
-import { InstallationVersion } from "../../installation/version"
+import packageJSON from "../../../package.json" with { type: "json" }
 
 export const CODEX_MODELS_ENDPOINT = "https://chatgpt.com/backend-api/codex/models"
+export const CODEX_CLIENT_VERSION = packageJSON.version
 
 const CODEX_MODELS_TIMEOUT_MS = 15_000
 const CODEX_MODELS_ORIGINATOR = "opencode"
+const CODEX_MODELS_USER_AGENT = `opencode/${CODEX_CLIENT_VERSION}`
 
 export type CodexModel = {
   id: string
@@ -31,14 +33,17 @@ export async function fetchCodexModels(
   options: { endpoint?: string; fetch?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<CodexModel[]> {
   const endpoint = new URL(options.endpoint ?? CODEX_MODELS_ENDPOINT)
-  endpoint.searchParams.set("client_version", InstallationVersion)
+  endpoint.searchParams.set("client_version", CODEX_CLIENT_VERSION)
   const accountId = auth.accountId ?? accountIDFromAccess(auth.access)
   const response = await (options.fetch ?? fetch)(endpoint, {
+    method: "GET",
     headers: {
       Authorization: `Bearer ${auth.access}`,
       originator: CODEX_MODELS_ORIGINATOR,
+      "User-Agent": CODEX_MODELS_USER_AGENT,
       ...(accountId ? { "ChatGPT-Account-Id": accountId } : {}),
     },
+    redirect: "manual",
     signal: AbortSignal.timeout(options.timeoutMs ?? CODEX_MODELS_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`Codex model discovery failed: ${response.status}`)

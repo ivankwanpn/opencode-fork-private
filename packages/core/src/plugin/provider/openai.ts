@@ -4,13 +4,12 @@ import { define } from "@opencode-ai/plugin/v2/effect/plugin"
 import { Deferred, Effect } from "effect"
 import type { Scope } from "effect"
 import { Credential } from "../../credential"
-import { InstallationVersion } from "../../installation/version"
 import { Integration } from "../../integration"
 import { ModelV2 } from "../../model"
 import { OauthCallbackPage } from "../../oauth/page"
 import { ProviderV2 } from "../../provider"
 import { ProviderModelDiscovery } from "../../provider-discovery"
-import { fetchCodexModels } from "./codex-models"
+import { CODEX_CLIENT_VERSION, fetchCodexModels } from "./codex-models"
 import type { PluginInternal } from "../internal"
 
 const clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -164,8 +163,8 @@ export function makeOpenAIPlugin(options: { fetchCodexModels?: typeof fetchCodex
       )
 
       yield* ctx.integration.transform((draft) => {
-        draft.method.update(browser)
         draft.method.update(headless)
+        draft.method.update(browser)
       })
       yield* ctx.catalog.transform(
         Effect.fn(function* (evt) {
@@ -246,7 +245,7 @@ function codexDiscoveryFailureKind(cause: unknown): ProviderModelDiscovery.Failu
 }
 
 function headers(contentType: string) {
-  return { "Content-Type": contentType, "User-Agent": `opencode/${InstallationVersion}` }
+  return { "Content-Type": contentType, "User-Agent": `opencode/${CODEX_CLIENT_VERSION}` }
 }
 
 function exchange(code: string, redirect: string, pkce: Pkce) {

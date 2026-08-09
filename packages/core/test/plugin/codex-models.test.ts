@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { fetchCodexModels, parseCodexModels } from "../../src/plugin/provider/codex-models"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import packageJSON from "../../package.json" with { type: "json" }
 
 describe("codex model discovery", () => {
   test("accepts supported response envelopes and uses safe name fallback", () => {
@@ -47,7 +47,7 @@ describe("codex model discovery", () => {
     ).toEqual([{ id: "gpt-map", name: "GPT Map" }])
   })
 
-  test("adds the OpenCode client version, originator, account header, and timeout", async () => {
+  test("uses the cc-custom Codex catalog request profile without leaking redirects", async () => {
     let request: { url: string; init?: RequestInit } | undefined
     const response = await fetchCodexModels(
       { access: "access-token", accountId: "account-123" },
@@ -63,9 +63,12 @@ describe("codex model discovery", () => {
 
     expect(response).toEqual([{ id: "gpt-live" }])
     expect(new URL(request?.url ?? "https://invalid").searchParams.get("existing")).toBe("true")
-    expect(new URL(request?.url ?? "https://invalid").searchParams.get("client_version")).toBe(InstallationVersion)
+    expect(new URL(request?.url ?? "https://invalid").searchParams.get("client_version")).toBe(packageJSON.version)
     expect(new Headers(request?.init?.headers).get("originator")).toBe("opencode")
+    expect(new Headers(request?.init?.headers).get("User-Agent")).toBe(`opencode/${packageJSON.version}`)
     expect(new Headers(request?.init?.headers).get("ChatGPT-Account-Id")).toBe("account-123")
+    expect(request?.init?.method).toBe("GET")
+    expect(request?.init?.redirect).toBe("manual")
     expect(request?.init?.signal).toBeInstanceOf(AbortSignal)
   })
 

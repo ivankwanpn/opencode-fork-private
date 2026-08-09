@@ -510,6 +510,56 @@ describe("provider HttpApi", () => {
   )
 
   it.instance(
+    "returns a sanitized discovery error for a catalog provider without a configured connection",
+    Effect.gen(function* () {
+      const directory = (yield* TestInstance).directory
+      const response = yield* request("/api/provider/provider-without-discovery/models/discover", {
+        method: "POST",
+        headers: { "x-opencode-directory": directory },
+      })
+
+      expect(response.status).toBe(502)
+      const body = yield* response.json
+      expect(body).toMatchObject({
+        _tag: "ProviderModelDiscoveryError",
+        providerID: "provider-without-discovery",
+        kind: "missing-credential",
+      })
+      expect(JSON.stringify(body)).not.toContain("token")
+      expect(JSON.stringify(body)).not.toContain("endpoint")
+      expect(JSON.stringify(body)).not.toContain("access")
+    }),
+    {
+      config: {
+        ...projectOptions.config,
+        provider: {
+          "provider-without-discovery": {
+            name: "Provider without discovery connection",
+            npm: "@ai-sdk/openai-compatible",
+            api: "https://provider-without-discovery.example/v1",
+            models: { configured: { name: "Configured" } },
+          },
+        },
+      },
+    },
+  )
+
+  it.instance(
+    "returns 404 for discovery of an unknown provider",
+    Effect.gen(function* () {
+      const directory = (yield* TestInstance).directory
+      const response = yield* request("/api/provider/missing-provider/models/discover", {
+        method: "POST",
+        headers: { "x-opencode-directory": directory },
+      })
+
+      expect(response.status).toBe(404)
+      expect(yield* response.text).not.toContain("token")
+    }),
+    projectOptions,
+  )
+
+  it.instance(
     "serves OAuth authorize response shapes",
     Effect.gen(function* () {
       const directory = (yield* TestInstance).directory

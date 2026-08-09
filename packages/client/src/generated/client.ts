@@ -81,6 +81,8 @@ import type {
   ProvidersListOutput,
   ProvidersGetInput,
   ProvidersGetOutput,
+  ProvidersDiscoverModelsInput,
+  ProvidersDiscoverModelsOutput,
   ProvidersDiscoverCustomInput,
   ProvidersDiscoverCustomOutput,
   ProvidersConfigureCustomInput,
@@ -902,6 +904,18 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [404, 503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      discoverModels: (input: ProvidersDiscoverModelsInput, requestOptions?: RequestOptions) =>
+        request<ProvidersDiscoverModelsOutput>(
+          {
+            method: "POST",
+            path: `/api/provider/${encodeURIComponent(input.providerID)}/models/discover`,
+            query: { location: input["location"] },
+            successStatus: 200,
+            declaredStatuses: [404, 502, 503, 401, 400],
             empty: false,
           },
           requestOptions,

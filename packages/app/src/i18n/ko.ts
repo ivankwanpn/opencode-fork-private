@@ -2,6 +2,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "OAuth 제공자",
+  "provider.oauth.authManaged": "자격 증명은 이 연결에서 관리됩니다.",
+  "provider.oauth.discovery.discover": "모델 검색",
+  "provider.oauth.discovery.discovering": "모델을 검색하는 중...",
+  "provider.oauth.discovery.success": "현재 사용 가능한 모델을 찾았습니다",
+  "provider.oauth.discovery.cached": "캐시되었거나 정적인 카탈로그 모델을 표시합니다.",
+  "provider.oauth.discovery.failure": "모델을 찾을 수 없습니다. 다시 시도하세요.",
+  "provider.oauth.discovery.unsupported": "이 제공자는 모델 검색을 지원하지 않습니다.",
+  "provider.oauth.discovery.empty": "검색된 모델이 없습니다.",
+  "provider.oauth.models.search": "모델 검색",
+  "provider.oauth.models.empty": "검색과 일치하는 모델이 없습니다.",
+  "provider.oauth.models.context": "로컬 컨텍스트 재정의",
   "command.category.suggested": "추천",
   "command.category.view": "보기",
   "command.category.project": "프로젝트",

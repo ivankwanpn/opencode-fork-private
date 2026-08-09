@@ -6,6 +6,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "OAuth sağlayıcısı",
+  "provider.oauth.authManaged": "Kimlik bilgileri bu bağlantı tarafından yönetilir.",
+  "provider.oauth.discovery.discover": "Modelleri keşfet",
+  "provider.oauth.discovery.discovering": "Modeller keşfediliyor...",
+  "provider.oauth.discovery.success": "Güncel modeller keşfedildi",
+  "provider.oauth.discovery.cached": "Önbelleğe alınmış veya statik katalog modelleri gösteriliyor.",
+  "provider.oauth.discovery.failure": "Modeller keşfedilemedi. Yeniden deneyin.",
+  "provider.oauth.discovery.unsupported": "Bu sağlayıcı model keşfini desteklemiyor.",
+  "provider.oauth.discovery.empty": "Hiç model keşfedilmedi.",
+  "provider.oauth.models.search": "Model ara",
+  "provider.oauth.models.empty": "Aramanızla eşleşen model yok.",
+  "provider.oauth.models.context": "Yerel bağlam geçersiz kılma",
   "command.category.suggested": "Önerilen",
   "command.category.view": "Görünüm",
   "command.category.project": "Proje",

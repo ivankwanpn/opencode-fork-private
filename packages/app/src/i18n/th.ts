@@ -2,6 +2,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "ผู้ให้บริการ OAuth",
+  "provider.oauth.authManaged": "ข้อมูลรับรองได้รับการจัดการโดยการเชื่อมต่อนี้",
+  "provider.oauth.discovery.discover": "ค้นหารุ่นโมเดล",
+  "provider.oauth.discovery.discovering": "กำลังค้นหารุ่นโมเดล...",
+  "provider.oauth.discovery.success": "ค้นพบรุ่นโมเดลปัจจุบันแล้ว",
+  "provider.oauth.discovery.cached": "กำลังแสดงรุ่นโมเดลจากแคชหรือแค็ตตาล็อกแบบคงที่",
+  "provider.oauth.discovery.failure": "ไม่สามารถค้นหารุ่นโมเดลได้ โปรดลองอีกครั้ง",
+  "provider.oauth.discovery.unsupported": "ผู้ให้บริการนี้ไม่รองรับการค้นหารุ่นโมเดล",
+  "provider.oauth.discovery.empty": "ไม่พบรุ่นโมเดล",
+  "provider.oauth.models.search": "ค้นหารุ่นโมเดล",
+  "provider.oauth.models.empty": "ไม่มีรุ่นโมเดลที่ตรงกับการค้นหาของคุณ",
+  "provider.oauth.models.context": "การแทนที่บริบทเฉพาะเครื่อง",
   "command.category.suggested": "แนะนำ",
   "command.category.view": "มุมมอง",
   "command.category.project": "โปรเจกต์",

@@ -20,6 +20,20 @@ const appLocales = [
   "zht",
 ] as const
 const desktopLocales = appLocales.filter((locale) => locale !== "th" && locale !== "tr")
+const oauthProviderKeys = [
+  "provider.oauth.title",
+  "provider.oauth.authManaged",
+  "provider.oauth.discovery.discover",
+  "provider.oauth.discovery.discovering",
+  "provider.oauth.discovery.success",
+  "provider.oauth.discovery.cached",
+  "provider.oauth.discovery.failure",
+  "provider.oauth.discovery.unsupported",
+  "provider.oauth.discovery.empty",
+  "provider.oauth.models.search",
+  "provider.oauth.models.empty",
+  "provider.oauth.models.context",
+] as const
 
 const domains = [
   {
@@ -80,6 +94,19 @@ describe.skipIf(!!process.env.CI)("i18n parity", () => {
       for (const key of ["command.session.previous.unseen", "command.session.next.unseen"]) {
         expect(target[key]).toBeDefined()
         expect(target[key]).not.toBe(source[key])
+      }
+    }
+  })
+
+  test("OAuth provider discovery keys exist in every app locale", async () => {
+    for (const locale of ["en", ...appLocales]) {
+      const target = await dictionary(`./${locale}.ts`)
+      for (const key of oauthProviderKeys) {
+        const value = target[key]
+        expect(value).toBeDefined()
+        if (value === undefined) continue
+        expect(value.trim()).not.toBe("")
+        expect(placeholders(value)).toEqual([])
       }
     }
   })

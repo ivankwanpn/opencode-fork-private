@@ -1,4 +1,3 @@
-import type { CatalogDraft } from "@opencode-ai/plugin/v2/effect"
 import { define } from "@opencode-ai/plugin/v2/effect/plugin"
 import { Effect, Stream } from "effect"
 import { Catalog } from "../../catalog"
@@ -7,7 +6,16 @@ import { EventV2 } from "../../event"
 import { Integration } from "../../integration"
 import { ModelsDev } from "../../models-dev"
 import { ProviderV2 } from "../../provider"
-import { fetchProviderModels, supportsProviderModelDiscovery, type ProviderModel } from "../../provider-models"
+import {
+  applyLiveModels,
+  liveModelSourceKey,
+  resolveLiveSnapshot,
+  supportsLiveModels,
+  type LiveModelsSnapshot,
+} from "../../provider-discovery"
+import { fetchProviderModels } from "../../provider-models"
+
+export { applyLiveModels, resolveLiveSnapshot, supportsLiveModels, type LiveModelsSnapshot } from "../../provider-discovery"
 
 export const LiveModelsPlugin = define({
   id: "live-models",
@@ -112,101 +120,3 @@ export const LiveModelsPlugin = define({
     )
   }),
 })
-
-export type LiveModelsSnapshot = {
-  readonly source: string
-  readonly models: readonly ProviderModel[]
-}
-
-export function resolveLiveSnapshot(input: {
-  source: string
-  fetched?: readonly ProviderModel[]
-  previous?: LiveModelsSnapshot
-}) {
-  if (input.fetched?.length) {
-    const snapshot = { source: input.source, models: input.fetched }
-    return { live: snapshot.models, snapshot }
-  }
-  if (input.previous?.source !== input.source) return { live: undefined, snapshot: undefined }
-  if (!input.previous) return { live: undefined, snapshot: undefined }
-  return { live: input.previous.models, snapshot: input.previous }
-}
-
-function liveModelSourceKey(input: { baseURL: string; packageName: string; modelsURL?: string }) {
-  return JSON.stringify([input.baseURL.trim().replace(/\/+$/, ""), input.packageName, input.modelsURL?.trim() ?? ""])
-}
-
-export function supportsLiveModels(provider: ProviderV2.Info) {
-  if (provider.api.type !== "aisdk") return false
-  return supportsProviderModelDiscovery({
-    providerID: provider.id,
-    packageName: provider.api.package,
-    baseURL: provider.api.url,
-  })
-}
-
-export function applyLiveModels(
-  catalog: LiveModelsCatalog,
-  providerID: string,
-  live: readonly ProviderModel[] | undefined,
-  hiddenByLive: Set<string>,
-  addedByLive: Set<string>,
-) {
-  const record = catalog.provider.get(providerID)
-  if (!record) return
-
-  const liveIDs = live ? new Set(live.map((model) => model.id)) : undefined
-  for (const key of addedByLive) {
-    if (!key.startsWith(`${providerID}/`)) continue
-    const modelID = key.slice(providerID.length + 1)
-    if (!liveIDs || !liveIDs.has(modelID)) {
-      catalog.model.remove(providerID, modelID)
-      addedByLive.delete(key)
-      hiddenByLive.delete(key)
-    }
-  }
-
-  for (const [modelID, model] of record.models) {
-    const key = `${providerID}/${modelID}`
-    if (!liveIDs) {
-      if (hiddenByLive.delete(key)) model.enabled = true
-      continue
-    }
-    if (liveIDs.has(model.api.id)) {
-      if (hiddenByLive.delete(key)) model.enabled = true
-      continue
-    }
-    if (model.enabled) hiddenByLive.add(key)
-    model.enabled = false
-  }
-
-  if (!live || record.provider.api.type !== "aisdk") return
-  for (const item of live) {
-    if (record.models.has(item.id)) continue
-    catalog.model.update(providerID, item.id, (model) => {
-      model.name = item.name ?? item.id
-      model.api = { ...record.provider.api, id: item.id }
-      model.capabilities = { tools: false, input: ["text"], output: ["text"] }
-      model.cost = [{ input: 0, output: 0, cache: { read: 0, write: 0 } }]
-      model.limit = {
-        context: item.context ?? 0,
-        ...(item.input === undefined ? {} : { input: item.input }),
-        output: item.output ?? 0,
-      }
-      model.status = "active"
-      model.enabled = true
-      model.variants = []
-    })
-    addedByLive.add(`${providerID}/${item.id}`)
-  }
-}
-
-type LiveModelsCatalog = {
-  readonly provider: {
-    get(providerID: string): ReturnType<CatalogDraft["provider"]["get"]>
-  }
-  readonly model: {
-    update: CatalogDraft["model"]["update"]
-    remove: CatalogDraft["model"]["remove"]
-  }
-}

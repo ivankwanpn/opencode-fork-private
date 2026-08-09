@@ -87,6 +87,20 @@ describe("provider model discovery", () => {
     expect(result.models).toEqual([{ id: "claude-live" }])
   })
 
+  test("uses the supplied credential as a bearer token for compatible discovery", async () => {
+    const result = await fetchProviderModels({
+      baseURL: "https://api.example.com/v1",
+      packageName: "@ai-sdk/openai-compatible",
+      apiKey: "oauth-access-token",
+      fetch: async (_input, init) => {
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer oauth-access-token")
+        return Response.json({ data: [{ id: "oauth-live" }] })
+      },
+    })
+
+    expect(result.models).toEqual([{ id: "oauth-live" }])
+  })
+
   test("does not treat an empty catalog as a successful snapshot", async () => {
     await expect(
       fetchProviderModels({

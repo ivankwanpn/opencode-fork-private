@@ -132,6 +132,61 @@ describe("Integration", () => {
     }),
   )
 
+  it.effect("force refreshes a still-valid OAuth connection and persists the new credential", () =>
+    Effect.gen(function* () {
+      const integrations = yield* Integration.Service
+      const credentials = yield* Credential.Service
+      const integrationID = Integration.ID.make("openai")
+      const methodID = Integration.MethodID.make("chatgpt")
+      let refreshes = 0
+      yield* integrations.transform((editor) =>
+        editor.method.update({
+          integrationID,
+          method: { id: methodID, type: "oauth", label: "ChatGPT" },
+          authorize: () =>
+            Effect.succeed({
+              mode: "auto" as const,
+              url: "https://example.com/authorize",
+              instructions: "Sign in",
+              callback: Effect.never,
+            }),
+          refresh: (value) => {
+            refreshes++
+            return Effect.succeed(
+              Credential.OAuth.make({
+                ...value,
+                access: "fresh-access",
+                refresh: "rotated-refresh",
+                expires: Date.now() + 60 * 60 * 1000,
+              }),
+            )
+          },
+        }),
+      )
+      const credential = yield* credentials.create({
+        integrationID,
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          access: "stale-access",
+          refresh: "refresh-token",
+          expires: Date.now() + 60 * 60 * 1000,
+        }),
+      })
+      const connection = yield* integrations.connection.active(integrationID)
+      if (!connection) throw new Error("Expected active connection")
+
+      const resolved = yield* integrations.connection.resolve(connection, { forceRefresh: true })
+      expect(resolved).toMatchObject({ type: "oauth", access: "fresh-access", refresh: "rotated-refresh" })
+      expect(refreshes).toBe(1)
+      expect((yield* credentials.get(credential.id))?.value).toMatchObject({
+        type: "oauth",
+        access: "fresh-access",
+        refresh: "rotated-refresh",
+      })
+    }),
+  )
+
   it.effect("completes code OAuth once and stores the credential", () =>
     Effect.gen(function* () {
       const integrations = yield* Integration.Service

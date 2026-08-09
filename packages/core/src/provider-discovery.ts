@@ -223,13 +223,16 @@ export function makeLayer(input: { readonly fetch?: FetchProviderModels } = {}) 
         yield* projection.reconcile(() => snapshots.delete(providerID))
       })
 
-      const resolveCredential = Effect.fn("ProviderModelDiscovery.resolveCredential")(function* (provider: ProviderV2.Info) {
+      const resolveCredential = Effect.fn("ProviderModelDiscovery.resolveCredential")(function* (
+        provider: ProviderV2.Info,
+        forceRefresh = false,
+      ) {
         const connection = yield* integration.connection
           .active(provider.integrationID ?? Integration.ID.make(provider.id))
           .pipe(Effect.catch(() => Effect.fail(new Failure({ providerID: provider.id, kind: "authentication" }))))
         if (!connection) return undefined
         return yield* integration.connection
-          .resolve(connection)
+          .resolve(connection, { forceRefresh })
           .pipe(Effect.catch(() => Effect.fail(new Failure({ providerID: provider.id, kind: "authentication" }))))
       })
 
@@ -286,13 +289,26 @@ export function makeLayer(input: { readonly fetch?: FetchProviderModels } = {}) 
             const provider = yield* catalog.provider.get(providerID)
             if (!provider) return yield* new Failure({ providerID, kind: "unsupported" })
             const credential = yield* resolveCredential(provider)
-            const strategy = strategies.get(providerID)
-            const selected = strategy ? yield* strategy({ provider, credential }) : undefined
-            const result = selected ?? (yield* generic(provider, credential))
-            const models = uniqueModels(result.models)
-            if (!models.length) return yield* new Failure({ providerID, kind: "empty" })
-            yield* projection.reconcile(() => snapshots.set(providerID, { source: result.sourceKey, models }))
-            return ProviderDiscovery.Result.make({ providerID, source: result.source, models })
+            const attempt = (resolved: Credential.Value | undefined) =>
+              Effect.gen(function* () {
+                const strategy = strategies.get(providerID)
+                const selected = strategy ? yield* strategy({ provider, credential: resolved }) : undefined
+                const result = selected ?? (yield* generic(provider, resolved))
+                const models = uniqueModels(result.models)
+                if (!models.length) return yield* new Failure({ providerID, kind: "empty" })
+                yield* projection.reconcile(() => snapshots.set(providerID, { source: result.sourceKey, models }))
+                return ProviderDiscovery.Result.make({ providerID, source: result.source, models })
+              })
+
+            return yield* attempt(credential).pipe(
+              Effect.catch((failure) => {
+                if (!shouldRetryOAuthDiscovery(provider, credential, failure)) return Effect.fail(failure)
+                return Effect.gen(function* () {
+                  const refreshed = yield* resolveCredential(provider, true)
+                  return yield* attempt(refreshed)
+                })
+              }),
+            )
           }),
         )
       })
@@ -363,4 +379,13 @@ function failureKind(cause: unknown): FailureKind {
   if (/empty catalog/i.test(message)) return "empty"
   if (cause instanceof SyntaxError || /json|parse/i.test(message)) return "invalid"
   return "network"
+}
+
+function shouldRetryOAuthDiscovery(
+  provider: ProviderV2.Info,
+  credential: Credential.Value | undefined,
+  failure: Failure,
+) {
+  if (provider.id !== ProviderV2.ID.openai || credential?.type !== "oauth") return false
+  return failure.kind === "authentication" || failure.kind === "network"
 }

@@ -96,6 +96,83 @@ describe("OpenAIPlugin", () => {
     }),
   )
 
+  it.effect("refreshes rejected OAuth access once before retrying Codex discovery", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const credentials = yield* Credential.Service
+      const integrations = yield* Integration.Service
+      const discovery = yield* ProviderModelDiscovery.Service
+      const methodID = Integration.MethodID.make("chatgpt-browser")
+      let calls = 0
+      let refreshes = 0
+      yield* catalog.transform((draft) => {
+        draft.provider.update(ProviderV2.ID.openai, (provider) => {
+          provider.api = { type: "aisdk", package: "@ai-sdk/openai", url: "https://api.openai.com/v1" }
+        })
+      })
+      yield* addPlugin(
+        makeOpenAIPlugin({
+          fetchCodexModels: async (auth) => {
+            calls++
+            if (auth.access === "stale-access") throw new Error("Codex model discovery failed: 403")
+            return [{ id: "fresh-runtime-model", context: 200_000 }]
+          },
+        }),
+      )
+      yield* integrations.transform((editor) =>
+        editor.method.update({
+          integrationID: Integration.ID.make(ProviderV2.ID.openai),
+          method: { id: methodID, type: "oauth", label: "ChatGPT" },
+          authorize: () =>
+            Effect.succeed({
+              mode: "auto" as const,
+              url: "https://example.com/authorize",
+              instructions: "Sign in",
+              callback: Effect.never,
+            }),
+          refresh: (value) => {
+            refreshes++
+            return Effect.succeed(
+              Credential.OAuth.make({
+                ...value,
+                access: "fresh-access",
+                refresh: "rotated-refresh",
+                expires: Date.now() + 60 * 60 * 1000,
+              }),
+            )
+          },
+        }),
+      )
+      const stored = yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          access: "stale-access",
+          refresh: "refresh-token",
+          expires: Date.now() + 60 * 60 * 1000,
+          metadata: { accountID: "account-id" },
+        }),
+      })
+
+      const result = yield* discovery.discover(ProviderV2.ID.openai)
+      expect(result).toEqual({
+        providerID: ProviderV2.ID.openai,
+        source: "oauth",
+        models: [{ id: "fresh-runtime-model", context: 200_000 }],
+      })
+      expect(calls).toBe(2)
+      expect(refreshes).toBe(1)
+      expect((yield* credentials.get(stored.id))?.value).toMatchObject({
+        type: "oauth",
+        access: "fresh-access",
+        refresh: "rotated-refresh",
+      })
+      expect(JSON.stringify(result)).not.toContain("stale-access")
+      expect(JSON.stringify(result)).not.toContain("rotated-refresh")
+    }),
+  )
+
   it.effect("falls through to compatible discovery for an OpenAI API key", () =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service

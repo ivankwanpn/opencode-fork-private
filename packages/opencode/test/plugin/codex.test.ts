@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import {
   CodexAuthPlugin,
   parseJwtClaims,
@@ -186,6 +187,8 @@ describe("plugin.codex", () => {
         if (url.pathname === "/backend-api/codex/models") {
           expect(request.headers.get("authorization")).toBe("Bearer access-token")
           expect(request.headers.get("ChatGPT-Account-Id")).toBe("account-123")
+          expect(url.searchParams.get("client_version")).toBe(InstallationVersion)
+          expect(request.headers.get("originator")).toBe("opencode")
           return Response.json({
             models: [{ id: "gpt-live", name: "GPT Live", context_window: 321_000 }],
           })

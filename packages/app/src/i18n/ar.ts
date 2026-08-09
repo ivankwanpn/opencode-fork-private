@@ -2,6 +2,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "موفر OAuth",
+  "provider.oauth.authManaged": "تُدار بيانات الاعتماد بواسطة هذا الاتصال.",
+  "provider.oauth.discovery.discover": "اكتشاف النماذج",
+  "provider.oauth.discovery.discovering": "جارٍ اكتشاف النماذج...",
+  "provider.oauth.discovery.success": "تم اكتشاف النماذج المتاحة",
+  "provider.oauth.discovery.cached": "يتم عرض نماذج الكتالوج المخزنة مؤقتًا أو الثابتة.",
+  "provider.oauth.discovery.failure": "تعذر اكتشاف النماذج. حاول مرة أخرى.",
+  "provider.oauth.discovery.unsupported": "اكتشاف النماذج غير مدعوم من هذا الموفر.",
+  "provider.oauth.discovery.empty": "لم يتم اكتشاف أي نماذج.",
+  "provider.oauth.models.search": "البحث في النماذج",
+  "provider.oauth.models.empty": "لا توجد نماذج تطابق بحثك.",
+  "provider.oauth.models.context": "تجاوز محلي لسياق النموذج",
   "command.category.suggested": "مقترح",
   "command.category.view": "عرض",
   "command.category.project": "مشروع",

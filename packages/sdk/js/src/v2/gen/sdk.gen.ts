@@ -405,12 +405,18 @@ import type {
   V2ProviderCatalogResponses,
   V2ProviderCustomConfigureErrors,
   V2ProviderCustomConfigureResponses,
+  V2ProviderCustomDisconnectErrors,
+  V2ProviderCustomDisconnectResponses,
   V2ProviderCustomDiscoverErrors,
   V2ProviderCustomDiscoverResponses,
+  V2ProviderDisconnectErrors,
+  V2ProviderDisconnectResponses,
   V2ProviderGetErrors,
   V2ProviderGetResponses,
   V2ProviderListErrors,
   V2ProviderListResponses,
+  V2ProviderModelsDiscoverErrors,
+  V2ProviderModelsDiscoverResponses,
   V2PtyConnectErrors,
   V2PtyConnectResponses,
   V2PtyConnectTokenErrors,
@@ -6520,6 +6526,45 @@ export class Model extends HeyApiClient {
   }
 }
 
+export class Models extends HeyApiClient {
+  /**
+   * Discover provider models
+   *
+   * Discover models available through the provider's current connection.
+   */
+  public discover<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
+      location?: {
+        directory?: string
+        workspace?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "providerID" },
+            { in: "query", key: "location" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      V2ProviderModelsDiscoverResponses,
+      V2ProviderModelsDiscoverErrors,
+      ThrowOnError
+    >({
+      url: "/api/provider/{providerID}/models/discover",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Custom extends HeyApiClient {
   /**
    * Discover custom provider models
@@ -6604,6 +6649,43 @@ export class Custom extends HeyApiClient {
       },
     })
   }
+
+  /**
+   * Disconnect a custom provider
+   *
+   * Disable a custom provider and remove all stored credentials.
+   */
+  public disconnect<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
+      location?: {
+        directory?: string
+        workspace?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "providerID" },
+            { in: "query", key: "location" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<
+      V2ProviderCustomDisconnectResponses,
+      V2ProviderCustomDisconnectErrors,
+      ThrowOnError
+    >({
+      url: "/api/provider/custom/{providerID}",
+      ...options,
+      ...params,
+    })
+  }
 }
 
 export class Provider2 extends HeyApiClient {
@@ -6652,6 +6734,43 @@ export class Provider2 extends HeyApiClient {
   }
 
   /**
+   * Disconnect a provider
+   *
+   * Remove all stored credentials for a provider.
+   */
+  public disconnect<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
+      location?: {
+        directory?: string
+        workspace?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "providerID" },
+            { in: "query", key: "location" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<
+      V2ProviderDisconnectResponses,
+      V2ProviderDisconnectErrors,
+      ThrowOnError
+    >({
+      url: "/api/provider/{providerID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Get provider
    *
    * Retrieve a single AI provider so clients can inspect its availability and endpoint settings.
@@ -6682,6 +6801,11 @@ export class Provider2 extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  private _models?: Models
+  get models(): Models {
+    return (this._models ??= new Models({ client: this.client }))
   }
 
   private _custom?: Custom

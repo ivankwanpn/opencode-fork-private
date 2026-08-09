@@ -487,15 +487,37 @@ const Endpoint7_2 = (raw: RawClient["server.provider"]) => (input: Endpoint7_2In
     Effect.mapError(mapClientError),
   )
 
-type Endpoint7_3Request = Parameters<RawClient["server.provider"]["provider.custom.discover"]>[0]
+type Endpoint7_3Request = Parameters<RawClient["server.provider"]["provider.models.discover"]>[0]
 type Endpoint7_3Input = {
+  readonly providerID: Endpoint7_3Request["params"]["providerID"]
   readonly location?: Endpoint7_3Request["query"]["location"]
-  readonly protocol?: Endpoint7_3Request["payload"]["protocol"]
-  readonly baseURL: Endpoint7_3Request["payload"]["baseURL"]
-  readonly apiKey?: Endpoint7_3Request["payload"]["apiKey"]
-  readonly headers: Endpoint7_3Request["payload"]["headers"]
 }
 const Endpoint7_3 = (raw: RawClient["server.provider"]) => (input: Endpoint7_3Input) =>
+  raw["provider.models.discover"]({
+    params: { providerID: input["providerID"] },
+    query: { location: input["location"] },
+  }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint7_4Request = Parameters<RawClient["server.provider"]["provider.disconnect"]>[0]
+type Endpoint7_4Input = {
+  readonly providerID: Endpoint7_4Request["params"]["providerID"]
+  readonly location?: Endpoint7_4Request["query"]["location"]
+}
+const Endpoint7_4 = (raw: RawClient["server.provider"]) => (input: Endpoint7_4Input) =>
+  raw["provider.disconnect"]({
+    params: { providerID: input["providerID"] },
+    query: { location: input["location"] },
+  }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint7_5Request = Parameters<RawClient["server.provider"]["provider.custom.discover"]>[0]
+type Endpoint7_5Input = {
+  readonly location?: Endpoint7_5Request["query"]["location"]
+  readonly protocol?: Endpoint7_5Request["payload"]["protocol"]
+  readonly baseURL: Endpoint7_5Request["payload"]["baseURL"]
+  readonly apiKey?: Endpoint7_5Request["payload"]["apiKey"]
+  readonly headers: Endpoint7_5Request["payload"]["headers"]
+}
+const Endpoint7_5 = (raw: RawClient["server.provider"]) => (input: Endpoint7_5Input) =>
   raw["provider.custom.discover"]({
     query: { location: input["location"] },
     payload: {
@@ -506,19 +528,19 @@ const Endpoint7_3 = (raw: RawClient["server.provider"]) => (input: Endpoint7_3In
     },
   }).pipe(Effect.mapError(mapClientError))
 
-type Endpoint7_4Request = Parameters<RawClient["server.provider"]["provider.custom.configure"]>[0]
-type Endpoint7_4Input = {
-  readonly location?: Endpoint7_4Request["query"]["location"]
-  readonly providerID: Endpoint7_4Request["payload"]["providerID"]
-  readonly name: Endpoint7_4Request["payload"]["name"]
-  readonly protocol?: Endpoint7_4Request["payload"]["protocol"]
-  readonly update?: Endpoint7_4Request["payload"]["update"]
-  readonly baseURL: Endpoint7_4Request["payload"]["baseURL"]
-  readonly apiKey?: Endpoint7_4Request["payload"]["apiKey"]
-  readonly headers: Endpoint7_4Request["payload"]["headers"]
-  readonly models: Endpoint7_4Request["payload"]["models"]
+type Endpoint7_6Request = Parameters<RawClient["server.provider"]["provider.custom.configure"]>[0]
+type Endpoint7_6Input = {
+  readonly location?: Endpoint7_6Request["query"]["location"]
+  readonly providerID: Endpoint7_6Request["payload"]["providerID"]
+  readonly name: Endpoint7_6Request["payload"]["name"]
+  readonly protocol?: Endpoint7_6Request["payload"]["protocol"]
+  readonly update?: Endpoint7_6Request["payload"]["update"]
+  readonly baseURL: Endpoint7_6Request["payload"]["baseURL"]
+  readonly apiKey?: Endpoint7_6Request["payload"]["apiKey"]
+  readonly headers: Endpoint7_6Request["payload"]["headers"]
+  readonly models: Endpoint7_6Request["payload"]["models"]
 }
-const Endpoint7_4 = (raw: RawClient["server.provider"]) => (input: Endpoint7_4Input) =>
+const Endpoint7_6 = (raw: RawClient["server.provider"]) => (input: Endpoint7_6Input) =>
   raw["provider.custom.configure"]({
     query: { location: input["location"] },
     payload: {
@@ -533,12 +555,26 @@ const Endpoint7_4 = (raw: RawClient["server.provider"]) => (input: Endpoint7_4In
     },
   }).pipe(Effect.mapError(mapClientError))
 
+type Endpoint7_7Request = Parameters<RawClient["server.provider"]["provider.custom.disconnect"]>[0]
+type Endpoint7_7Input = {
+  readonly providerID: Endpoint7_7Request["params"]["providerID"]
+  readonly location?: Endpoint7_7Request["query"]["location"]
+}
+const Endpoint7_7 = (raw: RawClient["server.provider"]) => (input: Endpoint7_7Input) =>
+  raw["provider.custom.disconnect"]({
+    params: { providerID: input["providerID"] },
+    query: { location: input["location"] },
+  }).pipe(Effect.mapError(mapClientError))
+
 const adaptGroup7 = (raw: RawClient["server.provider"]) => ({
   catalog: Endpoint7_0(raw),
   list: Endpoint7_1(raw),
   get: Endpoint7_2(raw),
-  discoverCustom: Endpoint7_3(raw),
-  configureCustom: Endpoint7_4(raw),
+  discoverModels: Endpoint7_3(raw),
+  disconnect: Endpoint7_4(raw),
+  discoverCustom: Endpoint7_5(raw),
+  configureCustom: Endpoint7_6(raw),
+  disconnectCustom: Endpoint7_7(raw),
 })
 
 type Endpoint8_0Request = Parameters<RawClient["server.integration"]["integration.list"]>[0]

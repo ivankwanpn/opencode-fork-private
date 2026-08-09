@@ -1,12 +1,13 @@
 import { Catalog } from "@opencode-ai/core/catalog"
 import { Integration } from "@opencode-ai/core/integration"
 import { Location } from "@opencode-ai/core/location"
+import { ProviderModelDiscovery } from "@opencode-ai/core/provider-discovery"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
-import { ProviderNotFoundError } from "@opencode-ai/protocol/errors"
+import { ProviderModelDiscoveryError, ProviderNotFoundError } from "@opencode-ai/protocol/errors"
 import { ConfigCapability } from "../config-capability"
 import { response } from "../location"
 import { Credential } from "@opencode-ai/core/credential"
@@ -77,6 +78,39 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
         }),
       )
       .handle(
+        "provider.models.discover",
+        Effect.fn(function* (ctx) {
+          const catalog = yield* Catalog.Service
+          const provider = yield* catalog.provider.get(ctx.params.providerID)
+          if (!provider)
+            return yield* new ProviderNotFoundError({
+              providerID: ctx.params.providerID,
+              message: `Provider not found: ${ctx.params.providerID}`,
+            })
+          const discovery = yield* ProviderModelDiscovery.Service
+          return yield* response(
+            discovery.discover(provider.id).pipe(
+              Effect.mapError(
+                (failure) =>
+                  new ProviderModelDiscoveryError({
+                    providerID: failure.providerID,
+                    kind: failure.kind,
+                    message: "Unable to discover provider models",
+                  }),
+              ),
+            ),
+          )
+        }),
+      )
+      .handle(
+        "provider.disconnect",
+        Effect.fn(function* (ctx) {
+          const capability = yield* ConfigCapability.Service
+          yield* capability.disconnectProvider(ctx.params.providerID)
+          return yield* response(Effect.succeed(true))
+        }),
+      )
+      .handle(
         "provider.custom.discover",
         Effect.fn(function* (ctx) {
           const capability = yield* ConfigCapability.Service
@@ -93,6 +127,19 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
             workspaceID: location.workspaceID,
           })
           return yield* response(capability.configureCustomProvider(ctx.payload, ref))
+        }),
+      )
+      .handle(
+        "provider.custom.disconnect",
+        Effect.fn(function* (ctx) {
+          const capability = yield* ConfigCapability.Service
+          const location = yield* Location.Service
+          const ref = Location.Ref.make({
+            directory: location.directory,
+            workspaceID: location.workspaceID,
+          })
+          yield* capability.disconnectCustomProvider(ctx.params.providerID, ref)
+          return yield* response(Effect.succeed(true))
         }),
       )
   }),

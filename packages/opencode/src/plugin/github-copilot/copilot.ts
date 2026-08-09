@@ -8,7 +8,6 @@ import { MessageV2 } from "@/session/message-v2"
 
 const CLIENT_ID = "Ov23li8tweQw6odWQebz"
 const API_VERSION = "2026-06-01"
-const UTILITY_MODELS = ["gpt-5.4-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"]
 // Add a small safety buffer when polling to avoid hitting the server
 // slightly too early due to clock skew / timer drift.
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000 // 3 seconds
@@ -53,15 +52,26 @@ function fix(model: Model, url: string): Model {
   }
 }
 
+function selectUtilityModel(models: Record<string, Model>, pickerEnabled: ReadonlySet<string>) {
+  return Object.values(models)
+    .filter((model) => !pickerEnabled.has(model.api.id))
+    .toSorted(
+      (a, b) =>
+        a.limit.output - b.limit.output ||
+        a.limit.context - b.limit.context ||
+        a.id.localeCompare(b.id),
+    )[0]
+}
+
 export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
   const sdk = input.client
-  let models: Record<string, Model> = {}
+  let utilityModel: Model | undefined
   return {
     provider: {
       id: "github-copilot",
       async models(provider, ctx) {
         if (ctx.auth?.type !== "oauth") {
-          models = {}
+          utilityModel = undefined
           return Object.fromEntries(Object.entries(provider.models).map(([id, model]) => [id, fix(model, base())]))
         }
 
@@ -78,13 +88,13 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
           provider.models,
         )
           .then((result) => {
-            models = result.models
+            utilityModel = selectUtilityModel(result.models, result.pickerEnabled)
             return Object.fromEntries(
               Object.entries(result.models).filter(([, model]) => result.pickerEnabled.has(model.api.id)),
             )
           })
           .catch((error) => {
-            models = {}
+            utilityModel = undefined
             return Object.fromEntries(
               Object.entries(provider.models).map(([id, model]) => [id, fix(model, base(auth.enterpriseUrl))]),
             )
@@ -355,7 +365,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
     "experimental.provider.small_model": async (incoming, output) => {
       if (incoming.provider.id !== "github-copilot") return
       // GitHub exposes utility models for title generation without including them in the picker.
-      output.model = UTILITY_MODELS.map((id) => models[id]).find((model) => model !== undefined)
+      output.model = utilityModel
     },
     "chat.headers": async (incoming, output) => {
       if (!incoming.model.providerID.includes("github-copilot")) return

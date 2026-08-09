@@ -23,6 +23,7 @@ import { Location } from "../location"
 import { ModelsDev } from "../models-dev"
 import { Npm } from "../npm"
 import { PluginV2 } from "../plugin"
+import { ProviderModelDiscovery } from "../provider-discovery"
 import { Reference } from "../reference"
 import { SkillV2 } from "../skill"
 import { State } from "../state"
@@ -48,6 +49,7 @@ export type Requirements =
   | Location.Service
   | ModelsDev.Service
   | Npm.Service
+  | ProviderModelDiscovery.Service
   | Reference.Service
   | SkillV2.Service
 
@@ -65,6 +67,7 @@ const layer = Layer.effectDiscard(
     const catalog = yield* Catalog.Service
     const commands = yield* CommandV2.Service
     const plugin = yield* PluginV2.Service
+    const providerDiscovery = yield* ProviderModelDiscovery.Service
     const integration = yield* Integration.Service
     const agents = yield* AgentV2.Service
     const config = yield* Config.Service
@@ -100,6 +103,7 @@ const layer = Layer.effectDiscard(
               Effect.provideService(HttpClient.HttpClient, http),
               Effect.provideService(SkillV2.Service, skill),
               Effect.provideService(Reference.Service, reference),
+              Effect.provideService(ProviderModelDiscovery.Service, providerDiscovery),
             ),
       }
       return plugin.add(PluginV2.ID.make(loaded.id), loaded.effect)
@@ -136,6 +140,7 @@ export const node = makeLocationNode({
     Catalog.node,
     CommandV2.node,
     PluginV2.node,
+    ProviderModelDiscovery.node,
     Integration.node,
     AgentV2.node,
     Config.node,

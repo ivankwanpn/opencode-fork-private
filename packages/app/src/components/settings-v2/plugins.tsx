@@ -6,7 +6,7 @@ import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { type Component, For, Show, createMemo, createSignal, onMount } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
-import { useSync } from "@/context/sync"
+import { useServerSync } from "@/context/server-sync"
 import type { ServerApi } from "@/utils/server"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
@@ -28,7 +28,14 @@ function errorMessage(error: unknown) {
 
 export const SettingsPluginsV2: Component = () => {
   const sdk = useServerSDK()
-  const sync = useSync()
+  const serverSync = useServerSync()
+  const directorySync = createMemo(() => {
+    const directory = serverSync().data.path.directory
+    if (!directory) return
+    return serverSync().ensureDirSyncContext(directory)
+  })
+  const mcp = createMemo(() => directorySync()?.data.mcp ?? {})
+  const mcpReady = createMemo(() => directorySync()?.data.mcp_ready ?? false)
   const language = useLanguage()
   const [catalog, setCatalog] = createSignal<Catalog>({ marketplaces: [], plugins: [] })
   const [view, setView] = createSignal<"plugins" | "marketplaces">("plugins")
@@ -42,7 +49,10 @@ export const SettingsPluginsV2: Component = () => {
     setError(undefined)
     try {
       setCatalog(await action())
-      if (refreshMcp) await sync().mcp.refresh()
+      if (refreshMcp) {
+        const directory = directorySync()
+        if (directory) await Promise.all([directory.mcp.refresh(), directory.commands.refresh()])
+      }
     } catch (reason) {
       setError(errorMessage(reason))
     } finally {
@@ -260,8 +270,8 @@ export const SettingsPluginsV2: Component = () => {
                     <PluginRow
                       item={item}
                       busy={busy()}
-                      mcp={sync().data.mcp}
-                      mcpReady={sync().data.mcp_ready}
+                      mcp={mcp()}
+                      mcpReady={mcpReady()}
                       enabledLabel={language.t("plugin.status.enabled")}
                       disabledLabel={language.t("plugin.status.disabled")}
                       connectedLabel={language.t("mcp.status.connected")}

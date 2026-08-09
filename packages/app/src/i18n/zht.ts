@@ -3,6 +3,18 @@ import { dict as en } from "./en"
 type Keys = keyof typeof en
 
 export const dict = {
+  "provider.oauth.title": "OAuth 提供者",
+  "provider.oauth.authManaged": "憑證由此連線管理。",
+  "provider.oauth.discovery.discover": "探索模型",
+  "provider.oauth.discovery.discovering": "正在探索模型...",
+  "provider.oauth.discovery.success": "已探索到目前模型",
+  "provider.oauth.discovery.cached": "正在顯示已快取或靜態目錄模型。",
+  "provider.oauth.discovery.failure": "無法探索模型。請重試。",
+  "provider.oauth.discovery.unsupported": "此提供者不支援模型探索。",
+  "provider.oauth.discovery.empty": "未探索到任何模型。",
+  "provider.oauth.models.search": "搜尋模型",
+  "provider.oauth.models.empty": "沒有符合搜尋條件的模型。",
+  "provider.oauth.models.context": "本機上下文覆寫",
   "command.category.suggested": "建議",
   "command.category.view": "檢視",
   "command.category.project": "專案",

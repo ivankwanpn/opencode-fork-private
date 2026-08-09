@@ -1,5 +1,7 @@
 import { ServiceUnavailableError } from "@opencode-ai/protocol/errors"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { EventV2 } from "@opencode-ai/core/event"
+import { Event } from "@opencode-ai/core/catalog"
 import type { Catalog } from "@opencode-ai/protocol/groups/plugin"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { Effect, Layer } from "effect"
@@ -20,6 +22,7 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
     Effect.gen(function* () {
       const config = yield* Config.Service
       const locations = yield* LocationServiceMap.Service
+      const events = yield* EventV2.Service
 
       const run = <A>(action: string, task: () => Promise<A>) =>
         Effect.tryPromise({
@@ -56,6 +59,7 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
           yield* syncMcp(previousKeys, nextServers)
           yield* Effect.promise(() => InstanceState.invalidateGroup("plugins"))
           if (locations.invalidateAll) yield* locations.invalidateAll()
+          yield* events.publish(Event.Updated, {})
           return catalog
         })
 

@@ -103,6 +103,15 @@ export type ProviderNotFoundError = {
 export const isProviderNotFoundError = (value: unknown): value is ProviderNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ProviderNotFoundError"
 
+export type ProviderModelDiscoveryError = {
+  readonly _tag: "ProviderModelDiscoveryError"
+  readonly providerID: string
+  readonly kind: "unsupported" | "missing-credential" | "authentication" | "network" | "timeout" | "invalid" | "empty"
+  readonly message: string
+}
+export const isProviderModelDiscoveryError = (value: unknown): value is ProviderModelDiscoveryError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ProviderModelDiscoveryError"
+
 export type CustomProviderValidationError = {
   readonly _tag: "CustomProviderValidationError"
   readonly message: string
@@ -4908,6 +4917,48 @@ export type ProvidersGetOutput = {
   }
 }
 
+export type ProvidersDiscoverModelsInput = {
+  readonly providerID: { readonly providerID: string }["providerID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type ProvidersDiscoverModelsOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data: {
+    readonly providerID: string
+    readonly source: "oauth" | "compatible" | "provider"
+    readonly models: ReadonlyArray<{
+      readonly id: string
+      readonly name?: string
+      readonly context?: number
+      readonly input?: number
+      readonly output?: number
+    }>
+  }
+}
+
+export type ProvidersDisconnectInput = {
+  readonly providerID: { readonly providerID: string }["providerID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type ProvidersDisconnectOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data: boolean
+}
+
 export type ProvidersDiscoverCustomInput = {
   readonly location?: {
     readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
@@ -5102,6 +5153,22 @@ export type ProvidersConfigureCustomOutput = {
     readonly protocol: "openai-responses" | "openai-compatible" | "anthropic-messages"
     readonly models: ReadonlyArray<string>
   }
+}
+
+export type ProvidersDisconnectCustomInput = {
+  readonly providerID: { readonly providerID: string }["providerID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type ProvidersDisconnectCustomOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data: boolean
 }
 
 export type IntegrationsListInput = {

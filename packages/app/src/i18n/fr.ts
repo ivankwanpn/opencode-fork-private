@@ -2,6 +2,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "Fournisseur OAuth",
+  "provider.oauth.authManaged": "Les identifiants sont gérés par cette connexion.",
+  "provider.oauth.discovery.discover": "Découvrir les modèles",
+  "provider.oauth.discovery.discovering": "Découverte des modèles...",
+  "provider.oauth.discovery.success": "Modèles actuels découverts",
+  "provider.oauth.discovery.cached": "Affichage des modèles du catalogue en cache ou statiques.",
+  "provider.oauth.discovery.failure": "Impossible de découvrir les modèles. Réessayez.",
+  "provider.oauth.discovery.unsupported": "Ce fournisseur ne prend pas en charge la découverte de modèles.",
+  "provider.oauth.discovery.empty": "Aucun modèle n’a été découvert.",
+  "provider.oauth.models.search": "Rechercher des modèles",
+  "provider.oauth.models.empty": "Aucun modèle ne correspond à votre recherche.",
+  "provider.oauth.models.context": "Remplacement local du contexte",
   "command.category.suggested": "Suggéré",
   "command.category.view": "Affichage",
   "command.category.project": "Projet",

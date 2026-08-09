@@ -330,6 +330,7 @@ export function createApiForServer(input: {
     providers: {
       list: current.providers.list,
       get: current.providers.get,
+      discoverModels: current.providers.discoverModels,
       ...custom,
     },
   } as unknown as ServerApi
@@ -379,7 +380,7 @@ export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "
       }
     }>
   }
-  readonly providers: OpenCodeClient["provider"] & CustomProviderApi
+  readonly providers: OpenCodeClient["provider"] & CustomProviderApi & Pick<CurrentClient["providers"], "discoverModels">
   readonly plugins: CurrentClient["server.plugins"]
   readonly config: CurrentClient["config"]
   readonly lsp: CurrentClient["lsp"]

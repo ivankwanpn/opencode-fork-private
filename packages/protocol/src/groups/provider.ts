@@ -1,10 +1,11 @@
 import { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { Provider } from "@opencode-ai/schema/provider"
 import { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
+import { ProviderDiscovery } from "@opencode-ai/schema/provider-discovery"
 import { Location } from "@opencode-ai/schema/location"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
-import { ProviderNotFoundError, ServiceUnavailableError } from "../errors"
+import { ProviderModelDiscoveryError, ProviderNotFoundError, ServiceUnavailableError } from "../errors"
 import { LocationQuery, locationQueryOpenApi } from "./location"
 
 export const ProviderGroup = HttpApiGroup.make("server.provider")
@@ -55,6 +56,38 @@ export const ProviderGroup = HttpApiGroup.make("server.provider")
       ),
   )
   .add(
+    HttpApiEndpoint.post("provider.models.discover", "/api/provider/:providerID/models/discover", {
+      params: { providerID: Provider.ID },
+      query: LocationQuery,
+      success: Location.response(ProviderDiscovery.Result),
+      error: [ProviderNotFoundError, ProviderModelDiscoveryError, ServiceUnavailableError],
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.provider.models.discover",
+          summary: "Discover provider models",
+          description: "Discover models available through the provider's current connection.",
+        }),
+      ),
+  )
+  .add(
+    HttpApiEndpoint.delete("provider.disconnect", "/api/provider/:providerID", {
+      params: { providerID: Provider.ID },
+      query: LocationQuery,
+      success: Location.response(Schema.Boolean),
+      error: ServiceUnavailableError,
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.provider.disconnect",
+          summary: "Disconnect a provider",
+          description: "Remove all stored credentials for a provider.",
+        }),
+      ),
+  )
+  .add(
     HttpApiEndpoint.post("provider.custom.discover", "/api/provider/custom/discover", {
       query: LocationQuery,
       payload: CustomProvider.DiscoverInput,
@@ -88,6 +121,22 @@ export const ProviderGroup = HttpApiGroup.make("server.provider")
           identifier: "v2.provider.custom.configure",
           summary: "Configure a custom provider",
           description: "Persist a custom provider and its selected models.",
+        }),
+      ),
+  )
+  .add(
+    HttpApiEndpoint.delete("provider.custom.disconnect", "/api/provider/custom/:providerID", {
+      params: { providerID: Provider.ID },
+      query: LocationQuery,
+      success: Location.response(Schema.Boolean),
+      error: ServiceUnavailableError,
+    })
+      .annotateMerge(locationQueryOpenApi)
+      .annotateMerge(
+        OpenApi.annotations({
+          identifier: "v2.provider.custom.disconnect",
+          summary: "Disconnect a custom provider",
+          description: "Disable a custom provider and remove all stored credentials.",
         }),
       ),
   )

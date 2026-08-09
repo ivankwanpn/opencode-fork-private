@@ -21,6 +21,7 @@ import { PermissionV2 } from "./permission"
 import { PluginV2 } from "./plugin"
 import { PluginRuntime } from "./plugin/runtime"
 import { PluginInternal } from "./plugin/internal"
+import { ProviderModelDiscovery } from "./provider-discovery"
 import { Policy } from "./policy"
 import { ProjectCopy } from "./project/copy"
 import { Pty } from "./pty"
@@ -60,6 +61,7 @@ export const locationServices = LayerNode.group([
   AISDK.node,
   PluginRuntime.node,
   PluginV2.node,
+  ProviderModelDiscovery.node,
   PluginInternal.node,
   ProjectCopy.node,
   ProjectCopy.refreshNode,

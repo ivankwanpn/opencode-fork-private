@@ -24,6 +24,11 @@ export interface Interface {
     | CustomProvider.ConfigureError
     | ServiceUnavailableError
   >
+  readonly disconnectCustomProvider: (
+    providerID: string,
+    location: Location.Ref,
+  ) => Effect.Effect<void, ServiceUnavailableError>
+  readonly disconnectProvider: (providerID: string) => Effect.Effect<void, ServiceUnavailableError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/server/ConfigCapability") {}
@@ -35,6 +40,8 @@ export const layer = Layer.succeed(
     update: () => Effect.fail(configUpdateUnavailable()),
     discoverCustomProvider: () => Effect.fail(customProviderUnavailable()),
     configureCustomProvider: () => Effect.fail(customProviderUnavailable()),
+    disconnectCustomProvider: () => Effect.fail(customProviderUnavailable()),
+    disconnectProvider: () => Effect.fail(customProviderUnavailable()),
   }),
 )
 

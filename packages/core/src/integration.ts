@@ -137,6 +137,10 @@ export type Draft = {
   }
 }
 
+export type ConnectionResolveOptions = {
+  readonly forceRefresh?: boolean
+}
+
 export interface Interface extends State.Transformable<Draft> {
   /** Registers a scoped transform over the integration registry. */
   /** Returns one integration with its methods and current connections. */
@@ -149,6 +153,7 @@ export interface Interface extends State.Transformable<Draft> {
     /** Resolves a connection into usable credential material. */
     readonly resolve: (
       connection: IntegrationConnection.Info,
+      options?: ConnectionResolveOptions,
     ) => Effect.Effect<Credential.Value | undefined, AuthorizationError>
     /** Runs a key method and stores the resulting credential. */
     readonly key: (input: {
@@ -382,7 +387,10 @@ export const locationLayer = Layer.effect(
           const entry = state.get().integrations.get(id)
           return resolveConnections(entry, yield* credentials.list(id))[0]
         }),
-        resolve: Effect.fn("Integration.connection.resolve")(function* (connection) {
+        resolve: Effect.fn("Integration.connection.resolve")(function* (
+          connection,
+          options: ConnectionResolveOptions = {},
+        ) {
           if (connection.type === "env") {
             const key = process.env[connection.name]
             return key ? Credential.Key.make({ type: "key", key }) : undefined
@@ -396,7 +404,9 @@ export const locationLayer = Layer.effect(
             ?.implementations.get(credential.value.methodID)
           if (!implementation?.refresh) return credential.value
           const now = yield* Clock.currentTimeMillis
-          if (credential.value.expires > now + Duration.toMillis(Duration.minutes(5))) return credential.value
+          if (!options.forceRefresh && credential.value.expires > now + Duration.toMillis(Duration.minutes(5))) {
+            return credential.value
+          }
           const value = yield* authorize(implementation.refresh(credential.value))
           yield* credentials.update(credential.id, { value })
           return value

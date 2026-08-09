@@ -2,6 +2,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "OAuth-udbyder",
+  "provider.oauth.authManaged": "Legitimationsoplysninger administreres af denne forbindelse.",
+  "provider.oauth.discovery.discover": "Find modeller",
+  "provider.oauth.discovery.discovering": "Finder modeller...",
+  "provider.oauth.discovery.success": "Aktuelle modeller fundet",
+  "provider.oauth.discovery.cached": "Viser cachelagrede eller statiske katalogmodeller.",
+  "provider.oauth.discovery.failure": "Modeller kunne ikke findes. Prøv igen.",
+  "provider.oauth.discovery.unsupported": "Denne udbyder understøtter ikke modelopdagelse.",
+  "provider.oauth.discovery.empty": "Der blev ikke fundet nogen modeller.",
+  "provider.oauth.models.search": "Søg efter modeller",
+  "provider.oauth.models.empty": "Ingen modeller matcher din søgning.",
+  "provider.oauth.models.context": "Lokal tilsidesættelse af kontekst",
   "command.category.suggested": "Foreslået",
   "command.category.view": "Vis",
   "command.category.project": "Projekt",

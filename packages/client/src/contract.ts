@@ -54,8 +54,10 @@ export const groupNames = {
 } as const
 
 export const endpointNames = {
+  "provider.models.discover": "discoverModels",
   "provider.custom.discover": "discoverCustom",
   "provider.custom.configure": "configureCustom",
+  "provider.custom.disconnect": "disconnectCustom",
   "session.messages": "list",
   "session.input.list": "inputList",
   "session.input.get": "inputGet",

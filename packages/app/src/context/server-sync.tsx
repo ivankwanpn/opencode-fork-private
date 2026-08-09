@@ -2,7 +2,7 @@ import type { Config, Path, Project, ProviderAuthResponse, SessionStatus } from 
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile, type SetStoreFunction } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
 import { ServerSDK } from "./server-sdk"
@@ -22,7 +22,7 @@ import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent, isAgentConfigDisposal } from "./global-sync/event-reducer"
 import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/session-load"
 import { trimSessions } from "./global-sync/session-trim"
-import type { ProjectMeta } from "./global-sync/types"
+import type { ProjectMeta, State } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
 import { formatServerError } from "@/utils/server-errors"
 import { queryOptions, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/solid-query"
@@ -214,6 +214,10 @@ export type ConfigUpdateOptions = {
 
 export function isProviderCatalogEvent(type: string) {
   return type === "catalog.updated" || type === "integration.updated" || type === "integration.connection.updated"
+}
+
+export function isCommandCatalogEvent(type: string) {
+  return type === "catalog.updated" || type === "command.updated"
 }
 
 function activeSessionTurn(status: unknown) {
@@ -436,6 +440,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     bootstrapInstance,
   })
 
+  const loadDirectoryCommands = (directory: string, setStore: SetStoreFunction<State>) =>
+    serverSDK
+      .apiForGeneration()
+      .then((api) => loadCommands(directory, api.command, serverSDK.apiForGeneration))
+      .then((commands) => setStore("command", commands))
+
   const children = createChildStoreManager({
     owner,
     scope: serverSDK.scope,
@@ -446,17 +456,13 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       void bootstrapInstance(directory)
     },
     onMcp: (directory, setStore) => {
-      void serverSDK
-        .apiForGeneration()
-        .then((api) => loadCommands(directory, api.command, serverSDK.apiForGeneration))
-        .then((commands) => setStore("command", commands))
-        .catch((err) => {
-          showToast({
-            variant: "error",
-            title: language.t("toast.project.reloadFailed.title", { project: getFilename(directory) }),
-            description: formatServerError(err, language.t),
-          })
+      void loadDirectoryCommands(directory, setStore).catch((err) => {
+        showToast({
+          variant: "error",
+          title: language.t("toast.project.reloadFailed.title", { project: getFilename(directory) }),
+          description: formatServerError(err, language.t),
         })
+      })
     },
     onDispose: (directory) => {
       const key = directoryKey(directory)
@@ -471,6 +477,19 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       provider: globalStore.provider,
     },
   })
+
+  const refreshCommands = (directory: string) => {
+    const key = directoryKey(directory)
+    const existing = children.children[key]
+    if (!existing || !children.mcp(key)) return Promise.resolve()
+    return loadDirectoryCommands(key, existing[1]).catch((err) => {
+      showToast({
+        variant: "error",
+        title: language.t("toast.project.reloadFailed.title", { project: getFilename(key) }),
+        description: formatServerError(err, language.t),
+      })
+    })
+  }
 
   async function loadSessions(directory: string, options?: { limit?: number }) {
     const key = directoryKey(directory)
@@ -671,6 +690,13 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         eventType === "project.directories.updated"
       )
         bootstrap.refetch()
+      if (isCommandCatalogEvent(eventType)) {
+        for (const directory of Object.keys(children.children)) {
+          if (!children.active(directory)) continue
+          void refreshCommands(directory)
+          queue.push(directory)
+        }
+      }
       if ((eventType === "server.connected" || eventType === "global.disposed") && !agentConfigDisposal) {
         if (recent) return
         for (const directory of Object.keys(children.children)) {
@@ -707,7 +733,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       event.current?.type === "session.next.moved" ||
       event.current?.type === "session.archived" ||
       event.current?.type === "session.forked" ||
-      eventType === "command.updated" ||
+      isCommandCatalogEvent(eventType) ||
       eventType === "config.updated" ||
       isProviderCatalogEvent(eventType) ||
       eventType === "agent.updated"
@@ -843,6 +869,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         })
       },
       refresh: refreshMcp,
+    },
+    commands: {
+      refresh: refreshCommands,
     },
   }
 }

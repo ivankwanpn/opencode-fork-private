@@ -1,26 +1,32 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect } from "bun:test"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
+import { Credential } from "@opencode-ai/core/credential"
 import { Integration } from "@opencode-ai/core/integration"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
-import { applyOpenAILiveModels, OpenAIPlugin, resolveOpenAILiveModels } from "@opencode-ai/core/plugin/provider/openai"
-import type { ProviderModel } from "@opencode-ai/core/provider-models"
+import { fetchCodexModels } from "@opencode-ai/core/plugin/provider/codex-models"
+import { makeOpenAIPlugin, OpenAIPlugin } from "@opencode-ai/core/plugin/provider/openai"
+import { ProviderModelDiscovery } from "@opencode-ai/core/provider-discovery"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
 
-const it = testEffect(PluginTestLayer)
+const it = testEffect(
+  ProviderModelDiscovery.makeLayer({
+    fetch: async () => Response.json({ data: [{ id: "compatible-model" }] }),
+  }).pipe(Layer.provideMerge(PluginTestLayer)),
+)
 
-const addPlugin = Effect.fn(function* () {
+const addPlugin = (item = OpenAIPlugin) =>
+  Effect.gen(function* () {
   const plugin = yield* PluginV2.Service
-  const aisdk = yield* AISDK.Service
   const host = yield* PluginHost.make(plugin)
   const integrations = yield* Integration.Service
-  yield* OpenAIPlugin.effect(host).pipe(Effect.provideService(Integration.Service, integrations))
+  yield* item.effect(host).pipe(Effect.provideService(Integration.Service, integrations))
 })
 
 function required<T>(value: T | undefined): T {
@@ -42,57 +48,164 @@ function fakeSelectorSdk(calls: string[]) {
 }
 
 describe("OpenAIPlugin", () => {
-  it.effect("adds live OAuth models to the V2 catalog with their context metadata", () =>
+  it.effect("registers a dedicated Codex strategy for OAuth without exposing credentials", () =>
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
-      const liveID = ModelV2.ID.make("gpt-live")
+      const credentials = yield* Credential.Service
+      const discovery = yield* ProviderModelDiscovery.Service
+      let headers: Headers | undefined
+      const codexFetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        headers = new Headers(init?.headers)
+        return Response.json({ data: [{ id: "runtime-model", name: "Runtime", context_window: 200_000 }] })
+      }) as unknown as typeof fetch
       yield* catalog.transform((draft) => {
         draft.provider.update(ProviderV2.ID.openai, (provider) => {
           provider.api = { type: "aisdk", package: "@ai-sdk/openai", url: "https://api.openai.com/v1" }
         })
       })
-
-      const hidden = new Set<string>()
-      const added = new Set<string>()
-      const live: ProviderModel[] = [{ id: liveID, name: "GPT Live", context: 321_000 }]
-      yield* catalog.transform((draft) => applyOpenAILiveModels(draft, live, hidden, added))
-
-      expect(yield* catalog.model.get(ProviderV2.ID.openai, liveID)).toMatchObject({
-        name: "GPT Live",
-        limit: { context: 321_000 },
-        enabled: true,
+      yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("chatgpt-browser"),
+          access: "access-secret",
+          refresh: "refresh-secret",
+          expires: Date.now() + 60_000,
+          metadata: { accountID: "account-secret" },
+        }),
       })
-      expect(added).toContain(`${ProviderV2.ID.openai}/${liveID}`)
+      yield* addPlugin(
+        makeOpenAIPlugin({
+          fetchCodexModels: (auth) =>
+            fetchCodexModels(auth, {
+              fetch: codexFetch,
+            }),
+        }),
+      )
+
+      const result = yield* discovery.discover(ProviderV2.ID.openai)
+      expect(result).toEqual({
+        providerID: ProviderV2.ID.openai,
+        source: "oauth",
+        models: [{ id: "runtime-model", name: "Runtime", context: 200_000 }],
+      })
+      expect(headers?.get("ChatGPT-Account-Id")).toBe("account-secret")
+      expect(JSON.stringify(result)).not.toContain("access-secret")
+      expect(JSON.stringify(result)).not.toContain("refresh-secret")
+      expect(JSON.stringify(result)).not.toContain("account-secret")
     }),
   )
 
-  it.effect("does not reuse an OAuth snapshot after leaving OAuth", () =>
-    Effect.sync(() => {
-      const previous: ProviderModel[] = [{ id: "gpt-live", context: 321_000 }]
-      expect(resolveOpenAILiveModels(true, undefined, previous)).toEqual({
-        live: previous,
-        previous,
+  it.effect("refreshes rejected OAuth access once before retrying Codex discovery", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const credentials = yield* Credential.Service
+      const integrations = yield* Integration.Service
+      const discovery = yield* ProviderModelDiscovery.Service
+      const methodID = Integration.MethodID.make("chatgpt-browser")
+      let calls = 0
+      let refreshes = 0
+      yield* catalog.transform((draft) => {
+        draft.provider.update(ProviderV2.ID.openai, (provider) => {
+          provider.api = { type: "aisdk", package: "@ai-sdk/openai", url: "https://api.openai.com/v1" }
+        })
       })
-      expect(resolveOpenAILiveModels(false, undefined, previous)).toEqual({
-        live: undefined,
-        previous: undefined,
+      yield* addPlugin(
+        makeOpenAIPlugin({
+          fetchCodexModels: async (auth) => {
+            calls++
+            if (auth.access === "stale-access") throw new Error("Codex model discovery failed: 403")
+            return [{ id: "fresh-runtime-model", context: 200_000 }]
+          },
+        }),
+      )
+      yield* integrations.transform((editor) =>
+        editor.method.update({
+          integrationID: Integration.ID.make(ProviderV2.ID.openai),
+          method: { id: methodID, type: "oauth", label: "ChatGPT" },
+          authorize: () =>
+            Effect.succeed({
+              mode: "auto" as const,
+              url: "https://example.com/authorize",
+              instructions: "Sign in",
+              callback: Effect.never,
+            }),
+          refresh: (value) => {
+            refreshes++
+            return Effect.succeed(
+              Credential.OAuth.make({
+                ...value,
+                access: "fresh-access",
+                refresh: "rotated-refresh",
+                expires: Date.now() + 60 * 60 * 1000,
+              }),
+            )
+          },
+        }),
+      )
+      const stored = yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          access: "stale-access",
+          refresh: "refresh-token",
+          expires: Date.now() + 60 * 60 * 1000,
+          metadata: { accountID: "account-id" },
+        }),
       })
+
+      const result = yield* discovery.discover(ProviderV2.ID.openai)
+      expect(result).toEqual({
+        providerID: ProviderV2.ID.openai,
+        source: "oauth",
+        models: [{ id: "fresh-runtime-model", context: 200_000 }],
+      })
+      expect(calls).toBe(2)
+      expect(refreshes).toBe(1)
+      expect((yield* credentials.get(stored.id))?.value).toMatchObject({
+        type: "oauth",
+        access: "fresh-access",
+        refresh: "rotated-refresh",
+      })
+      expect(JSON.stringify(result)).not.toContain("stale-access")
+      expect(JSON.stringify(result)).not.toContain("rotated-refresh")
     }),
   )
 
-  it.effect("registers browser and headless ChatGPT OAuth methods", () =>
+  it.effect("falls through to compatible discovery for an OpenAI API key", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const credentials = yield* Credential.Service
+      const discovery = yield* ProviderModelDiscovery.Service
+      yield* catalog.transform((draft) => {
+        draft.provider.update(ProviderV2.ID.openai, (provider) => {
+          provider.api = { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "https://api.openai.com/v1" }
+        })
+      })
+      yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.Key.make({ type: "key", key: "api-key" }),
+      })
+      yield* addPlugin()
+
+      expect((yield* discovery.discover(ProviderV2.ID.openai)).source).toBe("compatible")
+    }),
+  )
+
+  it.effect("prefers the Codex device OAuth method before browser OAuth", () =>
     Effect.gen(function* () {
       yield* addPlugin()
       expect((yield* (yield* Integration.Service).get(Integration.ID.make("openai")))?.methods).toEqual([
         {
-          id: Integration.MethodID.make("chatgpt-browser"),
-          type: "oauth",
-          label: "ChatGPT Pro/Plus (browser)",
-        },
-        {
           id: Integration.MethodID.make("chatgpt-headless"),
           type: "oauth",
           label: "ChatGPT Pro/Plus (headless)",
+        },
+        {
+          id: Integration.MethodID.make("chatgpt-browser"),
+          type: "oauth",
+          label: "ChatGPT Pro/Plus (browser)",
         },
       ])
     }),

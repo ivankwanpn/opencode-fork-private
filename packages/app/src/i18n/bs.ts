@@ -2,6 +2,18 @@ import { customProviderEnglish } from "./en"
 
 export const dict = {
   ...customProviderEnglish,
+  "provider.oauth.title": "OAuth provajder",
+  "provider.oauth.authManaged": "Vjerodajnicama upravlja ova veza.",
+  "provider.oauth.discovery.discover": "Otkrij modele",
+  "provider.oauth.discovery.discovering": "Otkrivanje modela...",
+  "provider.oauth.discovery.success": "Dostupni modeli su otkriveni",
+  "provider.oauth.discovery.cached": "Prikazuju se keširani ili statični modeli kataloga.",
+  "provider.oauth.discovery.failure": "Nije moguće otkriti modele. Pokušajte ponovo.",
+  "provider.oauth.discovery.unsupported": "Ovaj provajder ne podržava otkrivanje modela.",
+  "provider.oauth.discovery.empty": "Nijedan model nije otkriven.",
+  "provider.oauth.models.search": "Pretraži modele",
+  "provider.oauth.models.empty": "Nijedan model ne odgovara vašoj pretrazi.",
+  "provider.oauth.models.context": "Lokalno prepisivanje konteksta",
   "command.category.suggested": "Predloženo",
   "command.category.view": "Prikaz",
   "command.category.project": "Projekat",

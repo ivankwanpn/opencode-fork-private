@@ -4,10 +4,12 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap, type LocationServices } from "@opencode-ai/core/location-services"
+import { EventV2 } from "@opencode-ai/core/event"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, LayerMap } from "effect"
 import { Config } from "../config/config"
+import { ConfigCommand } from "../config/command"
 import { ClaudeMarketplaceManager, type MarketplacePaths } from "./claude-marketplace"
 import { NativeClaudeMarketplace } from "./native-claude-marketplace"
 import { Process } from "../util/process"
@@ -86,6 +88,11 @@ describe("ClaudeMarketplaceManager", () => {
     expect(
       await fsNode.stat(path.join(testPaths().generatedCommandDirectory, "local-marketplace__demo", "demo.md")),
     ).toBeTruthy()
+    const commands = await ConfigCommand.load(path.join(temporaryDirectory, "config"))
+    expect(commands["claude/local-marketplace__demo/demo"]).toMatchObject({
+      description: "demo command",
+      template: "Run the demo command.",
+    })
     expect((await manager.enabledMcpServers())["claude:local-marketplace:demo:demo"]).toEqual({
       type: "local",
       command: ["demo-server", "--stdio"],
@@ -98,6 +105,8 @@ describe("ClaudeMarketplaceManager", () => {
     await expect(
       fsNode.stat(path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo")),
     ).rejects.toThrow()
+    const disabledCommands = await ConfigCommand.load(path.join(temporaryDirectory, "config"))
+    expect(disabledCommands["claude/local-marketplace__demo/demo"]).toBeUndefined()
     await manager.uninstall("demo@local-marketplace")
     expect((await manager.list()).plugins[0]?.installed).toBe(false)
   })
@@ -151,6 +160,7 @@ describe("NativeClaudeMarketplace", () => {
     const manager = new ClaudeMarketplaceManager(testPaths())
     const key = "claude:local-marketplace:demo:demo"
     const observations: boolean[] = []
+    const catalogEvents: string[] = []
     let current: Config.Info = {}
 
     const config = Layer.mock(Config.Service)({
@@ -178,19 +188,30 @@ describe("NativeClaudeMarketplace", () => {
           }),
       ),
     )
-    const runtime = NativeClaudeMarketplace.layerWith(manager).pipe(Layer.provide(Layer.mergeAll(config, locations)))
+    const events = Layer.mock(EventV2.Service, {
+      publish: (definition) =>
+        Effect.sync(() => {
+          catalogEvents.push(definition.type)
+          return undefined as never
+        }),
+    })
+    const runtime = NativeClaudeMarketplace.layerWith(manager).pipe(
+      Layer.provide(Layer.mergeAll(config, locations, events)),
+    )
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const plugins = yield* PluginCapability.Service
         yield* plugins.addMarketplace(marketplace)
         observations.length = 0
+        catalogEvents.length = 0
         yield* plugins.install("demo@local-marketplace")
         yield* plugins.disable("demo@local-marketplace")
       }).pipe(Effect.provide(runtime)),
     )
 
     expect(observations).toEqual([true, false])
+    expect(catalogEvents).toEqual(["catalog.updated", "catalog.updated"])
     expect(current.mcp).toBeUndefined()
   })
 })

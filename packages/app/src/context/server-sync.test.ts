@@ -16,6 +16,7 @@ import {
   loadMcpQuery,
   loadMcpResourcesQuery,
   isProviderCatalogEvent,
+  isCommandCatalogEvent,
   reconcileActiveSessionStatuses,
   refreshProviderQueries,
   seedActiveSessionStatuses,
@@ -138,13 +139,12 @@ describe("active session query", () => {
 })
 
 describe("provider refresh", () => {
-  test.each([
-    "catalog.updated",
-    "integration.updated",
-    "integration.connection.updated",
-  ])("refreshes providers for %s", (type) => {
-    expect(isProviderCatalogEvent(type)).toBe(true)
-  })
+  test.each(["catalog.updated", "integration.updated", "integration.connection.updated"])(
+    "refreshes providers for %s",
+    (type) => {
+      expect(isProviderCatalogEvent(type)).toBe(true)
+    },
+  )
 
   test("ignores unrelated events", () => {
     expect(isProviderCatalogEvent("session.updated")).toBe(false)
@@ -200,6 +200,16 @@ describe("provider refresh", () => {
     pending.forEach((resolve) => resolve())
     await refresh
     expect(complete).toBe(true)
+  })
+})
+
+describe("command catalog refresh", () => {
+  test.each(["catalog.updated", "command.updated"])("refreshes commands for %s", (type) => {
+    expect(isCommandCatalogEvent(type)).toBe(true)
+  })
+
+  test("ignores unrelated events", () => {
+    expect(isCommandCatalogEvent("session.updated")).toBe(false)
   })
 })
 

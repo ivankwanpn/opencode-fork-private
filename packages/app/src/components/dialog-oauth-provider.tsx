@@ -150,7 +150,10 @@ export const DialogOAuthProvider: Component<{
       <div class="flex max-h-[60vh] flex-col gap-5 overflow-y-auto px-5 pb-6">
         <div class="flex items-center gap-3">
           <ProviderIcon id={props.providerID} class="size-5 shrink-0 icon-strong-base" />
-          <div class="text-16-medium text-text-strong">{props.providerName}</div>
+          <div class="flex min-w-0 flex-col gap-1">
+            <div class="text-16-medium text-text-strong">{props.providerName}</div>
+            <span class="text-12-regular text-text-weak">{language.t("provider.oauth.authManaged")}</span>
+          </div>
         </div>
 
         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -202,6 +205,10 @@ export const DialogOAuthProvider: Component<{
                 <span class="truncate text-12-regular text-text-weak">{row.id}</span>
               </div>
               <div class="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                <div class="flex items-center gap-1 text-12-regular text-text-weak">
+                  <span>{language.t("provider.oauth.models.context")}</span>
+                  <span>{row.limit.context.toLocaleString()}</span>
+                </div>
                 <Button
                   type="button"
                   variant="ghost"

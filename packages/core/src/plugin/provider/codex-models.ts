@@ -1,4 +1,9 @@
+import { InstallationVersion } from "../../installation/version"
+
 export const CODEX_MODELS_ENDPOINT = "https://chatgpt.com/backend-api/codex/models"
+
+const CODEX_MODELS_TIMEOUT_MS = 15_000
+const CODEX_MODELS_ORIGINATOR = "opencode"
 
 export type CodexModel = {
   id: string
@@ -12,36 +17,98 @@ export type CodexModelsAuth = {
 }
 
 export function parseCodexModels(value: unknown): CodexModel[] {
-  const items = Array.isArray(value)
-    ? value
-    : isRecord(value) && Array.isArray(value.models)
-      ? value.models
-      : isRecord(value) && Array.isArray(value.data)
-        ? value.data
-        : []
-
-  return items.flatMap((item) => {
-    if (!isRecord(item)) return []
-    const id = typeof item.id === "string" ? item.id : typeof item.slug === "string" ? item.slug : undefined
-    if (!id) return []
-    const context = firstPositiveInteger(item.context_window, item.contextWindow, item.context)
-    return [{ id, ...(typeof item.name === "string" ? { name: item.name } : {}), ...(context ? { context } : {}) }]
-  })
+  const entries = modelEntries(value)
+  const mapped = entries.flatMap((entry) => parseCodexModelEntry(entry.value, entry.fallbackID))
+  const unique = new Map<string, CodexModel>()
+  for (const model of mapped.toSorted((a, b) => a.id.localeCompare(b.id))) {
+    if (!unique.has(model.id)) unique.set(model.id, model)
+  }
+  return [...unique.values()]
 }
 
 export async function fetchCodexModels(
   auth: CodexModelsAuth,
-  options: { endpoint?: string; fetch?: typeof fetch } = {},
+  options: { endpoint?: string; fetch?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<CodexModel[]> {
-  const response = await (options.fetch ?? fetch)(options.endpoint ?? CODEX_MODELS_ENDPOINT, {
+  const endpoint = new URL(options.endpoint ?? CODEX_MODELS_ENDPOINT)
+  endpoint.searchParams.set("client_version", InstallationVersion)
+  const accountId = auth.accountId ?? accountIDFromAccess(auth.access)
+  const response = await (options.fetch ?? fetch)(endpoint, {
     headers: {
       Authorization: `Bearer ${auth.access}`,
-      originator: "opencode",
-      ...(auth.accountId ? { "ChatGPT-Account-Id": auth.accountId } : {}),
+      originator: CODEX_MODELS_ORIGINATOR,
+      ...(accountId ? { "ChatGPT-Account-Id": accountId } : {}),
     },
+    signal: AbortSignal.timeout(options.timeoutMs ?? CODEX_MODELS_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`Codex model discovery failed: ${response.status}`)
   return parseCodexModels(await response.json())
+}
+
+function modelEntries(value: unknown): Array<{ value: unknown; fallbackID?: string }> {
+  if (Array.isArray(value)) return value.map((item) => ({ value: item }))
+  if (!isRecord(value)) return []
+
+  const entries: Array<{ value: unknown; fallbackID?: string }> = []
+  for (const key of ["data", "models", "items"]) {
+    if (Array.isArray(value[key])) {
+      entries.push(...value[key].map((item) => ({ value: item })))
+      break
+    }
+  }
+
+  if (isRecord(value.models)) {
+    entries.push(...Object.entries(value.models).map(([fallbackID, item]) => ({ value: item, fallbackID })))
+  }
+
+  return entries
+}
+
+function parseCodexModelEntry(value: unknown, fallbackID?: string): CodexModel[] {
+  if (typeof value === "string") {
+    const id = value.trim()
+    return id ? [{ id }] : []
+  }
+  if (!isRecord(value)) {
+    return fallbackID ? [{ id: fallbackID }] : []
+  }
+
+  const id = stringField(value, ["slug", "id", "model", "name"]) ?? fallbackID
+  if (!id) return []
+  const name = stringField(value, ["display_name", "displayName", "name"])
+  const context = firstPositiveInteger(value.context_window, value.contextWindow, value.context)
+  return [
+    {
+      id,
+      ...(name ? { name } : {}),
+      ...(context ? { context } : {}),
+    },
+  ]
+}
+
+function stringField(value: Record<string, unknown>, keys: readonly string[]) {
+  return keys
+    .map((key) => value[key])
+    .find((item): item is string => typeof item === "string" && item.trim().length > 0)
+    ?.trim()
+}
+
+function accountIDFromAccess(access: string) {
+  const part = access.split(".")[1]
+  if (!part) return
+  try {
+    const payload = JSON.parse(Buffer.from(part, "base64url").toString())
+    if (!isRecord(payload)) return
+    const nested = payload["https://api.openai.com/auth"]
+    const nestedAccountID = isRecord(nested) ? stringField(nested, ["chatgpt_account_id", "account_id", "accountId"]) : undefined
+    const organizations = Array.isArray(payload.organizations) ? payload.organizations : []
+    const organizationID = organizations
+      .map((organization) => (isRecord(organization) ? organization.id : undefined))
+      .find((id): id is string => typeof id === "string" && id.trim().length > 0)
+    return stringField(payload, ["chatgpt_account_id", "account_id", "accountId"]) ?? nestedAccountID ?? organizationID
+  } catch {
+    return
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

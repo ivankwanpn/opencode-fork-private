@@ -649,7 +649,7 @@ export type Part =
 
 export type Prompt = {
   text: string
-  context?: Array<PromptContext>
+  context?: readonly PromptContext[]
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
   system?: string
@@ -2826,7 +2826,7 @@ export type ServiceUnavailableError = {
 
 export type PromptInput = {
   text: string
-  context?: Array<PromptContext>
+  context?: readonly PromptContext[]
   files?: Array<PromptInputFileAttachment>
   agents?: Array<PromptInputAgentAttachment>
   system?: string
@@ -3386,7 +3386,7 @@ export type SessionMessageUser = {
     created: number
   }
   text: string
-  context?: Array<PromptContext>
+  context?: readonly PromptContext[]
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
   system?: string
@@ -3666,7 +3666,7 @@ export type RevertState = {
   partID?: string
   snapshot?: string
   diff?: string
-  files?: Array<FileDiff>
+  files?: readonly FileDiff[]
 }
 
 export type PermissionV2Source = {

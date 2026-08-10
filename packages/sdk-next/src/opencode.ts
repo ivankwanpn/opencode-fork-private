@@ -34,7 +34,7 @@ export const create = Effect.fn("OpenCode.create")(function* () {
   )
   const fetch = Object.assign(
     (input: RequestInfo | URL, init?: RequestInit) =>
-      web.handler(new Request(input, init), Context.make(ConfigCapability.Service, config)),
+      web.handler(new Request(input, init), Context.make(ConfigCapability.Service, config) as Context.Context<unknown>),
     {
       preconnect: () => undefined,
     },

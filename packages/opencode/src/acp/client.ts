@@ -195,7 +195,9 @@ function sessionLifecycle(
       messages: async (input: Parameters<Interface["session"]["messages"]>[0]) =>
         legacyTranscriptFromNative({
           session: await native.sessions.get({ sessionID: input.sessionID }),
-          messages: await nativeMessages(input.sessionID, input.limit),
+          messages: (await nativeMessages(input.sessionID, input.limit)) as unknown as Parameters<
+            typeof legacyTranscriptFromNative
+          >[0]["messages"],
         }),
       message: async (input: Parameters<Interface["session"]["message"]>[0]) => {
         const message = await native.sessions.message(input).catch((error) => {
@@ -370,7 +372,7 @@ function catalog(native: GeneratedClients["native"]): Interface["catalog"] {
         native.skills.list(target),
         configuration.get(directory),
       ])
-      const projected = legacyProvidersFromNative(providerCatalog.data)
+      const projected = legacyProvidersFromNative(providerCatalog.data as unknown as Parameters<typeof legacyProvidersFromNative>[0])
       const projectedCommands = commands.data.map(legacyCommandFromNative)
       const commandNames = new Set(projectedCommands.map((command) => command.name))
       return {
@@ -378,7 +380,7 @@ function catalog(native: GeneratedClients["native"]): Interface["catalog"] {
           ProviderV2.ID,
           Provider.Info
         >,
-        agents: agents.data.map(legacyAgentFromNative),
+        agents: agents.data.map((agent) => legacyAgentFromNative(agent as unknown as Parameters<typeof legacyAgentFromNative>[0])),
         commands: [
           ...projectedCommands,
           ...skills.data

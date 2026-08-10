@@ -1,7 +1,6 @@
-import type { SessionsListOutput } from "@opencode-ai/client"
-import type { Session } from "@opencode-ai/sdk/v2"
+import type { Session, SessionV2Info } from "@opencode-ai/sdk/v2"
 
-type NativeSession = SessionsListOutput["data"][number]
+type NativeSession = SessionV2Info
 
 export function legacySessionFromNative(info: NativeSession): Session {
   return {

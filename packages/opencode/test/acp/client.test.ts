@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { AssistantErrorCodec } from "@opencode-ai/core/session/assistant-error-codec"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ACPClient, type EventEnvelope } from "../../src/acp/client"
 import { empty, eventStream, json, recorder, type RecordedRequest } from "./client-fixture"
 import { readdir } from "node:fs/promises"
@@ -1235,7 +1236,7 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
     expect(recording.requests.map((request) => request.url.searchParams.get("location[directory]"))).toEqual(
       Array.from({ length: 5 }, () => directory),
     )
-    expect(catalog.providers.provider).toMatchObject({
+    expect(catalog.providers[ProviderV2.ID.make("provider")]).toMatchObject({
       id: "provider",
       name: "Provider",
       source: "api",

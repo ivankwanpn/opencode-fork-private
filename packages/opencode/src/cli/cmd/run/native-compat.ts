@@ -180,7 +180,12 @@ export function createNativeCompatClient(input: { native: NativeClient; director
           native.sessions.get({ sessionID: value.sessionID }),
           native.messages.list({ sessionID: value.sessionID, limit: value.limit, order: "asc" }),
         ])
-        return { data: legacyTranscriptFromNative({ session, messages: messages.data }) }
+        return {
+          data: legacyTranscriptFromNative({
+            session,
+            messages: messages.data as unknown as Parameters<typeof legacyTranscriptFromNative>[0]["messages"],
+          }),
+        }
       },
       children: async (value: Input) => ({
         data: (await native.sessions.children({ sessionID: value.sessionID })).map(legacySessionFromNative),
@@ -277,7 +282,9 @@ export function createNativeCompatClient(input: { native: NativeClient; director
     },
     app: {
       agents: async (value?: Input) => ({
-        data: (await native.agents.list({ location: loc(value?.directory) })).data.map(legacyAgentFromNative),
+        data: (await native.agents.list({ location: loc(value?.directory) })).data.map((agent) =>
+          legacyAgentFromNative(agent as unknown as Parameters<typeof legacyAgentFromNative>[0]),
+        ),
       }),
     },
     command: {
@@ -301,14 +308,18 @@ export function createNativeCompatClient(input: { native: NativeClient; director
       get: async () => ({ data: (await native.config.get({ location: loc() })).data }),
       providers: async (value?: Input) => {
         const target = { location: loc(value?.directory) }
-        const result = legacyProvidersFromNative((await native.providers.catalog(target)).data)
+        const result = legacyProvidersFromNative(
+          (await native.providers.catalog(target)).data as unknown as Parameters<typeof legacyProvidersFromNative>[0],
+        )
         return { data: { providers: result.providers, default: result.defaults } }
       },
     },
     provider: {
       list: async (value?: Input) => {
         const target = { location: loc(value?.directory) }
-        const result = legacyProvidersFromNative((await native.providers.catalog(target)).data)
+        const result = legacyProvidersFromNative(
+          (await native.providers.catalog(target)).data as unknown as Parameters<typeof legacyProvidersFromNative>[0],
+        )
         return { data: { all: result.providers, connected: result.providers, default: result.defaults } }
       },
     },

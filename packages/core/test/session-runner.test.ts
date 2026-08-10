@@ -821,6 +821,59 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("dynamically loads a searched deferred tool into the next provider turn", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const applicationTools = yield* ApplicationTools.Service
+      const session = yield* SessionV2.Service
+      yield* applicationTools.register({
+        deferred_echo: Tool.withExposure(
+          Tool.make({
+            description: "Echo text after a tool_search",
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
+            execute: ({ text }) => Effect.succeed({ text }),
+            toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
+          }),
+          "deferred",
+        ),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Search and use the echo tool" }), resume: false })
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-search", name: "tool_search", input: { query: "echo text" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-echo", name: "deferred_echo", input: { text: "hello" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [],
+      ]
+      yield* session.resume(sessionID)
+
+      const turnTools = requests.map((request) => request.tools.map((tool) => tool.name))
+      // First turn: only tool_search is advertised, the deferred tool is hidden.
+      expect(turnTools[0]).not.toContain("deferred_echo")
+      expect(turnTools[0]).toContain("tool_search")
+      // Second turn: the tool_search result unlocked the tool definition.
+      expect(turnTools[1]).toContain("deferred_echo")
+      // The deferred tool actually executed (its completed call is in context).
+      const context = yield* session.context(sessionID)
+      const executedEcho = context.some(
+        (message) =>
+          message.type === "assistant" &&
+          message.content.some((part) => part.type === "tool" && part.id === "call-echo" && part.state?.status === "completed"),
+      )
+      expect(executedEcho).toBe(true)
+    }),
+  )
+
   it.effect("promotes nested instructions only after durable read settlement and rebuilds them after replay", () =>
     Effect.gen(function* () {
       yield* setup

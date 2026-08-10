@@ -1,6 +1,6 @@
 # P5: tool_search 動態載入契約（復現 Codex tool_search）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 把目前「字串搜尋」的 `tool_search` 升級為 Codex v0.146.0 等價的動態工具載入：搜索返回**結構化結果**、記錄**選中集（searched tools）**、下一輪 provider turn **重新注入選中工具到 definitions**、`settle` **拒絕未搜索的 deferred tool**。P6（Capability 全面統一）明確排除。
 
@@ -43,7 +43,7 @@
   - `tool_search` 返回結構化結果（名稱 + description + inputSchema + `defer_loading: true`），文字輸出保留；命中工具名可寫入一個選中集
   - `Materialization` 增加 `selected: ReadonlySet<string>`（當前選中集快照）供 runner 傳遞
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `packages/core/test/tool-search-dynamic.test.ts`（用 `ToolRegistry` + 註冊 deferred 工具）：
 ```ts
@@ -53,12 +53,12 @@
 // 4. tool_search 對 "alpha" 搜索命中 tool_a → 返回結構化結果（含 name/schema/defer_loading）
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**（目前 selected 無作用、tool_search 純文字）
-- [ ] **Step 3: 實現**
+- [x] **Step 2: 跑測試確認失敗**（目前 selected 無作用、tool_search 純文字）
+- [x] **Step 3: 實現**
   - `materialize` 接收 selected 來源；對 deferred 工具，若 `selected.has(name)` 且權限允許 → 加入 `definitions`（移出 deferred）
   - `tool-search.ts`：新增 `LoadableToolSpec` 形狀的結構化輸出；`execute` 可選接收 selected 寫入 callback
-- [ ] **Step 4: 跑測試確認通過**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: 跑測試確認通過**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "feat(core): materialize injects searched deferred tools into definitions"
@@ -79,16 +79,16 @@ git commit -m "feat(core): materialize injects searched deferred tools into defi
   - `materialize` 調用時傳入選中集；`tool_search` 工具的 execute 能更新該 Ref（命中工具名寫入）
   - 下一輪 provider turn 重新 materialize 時，選中工具被注入 definitions
 
-- [ ] **Step 1: 寫失敗測試**（runner 層：用現有 SessionRunnerLLM 基建，fake provider 兩輪）
+- [x] **Step 1: 寫失敗測試**（runner 層：用現有 SessionRunnerLLM 基建，fake provider 兩輪）
   - turn 1：模型調用 tool_search（fake provider 發 tool_search call）
   - turn 2：fake provider 調用搜索到的 deferred 工具
   - 斷言：turn 2 的 request tools 包含該工具定義（已注入）
   - 若難直接驅動 runner，可先在 registry 層測「同一個 selected Ref 兩次 materialize 的行為」
-- [ ] **Step 2: 跑測試確認失敗**
-- [ ] **Step 3: 實現**
+- [x] **Step 2: 跑測試確認失敗**
+- [x] **Step 3: 實現**
   - runner 的 session 執行上下文加選中集 Ref；tool_search settle 時更新；materialize 傳入
-- [ ] **Step 4: 跑測試確認通過**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: 跑測試確認通過**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "feat(core): thread searched-tool set across provider turns"
@@ -107,13 +107,13 @@ git commit -m "feat(core): thread searched-tool set across provider turns"
   - `settle` 對 deferred 工具：若名稱不在選中集（且非 Direct）→ 返回 `{ type: "error", value: "unsupported call: <name> ..." }`（Codex 等價）
   - Direct 工具與 tool_search 不受影響
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
   - materialize 後，對**未搜索**的 deferred 工具 `settle(call("tool_b"))` → 期望 error "unsupported call"
   - 對已搜索的 `tool_a` → 正常執行
-- [ ] **Step 2: 跑測試確認失敗**（目前 deferred settle 只憑名稱）
-- [ ] **Step 3: 實現**：settle 閉包持有選中集；deferred registration 需要 `selected.has(name)` 才放行
-- [ ] **Step 4: 跑測試確認通過**；跑既有 `tool-search-deferred.test.ts`、`mcp-tool-exposure.test.ts` 確認無回歸（既有 deferred settle 測試可能需要 update）
-- [ ] **Step 5: Commit**
+- [x] **Step 2: 跑測試確認失敗**（目前 deferred settle 只憑名稱）
+- [x] **Step 3: 實現**：settle 閉包持有選中集；deferred registration 需要 `selected.has(name)` 才放行
+- [x] **Step 4: 跑測試確認通過**；跑既有 `tool-search-deferred.test.ts`、`mcp-tool-exposure.test.ts` 確認無回歸（既有 deferred settle 測試可能需要 update）
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "feat(core): reject deferred tool calls that were not searched first"
@@ -135,11 +135,11 @@ git commit -m "feat(core): reject deferred tool calls that were not searched fir
   4. turn 2 調用該工具成功
   5. （負向）未搜索的 deferred 工具被模型調用 → "unsupported call"
 
-- [ ] **Step 1: 寫端到端測試**（用 SessionRunnerLLM fake provider 基建，參考 `session-runner.test.ts`）
-- [ ] **Step 2: 跑測試確認通過**
-- [ ] **Step 3: 全量 `bun test`（packages/core）+ typecheck**
-- [ ] **Step 4: 檢查既有測試回歸**（mcp-tool-exposure、tool-search-deferred、plugin 相關——deferred settle 行為變化可能影響）
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 寫端到端測試**（用 SessionRunnerLLM fake provider 基建，參考 `session-runner.test.ts`）
+- [x] **Step 2: 跑測試確認通過**
+- [x] **Step 3: 全量 `bun test`（packages/core）+ typecheck**
+- [x] **Step 4: 檢查既有測試回歸**（mcp-tool-exposure、tool-search-deferred、plugin 相關——deferred settle 行為變化可能影響）
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "test(core): end-to-end tool_search dynamic loading regression"

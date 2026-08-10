@@ -139,6 +139,27 @@ const layer = Layer.effect(
           },
         })
 
+        // Spec §3.3 minimal tool whitelists for the subagent roles. Permission
+        // rules are last-match-wins, so the `*: deny` catch-all must come first
+        // and every explicit allow (plus the protective `read` *.env rules)
+        // afterwards. This mirrors the V2 definitions in
+        // packages/core/src/plugin/agent.ts — keep them in sync.
+        const subagentWhitelist = (
+          tools: readonly string[],
+          extra?: Record<string, "allow" | "ask" | "deny">,
+        ) =>
+          Permission.fromConfig({
+            "*": "deny",
+            ...Object.fromEntries(tools.map((tool) => [tool, "allow"])),
+            read: {
+              "*": "allow",
+              "*.env": "ask",
+              "*.env.*": "ask",
+              "*.env.example": "allow",
+            },
+            ...extra,
+          })
+
         const user = Permission.fromConfig(cfg.permission ?? {})
 
         const agents: Record<string, Info> = {
@@ -188,9 +209,10 @@ const layer = Layer.effect(
             description: `General agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
             permission: Permission.merge(
               defaults,
-              Permission.fromConfig({
-                todowrite: "deny",
-              }),
+              subagentWhitelist(
+                ["bash", "write", "edit", "grep", "glob", "webfetch", "websearch", "task", "skill"],
+                { todowrite: "deny" },
+              ),
               user,
             ),
             options: {},
@@ -201,17 +223,8 @@ const layer = Layer.effect(
             name: "explore",
             permission: Permission.merge(
               defaults,
-              Permission.fromConfig({
-                "*": "deny",
-                grep: "allow",
-                glob: "allow",
-                list: "allow",
-                bash: "allow",
-                webfetch: "allow",
-                websearch: "allow",
-                read: "allow",
-                external_directory: readonlyExternalDirectory,
-              }),
+              subagentWhitelist(["grep", "glob", "webfetch", "websearch"]),
+              Permission.fromConfig({ external_directory: readonlyExternalDirectory }),
               user,
             ),
             description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
@@ -224,19 +237,8 @@ const layer = Layer.effect(
             name: "research",
             permission: Permission.merge(
               defaults,
-              Permission.fromConfig({
-                "*": "deny",
-                grep: "allow",
-                glob: "allow",
-                list: "allow",
-                webfetch: "allow",
-                websearch: "allow",
-                read: "allow",
-                "playwright_*": "allow",
-                "mcp_playwright_*": "allow",
-                "claude_claude-plugins-official_playwright_playwright_*": "allow",
-                external_directory: readonlyExternalDirectory,
-              }),
+              subagentWhitelist(["grep", "glob", "webfetch", "websearch"]),
+              Permission.fromConfig({ external_directory: readonlyExternalDirectory }),
               user,
             ),
             description:
@@ -252,9 +254,10 @@ const layer = Layer.effect(
               "Strong implementation agent for focused code changes, bug fixes, tests, and verification. Use this when the task requires reliable execution and good code quality.",
             permission: Permission.merge(
               defaults,
-              Permission.fromConfig({
-                todowrite: "deny",
-              }),
+              subagentWhitelist(
+                ["bash", "write", "edit", "grep", "glob", "webfetch", "task"],
+                { todowrite: "deny" },
+              ),
               user,
             ),
             prompt: PROMPT_WORKER,

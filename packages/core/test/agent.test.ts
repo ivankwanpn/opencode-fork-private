@@ -101,7 +101,7 @@ describe("AgentV2", () => {
     }),
   )
 
-  it.effect("does not ambiently opt built-in agents into bash", () =>
+  it.effect("only write-capable subagents are opted into bash", () =>
     Effect.gen(function* () {
       const agent = yield* AgentV2.Service
       yield* AgentPlugin.Plugin.effect(
@@ -128,7 +128,12 @@ describe("AgentV2", () => {
         "worker",
       ])
       for (const item of agents) {
-        expect(item.permissions.some((rule) => rule.action === "bash" && rule.effect !== "deny")).toBe(false)
+        const explicitBashAllow = item.permissions.some((rule) => rule.action === "bash" && rule.effect === "allow")
+        if (item.id === AgentV2.ID.make("general") || item.id === AgentV2.ID.make("worker")) {
+          expect(explicitBashAllow).toBe(true)
+        } else {
+          expect(explicitBashAllow).toBe(false)
+        }
       }
     }),
   )
@@ -165,18 +170,12 @@ describe("AgentV2", () => {
           expect.objectContaining({ action: "read", effect: "allow" }),
           expect.objectContaining({ action: "webfetch", effect: "allow" }),
           expect.objectContaining({ action: "websearch", effect: "allow" }),
-          expect.objectContaining({ action: "playwright_*", effect: "allow" }),
-          expect.objectContaining({ action: "mcp_playwright_*", effect: "allow" }),
-          expect.objectContaining({
-            action: "claude_claude-plugins-official_playwright_playwright_*",
-            effect: "allow",
-          }),
         ]),
       )
       expect(PermissionV2.evaluate("playwright_browser_navigate", "*", research?.permissions ?? []).effect).toBe(
-        "allow",
+        "deny",
       )
-      expect(PermissionV2.evaluate(managedPlaywright, "*", research?.permissions ?? []).effect).toBe("allow")
+      expect(PermissionV2.evaluate(managedPlaywright, "*", research?.permissions ?? []).effect).toBe("deny")
       expect(PermissionV2.evaluate(managedThirdPartyPlaywright, "*", research?.permissions ?? []).effect).toBe("deny")
       expect(PermissionV2.evaluate(managedOther, "*", research?.permissions ?? []).effect).toBe("deny")
       expect(PermissionV2.evaluate("mcp_other_tool", "*", research?.permissions ?? []).effect).toBe("deny")

@@ -133,6 +133,21 @@ export const Plugin = define({
       { action: "read", resource: "*.env.example", effect: "allow" },
     ]
 
+    // Spec §3.3 minimal tool whitelists for the subagent roles. Permission
+    // rules are last-match-wins, so the `*: deny` catch-all must come first and
+    // every explicit allow (plus the protective `read` *.env rules) afterwards.
+    // This mirrors the V1 definitions in
+    // packages/opencode/src/agent/agent.ts — keep them in sync.
+    const subagentWhitelist = (tools: readonly string[], extra?: PermissionV2.Rule[]): PermissionV2.Rule[] => [
+      { action: "*", resource: "*", effect: "deny" },
+      ...tools.map((action): PermissionV2.Rule => ({ action, resource: "*", effect: "allow" })),
+      { action: "read", resource: "*", effect: "allow" },
+      { action: "read", resource: "*.env", effect: "ask" },
+      { action: "read", resource: "*.env.*", effect: "ask" },
+      { action: "read", resource: "*.env.example", effect: "allow" },
+      ...(extra ?? []),
+    ]
+
     yield* ctx.agent.transform((draft) => {
       draft.update(AgentV2.defaultID, (item) => {
         item.description = "The default agent. Executes tools based on configured permissions."
@@ -169,7 +184,15 @@ export const Plugin = define({
         item.description =
           "General agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."
         item.mode = "subagent"
-        item.permissions.push(...PermissionV2.merge(defaults, [{ action: "todowrite", resource: "*", effect: "deny" }]))
+        item.permissions.push(
+          ...PermissionV2.merge(
+            defaults,
+            subagentWhitelist(
+              ["bash", "write", "edit", "grep", "glob", "webfetch", "websearch", "task", "skill"],
+              [{ action: "todowrite", resource: "*", effect: "deny" }],
+            ),
+          ),
+        )
       })
 
       draft.update(AgentV2.ID.make("explore"), (item) => {
@@ -180,14 +203,7 @@ export const Plugin = define({
         item.permissions.push(
           ...PermissionV2.merge(
             defaults,
-            [
-              { action: "*", resource: "*", effect: "deny" },
-              { action: "grep", resource: "*", effect: "allow" },
-              { action: "glob", resource: "*", effect: "allow" },
-              { action: "webfetch", resource: "*", effect: "allow" },
-              { action: "websearch", resource: "*", effect: "allow" },
-              { action: "read", resource: "*", effect: "allow" },
-            ],
+            subagentWhitelist(["grep", "glob", "webfetch", "websearch"]),
             readonlyExternalDirectory,
           ),
         )
@@ -201,19 +217,7 @@ export const Plugin = define({
         item.permissions.push(
           ...PermissionV2.merge(
             defaults,
-            [
-              { action: "*", resource: "*", effect: "deny" },
-              { action: "grep", resource: "*", effect: "allow" },
-              { action: "glob", resource: "*", effect: "allow" },
-              { action: "webfetch", resource: "*", effect: "allow" },
-              { action: "websearch", resource: "*", effect: "allow" },
-              { action: "read", resource: "*", effect: "allow" },
-              // Browser MCP tools are observational when exposed by the
-              // configured Playwright server; keep all other MCP tools denied.
-              { action: "playwright_*", resource: "*", effect: "allow" },
-              { action: "mcp_playwright_*", resource: "*", effect: "allow" },
-              { action: "claude_claude-plugins-official_playwright_playwright_*", resource: "*", effect: "allow" },
-            ],
+            subagentWhitelist(["grep", "glob", "webfetch", "websearch"]),
             readonlyExternalDirectory,
           ),
         )
@@ -224,7 +228,15 @@ export const Plugin = define({
           "Strong implementation agent for focused code changes, bug fixes, tests, and verification. Use this when the task requires reliable execution and good code quality."
         item.system = PROMPT_WORKER
         item.mode = "subagent"
-        item.permissions.push(...PermissionV2.merge(defaults, [{ action: "todowrite", resource: "*", effect: "deny" }]))
+        item.permissions.push(
+          ...PermissionV2.merge(
+            defaults,
+            subagentWhitelist(
+              ["bash", "write", "edit", "grep", "glob", "webfetch", "task"],
+              [{ action: "todowrite", resource: "*", effect: "deny" }],
+            ),
+          ),
+        )
       })
 
       draft.update(AgentV2.ID.make("compaction"), (item) => {

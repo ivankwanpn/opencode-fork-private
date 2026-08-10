@@ -150,14 +150,15 @@ it.instance("research agent is read-only", () =>
     expect(evalPerm(research, "glob")).toBe("allow")
     expect(evalPerm(research, "webfetch")).toBe("allow")
     expect(evalPerm(research, "websearch")).toBe("allow")
-    expect(evalPerm(research, "playwright_browser_navigate")).toBe("allow")
-    expect(evalPerm(research, "mcp_playwright_browser_navigate")).toBe("allow")
+    // Playwright wildcard rules were removed (spec §3.3): no browser access.
+    expect(evalPerm(research, "playwright_browser_navigate")).toBe("deny")
+    expect(evalPerm(research, "mcp_playwright_browser_navigate")).toBe("deny")
     expect(
       evalPerm(
         research,
         McpCatalog.toolName("claude:claude-plugins-official:playwright:playwright", "browser_take_screenshot"),
       ),
-    ).toBe("allow")
+    ).toBe("deny")
     expect(
       evalPerm(research, McpCatalog.toolName("claude:third-party:playwright:playwright", "browser_take_screenshot")),
     ).toBe("deny")

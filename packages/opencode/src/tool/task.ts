@@ -19,6 +19,7 @@ import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { DEFAULT_BLOCKED_TOOLS } from "@opencode-ai/core/mcp/runtime"
 import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
@@ -71,6 +72,17 @@ export const Parameters = Schema.Struct({
   background: Schema.optional(Schema.Boolean).annotate({
     description:
       "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
+  }),
+  permission: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        tool: Schema.String,
+        resource: Schema.optional(Schema.String),
+      }),
+    ),
+  ).annotate({
+    description:
+      "Grant the subagent temporary access to specific tools for this task. Only allow grants are supported; blocklisted tools are ignored. The grant expires when the task ends.",
   }),
 })
 
@@ -171,6 +183,8 @@ export const TaskTool = Tool.define(
       const childPermission = deriveSubagentSessionPermission({
         parentSessionPermission: parent.permission ?? [],
         subagent: next,
+        grants: params.permission,
+        blocked: new Set(DEFAULT_BLOCKED_TOOLS),
       })
       const childToolDenies = [
         ...(next.permission.some((rule) => rule.permission === "todowrite")

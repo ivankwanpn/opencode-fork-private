@@ -32,6 +32,9 @@ const ServerApi = HttpApi.make("test-server-authorization").add(
       HttpApiEndpoint.get("probe", "/api/probe", {
         success: Schema.String,
       }),
+      HttpApiEndpoint.get("health", "/api/health", {
+        success: Schema.Struct({ healthy: Schema.Literal(true), pid: Schema.Number }),
+      }),
     )
     .middleware(ServerAuthorization),
 )
@@ -43,7 +46,9 @@ const handlers = HttpApiBuilder.group(Api, "test", (handlers) =>
 )
 
 const serverHandlers = HttpApiBuilder.group(ServerApi, "test.v2", (handlers) =>
-  handlers.handle("probe", () => Effect.succeed("ok")),
+  handlers
+    .handle("probe", () => Effect.succeed("ok"))
+    .handle("health", () => Effect.succeed({ healthy: true, pid: 1 })),
 )
 
 const apiLayer = HttpRouter.serve(
@@ -169,6 +174,20 @@ describe("HttpApi authorization middleware", () => {
       expect(response.status).toBe(401)
       expect(response.headers["www-authenticate"] ?? "").toContain("Basic")
       expect(body).toEqual({ _tag: "UnauthorizedError", message: "Authentication required" })
+    }),
+  )
+
+  // K1 regression: readiness/capability probes are unauthenticated so clients
+  // can detect the server protocol before authenticating.
+  itV2Secret.live("serves health without credentials while protecting other endpoints", () =>
+    Effect.gen(function* () {
+      const [health, probe] = yield* Effect.all([HttpClient.get("/api/health"), HttpClient.get("/api/probe")], {
+        concurrency: "unbounded",
+      })
+
+      expect(health.status).toBe(200)
+      expect(yield* health.json).toEqual({ healthy: true, pid: 1 })
+      expect(probe.status).toBe(401)
     }),
   )
 })

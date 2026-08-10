@@ -51,6 +51,8 @@ export interface Interface {
 export interface Materialization {
   readonly definitions: ReadonlyArray<ToolDefinition>
   readonly deferred: ReadonlyArray<ToolDefinition>
+  /** Snapshot of the deferred tools searched so far (empty unless selected was provided). */
+  readonly selected: ReadonlySet<string>
   readonly settle: (input: ExecuteInput) => Effect.Effect<Settlement, SettlementError>
 }
 
@@ -66,6 +68,8 @@ export interface MaterializationContext {
     readonly modelID: ModelV2.ID
   }
   readonly features?: Partial<MaterializationFeatures>
+  /** Names of deferred tools the model already searched (Codex dynamic loading). */
+  readonly selected?: ReadonlySet<string>
 }
 
 export interface MaterializationFeatures {
@@ -257,8 +261,16 @@ const registryLayer = Layer.effect(
                   inputSchema: transformed.parameters as ToolDefinition["inputSchema"],
                 })
           if (toolExposure === "deferred") {
-            deferredRegistrations.set(name, registration)
-            deferred.push(toolDefinition)
+            // A deferred tool that the model already searched (P5 dynamic
+            // loading) is injected into the advertised definitions so the next
+            // provider turn can call it; the rest stay in the tool_search index.
+            if (context?.selected?.has(name)) {
+              advertised.set(name, registration)
+              definitions.push(toolDefinition)
+            } else {
+              deferredRegistrations.set(name, registration)
+              deferred.push(toolDefinition)
+            }
           } else {
             advertised.set(name, registration)
             definitions.push(toolDefinition)
@@ -281,6 +293,7 @@ const registryLayer = Layer.effect(
         return {
           definitions,
           deferred,
+          selected: context?.selected ?? new Set(),
           settle: (input) => {
             if (input.call.name === ToolSearch.name && toolSearchRegistration)
               return settleWith(input, toolSearchRegistration.identity, toolSearchRegistration)

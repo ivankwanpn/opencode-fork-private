@@ -84,8 +84,11 @@ type Config<
   }) => ReadonlyArray<Content>
 }
 
+export type ToolExposure = "direct" | "deferred" | "hidden"
+
 type Runtime = {
   readonly permissions?: ReadonlyArray<string>
+  readonly exposure?: ToolExposure
   readonly definition: (name: string, permissions: PermissionV2.Ruleset) => ToolDefinition | undefined
   readonly settle: (call: ToolCall, context: Context) => Effect.Effect<ToolOutput, ExecutionError>
 }
@@ -182,7 +185,17 @@ export const withPermissions = <Input extends SchemaType<any>, Output extends Sc
   return decorated
 }
 
+export const withExposure = <Input extends SchemaType<any>, Output extends SchemaType<any>>(
+  tool: Definition<Input, Output>,
+  exposure: ToolExposure,
+) => {
+  const decorated = Object.freeze({}) as Definition<Input, Output>
+  runtimes.set(decorated, { ...runtimeOf(tool), exposure })
+  return decorated
+}
+
 export const catalogPermissions = (tool: AnyTool, name: string) => runtimeOf(tool).permissions ?? [name]
+export const exposure = (tool: AnyTool) => runtimeOf(tool).exposure ?? "direct"
 export const definition = (name: string, tool: AnyTool, permissions: PermissionV2.Ruleset = []) =>
   runtimeOf(tool).definition(name, permissions)
 export const settle = (tool: AnyTool, call: ToolCall, context: Context) => runtimeOf(tool).settle(call, context)

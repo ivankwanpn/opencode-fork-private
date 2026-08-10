@@ -15,6 +15,7 @@ import { Wildcard } from "../util/wildcard"
 import { ApplicationTools } from "./application-tools"
 import {
   definition,
+  exposure,
   catalogPermissions,
   settle,
   validateName,
@@ -47,6 +48,7 @@ export interface Interface {
 
 export interface Materialization {
   readonly definitions: ReadonlyArray<ToolDefinition>
+  readonly deferred: ReadonlyArray<ToolDefinition>
   readonly settle: (input: ExecuteInput) => Effect.Effect<Settlement, SettlementError>
 }
 
@@ -207,12 +209,15 @@ const registryLayer = Layer.effect(
         }
         const advertised = new Map<string, Registration>()
         const definitions: ToolDefinition[] = []
+        const deferred: ToolDefinition[] = []
         for (const [name, registration] of registrations) {
           if (overrides[name] === false) continue
           if (context && !visible(name, context)) continue
           if (whollyDisabled(catalogPermissions(registration.tool, name), permissions)) continue
           const current = definition(name, registration.tool, permissions)
           if (!current) continue
+          const toolExposure = exposure(registration.tool)
+          if (toolExposure === "hidden") continue
           const taskAgentTypes =
             name === "task"
               ? [
@@ -237,18 +242,20 @@ const registryLayer = Layer.effect(
           })
           const transformed = value.get()
           advertised.set(name, registration)
-          definitions.push(
+          const toolDefinition =
             transformed.description === current.description && transformed.parameters === current.inputSchema
               ? current
               : new ToolDefinition({
                   ...current,
                   description: transformed.description,
                   inputSchema: transformed.parameters as ToolDefinition["inputSchema"],
-                }),
-          )
+                })
+          if (toolExposure === "deferred") deferred.push(toolDefinition)
+          else definitions.push(toolDefinition)
         }
         return {
           definitions,
+          deferred,
           settle: (input) => {
             const registration = advertised.get(input.call.name)
             if (registration) return settleWith(input, registration.identity)

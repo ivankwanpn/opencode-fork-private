@@ -58,6 +58,27 @@ describe("detectServerProtocol", () => {
     expect(await detectServerProtocol(server, fetcher)).toBe("v2")
   })
 
+  test("retries a transient health probe failure before failing protocol detection", async () => {
+    let healthCalls = 0
+    const fetcher = mockFetch((input) => {
+      const path = new URL(input instanceof Request ? input.url : input).pathname
+      if (path === "/api/health") {
+        healthCalls += 1
+        // First probe races server startup: connection refused / 401. Retry wins.
+        if (healthCalls === 1) return Promise.resolve(json({}, 401))
+        return Promise.resolve(json({ healthy: true, version: "2.0.0", pid: 123 }))
+      }
+      if (path === "/api/capability") return Promise.resolve(json({ backgroundSubagents: true }))
+      return Promise.resolve(json({}, 404))
+    })
+
+    expect(await detectServerProtocolDetails(server, fetcher, { mode: "v2" })).toMatchObject({
+      protocol: "v2",
+      pid: 123,
+    })
+    expect(healthCalls).toBe(2)
+  })
+
   test("returns V2 health and capability details for diagnostics", async () => {
     const fetcher = mockFetch((input) => {
       const path = new URL(input instanceof Request ? input.url : input).pathname

@@ -49,6 +49,19 @@ async function probe(server: ServerConnection.HttpBase, fetch: typeof globalThis
   return value
 }
 
+// The readiness probe races server startup on desktop (the sidecar resolves
+// the connection before its health check completes). Retry briefly so a
+// transient connection-refused/401 during boot does not surface as a protocol
+// detection failure; the first successful response wins.
+async function probeWithRetry(server: ServerConnection.HttpBase, fetch: typeof globalThis.fetch, path: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const value = await probe(server, fetch, path).catch(() => undefined)
+    if (value) return value
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 300))
+  }
+  return undefined
+}
+
 function healthDetails(value: unknown) {
   if (value === null || typeof value !== "object" || !("healthy" in value) || value.healthy !== true) return
   return {
@@ -76,7 +89,7 @@ export async function detectServerProtocolDetails(
   const mode = options?.mode ?? (options?.v2Only ? "v2" : "auto")
   if (mode === "v1") return { protocol: "v1" }
 
-  const current = await probe(server, fetch, "/api/health").catch(() => undefined)
+  const current = await probeWithRetry(server, fetch, "/api/health")
   const currentHealth = healthDetails(current)
   if (currentHealth?.pid !== undefined) {
     if (mode !== "v2") return { protocol: "v2", ...currentHealth }

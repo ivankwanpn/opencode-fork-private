@@ -1,5 +1,5 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { Permission } from "@/permission"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 
 import { Session } from "@/session/session"
@@ -72,7 +72,7 @@ export const CommandPayload = Schema.Struct(Struct.omit(CommandInput.fields, ["s
 export const ShellPayload = Schema.Struct(Struct.omit(ShellInput.fields, ["sessionID"]))
 export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput.fields, ["sessionID"]))
 export const PermissionResponsePayload = Schema.Struct({
-  response: PermissionV1.Reply,
+  response: PermissionV2.Reply,
 })
 
 export const SessionPaths = {
@@ -393,7 +393,7 @@ export const SessionApi = HttpApi.make("session")
           }),
         ),
         HttpApiEndpoint.post("permissionRespond", SessionPaths.permissions, {
-          params: { sessionID: SessionID, permissionID: PermissionV1.ID },
+          params: { sessionID: SessionID, permissionID: PermissionV2.ID },
           query: WorkspaceRoutingQuery,
           payload: PermissionResponsePayload,
           success: described(Schema.Boolean, "Permission processed successfully"),

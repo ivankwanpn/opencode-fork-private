@@ -199,10 +199,17 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 
 ### 批次 2：Permission 双轨合并（中风险）
 
-1. 让 `/permission` list/respond 端点直接面向 `PermissionV2`（已有 `forSession`/`list`）
-2. V1 工具路径改走 `PermissionV2.ask`
-3. 移除 `replyCompatible` 兜底逻辑
-4. 删除 `opencode/src/permission/index.ts`（V1）与 `core/v1/permission.ts` 的运行时使用
+> ✅ **HTTP 面已完成（999.0.17）**：
+> - `groups/permission.ts` + `handlers/permission.ts`：experimental `/permission` list/reply 端点切换到 `PermissionV2`（wire schema `PermissionV2.Request`/`Reply`/`ID`，通过 `LocationServiceMap` 解析 per-Location 服务）
+> - `session.permissionRespond`（`POST /api/session/:id/permission`）：从 V1 `replyCompatible` 切换到 V2 `PermissionV2.reply`
+> - 移除 handler 中未使用的 V1 `permissionSvc` / imports
+> - 调查确认：TUI/run/acp 都走 `packages/server` 的 V2 handler（`server.permission.*`）；experimental httpapi 的 V1 permission group 无实际 HTTP 消费者（仅契约测试），已切 V2
+
+剩余（工具路径，批次 7 前保留）：
+1. `@/permission`（V1）仍被 V1 工具路径使用（`agent/agent.ts`、`tool/shell.ts`、`tool/code-mode.ts`、`session/llm.ts` 等 12 个文件）——`Permission.node` 保留在 layer 图
+2. V1 工具路径改走 `PermissionV2.ask`（依赖 V1 工具迁移）
+3. `replyCompatible` 兜底逻辑仍被 `test/permission/next.test.ts` 覆盖，保留
+4. `core/v1/permission.ts` 的运行时使用（session 数据模型的 permission 字段，批次 4）
 
 ### 批次 3：V2 可靠性收尾（V2 侧，高优先）
 

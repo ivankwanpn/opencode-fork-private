@@ -1,5 +1,8 @@
-import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -137,10 +140,25 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const shareSvc = yield* SessionShare.Service
     const revertSvc = yield* SessionRevert.Service
     const runState = yield* SessionRunState.Service
-    const permissionSvc = yield* Permission.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
     const summary = yield* SessionSummary.Service
+    const locations = yield* LocationServiceMap.Service
+
+    const location = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      return yield* effect.pipe(
+        Effect.provide(
+          locations.get(
+            Location.Ref.make({
+              directory: AbsolutePath.make(ctx.directory),
+              ...(workspaceID === undefined ? {} : { workspaceID }),
+            }),
+          ),
+        ),
+      )
+    })
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
@@ -518,15 +536,20 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const permissionRespond = Effect.fn("SessionHttpApi.permissionRespond")(function* (ctx: {
-      params: { sessionID: SessionID; permissionID: PermissionV1.ID }
+      params: { sessionID: SessionID; permissionID: PermissionV2.ID }
       payload: typeof PermissionResponsePayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
-      yield* Permission.replyCompatible(permissionSvc, {
-        requestID: ctx.params.permissionID,
-        reply: ctx.payload.response,
-      }).pipe(
-        Effect.catchTag("Permission.NotFoundError", (error) =>
+      yield* location(
+        Effect.gen(function* () {
+          const permission = yield* PermissionV2.Service
+          yield* permission.reply({
+            requestID: ctx.params.permissionID,
+            reply: ctx.payload.response,
+          })
+        }),
+      ).pipe(
+        Effect.catchTag("PermissionV2.NotFoundError", (error) =>
           Effect.fail(
             new PermissionNotFoundError({
               requestID: String(error.requestID),

@@ -1,5 +1,4 @@
-import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { Permission } from "@/permission"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { PermissionNotFoundError } from "../errors"
@@ -10,7 +9,7 @@ import { described } from "./metadata"
 
 const root = "/permission"
 const ReplyPayload = Schema.Struct({
-  reply: PermissionV1.Reply,
+  reply: PermissionV2.Reply,
   message: Schema.optional(Schema.String),
 })
 
@@ -20,7 +19,7 @@ export const PermissionApi = HttpApi.make("permission")
       .add(
         HttpApiEndpoint.get("list", root, {
           query: WorkspaceRoutingQuery,
-          success: described(Schema.Array(PermissionV1.Request), "List of pending permissions"),
+          success: described(Schema.Array(PermissionV2.Request), "List of pending permissions"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "permission.list",
@@ -29,7 +28,7 @@ export const PermissionApi = HttpApi.make("permission")
           }),
         ),
         HttpApiEndpoint.post("reply", `${root}/:requestID/reply`, {
-          params: { requestID: PermissionV1.ID },
+          params: { requestID: PermissionV2.ID },
           query: WorkspaceRoutingQuery,
           payload: ReplyPayload,
           success: described(Schema.Boolean, "Permission processed successfully"),

@@ -123,3 +123,44 @@ describe("P5 searched-tool flow", () => {
     }),
   )
 })
+
+describe("P5 settle authorization", () => {
+  it.effect("rejects a deferred tool call that was never searched", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      yield* registry.register({ secret: defTool("secret", "Secret tool") })
+
+      const materialized = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected: new Set(),
+      })
+      const result = yield* materialized.settle({
+        sessionID: "ses_t" as never,
+        agent: "build" as never,
+        assistantMessageID: "msg_t" as never,
+        call: { type: "tool-call", id: "c1", name: "secret", input: {} },
+      })
+      expect(result.result.type).toBe("error")
+      expect(result.result.value).toContain("unsupported call: secret")
+    }),
+  )
+
+  it.effect("runs a deferred tool that was searched in a prior turn", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      yield* registry.register({ calendar: defTool("calendar", "Calendar events") })
+
+      const materialized = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected: new Set(["calendar"]),
+      })
+      const result = yield* materialized.settle({
+        sessionID: "ses_t" as never,
+        agent: "build" as never,
+        assistantMessageID: "msg_t" as never,
+        call: { type: "tool-call", id: "c1", name: "calendar", input: {} },
+      })
+      expect(result.result.type).toBe("text")
+    }),
+  )
+})

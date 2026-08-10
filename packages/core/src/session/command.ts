@@ -14,6 +14,8 @@ import { Global } from "../global"
 import { InstallationVersion } from "../installation/version"
 import { Location } from "../location"
 import { ModelV2 } from "../model"
+import { PermissionV2 } from "../permission"
+import { PermissionV1 } from "../v1/permission"
 import { PluginRuntime } from "../plugin/runtime"
 import { ProjectV2 } from "../project"
 import { ProviderV2 } from "../provider"
@@ -64,7 +66,13 @@ export type CreateInput = {
   readonly agent?: AgentV2.ID
   readonly model?: ModelV2.Ref
   readonly location: Location.Ref
+  readonly permissions?: PermissionV2.Ruleset
 }
+
+// Grants are persisted in the V1 rule shape ({ permission, pattern, action })
+// so the session permission column stays compatible with the V1 service.
+const toV1Rules = (rules: PermissionV2.Ruleset): PermissionV1.Ruleset =>
+  rules.map((rule) => ({ permission: rule.action, pattern: rule.resource, action: rule.effect }))
 
 export interface Interface {
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>
@@ -225,6 +233,7 @@ const layer = Layer.effect(
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           time: { created: now, updated: now },
+          permission: input.permissions ? toV1Rules(input.permissions) : undefined,
         })
         yield* events
           .publish(SessionV1.Event.Created, { sessionID, info }, { location: input.location })

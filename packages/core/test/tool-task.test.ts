@@ -256,6 +256,7 @@ const storeLayer = Layer.succeed(
   SessionStore.Service,
   SessionStore.Service.of({
     get: (sessionID) => Effect.succeed(sessions.get(sessionID)),
+    permissions: () => Effect.succeed([]),
     context: (sessionID) => Effect.succeed(contexts.get(sessionID) ?? []),
     runnerContext: (sessionID) => Effect.succeed(contexts.get(sessionID) ?? []),
     latestPrompt: () => Effect.succeed(undefined),

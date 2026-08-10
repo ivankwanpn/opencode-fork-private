@@ -6,6 +6,8 @@ import { AgentV2 } from "../agent"
 import { BackgroundJob } from "../background-job"
 import { Config } from "../config"
 import { makeLocationNode } from "../effect/app-node"
+import { McpCatalog } from "../mcp/catalog"
+import { DEFAULT_BLOCKED_TOOLS } from "../mcp/runtime"
 import { ModelV2 } from "../model"
 import { PermissionV2 } from "../permission"
 import { SessionCommand } from "../session/command"
@@ -26,6 +28,15 @@ import { Tools } from "./tools"
 export const name = "task"
 
 const normalizeSubagentType = (type: string) => (type === "general-purpose" ? "general" : type)
+
+export type GrantInput = { readonly tool: string; readonly resource?: string }
+
+// Turn task `permission` grants into V2 allow rules, dropping blocklisted
+// tools (P2 double-check: the blocklist already keeps them unregistered).
+const grantRules = (grants: readonly GrantInput[] | undefined, blocked: ReadonlySet<string>): PermissionV2.Ruleset =>
+  (grants ?? [])
+    .filter((grant) => !McpCatalog.isBlockedTool(grant.tool, blocked))
+    .map((grant): PermissionV2.Rule => ({ action: grant.tool, resource: grant.resource ?? "*", effect: "allow" }))
 
 const BACKGROUND_DESCRIPTION = [
   "Tasks run asynchronously by default and return a handle immediately.",
@@ -77,6 +88,17 @@ export const Input = Schema.Struct({
   ...InputFields,
   background: Schema.optional(Schema.Boolean).annotate({
     description: "Run asynchronously and notify the parent session when complete",
+  }),
+  permission: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        tool: Schema.String,
+        resource: Schema.optional(Schema.String),
+      }),
+    ),
+  ).annotate({
+    description:
+      "Grant the subagent temporary access to specific tools for this task. Only allow grants are supported; blocklisted tools are ignored. The grant expires when the task ends.",
   }),
 })
 
@@ -201,6 +223,14 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
             message: `Subagent depth limit reached (${maxDepth}). Increase "subagent_depth" to allow nested subagents.`,
           })
 
+        // Blocklist = default RCE-equivalent tools + user-configured MCP blocklist.
+        const blocked = new Set<string>([
+          ...DEFAULT_BLOCKED_TOOLS,
+          ...(yield* config.entries()).flatMap((entry) =>
+            entry.type === "document" ? (entry.info.mcp?.blockedTools ?? []) : [],
+          ),
+        ])
+
         const source = {
           type: "tool" as const,
           messageID: context.assistantMessageID,
@@ -257,6 +287,7 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               agent: agent.id,
               model,
               location: parent.location,
+              permissions: grantRules(input.permission, blocked),
             }))
           if (!resumed && acquired.kind === "new")
             yield* permits.rekey(acquired, child.id).pipe(Effect.flatMap((next) => Ref.set(reservationRef, next)))

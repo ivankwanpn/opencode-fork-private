@@ -5,6 +5,7 @@ import * as McpWebSearch from "./mcp-websearch"
 import DESCRIPTION from "./websearch.txt"
 import { checksum } from "@opencode-ai/core/util/encode"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 
 export const Parameters = Schema.Struct({
@@ -34,6 +35,16 @@ export function selectWebSearchProvider(sessionID: string, flags = { exa: false,
   if (flags.exa) return "exa"
 
   return Number.parseInt(checksum(sessionID) ?? "0", 36) % 2 === 0 ? "exa" : "parallel"
+}
+
+export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
+  return (
+    providerID === ProviderV2.ID.opencode ||
+    flags.exa ||
+    flags.parallel ||
+    process.env.OPENCODE_WEBSEARCH_PROVIDER === "exa" ||
+    process.env.OPENCODE_WEBSEARCH_PROVIDER === "parallel"
+  )
 }
 
 export function webSearchProviderLabel(provider: unknown) {

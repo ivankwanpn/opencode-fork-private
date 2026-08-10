@@ -28,10 +28,8 @@ import { Vcs } from "@/project/vcs"
 import { ProviderAuth } from "@/provider/auth"
 import { Provider } from "@/provider/provider"
 import { Question } from "@/question"
-import { SessionCompaction } from "@/session/compaction"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
-import { SessionProcessor } from "@/session/processor"
 import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
 import { Session } from "@/session/session"
@@ -295,8 +293,6 @@ const hostNodes = [
 
 const legacySessionRuntimeNodes = [
   SessionRunState.node,
-  SessionProcessor.node,
-  SessionCompaction.node,
   SessionRevert.node,
   Instruction.node,
 ] as const

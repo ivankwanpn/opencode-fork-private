@@ -1,0 +1,258 @@
+# V1 → V2 迁移清单
+
+> 分支：`999.0.17`
+> 调研日期：2026-08-10
+> 调研方式：三个并行只读研究子代理分别分析 `packages/opencode`、`packages/core`、`packages/tui` 的 V1/V2 边界，本文是汇总。
+
+## 总体结论
+
+**执行引擎已经是 V2。** 所有会真正产生模型调用的入口最终都进入
+`@opencode-ai/core/session`（`SessionV2`）+ `SessionExecutionLocal` + `SessionRunner` +
+V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**：
+
+- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor` + V1 `ToolRegistry` + V1 `TaskTool`）已断线——仍装配在 layer 图里但无任何生产调用方（死代码）。
+- V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
+
+当前状态与 Codex 评估一致：**V2 基础完成约 50%，剩余难点是"让 V2 成为唯一执行路径、然后删除 V1"**。
+
+---
+
+## 1. 各区域现状总表
+
+| 区域 | 现状 | 判定 |
+|---|---|---|
+| Session 执行（prompt/command/shell/init） | `LegacySessionExecution`（V1 壳）内部全部委托 V2 `SessionV2`；V1 `SessionPrompt.loop` 仅测试调用 | **V2 主路径，V1 壳待收** |
+| Session CRUD（list/get/create/fork/title/metadata） | V1 `Session.Service` 读同一张 `SessionTable`，httpapi CRUD 端点仍依赖 | **V1-only，待迁移** |
+| Session 读取（messages） | `LegacySessionRead` = V2 读 + V1 保留消息 merge | **V2 主，V1 merge 待收** |
+| Tool registry | V1 `ToolRegistry`（opencode 包）死代码；V2 `ToolRegistry`（core）完整（direct/deferred/hidden + settlement） | **V2 已接管** |
+| `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
+| Agent | V1 `Agent`（`@/agent`）仍在 `LegacySessionExecution.select` 使用；V2 `AgentV2.Service` 独立 | **双路径** |
+| Subagent permission | V1 `subagent-permissions.ts` 只被死 V1 `TaskTool` 引用（不可达）；V2 用 `PermissionV2` + `SubagentPermit` | **V1 死路径，可删** |
+| Permission | V1 `@/permission` 为主（pending 表），`replyCompatible` 兜底 V2；V2 请求不出现在 `/permission` list | **V1 主，V2 兜底** |
+| Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
+| Plugin tools | 同一份 `Contribution` 双路：V1 registry（死）+ V2 `PluginToolCompatV2`（deferred，实际生效） | **V2 生效路径已通** |
+| TUI 插件 | `plugin/tui/runtime.ts` 纯 V1 adapter，无 V2 运行时对应 | **V1-only** |
+| MCP | 单一 V2 runtime（`core/src/mcp/runtime.ts`）；`MCP.toolsNode` 注册进 V2 `Tools.Service`（direct/deferred/blocked） | **V2 已接管** |
+| Command | TUI 用 V2 `CommandV2`；V1 `@/command` 只服务 legacy instance API | **双路径** |
+| TUI 主体 | 全部走 V2 client（`@opencode-ai/client`）；`native-v1-*` 仅用于 TUI plugin API 外部相容 | **V2 已接管** |
+| CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
+| ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
+| Config | V1 `ConfigV1.Info` + `ConfigMigrateV1`；httpapi config 组 V1-only | **V1-only** |
+| Provider | V1 provider/auth 服务为主，参数混用 `ProviderV2.ID` | **V1 主，V2 ID 混用** |
+
+---
+
+## 2. 仍会落回 V1 的入口清单（迁移目标）
+
+### 2.1 活跃 V1 入口（HTTP/CLI 实际使用，不能直接删）
+
+1. **V1 legacy Session 存储服务** — `opencode/src/session/session.ts`
+   httpapi 的 list/get/create/remove/update/fork/children、touch、title/metadata/archived/permission 更新。
+   与 V2 共享同一 `SessionTable`。**CRUD 端点迁移前不可移除。**
+
+2. **V1 Config** — `opencode/src/config/config.ts` + `ConfigV1.Info`（`@opencode-ai/core/v1/config/config`）
+   `config.get/update` 端点、config 组。此区域 V1 最彻底。
+
+3. **V1 Provider** — `opencode/src/provider/provider.ts`、`provider/auth`
+   provider / config.providers 组；`LegacySessionExecution` 的模型解析路径。
+
+4. **V1 Agent** — `opencode/src/agent/agent.ts`
+   `LegacySessionExecution.select` 用 V1 Agent 选 agent，再交给 V2 `canonical.switchAgent`。
+
+5. **V1 Permission** — `opencode/src/permission/index.ts`
+   permission 组 + `permissionRespond`。V1 pending 表为主，`replyCompatible` 兜底 V2。
+   **风险**：V2 工具发起的 `PermissionV2.ask` 不出现在 V1 `/permission` list。
+
+6. **V1 Session 维护服务** — SessionRevert / SessionRunState / SessionStatus / SessionSummary / Todo
+   httpapi 相应端点；`LegacySessionExecution.cleanupRevert` 先 V2 commit 再 V1 收尾。
+
+7. **V1 Plugin 加载/触发/TUI** — `opencode/src/plugin/index.ts`、`loader.ts`、`plugin/tui/runtime.ts`
+   插件安装/发现/TUI 插件仍 V1；运行时 hooks 已桥接 V2。
+
+8. **V1 Command** — `opencode/src/command/index.ts`
+   只服务 legacy instance HTTP API 的 `command.list` 端点。
+
+### 2.2 死代码（已装配但不可达，可安全下线）
+
+| 文件 | 说明 |
+|---|---|
+| `opencode/src/session/prompt.ts`（`SessionPrompt.loop`，L1373） | V1 主循环，无生产调用，仅测试 35 处 `.loop(` |
+| `opencode/src/session/processor.ts`（`SessionProcessor`） | V1 处理器，无调用方 |
+| `opencode/src/session/compaction.ts`（V1 `SessionCompaction`） | V1 压缩，无调用方 |
+| `opencode/src/session/tools.ts`（V1 tool 组装） | 只被已断线的 `prompt.ts` 引用 |
+| `opencode/src/tool/registry.ts`（V1 `ToolRegistry`） | 只被 `prompt.ts`/`tools.ts` 引用 |
+| `opencode/src/tool/task.ts`（V1 `TaskTool`） | 依赖 `promptOps`，仅死路径提供 |
+| `opencode/src/agent/subagent-permissions.ts` | 只被死 V1 `TaskTool` 引用 |
+
+这些节点仍出现在 `app-runtime.ts`（L88-110）与 `httpapi/server.ts`（`legacySessionRuntimeNodes` L296-300）的 layer 图里。
+
+### 2.3 刻意保留的 V1 出口（外部兼容，迁移完成后独立评估）
+
+- `opencode/src/compat/native-v1-*.ts`（session/transcript/catalog）→ 供 `cli/cmd/run/native-compat.ts`（run 命令）与 `acp/client.ts`（opencode acp）消费
+- `tui/src/plugin/native-v1-transcript.ts`、`native-v1-catalog.ts` → 仅 TUI plugin API adapter（`adapters.tsx`）外部相容
+- `event-v2-bridge.ts`（`legacyEventPayloads`/`legacyEventProjection`）→ run 命令 stdout/JSON 事件输出、TUI `useEvent()` 的 legacy 事件集
+
+---
+
+## 3. core 包 V1/V2 边界
+
+### 3.1 `packages/core/src/v1/` 目录（不可独立删除）
+
+`v1/session.ts` 是**类型/错误门面**（76 行），非运行时；真数据模型在 `packages/schema/src/v1/session.ts`。
+`v1/permission.ts` = schema `permission-v1` re-export + 4 错误类。
+`v1/config/` = 18 个文件，V1 配置 schema。
+
+它承载三类活跃资产，**删除前必须完成**：
+1. **存储格式**：`core/src/session/sql.ts` 的 message/part/permission 列按 V1 形状存（`V1MessageData`、`PermissionV1.Ruleset`）
+2. **事件兼容面**：`core/src/session.ts`（L359/425/440/464/652）、`session/command.ts`（L239）、`execution/local.ts`（L224）发布 `SessionV1.Event.*`/`LegacyEvent`
+3. **配置迁移链**：`core/src/config.ts` 用 `ConfigV1.Info + ConfigMigrateV1` 解码旧配置
+
+### 3.2 V2 → V1 交叉引用清单（core 内 11 处）
+
+| V2 文件 | 引用 V1 | 性质 |
+|---|---|---|
+| `core/src/session.ts` | `SessionV1`、`LegacyEvent` | 发布兼容事件、V1 SessionInfo |
+| `core/src/session/command.ts` | `PermissionV1`、`SessionV1` | 权限存 V1 规则、发布 V1 Created |
+| `core/src/session/info.ts` | `SessionV1` | `toLegacyInfo` |
+| `core/src/session/projector.ts` | `SessionV1.Event.*` | V1 事件投影到 V2 表 |
+| `core/src/session/sql.ts` | `PermissionV1`、`V1MessageData` | DB 列类型 |
+| `core/src/session/execution/local.ts` | `SessionV1.Event.Error` | drain 失败事件 |
+| `core/src/config.ts` | `ConfigV1`、`ConfigMigrateV1` | 配置加载双路径 |
+| `core/src/config/plugin/{provider,agent}.ts` | `ConfigV1/MigrateV1` | 配置迁移 |
+| `core/src/plugin/provider/opencode.ts` | `ConfigProviderV1` | provider 配置 |
+
+**`core/src/tool/` 目录零 V1 导入**（仅一条 TODO 注释）。
+
+### 3.3 V2 已具备独立执行能力（已验证）
+
+- **admit → wake → drain → settlement 全链路**：`session/execution/local.ts` + `run-coordinator.ts` 完整
+- **V2 runner 自带工具循环**：`session/runner/llm.ts`（1217 行）从 provider turn → tool-call → `ToolRegistry.settle` → 回喂 → 下次 `llm.stream`，全自包含
+- **compaction/revert 完整**：`session/compaction.ts`（450+ 行）、`session/revert.ts`（120 行）
+- **tool registry 完整**：`core/tool/registry.ts` 有 `materialize`/`settle`/direct/deferred/hidden + `tool_search` 动态注入
+
+### 3.4 V2 剩余工程缺口（可靠性优先）
+
+- runner `llm.ts` 头部清单 8 项 `[ ]`：状态持久化、中断后 stale-work 拒绝（**影响可靠性**）、policy-filtered tool definitions、snapshot/patch 增量持久化、scoped runtime context、compaction continuation 条件、最终 status settlement、后台 title/summary/cleanup
+- `builtins.ts`：`repo_clone`/`repo_overview`/edit fuzzy 未移植
+- `tool/AGENTS.md` 记录的 3 个 gap：插件引导未走 `Tools.Service`、MCP/session-scoped 注册设计、`outputPaths` 未封装
+- 集群化所有权、跨进程 drain 恢复（AGENTS.md 明确"未来"项）
+
+---
+
+## 4. TUI / Plugin / MCP 边界
+
+### 4.1 TUI 主体已全 V2
+
+- Client：`tui/src/context/sdk.tsx` 用 `@opencode-ai/client`（V2 effect client）
+- Session/消息/catalog：全部 `sdk.native.*`（V2 API，V2 类型）
+- 事件：`useNativeEvent()` 消费 V2 `OpenCodeEvent`；`useEvent()` 是 V1 词汇兼容层
+- TUI state 结构全 V2（`SessionV2Info`、`SessionMessage`、`PermissionV2Request`）
+
+**注意**：Codex 提到的 `session-compat`/`transcript-compat`/`catalog-compat` **命名在仓库中不存在**。实际命名是 `native-v1-*`（TUI `plugin/native-v1-*.ts` 与 opencode `compat/native-v1-*.ts`）。
+
+### 4.2 V1 adapter 引用者（已确认仅外部相容）
+
+| 文件 | 引用者 | 用途 |
+|---|---|---|
+| `tui/plugin/native-v1-transcript.ts` | 仅 `tui/plugin/adapters.tsx:23,142` | TUI plugin API `state.session` 外部投影 |
+| `tui/plugin/native-v1-catalog.ts` | `adapters.tsx:22,159` + 测试 | plugin API `state.provider` |
+| `opencode/compat/native-v1-*.ts`（3 个） | `cli/cmd/run/native-compat.ts`、`acp/client.ts` | run 命令 + ACP 外部协议 |
+
+### 4.3 Plugin 双路径
+
+- **来源单一**：V1 `hooks.tool` + `tool/*.{js,ts}` → `PluginToolCompat` 编译为 `Contribution`
+- **V2 生效路径**：`PluginToolCompatV2` 把 Contribution 包成 canonical tool、`withExposure("deferred")`，`Tools.Service.register`（`bootstrap.ts:28,58-61` 触发）
+- **V1 死路径**：V1 `ToolRegistry`（opencode 包）同一批 Contribution
+- **V2 plugin host 无 tool 注册 API**：`plugin/v2/effect/context.ts` 的 `tool` 仅 ToolDomain（before/after/definition hooks），无 register
+
+### 4.4 MCP 已是单一 V2 runtime
+
+- 唯一实现：`core/src/mcp/runtime.ts`（stdio/StreamableHTTP/SSE/OAuth）
+- `MCP.toolsNode`（runtime.ts L879-935）：`blockedTools` + `isModelVisible` 过滤 → `toCoreTool` → `directTools.has(name) ? "direct" : "deferred"` → `tools.register`（V2 `Tools.Service`）
+- V1 session 仅通过 `MCP.Service.tools()` 读取同一来源
+
+---
+
+## 5. 迁移执行计划（按依赖排序）
+
+### 批次 0：建立门禁（防倒退）
+
+- 参照 `packages/schema/test/v1-isolation.test.ts`，为 `packages/core` 建立「`core/src` 不得 import `./v1/`」的测试门禁，倒逼迁移
+- 盘点 `opencode serve` / `listenNative` vs `listen` 的 route 集合，确认哪套是生产面（避免测试走 noop 路径产生假阴性）
+
+### 批次 1：删除 V1 执行死代码（低风险，纯删除）
+
+> ✅ **已完成（999.0.17）**：
+> - 解耦 `tool/task.ts` 对 `SessionPrompt.PromptInput` 的类型依赖 → 改用 `LegacySessionInput`
+> - 删除 `session/prompt.ts`（SessionPrompt.loop）、`session/processor.ts`（SessionProcessor）、V1 `session/compaction.ts`、`session/tools.ts`
+> - 从 `app-runtime.ts`、`httpapi/server.ts` 移除 `SessionProcessor.node` / `SessionCompaction.node`
+> - 删除死代码测试：`prompt.test.ts`、`processor-effect.test.ts`、`compaction.test.ts`、`snapshot-tool-race.test.ts`、`structured-output.test.ts`、`structured-output-integration.test.ts`、`tool/registry.test.ts`、`tool/skill.test.ts`
+> - 修复测试引用：`schema-decoding.test.ts`、`tool/task.test.ts` 改用 `LegacySessionInput`；`websearch.test.ts` 的 `webSearchEnabled` 移到 `tool/websearch.ts`
+> - **保留** V1 `tool/registry.ts`（`plugin-compat-v2.test.ts` parity 测试仍依赖）；V1 工具定义文件（task/shell/edit 等）被 run 展示层引用，暂留
+> - 注：`plugin-compat-v2.test.ts` 27 个失败与 `test/tool/`、`test/session/llm.test.ts` 的部分失败是 **baseline 预先存在问题**（stash 验证确认），非本批引入
+
+原计划步骤：
+1. 确认 `app-runtime.ts`、`httpapi/server.ts` 的 layer 图中 `SessionPrompt`/`SessionProcessor`/V1 `SessionCompaction`/V1 `ToolRegistry`/V1 `TaskTool`/`subagent-permissions.ts` 移除后无其他依赖
+2. 迁移 `opencode/test/session/*.test.ts`（35 处 `.loop(`）到 V2 测试
+3. 删除上述死代码 + 对应 `.node` 从 layer 图移除
+4. 删除 V1 `SessionProcessor` 依赖的 `session/tools.ts`
+
+### 批次 2：Permission 双轨合并（中风险）
+
+1. 让 `/permission` list/respond 端点直接面向 `PermissionV2`（已有 `forSession`/`list`）
+2. V1 工具路径改走 `PermissionV2.ask`
+3. 移除 `replyCompatible` 兜底逻辑
+4. 删除 `opencode/src/permission/index.ts`（V1）与 `core/v1/permission.ts` 的运行时使用
+
+### 批次 3：V2 可靠性收尾（V2 侧，高优先）
+
+1. runner 状态持久化 + 中断后 stale-work 拒绝
+2. policy-filtered tool definitions
+3. 最终 status settlement / delta coalescing / 后台 title/summary/cleanup
+4. `builtins.ts` 补齐 `repo_clone`/`repo_overview`/edit fuzzy
+
+### 批次 4：httpapi 各 group 迁移到 V2 数据模型（核心）
+
+1. **session group**：CRUD 从 V1 `Session.Service` 迁到 V2（`SessionV2` 持久化 + 投影），移除 `LegacySessionRead` 的 V1 merge
+2. **config group**：`ConfigV1` → V2 config 解码；移除 `ConfigMigrateV1`（保留一次性迁移入口）
+3. **provider group**：V1 provider/auth → V2 provider
+4. **event group**：`EventV2Bridge` 的 V1 序列化 → V2 事件词汇
+5. **command group**：V1 `@/command` → V2 `CommandV2`
+
+### 批次 5：存储格式迁移（高风险，影响用户数据）
+
+1. `core/src/session/sql.ts`：`V1MessageData` → `SessionMessage.Message`、`PermissionV1.Ruleset` → `PermissionV2.Ruleset`
+2. 更新 `data-migration.sql.ts` 与既有用户库迁移路径
+3. 更新 `session/info.ts` `toLegacyInfo`（或删除）
+
+### 批次 6：事件兼容面收口
+
+1. 替换 `core/src/session.ts`/`command.ts`/`execution/local.ts` 的 `SessionV1.Event.*` 发布点为 V2 `SessionEvent`（`@opencode-ai/schema/session-event`）
+2. TUI `useEvent()` legacy 事件集迁移到 V2 事件（`routes/session/index.tsx` 的 plan_exit/plan_enter、`sync.tsx` 的 session.updated/permission.*）
+3. `event-manifest.ts` 移除 `compatibilityDefinitions`
+
+### 批次 7：CLI/ACP 出口收口（外部契约，需产品决策）
+
+1. `run.ts` stdout/JSON 事件格式迁移到 V2 词汇（同步改 `--format json` 契约测试）
+2. `native-compat.ts` → 评估 V1 SDK 客户端的存续（插件 `client = createOpencodeClient(...)` 输入）
+3. `acp/client.ts` + `compat/native-v1-*` → 评估 ACP 协议是否保留 V1 形状
+4. `tui/plugin/native-v1-*` + `adapters.tsx` → TUI plugin API 是否提供 V2 state
+
+### 批次 8：删除 V1 目录（最终）
+
+按顺序：`v1/config/config.ts`（已依赖 V2，最容易）→ `core/src/v1/permission.ts` → `core/src/v1/session.ts` → `packages/schema/src/v1/*` 中不再被引用的部分
+
+### 批次 9：全量 V2-only regression gate
+
+- 确认任何主要入口（TUI/CLI run/ACP/HTTP API）都不再落回 V1
+- 运行全仓 typecheck + 契约测试
+
+---
+
+## 6. 风险与注意事项
+
+1. **双表读写一致性**：V1 `Session.Service` 与 V2 `SessionV2` 共享 `SessionTable`。任何 V2 消息格式变更都会影响 V1 投影（`MessageV2.toLegacy`）。迁移完成前不要移除 V1 CRUD。
+2. **两套 route 树执行语义不同**：TUI worker/native routes 用 `locationServiceMapV2Layer`（forwarding）；`packages/server/src/routes.ts` 独立 route 树仍绑 `noopLayer`（V2 工具彼处 recording-only）。需确认生产 server 入口。
+3. **Permission 双轨盲区**：V2 工具请求不出现在 V1 `/permission` list，用户 UI 可能看不到待授权请求。
+4. **`tool_search` selection 持久化**：若未来接入非 runner 的 V2 工具调用面（MCP/session-scoped 注册），需显式设计 selection 持久化。
+5. **删除 V1 的依赖顺序**：存储格式 → 事件发布点 → 配置解码。`v1/config/config.ts` 已依赖 V2（`config/experimental`/`config/reference`），是最容易先移除的内部引用。

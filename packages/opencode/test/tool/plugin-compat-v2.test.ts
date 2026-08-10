@@ -234,6 +234,18 @@ function settle(registry: ToolRegistry.Interface, name: string, input: unknown =
   return registry.materialize().pipe(Effect.flatMap((materialized) => materialized.settle(call(name, input, id))))
 }
 
+// Plugin tools are deferred (P4), so they land in `materialized.deferred`
+// rather than `definitions`. Look in both when a test asserts on a tool.
+function findMaterialized(
+  materialized: ToolRegistry.Materialization,
+  name: string,
+) {
+  return (
+    materialized.definitions.find((item) => item.name === name) ??
+    materialized.deferred.find((item) => item.name === name)
+  )
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -529,6 +541,31 @@ const hooks = harness({
 })
 
 describe("plugin tool compatibility v2", () => {
+  discovery.instance("registers plugin tools as deferred for tool_search discovery", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      yield* writeTool(
+        test.directory,
+        "tool",
+        "deferred.ts",
+        ["export default { description: 'deferred plugin tool', args: {}, execute: async () => 'ok' }", ""].join("\n"),
+      )
+      yield* initialize()
+
+      const materialized = yield* withLocation(
+        test.directory,
+        ToolRegistry.Service.use((registry) => registry.materialize()),
+      )
+      // P4: plugin tools are discoverable through tool_search, not injected.
+      expect(materialized.deferred.map((item) => item.name)).toContain("deferred")
+      expect(materialized.definitions.map((item) => item.name)).not.toContain("deferred")
+      // tool_search itself is advertised whenever deferred tools exist.
+      expect(materialized.definitions.map((item) => item.name)).toContain("tool_search")
+      // Settlement still works for a deferred plugin tool.
+      expect((yield* materialized.settle(call("deferred"))).result).toEqual({ type: "text", value: "ok" })
+    }),
+  )
+
   parity.instance("materializes and executes aligned V1/V2 config tools from singular and plural directories", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance
@@ -569,7 +606,7 @@ describe("plugin tool compatibility v2", () => {
           .toSorted(),
       ).toEqual(names)
       expect(
-        materialized.definitions
+        [...materialized.definitions, ...materialized.deferred]
           .filter((item) => names.includes(item.name))
           .map((item) => item.name)
           .toSorted(),
@@ -577,7 +614,7 @@ describe("plugin tool compatibility v2", () => {
 
       for (const name of names) {
         const legacy = legacyTools.find((item) => item.id === name)
-        const definition = materialized.definitions.find((item) => item.name === name)
+        const definition = findMaterialized(materialized, name)
         expect(definition?.description).toBe(legacy?.description)
         expect(definition?.inputSchema as unknown).toEqual(legacy?.jsonSchema)
       }
@@ -624,7 +661,7 @@ describe("plugin tool compatibility v2", () => {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
           for (const name of ["noargs", "noargs_nullable"]) {
-            expect(materialized.definitions.find((item) => item.name === name)?.inputSchema).toMatchObject({
+            expect(findMaterialized(materialized, name)?.inputSchema).toMatchObject({
               type: "object",
               properties: {},
             })
@@ -662,8 +699,8 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          expect(materialized.definitions.find((item) => item.name === "broken")).toBeUndefined()
-          expect(materialized.definitions.find((item) => item.name === "healthy")?.description).toBe("healthy")
+          expect(findMaterialized(materialized, "broken")).toBeUndefined()
+          expect(findMaterialized(materialized, "healthy")?.description).toBe("healthy")
           expect((yield* materialized.settle(call("healthy"))).result).toEqual({ type: "text", value: "ready" })
         }),
       )
@@ -698,7 +735,7 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          expect(materialized.definitions.find((item) => item.name === "query")?.inputSchema).toMatchObject({
+          expect(findMaterialized(materialized, "query")?.inputSchema).toMatchObject({
             type: "object",
             properties: {
               query: { type: "string", description: "SQL statement" },
@@ -755,7 +792,7 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          const inputSchema = materialized.definitions.find((item) => item.name === "recursive")?.inputSchema
+          const inputSchema = findMaterialized(materialized, "recursive")?.inputSchema
           if (!isRecord(inputSchema)) throw new Error("recursive input schema was not advertised")
           const definitions = inputSchema.definitions
           expect(isRecord(definitions) ? Object.keys(definitions).length : 0).toBeGreaterThan(0)
@@ -902,7 +939,7 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          expect(materialized.definitions.find((item) => item.name === "legacy")?.inputSchema).toEqual({
+          expect(findMaterialized(materialized, "legacy")?.inputSchema).toEqual({
             type: "object",
             properties: {
               text: { type: "string", minLength: 3, description: "Text to render" },
@@ -959,7 +996,7 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          const inputSchema = materialized.definitions.find((item) => item.name === "mixed")?.inputSchema
+          const inputSchema = findMaterialized(materialized, "mixed")?.inputSchema
           expect(inputSchema).toMatchObject({
             type: "object",
             properties: {
@@ -1068,8 +1105,8 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          expect(materialized.definitions.filter((item) => item.name === "collision")).toHaveLength(1)
-          expect(materialized.definitions.find((item) => item.name === "collision")?.description).toBe("plural config")
+          expect([...materialized.definitions, ...materialized.deferred].filter((item) => item.name === "collision")).toHaveLength(1)
+          expect(findMaterialized(materialized, "collision")?.description).toBe("plural config")
           expect((yield* materialized.settle(call("collision"))).result).toEqual({
             type: "text",
             value: "plural",
@@ -1095,11 +1132,11 @@ describe("plugin tool compatibility v2", () => {
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
           const materialized = yield* registry.materialize()
-          expect(materialized.definitions.find((item) => item.name === "plugin_only")?.description).toBe(
+          expect(findMaterialized(materialized, "plugin_only")?.description).toBe(
             "plugin hook tool",
           )
-          expect(materialized.definitions.filter((item) => item.name === "override")).toHaveLength(1)
-          expect(materialized.definitions.find((item) => item.name === "override")?.description).toBe("second plugin")
+          expect([...materialized.definitions, ...materialized.deferred].filter((item) => item.name === "override")).toHaveLength(1)
+          expect(findMaterialized(materialized, "override")?.description).toBe("second plugin")
           expect((yield* materialized.settle(call("override"))).result).toEqual({
             type: "text",
             value: "second plugin",
@@ -1542,10 +1579,10 @@ describe("plugin tool compatibility v2", () => {
         ToolRegistry.Service.use((registry) => registry.materialize()),
         workspaceB,
       )
-      expect(advertisedA.definitions.find((item) => item.name === "layered")?.description).toBe(
+      expect(findMaterialized(advertisedA, "layered")?.description).toBe(
         "compatibility registration",
       )
-      expect(advertisedB.definitions.find((item) => item.name === "layered")?.description).toBe(
+      expect(findMaterialized(advertisedB, "layered")?.description).toBe(
         "compatibility registration",
       )
 
@@ -1560,8 +1597,8 @@ describe("plugin tool compatibility v2", () => {
         ToolRegistry.Service.use((registry) => registry.materialize()),
         workspaceB,
       )
-      expect(cleanedA.definitions.find((item) => item.name === "layered")).toBeUndefined()
-      expect(cleanedB.definitions.find((item) => item.name === "layered")).toBeUndefined()
+      expect(findMaterialized(cleanedA, "layered")).toBeUndefined()
+      expect(findMaterialized(cleanedB, "layered")).toBeUndefined()
       expect((yield* advertisedA.settle(call("layered"))).result).toEqual({
         type: "error",
         value: "Stale tool call: layered",
@@ -1577,7 +1614,7 @@ describe("plugin tool compatibility v2", () => {
         ToolRegistry.Service.use((registry) => registry.materialize()),
         workspaceB,
       )
-      expect(refreshedB.definitions.find((item) => item.name === "layered")?.description).toBe(
+      expect(findMaterialized(refreshedB, "layered")?.description).toBe(
         "compatibility registration",
       )
       expect((yield* advertisedB.settle(call("layered"))).result).toEqual({
@@ -1589,7 +1626,7 @@ describe("plugin tool compatibility v2", () => {
         ToolRegistry.Service.use((registry) => registry.materialize()),
         workspaceA,
       )
-      expect(stillCleanA.definitions.find((item) => item.name === "layered")).toBeUndefined()
+      expect(findMaterialized(stillCleanA, "layered")).toBeUndefined()
     }),
   )
 
@@ -1621,13 +1658,13 @@ describe("plugin tool compatibility v2", () => {
 
           yield* compatibility.init()
           const advertised = yield* registry.materialize()
-          expect(advertised.definitions.find((item) => item.name === "layered")?.description).toBe(
+          expect(findMaterialized(advertised, "layered")?.description).toBe(
             "compatibility registration",
           )
 
           yield* store.dispose(instance)
           const revealed = yield* registry.materialize()
-          expect(revealed.definitions.find((item) => item.name === "layered")?.description).toBe(
+          expect(findMaterialized(revealed, "layered")?.description).toBe(
             "previous registration",
           )
           expect((yield* advertised.settle(call("layered"))).result).toEqual({

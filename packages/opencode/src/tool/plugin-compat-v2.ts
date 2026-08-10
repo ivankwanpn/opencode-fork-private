@@ -119,7 +119,7 @@ function makeTool(
     context: PluginToolContext,
   ) => Promise<unknown>
 
-  return Tool.make({
+  const tool = Tool.make({
     description: contribution.description,
     input: contribution.parameters,
     output: Result,
@@ -128,21 +128,21 @@ function makeTool(
     toStructuredOutput: ({ output }) => ({
       ...(output.metadata ?? {}),
       ...(output.title === undefined ? {} : { title: output.title }),
-    }),
-    toModelOutput: ({ output }) => [
-      { type: "text", text: output.output },
-      ...(output.attachments ?? []).map((attachment) => ({
-        type: "file" as const,
-        uri: attachment.url,
-        mime: attachment.mime,
-        name: attachment.filename,
-      })),
-    ],
-    execute: (input, context) => {
-      return Effect.callback<unknown, Tool.Failure>((resume, signal) => {
-        const result = Promise.resolve().then(() => {
-          const pluginContext: RuntimePluginToolContext = {
-            sessionID: context.sessionID,
+      }),
+      toModelOutput: ({ output }) => [
+        { type: "text", text: output.output },
+        ...(output.attachments ?? []).map((attachment) => ({
+          type: "file" as const,
+          uri: attachment.url,
+          mime: attachment.mime,
+          name: attachment.filename,
+        })),
+      ],
+      execute: (input, context) => {
+        return Effect.callback<unknown, Tool.Failure>((resume, signal) => {
+          const result = Promise.resolve().then(() => {
+            const pluginContext: RuntimePluginToolContext = {
+              sessionID: context.sessionID,
             messageID: context.assistantMessageID,
             callID: context.toolCallID,
             agent: context.agent,
@@ -221,6 +221,9 @@ function makeTool(
       )
     },
   })
+  // Plugin tools are discoverable through tool_search rather than injected
+  // into the model tool list up front (spec §3.2 / P4).
+  return Tool.withExposure(tool, "deferred")
 }
 
 function permissionFailure(error: unknown, action: string) {

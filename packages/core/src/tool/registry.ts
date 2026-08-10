@@ -1,4 +1,5 @@
 export * as ToolRegistry from "./registry"
+export { searchDeferred } from "./tool-search"
 
 import { ToolDefinition, ToolOutput, type ToolCall, type ToolContent, type ToolResultValue } from "@opencode-ai/llm"
 import { Context, Effect, Layer, Scope } from "effect"

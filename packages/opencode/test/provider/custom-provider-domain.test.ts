@@ -204,6 +204,13 @@ describe("custom provider persistence", () => {
     })
   })
 
+  test("selects the AI SDK package matching the chosen protocol", () => {
+    expect(buildProviderConfig({ ...valid, protocol: "anthropic-messages" }).npm).toBe("@ai-sdk/anthropic")
+    expect(buildProviderConfig({ ...valid, protocol: "openai-responses" }).npm).toBe("@ai-sdk/openai")
+    expect(buildProviderConfig({ ...valid, protocol: "openai-compatible" }).npm).toBe("@ai-sdk/openai-compatible")
+    expect(buildProviderConfig({ ...valid, protocol: undefined }).npm).toBe("@ai-sdk/openai-compatible")
+  })
+
   test("persists only the environment name for an environment credential", () => {
     expect(buildProviderConfig({ ...valid, apiKey: "{env:CUSTOM_PROVIDER_KEY}" }).env).toEqual(["CUSTOM_PROVIDER_KEY"])
     expect(JSON.stringify(buildProviderConfig(valid))).not.toContain("secret")

@@ -139,8 +139,9 @@ export function normalizeConfigureInput(
 export function buildProviderConfig(input: CustomProvider.ConfigureInput): ConfigProviderV1.Info {
   const headers = Object.fromEntries(input.headers.map((header) => [header.name, header.value]))
   const credential = parseCredential(input.apiKey)
+  const protocol = input.protocol ?? "openai-compatible"
   return {
-    npm: PACKAGE_BY_PROTOCOL["openai-compatible"],
+    npm: PACKAGE_BY_PROTOCOL[protocol],
     name: input.name,
     ...(credential.env ? { env: [credential.env] } : {}),
     options: {

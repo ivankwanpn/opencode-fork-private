@@ -427,7 +427,11 @@ export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPlug
                   })
               }
 
-              const refreshed = await refreshPromise
+              const refreshed = await refreshPromise.catch(() => {
+                throw new Error(
+                  "ChatGPT sign-in has expired and could not be refreshed. Re-authenticate in provider settings (OpenAI → ChatGPT Pro/Plus).",
+                )
+              })
               currentAuth.access = refreshed.access
               authWithAccount.accountId = refreshed.accountId
             }

@@ -266,8 +266,12 @@ const registryLayer = Layer.effect(
         }
         // Expose tool_search so the model can discover deferred tools on demand. It is built
         // per-materialization so its execute closure holds this materialization's deferred list.
+        // Gate it like any other tool: a user override disabling it or a full-deny permission
+        // rule keeps it out of definitions (settle then reports it as unknown).
         const toolSearchRegistration =
-          deferred.length > 0
+          deferred.length > 0 &&
+          overrides[ToolSearch.name] !== false &&
+          !whollyDisabled([ToolSearch.name], permissions)
             ? { identity: {}, tool: ToolSearch.makeToolSearchTool(deferred) }
             : undefined
         if (toolSearchRegistration) {

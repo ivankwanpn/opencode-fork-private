@@ -104,6 +104,29 @@ describe("materialize tool_search", () => {
       const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
       expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
     }))
+
+  it.effect("hides tool_search when overridden off", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ hello: hello() })
+      const materialized = yield* service.materialize([], { tool_search: false })
+      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
+      expect(materialized.deferred.map((tool) => tool.name)).toContain("hello")
+      const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
+      expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
+    }))
+
+  it.effect("hides tool_search when a permission deny rule matches", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ hello: hello() })
+      const materialized = yield* service.materialize([
+        { action: "tool_search", resource: "*", effect: "deny" },
+      ])
+      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
+      const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
+      expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
+    }))
 })
 
 const todoPermission = Layer.succeed(

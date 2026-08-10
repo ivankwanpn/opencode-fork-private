@@ -66,5 +66,3 @@ export const makeToolSearchTool = (deferred: ReadonlyArray<ToolDefinition>) =>
     execute: (input) =>
       Effect.sync(() => toModelText(searchDeferred(input.query, deferred, input.limit ?? DEFAULT_LIMIT))),
   })
-
-export const ToolSearchTool = makeToolSearchTool([])

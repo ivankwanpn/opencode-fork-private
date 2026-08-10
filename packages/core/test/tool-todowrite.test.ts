@@ -15,7 +15,7 @@ import { TodoWriteTool } from "@opencode-ai/core/tool/todowrite"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { testEffect } from "./lib/effect"
-import { toolIdentity, executeTool, settleTool, toolDefinitions } from "./lib/tool"
+import { toolIdentity, executeTool, settleTool } from "./lib/tool"
 
 const sessionID = SessionV2.ID.make("ses_todowrite_tool_test")
 const assertions: PermissionV2.AssertInput[] = []
@@ -91,7 +91,8 @@ describe("TodoWriteTool", () => {
         { content: "Implement slice", status: "in_progress", priority: "high" },
       ]
 
-      expect((yield* toolDefinitions(registry)).map((tool) => tool.name)).toEqual([TodoWriteTool.name])
+      expect((yield* registry.materialize()).definitions.map((tool) => tool.name)).toEqual(["tool_search"])
+      expect((yield* registry.materialize()).deferred.map((tool) => tool.name)).toEqual([TodoWriteTool.name])
       expect(yield* settleTool(registry, call(todoList))).toEqual({
         result: { type: "text", value: JSON.stringify(todoList, null, 2) },
         output: {

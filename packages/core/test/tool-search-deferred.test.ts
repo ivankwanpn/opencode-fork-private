@@ -3,8 +3,11 @@ import { Effect, Layer, Schema } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionTodo } from "@opencode-ai/core/session/todo"
+import { TodoWriteTool } from "@opencode-ai/core/tool/todowrite"
 import { Tool } from "@opencode-ai/core/tool/tool"
 import { searchDeferred, ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
@@ -100,5 +103,52 @@ describe("materialize tool_search", () => {
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
       const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
       expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
+    }))
+})
+
+const todoPermission = Layer.succeed(
+  PermissionV2.Service,
+  PermissionV2.Service.of({
+    assert: () => Effect.void,
+    ask: () => Effect.die("unused"),
+    reply: () => Effect.die("unused"),
+    get: () => Effect.die("unused"),
+    forSession: () => Effect.die("unused"),
+    list: () => Effect.die("unused"),
+  }),
+)
+const sessionTodo = Layer.succeed(
+  SessionTodo.Service,
+  SessionTodo.Service.of({
+    update: () => Effect.void,
+    get: () => Effect.succeed([]),
+  }),
+)
+const builtinLayer = AppNodeBuilder.build(
+  LayerNode.group([ToolRegistry.node, TodoWriteTool.node]),
+  [
+    [ToolOutputStore.node, outputStore],
+    [PermissionV2.node, todoPermission],
+    [SessionTodo.node, sessionTodo],
+  ],
+)
+const itBuiltin = testEffect(builtinLayer)
+
+describe("deferred builtin e2e", () => {
+  itBuiltin.effect("routes the shipped todowrite builtin to deferred and tool_search finds it", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      const materialized = yield* service.materialize()
+      expect(materialized.definitions.some((tool) => tool.name === "todowrite")).toBe(false)
+      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
+      expect(materialized.deferred.map((tool) => tool.name)).toContain("todowrite")
+      const hits = searchDeferred("track progress with a todo list", materialized.deferred, 5)
+      expect(hits.some((tool) => tool.name === "todowrite")).toBe(true)
+      const settlement = yield* materialized.settle(
+        call("todowrite", {
+          todos: [{ content: "finish tool exposure", status: "pending", priority: "low" }],
+        }),
+      )
+      expect(settlement.result).toMatchObject({ type: "text" })
     }))
 })

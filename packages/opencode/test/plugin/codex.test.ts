@@ -320,6 +320,30 @@ describe("plugin.codex", () => {
       { authorization: "Bearer access-new", accountId: "acc-123" },
     ])
   })
+  test("surfaces actionable errors when the Codex backend rejects with 401/403", async () => {
+    const statuses = [401, 403] as const
+    for (const status of statuses) {
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response("denied", { status })
+        },
+      })
+      const hooks = await CodexAuthPlugin({} as never, {
+        codexApiEndpoint: new URL("/backend-api/codex/responses", server.url).toString(),
+      })
+      const options = await hooks.auth!.loader!(
+        async () => ({ type: "oauth", access: "access-token", accountId: "account-123" }) as never,
+        {} as never,
+      )
+      const fetcher = options.fetch as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+      await expect(fetcher("https://api.openai.com/v1/responses", { method: "POST", body: "{}" })).rejects.toThrow(
+        status === 401
+          ? /ChatGPT authentication is invalid or expired/
+          : /ChatGPT rejected the Codex request/,
+      )
+    }
+  })
 })
 
 async function waitFor(predicate: () => boolean) {

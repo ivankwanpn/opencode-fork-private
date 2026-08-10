@@ -465,8 +465,21 @@ export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPlug
               body: init?.body,
               headers,
             }
-            if (websocketFetch && parsed.pathname.endsWith("/responses")) return websocketFetch(url, requestInit)
-            return fetch(url, OpenAIWebSocketPool.withoutInternalHeaders(requestInit))
+            const response = websocketFetch && parsed.pathname.endsWith("/responses")
+              ? await websocketFetch(url, requestInit)
+              : await fetch(url, OpenAIWebSocketPool.withoutInternalHeaders(requestInit))
+            // The Codex backend answers 401/403 when the OAuth token is invalid,
+            // expired, or the account lacks Codex access. Surface an actionable
+            // message instead of a generic "HTTP 403"/"HTTP transport failed".
+            if (response.status === 401)
+              throw new Error(
+                "ChatGPT authentication is invalid or expired. Re-authenticate in provider settings (OpenAI → ChatGPT Pro/Plus) to continue using Codex models.",
+              )
+            if (response.status === 403)
+              throw new Error(
+                "ChatGPT rejected the Codex request (HTTP 403). Your account may need ChatGPT Pro/Plus access, or re-authenticate in provider settings.",
+              )
+            return response
           },
         }
       },

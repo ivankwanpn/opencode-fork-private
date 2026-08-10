@@ -905,7 +905,18 @@ describe("SessionRunnerLLM", () => {
 
       yield* waitFor("first runner request", () => requests.length >= 1)
       expect(requests).toHaveLength(1)
-      expect(yield* session.messages({ sessionID })).toMatchObject([
+      // The assistant placeholder is projected when the (empty) provider stream
+      // settles (Step.Ended), which races the first-request signal; wait for
+      // the projection instead of asserting immediately.
+      const messages = yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const current = yield* session.messages({ sessionID })
+          if (current.some((entry) => entry.type === "assistant")) return current
+          yield* Effect.promise(() => Bun.sleep(10))
+        }
+        return yield* Effect.die(new Error("Timed out waiting for assistant placeholder projection"))
+      })
+      expect(messages).toMatchObject([
         { type: "assistant", finish: "unknown", content: [] },
         { id: message.id, type: "user", text: "Run automatically" },
       ])

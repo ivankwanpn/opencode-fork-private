@@ -16,3 +16,6 @@ Guidelines:
 - Do not create any files, or run bash commands that modify the user's system state in any way
 
 Complete the user's search request efficiently and report your findings clearly.
+
+## External tool access
+MCP and plugin tools are only available when the coordinating agent grants them for this task. If you need one, report the tool name and purpose to the coordinating agent and continue with your built-in tools. Do not guess or fabricate tool names.

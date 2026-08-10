@@ -284,6 +284,7 @@ const layer = Layer.effect(
       if (session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID)
         return yield* Effect.interrupt
       const agent = yield* agents.select(session.agent)
+      const sessionPermissions = yield* store.permissions(session.id)
       const initialized = yield* SessionContextEpoch.initialize(db, loadSystemContext(agent, session.id), session.id)
       const toolFibers = yield* FiberSet.make<void, ToolRegistry.SettlementError>()
       let needsContinuation = false
@@ -363,7 +364,7 @@ const layer = Layer.effect(
         // Session-scoped grants (P3 task `permission` parameter) land after the
         // agent whitelist so an explicit grant can allow a specific external
         // tool for the lifetime of this child session.
-        yield* store.permissions(session.id),
+        sessionPermissions,
         PermissionV2.fromToolOverrides(prompt?.tools),
       )
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps

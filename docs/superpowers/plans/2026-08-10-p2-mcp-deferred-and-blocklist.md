@@ -338,6 +338,6 @@ git commit -m "test(core): e2e verify MCP deferral, blocklist, and directTools o
   - 重啟/重建 server 後驗證：`curl /api/health`（預期 `{"healthy":true,"pid":<num>}`）與 `curl /api/capability`（預期 `{"backgroundSubagents":true}`）。
   - 若確定要防啟動競態：可考慮在 app 側對 `/api/health` 探測加短重試（數次 200ms 退避），或在 server 側確保 listen 完成後才開始對外暴露（通常已如此）。
 - **狀態**：已修（2026-08-10）。雙層修復：
-  - （ 放行  與 ）——消除帶密碼 server 下探測 401 的根因（實測：health/capability 無 auth 200、 仍 401）
-  - （ 對  探測加 3 次重試）——吸收 sidecar 啟動競態
-  - 回歸測試：（免 auth 斷言）、（重試斷言）
+  - server 側：`packages/server/src/middleware/authorization.ts` 放行 `/api/health` 與 `/api/capability`（免 auth）——消除帶密碼 server 下探測 401 的根因（實測：health/capability 無 auth 200、`/api/session` 仍 401）
+  - app 側：`packages/app/src/utils/server-protocol.ts` 對 `/api/health` 探測加 3 次重試——吸收 sidecar 啟動競態
+  - 回歸測試：`httpapi-authorization.test.ts`（免 auth 斷言）、`server-protocol.test.ts`（重試斷言）

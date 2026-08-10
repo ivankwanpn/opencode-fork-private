@@ -25,6 +25,7 @@ import { InstallationVersion } from "../installation/version"
 import { Location } from "../location"
 import { PermissionV2 } from "../permission"
 import { ToolRegistry } from "../tool/registry"
+import { Tool } from "../tool/tool"
 import { Tools } from "../tool/tools"
 import { McpAuth } from "./auth"
 import { McpBrowser } from "./browser"
@@ -877,6 +878,7 @@ export const node = makeLocationNode({
 
 const toolsLayer = Layer.effectDiscard(
   Effect.gen(function* () {
+    const config = yield* Config.Service
     const mcp = yield* Service
     const tools = yield* Tools.Service
     const events = yield* EventV2.Service
@@ -885,13 +887,21 @@ const toolsLayer = Layer.effectDiscard(
     yield* Effect.addFinalizer((exit) => Scope.close(parent, exit).pipe(Effect.ignore))
     const lock = Semaphore.makeUnsafe(1)
     let current: Scope.Closeable | undefined
+    const resolved = resolveConfig(yield* config.entries())
 
     const sync = lock.withPermit(
       Effect.gen(function* () {
         const child = yield* Scope.fork(parent)
         const catalog = {
           ...Object.fromEntries(
-            Object.entries(yield* mcp.tools()).map(([name, entry]) => [name, McpCatalog.toCoreTool(entry)]),
+            Object.entries(yield* mcp.tools())
+              .filter(([, entry]) => !McpCatalog.isBlockedTool(entry.def.name, resolved.blockedTools))
+              .filter(([, entry]) => McpCatalog.isModelVisible(entry.def))
+              .map(([name, entry]) => {
+                const coreTool = McpCatalog.toCoreTool(entry)
+                const exposure = resolved.directTools.has(name) ? "direct" : "deferred"
+                return [name, Tool.withExposure(coreTool, exposure)]
+              }),
           ),
           ...(yield* McpResourceTools.catalog()),
         }
@@ -921,7 +931,7 @@ const toolsLayer = Layer.effectDiscard(
 export const toolsNode = makeLocationNode({
   name: "mcp-tools",
   layer: toolsLayer,
-  deps: [node, ToolRegistry.toolsNode, EventV2.node, Location.node, PermissionV2.node],
+  deps: [node, ToolRegistry.toolsNode, EventV2.node, Location.node, PermissionV2.node, Config.node],
 })
 
 function resolveConfig(entries: ReadonlyArray<Config.Entry>): ResolvedConfig {

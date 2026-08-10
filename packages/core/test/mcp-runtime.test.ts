@@ -222,6 +222,16 @@ function waitFor<A>(effect: Effect.Effect<A>, accept: (value: A) => boolean, mes
   })
 }
 
+// MCP tools are deferred by default and MCP resource helpers stay direct, so
+// presence checks must look across both materialized tool lists.
+const registeredToolNames = (registry: ToolRegistry.Interface) =>
+  registry.materialize().pipe(
+    Effect.map((materialized) => [
+      ...materialized.definitions.map((definition) => definition.name),
+      ...materialized.deferred.map((definition) => definition.name),
+    ]),
+  )
+
 it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchronized", () =>
   Effect.gen(function* () {
     const remote = yield* server
@@ -270,10 +280,10 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
     })
 
     yield* waitFor(
-      toolDefinitions(registry),
-      (definitions) =>
-        definitions.some((definition) => definition.name === "demo_server_echo") &&
-        resourceHelpers.every((name) => definitions.some((definition) => definition.name === name)),
+      registeredToolNames(registry),
+      (names) =>
+        names.includes("demo_server_echo") &&
+        resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not registered",
     )
     expect(
@@ -292,20 +302,18 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
     })
     yield* Effect.promise(remote.changed)
     yield* waitFor(
-      toolDefinitions(registry),
-      (definitions) =>
-        definitions.some((definition) => definition.name === "demo_server_next") &&
-        !definitions.some((definition) => definition.name === "demo_server_echo"),
+      registeredToolNames(registry),
+      (names) => names.includes("demo_server_next") && !names.includes("demo_server_echo"),
       "MCP tool registration did not refresh",
     )
 
     yield* mcp.disconnect("demo server")
     expect(yield* mcp.status()).toEqual({ "demo server": { status: "disabled" } })
     yield* waitFor(
-      toolDefinitions(registry),
-      (definitions) =>
-        !definitions.some((definition) => definition.name.startsWith("demo_server_")) &&
-        resourceHelpers.every((name) => !definitions.some((definition) => definition.name === name)),
+      registeredToolNames(registry),
+      (names) =>
+        !names.some((name) => name.startsWith("demo_server_")) &&
+        resourceHelpers.every((name) => !names.includes(name)),
       "MCP tools or resource helpers remained after disconnect",
     )
 
@@ -313,10 +321,10 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
     yield* mcp.connect("demo server")
     expect(yield* mcp.status()).toEqual({ "demo server": { status: "connected" } })
     yield* waitFor(
-      toolDefinitions(registry),
-      (definitions) =>
-        definitions.some((definition) => definition.name === "demo_server_next") &&
-        resourceHelpers.every((name) => definitions.some((definition) => definition.name === name)),
+      registeredToolNames(registry),
+      (names) =>
+        names.includes("demo_server_next") &&
+        resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not restored after reconnect",
     )
   }),

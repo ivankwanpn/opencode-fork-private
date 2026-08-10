@@ -121,6 +121,30 @@ export const toolNames = (clientName: string, definitions: ReadonlyArray<Pick<MC
     64,
   )
 
+export const isBlockedTool = (name: string, blocked: ReadonlySet<string>): boolean => blocked.has(name)
+
+const MCP_UI_META_KEY = "ui"
+const MCP_UI_VISIBILITY_KEY = "visibility"
+const MCP_UI_MODEL_VISIBILITY = "model"
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Returns whether an MCP tool may be exposed to the model.
+ *  Tools without `_meta.ui.visibility` remain visible; tools with visibility
+ *  metadata are hidden unless it explicitly includes `"model"`.
+ */
+export const isModelVisible = (def: MCPToolDefinition): boolean => {
+  const meta = def._meta
+  if (!isRecord(meta)) return true
+  const ui = meta[MCP_UI_META_KEY]
+  if (!isRecord(ui)) return true
+  const visibility = ui[MCP_UI_VISIBILITY_KEY]
+  if (!Array.isArray(visibility)) return true
+  return visibility.some((target) => target === MCP_UI_MODEL_VISIBILITY)
+}
+
 const listTools = (client: Client, timeout: number) =>
   Effect.tryPromise({
     try: () =>

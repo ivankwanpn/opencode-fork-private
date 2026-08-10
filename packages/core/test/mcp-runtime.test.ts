@@ -113,6 +113,37 @@ const layer = AppNodeBuilder.build(LayerNode.group([MCP.node, MCP.toolsNode, Too
 ])
 
 const it = testEffect(layer)
+
+// Config document carrying the directTools override consumed by toolsLayer.sync
+// at layer build time. Servers themselves are added at runtime through MCP.add.
+const gatesConfigLayer = Layer.succeed(
+  Config.Service,
+  Config.Service.of({
+    entries: () =>
+      Effect.succeed([
+        new Config.Document({
+          type: "document",
+          info: new Config.Info({
+            mcp: new ConfigMCP.Info({
+              directTools: ["playwright_playwright_navigate"],
+            }),
+          }),
+        }),
+      ]),
+  }),
+)
+
+const gatesLayer = AppNodeBuilder.build(LayerNode.group([MCP.node, MCP.toolsNode, ToolRegistry.node, Location.node]), [
+  [Config.node, gatesConfigLayer],
+  [EventV2.node, eventLayer],
+  [Global.node, isolatedGlobalLayer],
+  [Location.node, tempLocationLayer],
+  [CrossSpawnSpawner.node, spawnerLayer],
+  [PermissionV2.node, permissionLayer],
+  [ToolOutputStore.node, outputStoreLayer],
+])
+
+const gatesIt = testEffect(gatesLayer)
 const sessionID = SessionV2.ID.make("ses_mcp_runtime")
 const assistantMessageID = SessionMessage.ID.make("msg_mcp_runtime")
 const agent = AgentV2.ID.make("build")
@@ -387,4 +418,64 @@ it.live("returns typed missing-server errors and stable failed statuses", () =>
     expect(result.status.invalid).toEqual({ status: "failed", error: 'Invalid MCP URL for "invalid"' })
     expect(yield* mcp.clients()).toEqual({})
   }),
+)
+
+gatesIt.live(
+  "applies the deferred/blocked/directTools gates end to end through toolsLayer.sync and ToolRegistry.materialize",
+  () =>
+    Effect.gen(function* () {
+      const remote = yield* server
+      const mcp = yield* MCP.Service
+      const registry = yield* ToolRegistry.Service
+
+      // Provide one normal, one blocklisted, and one directTools-overridden tool.
+      remote.tools.splice(
+        0,
+        remote.tools.length,
+        {
+          name: "playwright_snapshot",
+          description: "Snapshot the browser page",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "browser_run_code_unsafe",
+          description: "Run arbitrary code in the browser",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "playwright_navigate",
+          description: "Navigate the browser to a URL",
+          inputSchema: { type: "object", properties: {} },
+        },
+      )
+      yield* mcp.add(
+        "playwright",
+        new ConfigMCP.Remote({ type: "remote", url: remote.url, oauth: false }),
+      )
+      expect(yield* mcp.status()).toEqual({ playwright: { status: "connected" } })
+
+      // Both the deferred and the directTools tools must materialize somewhere.
+      yield* waitFor(
+        registeredToolNames(registry),
+        (names) =>
+          names.includes("playwright_playwright_snapshot") && names.includes("playwright_playwright_navigate"),
+        "gated MCP tools were not registered",
+      )
+
+      const materialized = yield* registry.materialize()
+      const definitions = materialized.definitions.map((definition) => definition.name)
+      const deferred = materialized.deferred.map((definition) => definition.name)
+
+      // A plain MCP tool is deferred by default, not advertised in definitions.
+      expect(deferred).toContain("playwright_playwright_snapshot")
+      expect(definitions).not.toContain("playwright_playwright_snapshot")
+
+      // A blocklisted tool is dropped entirely: neither deferred nor definitions.
+      expect(deferred).not.toContain("playwright_browser_run_code_unsafe")
+      expect(definitions).not.toContain("playwright_browser_run_code_unsafe")
+
+      // A directTools override keeps the tool Direct (in definitions, not deferred).
+      expect(definitions).toContain("playwright_playwright_navigate")
+      expect(deferred).not.toContain("playwright_playwright_navigate")
+    }),
 )

@@ -1,5 +1,6 @@
 export * as ToolRegistry from "./registry"
 export { searchDeferred } from "./tool-search"
+import { ToolSearch } from "./tool-search"
 
 import { ToolDefinition, ToolOutput, type ToolCall, type ToolContent, type ToolResultValue } from "@opencode-ai/llm"
 import { Context, Effect, Layer, Scope } from "effect"
@@ -209,6 +210,7 @@ const registryLayer = Layer.effect(
           if (registration) registrations.set(name, registration)
         }
         const advertised = new Map<string, Registration>()
+        const deferredRegistrations = new Map<string, Registration>()
         const definitions: ToolDefinition[] = []
         const deferred: ToolDefinition[] = []
         for (const [name, registration] of registrations) {
@@ -242,7 +244,6 @@ const registryLayer = Layer.effect(
             definition: value.value,
           })
           const transformed = value.get()
-          advertised.set(name, registration)
           const toolDefinition =
             transformed.description === current.description && transformed.parameters === current.inputSchema
               ? current
@@ -251,14 +252,30 @@ const registryLayer = Layer.effect(
                   description: transformed.description,
                   inputSchema: transformed.parameters as ToolDefinition["inputSchema"],
                 })
-          if (toolExposure === "deferred") deferred.push(toolDefinition)
-          else definitions.push(toolDefinition)
+          if (toolExposure === "deferred") {
+            deferredRegistrations.set(name, registration)
+            deferred.push(toolDefinition)
+          } else {
+            advertised.set(name, registration)
+            definitions.push(toolDefinition)
+          }
+        }
+        // Expose tool_search so the model can discover deferred tools on demand. It is built
+        // per-materialization so its execute closure holds this materialization's deferred list.
+        if (deferred.length > 0) {
+          const toolSearchDefinition = definition(
+            ToolSearch.name,
+            ToolSearch.makeToolSearchTool(deferred),
+            permissions,
+          )
+          if (toolSearchDefinition) definitions.push(toolSearchDefinition)
         }
         return {
           definitions,
           deferred,
           settle: (input) => {
-            const registration = advertised.get(input.call.name)
+            const registration =
+              advertised.get(input.call.name) ?? deferredRegistrations.get(input.call.name)
             if (registration) return settleWith(input, registration.identity)
             return Effect.succeed({ result: { type: "error", value: `Unknown tool: ${input.call.name}` } })
           },

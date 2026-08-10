@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { searchDeferred } from "@opencode-ai/core/tool/registry"
+import { Effect, Layer, Schema } from "effect"
+import { AgentV2 } from "@opencode-ai/core/agent"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { Tool } from "@opencode-ai/core/tool/tool"
+import { searchDeferred, ToolRegistry } from "@opencode-ai/core/tool/registry"
+import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolDefinition } from "@opencode-ai/llm"
+import { testEffect } from "./lib/effect"
 
 const def = (name: string, description: string): ToolDefinition =>
   new ToolDefinition({ name, description, inputSchema: {} })
@@ -24,4 +33,41 @@ describe("searchDeferred", () => {
     const hits = searchDeferred("alpha beta", tools, 2)
     expect(hits.length).toBeLessThanOrEqual(2)
   })
+})
+
+const outputStore = Layer.mock(ToolOutputStore.Service, {
+  bound: (input) => Effect.succeed({ output: input.output, outputPaths: [] }),
+})
+const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [
+  [ToolOutputStore.node, outputStore],
+])
+const it = testEffect(registryLayer)
+
+const hello = () =>
+  Tool.withExposure(
+    Tool.make({
+      description: "Says hello",
+      input: Schema.Struct({ name: Schema.String }),
+      output: Schema.Struct({ greeting: Schema.String }),
+      execute: ({ name }) => Effect.succeed({ greeting: `hello ${name}` }),
+      toModelOutput: ({ output }) => [{ type: "text" as const, text: output.greeting }],
+    }),
+    "deferred",
+  )
+
+describe("materialize tool_search", () => {
+  it.effect("exposes tool_search and can settle a deferred tool call", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ hello: hello() })
+      const materialized = yield* service.materialize()
+      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
+      const settlement = yield* materialized.settle({
+        sessionID: SessionV2.ID.make("ses_tool_search"),
+        agent: AgentV2.ID.make("build"),
+        assistantMessageID: SessionMessage.ID.make("msg_tool_search"),
+        call: { type: "tool-call", id: "call-hello", name: "hello", input: { name: "bob" } },
+      })
+      expect(settlement.result).toEqual({ type: "text", value: "hello bob" })
+    }))
 })

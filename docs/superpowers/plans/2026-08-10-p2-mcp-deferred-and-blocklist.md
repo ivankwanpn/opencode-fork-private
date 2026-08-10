@@ -318,3 +318,23 @@ git commit -m "test(core): e2e verify MCP deferral, blocklist, and directTools o
 - **佔位符**：無 TBD/TODO；Task 4 的端到端測試描述了要斷言的內容，實現時需補具體 mock client 構造（參考 `packages/core/test/mcp-resource-tools.test.ts` 或 mcp runtime 現有測試）
 - **型別一致性**：`blockedTools`/`directTools`（ConfigMCP.Info）→ `ResolvedConfig.blockedTools/directTools`（ReadonlySet）→ `McpCatalog.isBlockedTool/isModelVisible` → `toolsLayer.sync` 的 `Tool.withExposure` 一致引用
 - **風險**：`_meta` 的類型收窄（`Record<string, unknown>`）需要小心；location-layer 測試的 `tool_search` 期望會因 todowrite 恢復而變化（Task 3 處理）
+
+---
+
+## Known Issues (recorded — deferred to a later stage, do not fix during P2)
+
+### K1: App 端 `V2 server health contract unavailable`（環境報錯）
+
+- **症狀**：desktop app renderer 在啟動連線時拋 `Error: V2 server health contract unavailable`（`packages/app/src/utils/server-protocol.ts:89`，`detectServerProtocolDetails` v2 模式）。
+- **診斷（已做，2026-08-10）**：
+  - 觸發條件：v2 模式下探測 `/api/health` 的回應缺 `pid`（→ 拋「health contract unavailable」）；或 `/api/health` 有 pid 但 `/api/capability` 缺 `backgroundSubagents`（→ 拋「capability contract unavailable」）。
+  - **Fork server 已完整實現兩者**：`/api/health` → `{ healthy: true, pid: process.pid }`（`packages/server/src/handlers/health.ts` + `packages/protocol/src/groups/health.ts`）；`/api/capability` → `{ backgroundSubagents: true }`（`handlers/capability.ts` + `groups/capability.ts`）。`serve-process.test.ts` 端到端證實 `/api/health` 正常。
+  - 與 P1/P2 變更無關（server 路由/health 代碼未被觸碰）。
+- **最可能成因**（按可能性排序）：
+  1. 啟動競態：app 首次探測時 server 尚未就緒（連線拒絕 → probe undefined）。app 有 `refreshProtocol()` 重連邏輯，通常自癒。
+  2. server 進程是舊版本/非本 fork 構建（不含 `/api/health`）。
+  3. auth 401（server 設密碼且探測缺 header；renderer 有密碼時會帶 Basic header，可能性低）。
+- **修復方向（後續階段，勿在 P2 做）**：
+  - 重啟/重建 server 後驗證：`curl /api/health`（預期 `{"healthy":true,"pid":<num>}`）與 `curl /api/capability`（預期 `{"backgroundSubagents":true}`）。
+  - 若確定要防啟動競態：可考慮在 app 側對 `/api/health` 探測加短重試（數次 200ms 退避），或在 server 側確保 listen 完成後才開始對外暴露（通常已如此）。
+- **狀態**：記錄在案，待後續階段處理。

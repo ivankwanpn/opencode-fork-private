@@ -157,16 +157,14 @@ const builtinLayer = AppNodeBuilder.build(
 )
 const itBuiltin = testEffect(builtinLayer)
 
-describe("deferred builtin e2e", () => {
-  itBuiltin.effect("routes the shipped todowrite builtin to deferred and tool_search finds it", () =>
+describe("shipped builtin e2e", () => {
+  itBuiltin.effect("advertises the shipped todowrite builtin directly without tool_search", () =>
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service
       const materialized = yield* service.materialize()
-      expect(materialized.definitions.some((tool) => tool.name === "todowrite")).toBe(false)
-      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
-      expect(materialized.deferred.map((tool) => tool.name)).toContain("todowrite")
-      const hits = searchDeferred("track progress with a todo list", materialized.deferred, 5)
-      expect(hits.some((tool) => tool.name === "todowrite")).toBe(true)
+      expect(materialized.definitions.some((tool) => tool.name === "todowrite")).toBe(true)
+      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
+      expect(materialized.deferred).toEqual([])
       const settlement = yield* materialized.settle(
         call("todowrite", {
           todos: [{ content: "finish tool exposure", status: "pending", priority: "low" }],

@@ -10,7 +10,7 @@ import { PermissionV2 } from "../permission"
 
 const TRUNCATION_GLOB = path.join(Global.Path.data, "tool-output", "*")
 const BUILD_SYSTEM =
-  "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions.\n\n## Tool discovery\nTools like MCP or plugin tools are not listed up front. If you need a tool that is not in your tool list, call `tool_search` with a query describing what you want to accomplish, then call the returned tool by its exact name. Do not invent tool names — search first."
+  "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions.\n\n## Tool discovery\nMCP and plugin tools are not listed up front. If you need such a tool that is not in your tool list, call `tool_search` with a query describing what you want to accomplish, then call the returned tool by its exact name. Do not invent tool names — search first."
 
 const PROMPT_EXPLORE = `You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
 

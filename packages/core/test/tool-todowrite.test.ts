@@ -91,8 +91,8 @@ describe("TodoWriteTool", () => {
         { content: "Implement slice", status: "in_progress", priority: "high" },
       ]
 
-      expect((yield* registry.materialize()).definitions.map((tool) => tool.name)).toEqual(["tool_search"])
-      expect((yield* registry.materialize()).deferred.map((tool) => tool.name)).toEqual([TodoWriteTool.name])
+      expect((yield* registry.materialize()).definitions.map((tool) => tool.name)).toEqual([TodoWriteTool.name])
+      expect((yield* registry.materialize()).deferred.map((tool) => tool.name)).toEqual([])
       expect(yield* settleTool(registry, call(todoList))).toEqual({
         result: { type: "text", value: JSON.stringify(todoList, null, 2) },
         output: {

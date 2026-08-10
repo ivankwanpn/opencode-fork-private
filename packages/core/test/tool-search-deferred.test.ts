@@ -54,6 +54,20 @@ const hello = () =>
     }),
     "deferred",
   )
+const direct = () =>
+  Tool.make({
+    description: "Says direct",
+    input: Schema.Struct({}),
+    output: Schema.Struct({ text: Schema.String }),
+    execute: () => Effect.succeed({ text: "direct" }),
+    toModelOutput: ({ output }) => [{ type: "text" as const, text: output.text }],
+  })
+const call = (name: string, input: Record<string, unknown>, id = `call-${name}`): ToolRegistry.ExecuteInput => ({
+  sessionID: SessionV2.ID.make("ses_tool_search"),
+  agent: AgentV2.ID.make("build"),
+  assistantMessageID: SessionMessage.ID.make("msg_tool_search"),
+  call: { type: "tool-call", id, name, input },
+})
 
 describe("materialize tool_search", () => {
   it.effect("exposes tool_search and can settle a deferred tool call", () =>
@@ -62,12 +76,29 @@ describe("materialize tool_search", () => {
       yield* service.register({ hello: hello() })
       const materialized = yield* service.materialize()
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
-      const settlement = yield* materialized.settle({
-        sessionID: SessionV2.ID.make("ses_tool_search"),
-        agent: AgentV2.ID.make("build"),
-        assistantMessageID: SessionMessage.ID.make("msg_tool_search"),
-        call: { type: "tool-call", id: "call-hello", name: "hello", input: { name: "bob" } },
-      })
+      const settlement = yield* materialized.settle(call("hello", { name: "bob" }))
       expect(settlement.result).toEqual({ type: "text", value: "hello bob" })
+    }))
+
+  it.effect("settles a tool_search call with matching-tool text", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ hello: hello() })
+      const materialized = yield* service.materialize()
+      const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
+      expect(settlement.result).toMatchObject({
+        type: "text",
+        value: expect.stringContaining("Says hello"),
+      })
+    }))
+
+  it.effect("does not advertise tool_search without deferred tools", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ direct: direct() })
+      const materialized = yield* service.materialize()
+      expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
+      const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
+      expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
     }))
 })

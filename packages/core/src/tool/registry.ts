@@ -105,9 +105,13 @@ const registryLayer = Layer.effect(
     type Registration = { readonly identity: object; readonly tool: AnyTool }
     const local = new Map<string, Array<{ readonly token: object; readonly registration: Registration }>>()
 
-    const settleWith = Effect.fn("ToolRegistry.settle")(function* (input: ExecuteInput, advertised?: object) {
+    const settleWith = Effect.fn("ToolRegistry.settle")(function* (
+      input: ExecuteInput,
+      advertised?: object,
+      explicit?: Registration,
+    ) {
       const registration =
-        local.get(input.call.name)?.at(-1)?.registration ?? applications.entries().get(input.call.name)
+        explicit ?? local.get(input.call.name)?.at(-1)?.registration ?? applications.entries().get(input.call.name)
       if (!registration)
         return {
           result: {
@@ -262,18 +266,20 @@ const registryLayer = Layer.effect(
         }
         // Expose tool_search so the model can discover deferred tools on demand. It is built
         // per-materialization so its execute closure holds this materialization's deferred list.
-        if (deferred.length > 0) {
-          const toolSearchDefinition = definition(
-            ToolSearch.name,
-            ToolSearch.makeToolSearchTool(deferred),
-            permissions,
-          )
+        const toolSearchRegistration =
+          deferred.length > 0
+            ? { identity: {}, tool: ToolSearch.makeToolSearchTool(deferred) }
+            : undefined
+        if (toolSearchRegistration) {
+          const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
           if (toolSearchDefinition) definitions.push(toolSearchDefinition)
         }
         return {
           definitions,
           deferred,
           settle: (input) => {
+            if (input.call.name === ToolSearch.name && toolSearchRegistration)
+              return settleWith(input, toolSearchRegistration.identity, toolSearchRegistration)
             const registration =
               advertised.get(input.call.name) ?? deferredRegistrations.get(input.call.name)
             if (registration) return settleWith(input, registration.identity)

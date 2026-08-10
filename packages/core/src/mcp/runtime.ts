@@ -136,7 +136,11 @@ export const emptyLayer = Layer.succeed(
 type ResolvedConfig = {
   readonly timeout: ConfigMCP.Timeout
   readonly servers: Readonly<Record<string, ServerConfig>>
+  readonly blockedTools: ReadonlySet<string>
+  readonly directTools: ReadonlySet<string>
 }
+
+export const DEFAULT_BLOCKED_TOOLS: readonly string[] = ["browser_run_code_unsafe"]
 
 type State = {
   readonly configured: Readonly<Record<string, ServerConfig>>
@@ -925,6 +929,11 @@ function resolveConfig(entries: ReadonlyArray<Config.Entry>): ResolvedConfig {
   return {
     timeout: Object.assign(new ConfigMCP.Timeout({}), ...configured.map((info) => info.timeout ?? {})),
     servers: Object.assign({}, ...configured.map((info) => info.servers ?? {})),
+    blockedTools: new Set([
+      ...DEFAULT_BLOCKED_TOOLS,
+      ...configured.flatMap((info) => info.blockedTools ?? []),
+    ]),
+    directTools: new Set(configured.flatMap((info) => info.directTools ?? [])),
   }
 }
 

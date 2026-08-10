@@ -45,4 +45,12 @@ export const Server = Schema.Union([Local, Remote]).pipe(Schema.toTaggedUnion("t
 export class Info extends Schema.Class<Info>("ConfigV2.MCP")({
   timeout: Timeout.pipe(Schema.optional),
   servers: Schema.Record(Schema.String, Server).pipe(Schema.optional),
+  blockedTools: Schema.Array(Schema.String).pipe(Schema.optional).annotate({
+    description:
+      "MCP tool names to hide entirely (never advertised or searchable). Defaults include RCE-equivalent tools like browser_run_code_unsafe.",
+  }),
+  directTools: Schema.Array(Schema.String).pipe(Schema.optional).annotate({
+    description:
+      "MCP tool names to keep Direct (injected into the model tool list) as a fallback, e.g. high-frequency tools.",
+  }),
 }) {}

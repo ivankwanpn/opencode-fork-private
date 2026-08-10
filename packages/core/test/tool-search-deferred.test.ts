@@ -12,6 +12,8 @@ import { Tool } from "@opencode-ai/core/tool/tool"
 import { searchDeferred, ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolDefinition } from "@opencode-ai/llm"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "./lib/effect"
 
 const def = (name: string, description: string): ToolDefinition =>
@@ -73,13 +75,23 @@ const call = (name: string, input: Record<string, unknown>, id = `call-${name}`)
 })
 
 describe("materialize tool_search", () => {
-  it.effect("exposes tool_search and can settle a deferred tool call", () =>
+  it.effect("exposes tool_search and can settle a deferred tool call after searching", () =>
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service
       yield* service.register({ hello: hello() })
       const materialized = yield* service.materialize()
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
-      const settlement = yield* materialized.settle(call("hello", { name: "bob" }))
+      // P5: a deferred tool is rejected until the model searches for it.
+      const denied = yield* materialized.settle(call("hello", { name: "bob" }))
+      expect(denied.result.type).toBe("error")
+      expect(denied.result.value).toContain("unsupported call: hello")
+      // After tool_search selects it, a fresh materialization can run it.
+      yield* materialized.settle(call("tool_search", { query: "hello" }))
+      const next = yield* service.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected: new Set(["hello"]),
+      })
+      const settlement = yield* next.settle(call("hello", { name: "bob" }))
       expect(settlement.result).toEqual({ type: "text", value: "hello bob" })
     }))
 

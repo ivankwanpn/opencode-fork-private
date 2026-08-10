@@ -13,6 +13,8 @@ import {
   type Tool as MCPToolDefinition,
 } from "@modelcontextprotocol/sdk/types.js"
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Config } from "@opencode-ai/core/config"
@@ -317,13 +319,19 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
         resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not registered",
     )
+    // P5: deferred MCP tools require a tool_search first; materialize with the
+    // searched set so the tool becomes callable.
+    const searched = yield* registry.materialize(undefined, undefined, {
+      model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+      selected: new Set(["demo_server_echo"]),
+    })
     expect(
-      yield* executeTool(registry, {
+      yield* searched.settle({
         sessionID,
         agent,
         assistantMessageID,
         call: { type: "tool-call", id: "call_echo", name: "demo_server_echo", input: { text: "hello" } },
-      }),
+      }).pipe(Effect.map((settlement) => settlement.result)),
     ).toEqual({ type: "text", value: "hello" })
 
     remote.tools.splice(0, remote.tools.length, {

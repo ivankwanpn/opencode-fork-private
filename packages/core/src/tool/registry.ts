@@ -70,6 +70,8 @@ export interface MaterializationContext {
   readonly features?: Partial<MaterializationFeatures>
   /** Names of deferred tools the model already searched (Codex dynamic loading). */
   readonly selected?: ReadonlySet<string>
+  /** Called when tool_search unlocks deferred tools; lets the caller persist the set across turns. */
+  readonly onSelect?: (names: ReadonlySet<string>) => void
 }
 
 export interface MaterializationFeatures {
@@ -284,7 +286,7 @@ const registryLayer = Layer.effect(
           deferred.length > 0 &&
           overrides[ToolSearch.name] !== false &&
           !whollyDisabled([ToolSearch.name], permissions)
-            ? { identity: {}, tool: ToolSearch.makeToolSearchTool(deferred) }
+            ? { identity: {}, tool: ToolSearch.makeToolSearchTool(deferred, context?.onSelect) }
             : undefined
         if (toolSearchRegistration) {
           const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
@@ -297,9 +299,22 @@ const registryLayer = Layer.effect(
           settle: (input) => {
             if (input.call.name === ToolSearch.name && toolSearchRegistration)
               return settleWith(input, toolSearchRegistration.identity, toolSearchRegistration)
-            const registration =
-              advertised.get(input.call.name) ?? deferredRegistrations.get(input.call.name)
-            if (registration) return settleWith(input, registration.identity)
+            const advertisedRegistration = advertised.get(input.call.name)
+            if (advertisedRegistration) return settleWith(input, advertisedRegistration.identity)
+            // Deferred tools may only run after the model searched for them in a
+            // previous turn (P5 dynamic loading) — mirror Codex's "unsupported
+            // call" for tools that were never unlocked.
+            const deferredRegistration = deferredRegistrations.get(input.call.name)
+            if (deferredRegistration) {
+              if (context?.selected?.has(input.call.name) ?? false)
+                return settleWith(input, deferredRegistration.identity)
+              return Effect.succeed({
+                result: {
+                  type: "error",
+                  value: `unsupported call: ${input.call.name} (search for it with tool_search first)`,
+                },
+              })
+            }
             return Effect.succeed({ result: { type: "error", value: `Unknown tool: ${input.call.name}` } })
           },
         }

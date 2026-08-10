@@ -278,6 +278,7 @@ const layer = Layer.effect(
       physical: PhysicalAttempt | undefined,
       stopBlockCount: PluginRuntime.Mutable<number>["value"],
       toolFailures: ToolFailureTracker,
+      searchedTools: { readonly current: ReadonlySet<string>; readonly select: (names: ReadonlySet<string>) => void },
     ) {
       const physicalAttempt: PhysicalAttempt = physical ?? { attempt: 1 }
       const session = yield* getSession(sessionID)
@@ -375,6 +376,11 @@ const layer = Layer.effect(
               providerID: resolved?.model.providerID ?? ProviderV2.ID.make(model.provider),
               modelID: resolved?.model.id ?? ModelV2.ID.make(model.id),
             },
+            // P5 dynamic loading: searched deferred tools are injected into the
+            // advertised definitions, and tool_search writes new selections here
+            // for the next provider turn.
+            selected: searchedTools.current,
+            onSelect: searchedTools.select,
           })
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
       const mcpInstructions = SessionRunnerSystem.mcp(yield* mcp.instructions(), effectivePermissions)
@@ -927,6 +933,10 @@ const layer = Layer.effect(
         }),
       )
     }, Effect.scoped)
+    type SearchedTools = {
+      current: ReadonlySet<string>
+      readonly select: (names: ReadonlySet<string>) => void
+    }
     type RunTurn = (
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
@@ -934,10 +944,11 @@ const layer = Layer.effect(
       physical: PhysicalAttempt | undefined,
       stopBlockCount: PluginRuntime.Mutable<number>["value"],
       toolFailures: ToolFailureTracker,
+      searchedTools: SearchedTools,
     ) => Effect.Effect<{ readonly needsContinuation: boolean; readonly step: number }, RunError>
 
     const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(
-      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures) {
+      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures, searchedTools) {
         return yield* runTurnAttempt(
           sessionID,
           promotion,
@@ -946,6 +957,7 @@ const layer = Layer.effect(
           physical,
           stopBlockCount,
           toolFailures,
+            searchedTools,
         ).pipe(
           Effect.catchDefect(
             Effect.fnUntraced(function* (defect) {
@@ -961,6 +973,7 @@ const layer = Layer.effect(
                   defect.transition.physical,
                   stopBlockCount,
                   toolFailures,
+                    searchedTools,
                 )
               return yield* runAfterOverflowCompaction(
                 sessionID,
@@ -969,6 +982,7 @@ const layer = Layer.effect(
                 physical,
                 stopBlockCount,
                 toolFailures,
+                  searchedTools,
               )
             }),
           ),
@@ -977,7 +991,7 @@ const layer = Layer.effect(
     )
 
     const runTurn: RunTurn = Effect.fnUntraced(
-      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures) {
+      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures, searchedTools) {
         return yield* runTurnAttempt(
           sessionID,
           promotion,
@@ -986,6 +1000,7 @@ const layer = Layer.effect(
           physical,
           stopBlockCount,
           toolFailures,
+            searchedTools,
         ).pipe(
           Effect.catchDefect(
             Effect.fnUntraced(function* (defect) {
@@ -999,6 +1014,7 @@ const layer = Layer.effect(
                   undefined,
                   stopBlockCount,
                   toolFailures,
+                    searchedTools,
                 )
               if (defect.transition._tag === "RetryProvider")
                 return yield* runTurn(
@@ -1008,6 +1024,7 @@ const layer = Layer.effect(
                   defect.transition.physical,
                   stopBlockCount,
                   toolFailures,
+                    searchedTools,
                 )
               return yield* runTurn(
                 sessionID,
@@ -1016,6 +1033,7 @@ const layer = Layer.effect(
                 physical,
                 stopBlockCount,
                 toolFailures,
+                  searchedTools,
               )
             }),
           ),
@@ -1100,6 +1118,15 @@ const layer = Layer.effect(
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
+        // P5 dynamic loading: searched deferred tools accumulate across the
+        // provider turns of this drain so tool_search in one turn unlocks the
+        // tool in the next.
+        const searchedTools: SearchedTools = {
+          current: new Set<string>(),
+          select: (names) => {
+            searchedTools.current = new Set(names)
+          },
+        }
         // One pool per turn: every `needsContinuation` iteration of the same
         // turn reuses the pooled Responses WebSocket connection (keyed by url +
         // headers) instead of opening and closing a socket per provider request.
@@ -1123,6 +1150,7 @@ const layer = Layer.effect(
               initialPhysical,
               stopBlockCount.value,
               toolFailures,
+                searchedTools,
             ).pipe(Effect.provideService(WebSocketPool.Service, pool))
             initialPhysical = undefined
             needsContinuation = result.needsContinuation

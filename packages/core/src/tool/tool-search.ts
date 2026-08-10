@@ -57,12 +57,21 @@ export const toModelText = (matches: ReadonlyArray<ToolDefinition>) =>
     ? "No matching tools found."
     : matches.map((tool) => `${tool.name}\n${tool.description ?? ""}\n${JSON.stringify(tool.inputSchema)}`).join("\n\n")
 
-export const makeToolSearchTool = (deferred: ReadonlyArray<ToolDefinition>) =>
+export const makeToolSearchTool = (
+  deferred: ReadonlyArray<ToolDefinition>,
+  onSelect?: (names: ReadonlySet<string>) => void,
+) =>
   Tool.make({
     description:
       "Search for tools that are not in your current tool list. Use this when you need a tool you don't see, such as MCP or plugin tools. Describe what you want to do; matching tool names, descriptions, and input schemas are returned, and the matched tools can then be called by their exact names.",
     input: Input,
     output: Output,
     execute: (input) =>
-      Effect.sync(() => toModelText(searchDeferred(input.query, deferred, input.limit ?? DEFAULT_LIMIT))),
+      Effect.sync(() => {
+        const matches = searchDeferred(input.query, deferred, input.limit ?? DEFAULT_LIMIT)
+        // P5 dynamic loading: record which deferred tools this search unlocked
+        // so the next provider turn can inject them into the tool definitions.
+        onSelect?.(new Set(matches.map((tool) => tool.name)))
+        return toModelText(matches)
+      }),
   })

@@ -78,3 +78,48 @@ describe("P5 tool_search dynamic loading", () => {
     expect(text).toContain("Alpha tool")
   })
 })
+
+describe("P5 searched-tool flow", () => {
+  it.effect("tool_search selection carries into the next materialization", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      yield* registry.register({
+        calendar: defTool("calendar", "Create calendar events"),
+        chat: defTool("chat", "Chat history search"),
+      })
+
+      let selected = new Set<string>()
+      const materialized = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+        onSelect: (names) => {
+          selected = new Set(names)
+        },
+      })
+
+      // model searches "calendar" → onSelect records the hit
+      const search = yield* materialized.settle({
+        sessionID: "ses_t" as never,
+        agent: "build" as never,
+        assistantMessageID: "msg_t" as never,
+        call: { type: "tool-call", id: "c1", name: "tool_search", input: { query: "calendar events" } },
+      })
+      expect(search.result.type).toBe("text")
+      expect(selected.has("calendar")).toBe(true)
+      expect(selected.has("chat")).toBe(false)
+
+      // next materialization injects the searched tool into definitions
+      const next = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+        onSelect: (names) => {
+          selected = new Set(names)
+        },
+      })
+      const names = (definitions: ReadonlyArray<{ name: string }>) => definitions.map((d) => d.name)
+      expect(names(next.definitions)).toContain("calendar")
+      expect(names(next.definitions)).not.toContain("chat")
+      expect(names(next.deferred)).toContain("chat")
+    }),
+  )
+})

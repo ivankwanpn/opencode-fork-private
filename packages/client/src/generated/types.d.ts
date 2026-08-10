@@ -2699,6 +2699,13 @@ export type SessionsContextOutput = {
             readonly start?: string;
             readonly end?: string;
             readonly files?: ReadonlyArray<string>;
+            readonly patch?: ReadonlyArray<{
+                readonly path: string;
+                readonly status: "added" | "modified" | "deleted";
+                readonly additions: number;
+                readonly deletions: number;
+                readonly patch: string;
+            }>;
         };
         readonly finish?: string;
         readonly structured?: JsonValue;
@@ -3207,6 +3214,13 @@ export type SessionsHistoryOutput = {
                     readonly start?: string;
                     readonly end?: string;
                     readonly files?: ReadonlyArray<string>;
+                    readonly patch?: ReadonlyArray<{
+                        readonly path: string;
+                        readonly status: "added" | "modified" | "deleted";
+                        readonly additions: number;
+                        readonly deletions: number;
+                        readonly patch: string;
+                    }>;
                 };
                 readonly finish?: string;
                 readonly structured?: JsonValue;
@@ -3607,6 +3621,13 @@ export type SessionsHistoryOutput = {
             };
             readonly snapshot?: string;
             readonly files?: ReadonlyArray<string>;
+            readonly patch?: ReadonlyArray<{
+                readonly path: string;
+                readonly status: "added" | "modified" | "deleted";
+                readonly additions: number;
+                readonly deletions: number;
+                readonly patch: string;
+            }>;
         };
     } | {
         readonly id: string;
@@ -4718,6 +4739,13 @@ export type SessionsEventsOutput = {
                 readonly start?: string;
                 readonly end?: string;
                 readonly files?: ReadonlyArray<string>;
+                readonly patch?: ReadonlyArray<{
+                    readonly path: string;
+                    readonly status: "added" | "modified" | "deleted";
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly patch: string;
+                }>;
             };
             readonly finish?: string;
             readonly structured?: unknown;
@@ -5118,6 +5146,13 @@ export type SessionsEventsOutput = {
         };
         readonly snapshot?: string;
         readonly files?: ReadonlyArray<string>;
+        readonly patch?: ReadonlyArray<{
+            readonly path: string;
+            readonly status: "added" | "modified" | "deleted";
+            readonly additions: number;
+            readonly deletions: number;
+            readonly patch: string;
+        }>;
     };
 } | {
     readonly id: string;
@@ -6147,6 +6182,13 @@ export type SessionsMessageOutput = {
             readonly start?: string;
             readonly end?: string;
             readonly files?: ReadonlyArray<string>;
+            readonly patch?: ReadonlyArray<{
+                readonly path: string;
+                readonly status: "added" | "modified" | "deleted";
+                readonly additions: number;
+                readonly deletions: number;
+                readonly patch: string;
+            }>;
         };
         readonly finish?: string;
         readonly structured?: JsonValue;
@@ -6573,6 +6615,13 @@ export type MessagesListOutput = {
             readonly start?: string;
             readonly end?: string;
             readonly files?: ReadonlyArray<string>;
+            readonly patch?: ReadonlyArray<{
+                readonly path: string;
+                readonly status: "added" | "modified" | "deleted";
+                readonly additions: number;
+                readonly deletions: number;
+                readonly patch: string;
+            }>;
         };
         readonly finish?: string;
         readonly structured?: JsonValue;

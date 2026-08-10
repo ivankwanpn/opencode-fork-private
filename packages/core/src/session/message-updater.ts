@@ -237,11 +237,12 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
           draft.finish = event.data.finish
           draft.cost = event.data.cost
           draft.tokens = event.data.tokens
-          if (event.data.snapshot || event.data.files)
+          if (event.data.snapshot || event.data.files || event.data.patch)
             draft.snapshot = {
               ...draft.snapshot,
               end: event.data.snapshot,
               files: event.data.files ? Array.from(event.data.files) : undefined,
+              patch: event.data.patch ? Array.from(event.data.patch) : undefined,
             }
         })
       },

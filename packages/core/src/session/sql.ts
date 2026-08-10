@@ -261,7 +261,14 @@ export const SessionCancellationTable = sqliteTable("session_cancellation", {
   time_completed: integer(),
 })
 
-export type SessionAttemptStatus = "started" | "responding" | "retrying" | "continuation" | "ended" | "abandoned"
+export type SessionAttemptStatus =
+  | "started"
+  | "responding"
+  | "retrying"
+  | "continuation"
+  | "ended"
+  | "abandoned"
+  | "interrupted"
 
 export const SessionAttemptTable = sqliteTable(
   "session_provider_attempt",

@@ -13,6 +13,7 @@ import { SessionInput } from "./session-input"
 import { Location } from "./location"
 import { SessionMessage } from "./session-message"
 import { Revert } from "./revert"
+import { FileDiff } from "./file-diff"
 
 export { FileAttachment }
 
@@ -226,6 +227,7 @@ export namespace Step {
       }),
       snapshot: Schema.String.pipe(optional),
       files: Schema.Array(RelativePath).pipe(optional),
+      patch: Schema.Array(FileDiff.Core).pipe(optional),
     },
   })
   export type Ended = typeof Ended.Type

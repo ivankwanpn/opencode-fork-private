@@ -148,7 +148,8 @@ export const status = Effect.fn("SessionAttempt.status")(function* (
   active: boolean,
 ) {
   const row = yield* get(db, sessionID)
-  if (!row || row.status === "ended" || row.status === "abandoned") return Status.make({ type: "idle" })
+  if (!row || row.status === "ended" || row.status === "abandoned" || row.status === "interrupted")
+    return Status.make({ type: "idle" })
   if (row.status === "retrying") {
     if (row.retry_at === null || row.error === null) return yield* Effect.die("Incomplete retry projection")
     return Status.make({
@@ -285,7 +286,13 @@ export const projectEnded = Effect.fn("SessionAttempt.projectEnded")(function* (
             .update(SessionAttemptTable)
             .set({
               status:
-                event.data.continuation ? "continuation" : event.data.outcome === "abandoned" ? "abandoned" : "ended",
+                event.data.continuation
+                  ? "continuation"
+                  : event.data.outcome === "abandoned"
+                    ? "abandoned"
+                    : event.data.outcome === "interrupted"
+                      ? "interrupted"
+                      : "ended",
               error: event.data.error ? { message: event.data.error.message, isRetryable: false } : null,
               seq: sequence(event),
               time_updated: DateTime.toEpochMillis(event.data.timestamp),

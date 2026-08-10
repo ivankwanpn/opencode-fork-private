@@ -5,6 +5,7 @@ import { optional } from "./schema"
 import { ProviderMetadata, ToolContent } from "./llm"
 import { Model } from "./model"
 import { FileAttachment, Prompt } from "./prompt"
+import { FileDiff } from "./file-diff"
 import { DateTimeUtcFromMillis, RelativePath, statics } from "./schema"
 import { SessionID } from "./session-id"
 import { ascending } from "./identifier"
@@ -182,6 +183,7 @@ export const Assistant = Schema.Struct({
     start: Schema.String.pipe(optional),
     end: Schema.String.pipe(optional),
     files: Schema.Array(RelativePath).pipe(optional),
+    patch: Schema.Array(FileDiff.Core).pipe(optional),
   }).pipe(optional),
   finish: Schema.String.pipe(optional),
   structured: Schema.Unknown.pipe(optional),

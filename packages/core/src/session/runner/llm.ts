@@ -856,6 +856,12 @@ const layer = Layer.effect(
                     .files({ from: startSnapshot, to: endSnapshot })
                     .pipe(Effect.catch(() => Effect.succeed(undefined)))
                 : undefined
+            const patch =
+              startSnapshot && endSnapshot && files && files.length > 0
+                ? yield* snapshots
+                    .diff({ from: startSnapshot, to: endSnapshot, context: 0 })
+                    .pipe(Effect.catch(() => Effect.succeed(undefined)))
+                : undefined
             yield* withPublication(
               events.publish(SessionEvent.Step.Ended, {
                 sessionID: session.id,
@@ -866,6 +872,7 @@ const layer = Layer.effect(
                 tokens: stepSettlement.tokens,
                 snapshot: endSnapshot,
                 files,
+                patch,
               }),
             )
           }

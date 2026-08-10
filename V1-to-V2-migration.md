@@ -213,6 +213,15 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 
 ### 批次 3：V2 可靠性收尾（V2 侧，高优先）
 
+> ✅ **已完成（999.0.17）**：
+> - **缺口1（会话级 cost/tokens 列陈旧）**：`Step.Ended` 投影调用 `applyUsage` 更新 `SessionTable` 的 cost/tokens_* 列
+> - **缺口2（interrupted 独立行状态）**：`SessionAttemptStatus` 加 `"interrupted"`；`projectEnded` 对 interrupted outcome 写独立状态；`status()` 派生按 idle 处理
+> - **缺口3（残留 attempt 自动结算）**：startup recovery 中 `settleCompletedAttempt` 对「assistant 已完成 + 无未结算工具」的残留 attempt 补发 `ProviderAttempt.Ended`
+> - **缺口6（后台维护）**：drain 结束用首条用户消息生成启发式标题（`updateSessionTitle`）；`Compaction.Ended` 投影写入 `time_compacting`
+> - **缺口7（patch 持久化）**：`Assistant.snapshot` 与 `Step.Ended` 事件加 `patch` 字段（`File.Diff` 提取到 `schema/src/file-diff.ts` 打破循环依赖）；runner 在 `Step.Ended` 用 `Snapshot.diff` 计算 patch 持久化
+> - 标记后续：缺口4（delta 流式合并——需异步 timer 有回归风险）、缺口5（repo_clone/repo_overview/edit fuzzy——全新功能非迁移缺口）
+
+原计划：
 1. runner 状态持久化 + 中断后 stale-work 拒绝
 2. policy-filtered tool definitions
 3. 最终 status settlement / delta coalescing / 后台 title/summary/cleanup

@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Layer, Stream } from "effect"
+import { Cause, Clock, DateTime, Effect, Layer, Stream } from "effect"
 import { and, desc, eq, isNotNull, isNull, lte, or } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { LocationServiceMap } from "../../location-service-map"
@@ -15,7 +15,8 @@ import { SessionTurn } from "../turn"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
-import { SessionAttemptTable, SessionInputTable, TaskSubmissionTable } from "../sql"
+import { SessionAttemptTable, SessionInputTable, SessionTable, TaskSubmissionTable } from "../sql"
+import { SessionEvent } from "../event"
 import { EventV2 } from "../../event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import { SessionV1 } from "@opencode-ai/schema/v1/session"
@@ -196,6 +197,66 @@ const layer = Layer.effect(
       const outcome = yield* SessionTurn.settleInterrupted(db, events, { sessionID, ...interruption })
       if (outcome === "pending" || outcome === "restart") yield* current.service?.wake(sessionID) ?? Effect.void
     })
+    /**
+     * Settles a stale `started`/`responding` attempt whose assistant message already
+     * reached a terminal state. Mirrors the runner's own reconciliation: once the
+     * assistant is completed and no tool call is left unsettled, the attempt is a
+     * finished work item that a crash interrupted before it could publish its ended
+     * event. Publishing `ProviderAttempt.Ended` lets the projector advance the row
+     * instead of leaving it stranded in `recovery-required` forever.
+     *
+     * Returns true when the attempt was settled (or was not a stale candidate).
+     */
+    const settleCompletedAttempt = Effect.fn("SessionExecutionLocal.settleCompletedAttempt")(function* (
+      sessionID: SessionSchema.ID,
+    ) {
+      const attempt = yield* SessionAttempt.get(db, sessionID)
+      if (!attempt || (attempt.status !== "started" && attempt.status !== "responding")) return true
+      const stored = yield* store.message(attempt.assistant_message_id)
+      const assistant =
+        stored?.sessionID === sessionID && stored.message.type === "assistant" ? stored.message : undefined
+      const unsettled = assistant?.content.some(
+        (part) => part.type === "tool" && (part.state.status === "pending" || part.state.status === "running"),
+      )
+      if (assistant?.time.completed === undefined || unsettled === false) return false
+      const interrupted = assistant.error?.message === "Provider turn interrupted"
+      const failed = assistant.finish === "error"
+      const continuation =
+        !failed && assistant.content.some((part) => part.type === "tool" && part.provider?.executed !== true)
+      yield* events.publish(SessionEvent.ProviderAttempt.Ended, {
+        sessionID,
+        attemptID: attempt.attempt_id,
+        assistantMessageID: attempt.assistant_message_id,
+        timestamp: yield* DateTime.now,
+        outcome: interrupted ? "interrupted" : failed ? "failed" : "completed",
+        continuation,
+        error: assistant.error ? { type: "unknown", message: assistant.error.message } : undefined,
+      })
+      return true
+    })
+    /**
+     * Derives a session title from the first user message when the session still
+     * carries the default placeholder. Heuristic: first non-empty text prompt,
+     * normalized to a single line, capped at 60 chars. Bounded and best-effort.
+     */
+    const updateSessionTitle = Effect.fn("SessionExecutionLocal.updateSessionTitle")(function* (
+      sessionID: SessionSchema.ID,
+    ) {
+      const session = yield* store.get(sessionID)
+      if (!session) return
+      if (session.title !== undefined && !session.title.startsWith("New session - ")) return
+      const messages = yield* store.context(sessionID).pipe(Effect.orDie)
+      const text = messages.find((message) => message.type === "user")?.text?.trim()
+      if (!text) return
+      const title = text.split(/\s+/).join(" ").slice(0, 60)
+      const timeUpdated = yield* Clock.currentTimeMillis
+      yield* db
+        .update(SessionTable)
+        .set({ title, time_updated: timeUpdated })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie)
+    })
     const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, SessionRunner.RunError>({
       drain: Effect.fnUntraced(function* (sessionID: SessionSchema.ID, force) {
         const session = yield* store.get(sessionID)
@@ -235,6 +296,7 @@ const layer = Layer.effect(
           )
           yield* recoverCompletedSubmissions(sessionID, store, submissions)
           yield* drainNotifications()
+          yield* updateSessionTitle(sessionID)
         }).pipe(Effect.ensuring(settleInterruption(sessionID).pipe(Effect.ensuring(idle))))
       }),
     })
@@ -271,7 +333,7 @@ const layer = Layer.effect(
     for (const turn of yield* SessionTurn.open(db)) {
       if (turn.status !== "active") continue
       const attempt = yield* SessionAttempt.get(db, turn.session_id)
-      if (attempt?.status !== "ended") continue
+      if (attempt?.status !== "ended" && attempt?.status !== "interrupted") continue
       const ended = yield* SessionAttempt.latestEnded(db, turn.session_id)
       if (!ended || ended.attemptID !== attempt.attempt_id || ended.outcome !== "interrupted" || ended.continuation)
         continue
@@ -286,6 +348,7 @@ const layer = Layer.effect(
     for (const recovery of yield* startupRecoveryCandidates(db, now)) {
       yield* recoverCompletedSubmissions(recovery.sessionID, store, submissions)
       if (yield* clearTerminalTaskAttempt(recovery.sessionID, db)) continue
+      if (yield* settleCompletedAttempt(recovery.sessionID)) continue
       const childInputID = yield* interruptedChildInputID(recovery.sessionID, db)
       if (childInputID)
         yield* submissions

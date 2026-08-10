@@ -2,7 +2,6 @@ import { sentryVitePlugin } from "@sentry/vite-plugin"
 import { defineConfig } from "electron-vite"
 import appPlugin from "@opencode-ai/app/vite"
 import * as fs from "node:fs/promises"
-import path from "node:path"
 import { resolveChannel } from "../script/src/channel"
 
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
@@ -63,22 +62,7 @@ const require = __cjs_mod__.createRequire(import.meta.url);
         name: "opencode:virtual-server-module",
         enforce: "pre",
         resolveId(id) {
-          if (id === "virtual:opencode-server") return "\0opencode-server-engine"
-          // Treat the copied engine file as external so rollup keeps the
-          // runtime `import` as-is instead of re-bundling the 32 MB engine.
-          if (id === "./opencode-server.js") return { id, external: true }
-        },
-        // Keep the engine bundle out of the main-process rollup graph: it is a
-        // self-contained ESM bundle built by `build-node.ts` (~32 MB), so
-        // re-bundling it here costs tens of seconds every build. Emit a tiny
-        // virtual module that re-exports the engine from its copied location at
-        // runtime instead of inlining it. The engine file is treated as external
-        // so rollup keeps the runtime `import` as-is.
-        load(id) {
-          if (id !== "\0opencode-server-engine") return
-          // The virtual module is emitted into out/main/chunks/, alongside the
-          // copied engine file, so reference it by its sibling basename.
-          return `export * from "./opencode-server.js"`
+          if (id === "virtual:opencode-server") return this.resolve(`${OPENCODE_SERVER_DIST}/node.js`)
         },
       },
       {
@@ -88,26 +72,6 @@ const require = __cjs_mod__.createRequire(import.meta.url);
             if (!l.endsWith(".wasm")) continue
             await fs.writeFile(`./out/main/chunks/${l}`, await fs.readFile(`${OPENCODE_SERVER_DIST}/${l}`))
           }
-          // Copy the engine bundle alongside its wasm assets so the virtual
-          // re-export above can load it at runtime.
-          await fs.writeFile(`./out/main/chunks/opencode-server.js`, await fs.readFile(`${OPENCODE_SERVER_DIST}/node.js`))
-          // The engine keeps `jsonc-parser` external (build-node.ts externalizes
-          // it), so make it resolvable from the packaged app: copy it into a
-          // top-level node_modules next to out/. Node's module resolution walks
-          // up from the engine file (out/main/chunks/) to find it.
-          const jsoncDir = path.resolve("..", "opencode", "node_modules", "jsonc-parser")
-          const jsoncOut = "./out/node_modules/jsonc-parser"
-          const copyDir = async (from: string, to: string) => {
-            await fs.mkdir(to, { recursive: true })
-            for (const l of await fs.readdir(from)) {
-              if (l === ".package-lock.json") continue
-              const src = path.join(from, l)
-              const stat = await fs.stat(src)
-              if (stat.isDirectory()) await copyDir(src, path.join(to, l))
-              else await fs.writeFile(path.join(to, l), await fs.readFile(src))
-            }
-          }
-          await copyDir(jsoncDir, jsoncOut)
         },
       },
     ],

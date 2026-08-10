@@ -1,0 +1,81 @@
+import { makeDefaultApi } from "@opencode-ai/protocol/api";
+import { InvalidRequestError, SessionNotFoundError } from "@opencode-ai/protocol/errors";
+import { HttpApiMiddleware } from "effect/unstable/httpapi";
+declare const LocationMiddleware_base: HttpApiMiddleware.ServiceClass<LocationMiddleware, "@opencode-ai/client/LocationMiddleware", {
+    requires: never;
+    provides: never;
+    error: never;
+    clientError: never;
+    requiredForClient: false;
+    security: never;
+}, HttpApiMiddleware.HttpApiMiddleware<never, never, never>>;
+declare class LocationMiddleware extends LocationMiddleware_base {
+}
+declare const SessionLocationMiddleware_base: HttpApiMiddleware.ServiceClass<SessionLocationMiddleware, "@opencode-ai/client/SessionLocationMiddleware", {
+    requires: never;
+    provides: never;
+    error: readonly [typeof InvalidRequestError, typeof SessionNotFoundError];
+    clientError: never;
+    requiredForClient: false;
+    security: never;
+}, HttpApiMiddleware.HttpApiMiddleware<never, readonly [typeof InvalidRequestError, typeof SessionNotFoundError], never>>;
+declare class SessionLocationMiddleware extends SessionLocationMiddleware_base {
+}
+type ClientApi = ReturnType<typeof makeDefaultApi<LocationMiddleware, never, SessionLocationMiddleware, never>>;
+export declare const ClientApi: ClientApi;
+export declare const groupNames: {
+    readonly "server.health": "health";
+    readonly "server.location": "location";
+    readonly "server.path": "path";
+    readonly "server.agent": "agents";
+    readonly "server.session": "sessions";
+    readonly "server.message": "messages";
+    readonly "server.model": "models";
+    readonly "server.provider": "providers";
+    readonly "server.integration": "integrations";
+    readonly "server.credential": "credentials";
+    readonly "server.permission": "permissions";
+    readonly "server.fs": "files";
+    readonly "server.command": "commands";
+    readonly "server.skill": "skills";
+    readonly "server.event": "events";
+    readonly "server.pty": "ptys";
+    readonly "server.question": "questions";
+    readonly "server.reference": "references";
+    readonly "server.projectCopy": "projectCopies";
+    readonly "server.mcp": "mcps";
+    readonly "server.lsp": "lsp";
+    readonly "server.project": "projects";
+    readonly "server.worktree": "worktrees";
+    readonly "server.capability": "capabilities";
+    readonly "server.vcs": "vcs";
+    readonly "server.formatter": "formatters";
+    readonly "server.console": "console";
+    readonly "server.config": "config";
+    readonly "server.workspace": "workspaces";
+    readonly "server.controlPlane": "controlPlane";
+};
+export declare const endpointNames: {
+    readonly "provider.custom.discover": "discoverCustom";
+    readonly "provider.custom.configure": "configureCustom";
+    readonly "session.messages": "list";
+    readonly "session.input.list": "inputList";
+    readonly "session.input.get": "inputGet";
+    readonly "session.input.promote": "inputPromote";
+    readonly "session.input.cancel": "inputCancel";
+    readonly "integration.connect.key": "connectKey";
+    readonly "integration.connect.oauth": "connectOauth";
+    readonly "integration.attempt.status": "attemptStatus";
+    readonly "integration.attempt.complete": "attemptComplete";
+    readonly "integration.attempt.cancel": "attemptCancel";
+    readonly "permission.request.list": "listRequests";
+    readonly "permission.saved.list": "listSaved";
+    readonly "permission.saved.remove": "removeSaved";
+    readonly "question.request.list": "listRequests";
+    readonly "console.org.list": "listOrgs";
+    readonly "console.org.switch": "switchOrg";
+    readonly "workspace.adapter.list": "listAdapters";
+    readonly "workspace.syncList": "syncList";
+};
+export declare const omitEndpoints: Set<string>;
+export {};

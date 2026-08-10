@@ -1,0 +1,560 @@
+export * as TaskTool from "./task"
+
+import { ToolFailure } from "@opencode-ai/llm"
+import { Cause, Effect, Exit, Layer, Ref, Schema } from "effect"
+import { AgentV2 } from "../agent"
+import { BackgroundJob } from "../background-job"
+import { Config } from "../config"
+import { makeLocationNode } from "../effect/app-node"
+import { ModelV2 } from "../model"
+import { PermissionV2 } from "../permission"
+import { SessionCommand } from "../session/command"
+import { SessionExecution } from "../session/execution"
+import { SessionAttempt } from "../session/attempt"
+import { Prompt } from "../session/prompt"
+import { SessionSchema } from "../session/schema"
+import { SessionStore } from "../session/store"
+import { SubagentPermit } from "../session/subagent-permit"
+import { TaskNotification } from "../session/task-notification"
+import { TaskCancellation } from "../session/task-cancellation"
+import { TaskSubmission } from "../session/task-submission"
+import { ToolProgress } from "./progress"
+import { ToolRegistry } from "./registry"
+import { Tool } from "./tool"
+import { Tools } from "./tools"
+
+export const name = "task"
+
+const normalizeSubagentType = (type: string) => (type === "general-purpose" ? "general" : type)
+
+const BACKGROUND_DESCRIPTION = [
+  "Tasks run asynchronously by default and return a handle immediately.",
+  "The parent session is automatically notified and woken when a task finishes.",
+  "Use background=false only when the next reasoning step has an immediate hard dependency on the result.",
+  "Never batch multiple foreground task calls in one assistant message.",
+  "Do not repeatedly poll task status; continue useful work and rely on the completion input or a deliberate bounded get_task_output call.",
+].join(" ")
+
+const BACKGROUND_STARTED = [
+  "The task is working in the background. You will be notified automatically when it finishes.",
+  "DO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work.",
+].join("\n")
+
+const BACKGROUND_UPDATED = [
+  "Additional context sent to the running background task.",
+  "The task is still working in the background. You will be notified automatically when it finishes.",
+  "DO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work.",
+].join("\n")
+
+export const description = `Launch a new agent to handle complex, multistep tasks autonomously.
+
+Use task_id only to continue an existing child session. Each fresh invocation otherwise creates a durable child session.
+
+When asynchronous delegation is available, it is the default and the parent is automatically notified and woken on completion. Use background=false only for an immediate hard dependency, never batch multiple foreground task calls, and never repeatedly poll task status.
+
+Do not delegate a specific file read or a narrow symbol search; use direct read, glob, or grep tools instead. Clearly state whether the subagent should write code or only research, and include enough context for it to work autonomously.
+
+Choose the task role by the work required: use \`explore\` for fast read-only navigation, \`research\` for deep read-only analysis and evidence-based investigation, \`worker\` for strong implementation work such as code changes, bug fixes, tests, and verification, and \`general\` for broad mixed-scope work that may research and execute multiple units of work. The role does not select a model; use the configured agent model for that role.
+
+The "subagent_type" parameter must use an exact agent identifier. Built-in task agent identifiers are "general", "explore", "research", and "worker"; configured task agent identifiers are listed below when available. Primary coordinator agents and internal agents "build", "plan", "compaction", "title", and "summary" are not task targets. Do not infer an identifier from an agent description. "general-purpose" is accepted as a compatibility alias for "general".`
+
+const InputFields = {
+  description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
+  prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
+  subagent_type: Schema.String.annotate({
+    description:
+      "The agent identifier to use. Built-in task agents are `general`, `explore`, `research`, and `worker`. Use `explore` for fast read-only navigation, `research` for deep read-only analysis, `worker` for strong implementation work, and `general` for broad mixed-scope work. The role uses its configured model; it does not select a model itself. `general-purpose` is accepted as a compatibility alias for `general`. Use a configured agent name exactly as listed in the task description. Primary coordinator agents and internal agents `build`, `plan`, `compaction`, `title`, and `summary` are not task targets.",
+  }),
+  task_id: Schema.optional(Schema.String).annotate({
+    description: "A prior task ID to continue the same child session",
+  }),
+  command: Schema.optional(Schema.String).annotate({ description: "The command that triggered this task" }),
+}
+
+const ForegroundInput = Schema.Struct(InputFields)
+
+export const Input = Schema.Struct({
+  ...InputFields,
+  background: Schema.optional(Schema.Boolean).annotate({
+    description: "Run asynchronously and notify the parent session when complete",
+  }),
+})
+
+const ModelMetadata = Schema.Struct({
+  modelID: Schema.String,
+  providerID: Schema.String,
+  variant: Schema.optional(Schema.String),
+  protocol: Schema.optional(ModelV2.Protocol),
+})
+
+export const Metadata = Schema.Struct({
+  parentSessionId: SessionSchema.ID,
+  sessionId: SessionSchema.ID,
+  agent: AgentV2.ID,
+  model: Schema.optional(ModelMetadata),
+  background: Schema.optional(Schema.Boolean),
+  jobId: Schema.optional(Schema.String),
+})
+
+export const Output = Schema.Struct({
+  title: Schema.String,
+  metadata: Metadata,
+  output: Schema.String,
+})
+
+function renderOutput(input: {
+  sessionID: SessionSchema.ID
+  state: "running" | "completed" | "error"
+  summary?: string
+  text: string
+}) {
+  const tag = input.state === "error" ? "task_error" : "task_result"
+  return [
+    `<task id="${input.sessionID}" state="${input.state}">`,
+    ...(input.summary ? [`<summary>${input.summary}</summary>`] : []),
+    `<${tag}>`,
+    input.text,
+    `</${tag}>`,
+    "</task>",
+  ].join("\n")
+}
+
+const modelMetadata = (model: ModelV2.Ref | undefined) =>
+  model
+    ? {
+        modelID: model.id,
+        providerID: model.providerID,
+        ...(model.variant === undefined ? {} : { variant: model.variant }),
+        ...(model.protocol === undefined ? {} : { protocol: model.protocol }),
+      }
+    : undefined
+
+export interface LayerOptions {
+  readonly background?: boolean
+}
+
+export const layerWithOptions = (options: LayerOptions = {}) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const agents = yield* AgentV2.Service
+      const background = yield* BackgroundJob.Service
+      const commands = yield* SessionCommand.Service
+      const config = yield* Config.Service
+      const execution = yield* SessionExecution.Service
+      const permission = yield* PermissionV2.Service
+      // The permit budget is built from the location config at layer construction so the
+      // configured `subagent_max_concurrency` actually bounds concurrent child sessions.
+      // It is location-scoped, not per parent: every parent session in the location shares
+      // the same budget.
+      const permits = yield* SubagentPermit.make({
+        limit: Config.latest(yield* config.entries(), "subagent_max_concurrency"),
+      })
+      const progress = yield* ToolProgress.Service
+      const sessions = yield* SessionStore.Service
+      const notifications = yield* TaskNotification.Service
+      const cancellation = yield* TaskCancellation.Service
+      const submissions = yield* TaskSubmission.Service
+      const tools = yield* Tools.Service
+      const allowBackground = options.background ?? true
+
+      const computeAgentPath = Effect.fn("TaskTool.computeAgentPath")(function* (session: SessionSchema.Info) {
+        const chain = [session]
+        let current = session
+        while (current.parentID) {
+          const ancestor = yield* sessions.get(current.parentID)
+          if (!ancestor) return yield* new ToolFailure({ message: `Session not found: ${current.parentID}` })
+          chain.push(ancestor)
+          current = ancestor
+        }
+        let path = "/root"
+        for (const entry of chain.reverse()) {
+          if (entry.parentID === undefined) continue
+          if (!entry.agent) return yield* new ToolFailure({ message: `Session has no agent: ${entry.id}` })
+          path = `${path}/${entry.agent}`
+        }
+        return path
+      })
+
+      const execute = Effect.fn("TaskTool.execute")(function* (input: typeof Input.Type, context: Tool.Context) {
+        const subagentType = normalizeSubagentType(input.subagent_type)
+        const requestedBackground = input.background === true
+        if (requestedBackground && !allowBackground)
+          return yield* new ToolFailure({
+            message: "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
+          })
+        const runInBackground = allowBackground ? input.background !== false : false
+
+        const parent = yield* sessions.get(context.sessionID)
+        if (!parent) return yield* new ToolFailure({ message: `Session not found: ${context.sessionID}` })
+
+        let current = parent
+        let depth = 0
+        while (current.parentID) {
+          depth++
+          const ancestor = yield* sessions.get(current.parentID)
+          if (!ancestor) return yield* new ToolFailure({ message: `Session not found: ${current.parentID}` })
+          current = ancestor
+        }
+        const maxDepth = Config.latest(yield* config.entries(), "subagent_depth") ?? 1
+        if (depth >= maxDepth)
+          return yield* new ToolFailure({
+            message: `Subagent depth limit reached (${maxDepth}). Increase "subagent_depth" to allow nested subagents.`,
+          })
+
+        const source = {
+          type: "tool" as const,
+          messageID: context.assistantMessageID,
+          callID: context.toolCallID,
+        }
+        yield* permission
+          .assert({
+            action: name,
+            resources: [subagentType],
+            save: ["*"],
+            metadata: { description: input.description, subagent_type: subagentType },
+            sessionID: context.sessionID,
+            agent: context.agent,
+            source,
+          })
+          .pipe(Effect.mapError(() => new ToolFailure({ message: `Permission denied: task ${subagentType}` })))
+
+        const caller = yield* agents.resolve(context.agent)
+        if (parent.parentID && caller?.mode === "subagent" && !caller.permissions.some((rule) => rule.action === name))
+          return yield* new ToolFailure({ message: `Permission denied: task ${subagentType}` })
+
+        const agentID = AgentV2.ID.make(subagentType)
+        const agent = yield* agents.get(agentID)
+        if (!agent)
+          return yield* new ToolFailure({
+            message: `Unknown agent type: ${subagentType} is not a valid agent type`,
+          })
+        if (agent.mode === "primary" || agent.hidden === true)
+          return yield* new ToolFailure({
+            message: `Agent "${subagentType}" cannot be used as a task target`,
+          })
+
+        const requested = input.task_id ? SessionSchema.ID.make(input.task_id) : undefined
+        const resumed = requested ? yield* sessions.get(requested) : undefined
+        const model = agent.model ?? parent.model
+        const acquired = yield* permits
+          .acquire(resumed?.id ?? SessionSchema.ID.create())
+          .pipe(Effect.mapError(() => new ToolFailure({ message: "Subagent concurrency limit reached" })))
+        if (!resumed && acquired.kind === "existing")
+          return yield* Effect.die(`Subagent provisional reservation collision: ${acquired.key}`)
+        const reservationRef = yield* Ref.make(acquired)
+        const ownedByJob = yield* Ref.make(false)
+        const releaseReservation = Ref.get(reservationRef).pipe(
+          Effect.flatMap((reservation) =>
+            reservation.kind === "new" ? permits.release(reservation.key) : Effect.void,
+          ),
+        )
+        const child = yield* Effect.gen(function* () {
+          const child =
+            resumed ??
+            (yield* commands.create({
+              parentID: context.sessionID,
+              title: `${input.description} (@${agent.id} subagent)`,
+              agent: agent.id,
+              model,
+              location: parent.location,
+            }))
+          if (!resumed && acquired.kind === "new")
+            yield* permits.rekey(acquired, child.id).pipe(Effect.flatMap((next) => Ref.set(reservationRef, next)))
+          if (resumed?.agent !== agent.id) yield* commands.switchAgent({ sessionID: child.id, agent: agent.id })
+          if (model) yield* commands.switchModel({ sessionID: child.id, model })
+          return child
+        }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseReservation : Effect.void)))
+
+        const baseMetadata = {
+          parentSessionId: context.sessionID,
+          sessionId: child.id,
+          agent: agent.id,
+          model: modelMetadata(model),
+        }
+        const metadata = {
+          ...baseMetadata,
+          ...(runInBackground ? { background: true as const } : {}),
+        }
+
+        const checkpoint = (next: typeof Metadata.Type, text?: string) =>
+          progress.publish(context, {
+            structured: { title: input.description, metadata: next },
+            content: text ? [{ type: "text", text }] : [],
+          })
+
+        const drainNotifications = () =>
+          notifications.drain({
+            admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+            wake: execution.wake,
+          })
+
+        const settleResult = (submission: TaskSubmission.Info, info: TaskSubmission.Info | undefined) =>
+          Effect.gen(function* () {
+            if (!info) return yield* Effect.fail(new Error(`Task submission disappeared: ${submission.id}`))
+            if (!info.outcome)
+              return yield* Effect.fail(
+                new Error(`Child input has no completed assistant result: ${submission.childInputID}`),
+              )
+            yield* drainNotifications()
+            if (info.outcome === "cancelled") return yield* new ToolFailure({ message: "Task cancelled" })
+            if (info.outcome !== "completed")
+              return yield* new ToolFailure({
+                message:
+                  taskErrorText(info.error) ?? (info.resultText?.trim() ? info.resultText : undefined) ?? "Task failed",
+              })
+            return info.resultText ?? ""
+          })
+
+        const runTask = (submission: TaskSubmission.Info) =>
+          Effect.gen(function* () {
+            const claim = yield* submissions.claim(submission.id)
+            if (!claim.acquired) {
+              yield* execution.wait(child.id)
+              return yield* settleResult(submission, yield* submissions.terminalizeFromChild(submission.id))
+            }
+
+            yield* execution.resume(child.id)
+            yield* execution.wait(child.id)
+            return yield* settleResult(submission, yield* submissions.terminalizeFromChild(submission.id))
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.uninterruptible(
+                submissions
+                  .terminalize({
+                    submissionID: submission.id,
+                    outcome: Cause.hasInterrupts(cause)
+                      ? "cancelled"
+                      : Cause.squash(cause) instanceof SessionAttempt.RecoveryRequiredError
+                        ? "recovery-required"
+                        : "error",
+                    error: { message: String(Cause.squash(cause)) },
+                  })
+                  .pipe(
+                    Effect.andThen(
+                      notifications.drain({
+                        admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+                        wake: execution.wake,
+                      }),
+                    ),
+                    Effect.ignore,
+                  ),
+              ).pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+            Effect.onInterrupt(() =>
+              cancellation
+                .cancelTree({
+                  rootSessionID: child.id,
+                  interrupt: execution.interrupt,
+                  wait: execution.wait,
+                })
+                .pipe(Effect.asVoid),
+            ),
+          )
+
+        const backgroundMetadata = {
+          ...baseMetadata,
+          background: true as const,
+          jobId: child.id,
+        }
+
+        const started = yield* Effect.ensuring(
+          Effect.gen(function* () {
+            yield* checkpoint(metadata)
+
+            const parentPath = yield* computeAgentPath(parent)
+            const agentPath = `${parentPath}/${agent.id}`
+            const submission = yield* submissions
+              .submit({
+                parentSessionID: context.sessionID,
+                assistantMessageID: context.assistantMessageID,
+                toolCallID: context.toolCallID,
+                childSessionID: child.id,
+                description: input.description,
+                prompt: Prompt.make({ text: input.prompt }),
+                agent: agent.id,
+                agentPath,
+                model,
+                completionDelivery: runInBackground ? "parent" : "tool",
+              })
+              .pipe(
+                Effect.catchTag("TaskSubmission.InvocationConflict", (error) =>
+                  Effect.fail(new ToolFailure({ message: `Task invocation conflict: ${error.toolCallID}` })),
+                ),
+              )
+
+            const started = yield* background.start({
+              id: child.id,
+              type: name,
+              title: input.description,
+              metadata,
+              onPromote: Effect.uninterruptible(
+                Effect.gen(function* () {
+                  const promoted = yield* submissions.promoteDelivery(submission.id)
+                  if (!promoted)
+                    return yield* new ToolFailure({ message: `Task submission disappeared: ${submission.id}` })
+                  yield* notifications
+                    .drain({
+                      admit: (notification) => commands.admitSynthetic(notification).pipe(Effect.asVoid),
+                      wake: execution.wake,
+                    })
+                    .pipe(Effect.catchCause(() => Effect.void))
+                  yield* checkpoint(backgroundMetadata).pipe(Effect.catchCause(() => Effect.void))
+                }),
+              ),
+              onAcquire: permits.acquire(child.id).pipe(Effect.ignore),
+              onRelease: permits.release(child.id),
+              run: runTask(submission),
+            })
+            yield* Ref.set(ownedByJob, true)
+            return { info: started, submissionID: submission.id }
+          }),
+          Effect.flatMap(Ref.get(ownedByJob), (owned) => (owned ? Effect.void : releaseReservation)),
+        )
+        const info = started.info
+
+        const runningResult = (mode: "started" | "updated") => {
+          const output = renderOutput({
+            sessionID: child.id,
+            state: "running" as const,
+            summary: mode === "updated" ? "Background task updated" : "Background task started",
+            text: mode === "updated" ? BACKGROUND_UPDATED : BACKGROUND_STARTED,
+          })
+          return { title: input.description, metadata: { ...backgroundMetadata, jobId: info.id }, output }
+        }
+
+        if (runInBackground) {
+          const result = runningResult("started")
+          yield* checkpoint(result.metadata, result.output)
+          return result
+        }
+
+        if (info.metadata?.background === true) {
+          if (!runInBackground) {
+            const promoted = yield* submissions.promoteDelivery(started.submissionID)
+            if (!promoted)
+              return yield* new ToolFailure({ message: `Task submission disappeared: ${started.submissionID}` })
+          }
+          const result = runningResult("updated")
+          yield* checkpoint(result.metadata, result.output)
+          return result
+        }
+
+        const waitForCompletion: Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> = Effect.raceFirst(
+          background.wait({ id: child.id }),
+          background
+            .waitForPromotion(child.id)
+            .pipe(
+              Effect.flatMap(
+                (result): Effect.Effect<BackgroundJob.WaitResult | BackgroundJob.Info> =>
+                  result === undefined ? background.wait({ id: child.id }) : Effect.succeed(result),
+              ),
+            ),
+        )
+
+        return yield* waitForCompletion.pipe(
+          Effect.flatMap((result) => {
+            if ("timedOut" in result) {
+              if (result.outcome === "missing")
+                return Effect.fail(new ToolFailure({ message: `Task lifecycle observation missing: ${child.id}` }))
+              if (result.timedOut || result.outcome === "timed-out")
+                return Effect.fail(new ToolFailure({ message: `Task lifecycle observation timed out: ${child.id}` }))
+              if (!result.info)
+                return Effect.fail(
+                  new ToolFailure({ message: `Task lifecycle observation missing result: ${child.id}` }),
+                )
+              if (result.info.status === "error")
+                return Effect.fail(new ToolFailure({ message: result.info.error ?? "Task failed" }))
+              if (result.info.status === "cancelled") return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
+              if (result.info.status !== "completed")
+                return Effect.fail(new ToolFailure({ message: "Task did not complete" }))
+              return Effect.succeed({
+                title: input.description,
+                metadata: baseMetadata,
+                output: renderOutput({
+                  sessionID: child.id,
+                  state: "completed",
+                  text: result.info.output ?? "",
+                }),
+              })
+            }
+            if (result.metadata?.background === true) {
+              const running = runningResult("started")
+              return checkpoint(running.metadata, running.output).pipe(Effect.as(running))
+            }
+            if (result.status === "error")
+              return Effect.fail(new ToolFailure({ message: result.error ?? "Task failed" }))
+            if (result.status === "cancelled") return Effect.fail(new ToolFailure({ message: "Task cancelled" }))
+            if (result.status !== "completed") return Effect.fail(new ToolFailure({ message: "Task did not complete" }))
+            return Effect.succeed({
+              title: input.description,
+              metadata: baseMetadata,
+              output: renderOutput({
+                sessionID: child.id,
+                state: "completed",
+                text: result.output ?? "",
+              }),
+            })
+          }),
+          // The job-scope onRelease owns the permit for the background path; the
+          // foreground path releases explicitly once the observed task settles
+          // (never while it keeps running in the background after promotion).
+          Effect.tap((result) => ("background" in result.metadata ? Effect.void : releaseReservation)),
+          Effect.onInterrupt(() => background.cancel(child.id).pipe(Effect.asVoid)),
+        )
+      })
+
+      yield* tools
+        .register({
+          [name]: Tool.make({
+            description: allowBackground ? `${description}\n\n${BACKGROUND_DESCRIPTION}` : description,
+            input: Input,
+            output: Output,
+            jsonSchema: allowBackground
+              ? undefined
+              : {
+                  input: Schema.toJsonSchemaDocument(ForegroundInput).schema,
+                  output: Schema.toJsonSchemaDocument(Output).schema,
+                },
+            toModelOutput: ({ output }) => [{ type: "text", text: output.output }],
+            execute: (input, context) =>
+              execute(input, context).pipe(
+                Effect.mapError((error) =>
+                  error instanceof ToolFailure ? error : new ToolFailure({ message: "Unable to run task", error }),
+                ),
+              ),
+          }),
+        })
+        .pipe(Effect.orDie)
+    }),
+  )
+
+function taskErrorText(error: unknown) {
+  if (typeof error === "string" && error.trim()) return error
+  if (typeof error !== "object" || error === null || !("message" in error)) return undefined
+  const message = String(error.message)
+  return message.trim() ? message : undefined
+}
+
+const deps = [
+  AgentV2.node,
+  BackgroundJob.node,
+  Config.node,
+  PermissionV2.node,
+  SessionCommand.node,
+  SessionExecution.node,
+  SessionStore.node,
+  TaskCancellation.node,
+  TaskNotification.node,
+  TaskSubmission.node,
+  ToolProgress.node,
+  ToolRegistry.node,
+] as const
+
+export const nodeWithOptions = (options: LayerOptions = {}) =>
+  makeLocationNode({
+    name: "tool/task",
+    layer: layerWithOptions(options),
+    deps,
+  })
+
+export const node = nodeWithOptions()

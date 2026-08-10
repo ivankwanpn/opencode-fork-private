@@ -1,0 +1,2 @@
+$ vite --port "4444"
+error: script "dev" exited with code 4

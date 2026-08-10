@@ -32,7 +32,7 @@
   - `ResolvedConfig` 新增 `readonly blockedTools: ReadonlySet<string>` 與 `readonly directTools: ReadonlySet<string>`（resolveConfig 合併所有配置文檔）
   - `DEFAULT_BLOCKED_TOOLS: readonly string[] = ["browser_run_code_unsafe"]`（`catalog.ts` 或 `runtime.ts` 導出）
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 ```ts
 // packages/core/test/config-mcp.test.ts
@@ -51,12 +51,12 @@ describe("ConfigMCP", () => {
 })
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `cd packages/core && bun test test/config-mcp.test.ts`
 Expected: FAIL — 類型上沒有 `blockedTools`/`directTools`
 
-- [ ] **Step 3: 實現**
+- [x] **Step 3: 實現**
 
 `packages/core/src/config/mcp.ts` 的 `Info` 類新增：
 
@@ -100,12 +100,12 @@ function resolveConfig(entries: ReadonlyArray<Config.Entry>): ResolvedConfig {
 }
 ```
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `cd packages/core && bun test test/config-mcp.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/config/mcp.ts packages/core/src/mcp/runtime.ts packages/core/test/config-mcp.test.ts
@@ -128,7 +128,7 @@ git commit -m "feat(core): add blockedTools/directTools MCP config"
   - `McpCatalog.isModelVisible(def: MCPToolDefinition): boolean`（解析 `def._meta?.ui?.visibility`；無 visibility 或含 `"model"` 為可見）
   - `toolsLayer.sync` 對每個 MCP 工具：blocked → skip；!isModelVisible → skip；directTools.has(name) → Direct；否則 `withExposure(..., "deferred")`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 ```ts
 // packages/core/test/mcp-tool-exposure.test.ts
@@ -160,12 +160,12 @@ describe("McpCatalog exposure", () => {
 
 （注意 `isModelVisible` 的入參是 `MCPToolDefinition`（`@modelcontextprotocol/sdk` 的 `Tool`），測試用最小物件 cast。）
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `cd packages/core && bun test test/mcp-tool-exposure.test.ts`
 Expected: FAIL — `isBlockedTool`/`isModelVisible` 不存在
 
-- [ ] **Step 3: 實現**
+- [x] **Step 3: 實現**
 
 `packages/core/src/mcp/catalog.ts` 新增：
 
@@ -209,12 +209,12 @@ const catalog = {
 
 （`resolved` 已在 layer 開頭由 `resolveConfig(yield* config.entries())` 得到；`Tool` 已是 `catalog.ts` 的導入別名，runtime.ts 需 `import { Tool } from "../tool/tool"`。）
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `cd packages/core && bun test test/mcp-tool-exposure.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/mcp/catalog.ts packages/core/src/mcp/runtime.ts packages/core/test/mcp-tool-exposure.test.ts
@@ -234,11 +234,11 @@ git commit -m "feat(core): defer MCP tools by default with blocklist and visibil
 - Consumes: Task 2（MCP 已 Deferred）
 - Produces: `todowrite` 回到 Direct；BUILD_SYSTEM 措辭與實際行為一致
 
-- [ ] **Step 1: 移除 todowrite 的 withExposure**
+- [x] **Step 1: 移除 todowrite 的 withExposure**
 
 `packages/core/src/tool/todowrite.ts`：把 `Tool.withExposure(Tool.make({...}), "deferred")` 改回 `Tool.make({...})`。
 
-- [ ] **Step 2: 修正 BUILD_SYSTEM 措辭**
+- [x] **Step 2: 修正 BUILD_SYSTEM 措辭**
 
 `packages/core/src/plugin/agent.ts` 的 `## Tool discovery` 段落改為（現在 MCP 工具確實不直接列出）：
 
@@ -250,18 +250,18 @@ MCP and plugin tools are not listed up front. If you need such a tool that is no
 
 （把「Tools like MCP or plugin tools」改為精確的「MCP and plugin tools」，並確保與 P2 後行為一致。）
 
-- [ ] **Step 3: 更新受影響測試**
+- [x] **Step 3: 更新受影響測試**
 
 - `packages/core/test/location-layer.test.ts`：`tool_search` 從預期內建清單移除（因 todowrite 恢復 Direct 後無 deferred 內建工具 → tool_search 不再注入；除非 MCP deferred 存在——location-layer 測試無 MCP，故移除 `tool_search`）
 - `packages/core/test/tool-search-deferred.test.ts`：todowrite 相關的「deferred builtin e2e」用例更新——若無其他 deferred 內建工具，該用例可改為用自定義 `Tool.withExposure(..., "deferred")` 工具替代，或刪除並保留自定義 deferred 用例
 - 跑受影響測試確認通過
 
-- [ ] **Step 4: 全量測試**
+- [x] **Step 4: 全量測試**
 
 Run: `cd packages/core && bun test`
 Expected: 全綠（數量可能因 MCP/工具暴露變化而變動）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/tool/todowrite.ts packages/core/src/plugin/agent.ts packages/core/test/
@@ -280,7 +280,7 @@ git commit -m "fix(core): restore todowrite to direct and align tool_search guid
 - Consumes: Task 2 的 `toolsLayer.sync` 判斷
 - Produces: 端到端驗證——註冊一個模擬 MCP server（deferred 工具 + 一個黑名單名 + 一個 directTools 名），斷言 materialize 的 `deferred`/`definitions` 符合預期
 
-- [ ] **Step 1: 寫端到端測試**
+- [x] **Step 1: 寫端到端測試**
 
 ```ts
 // packages/core/test/mcp-tool-exposure.test.ts（追加）
@@ -291,19 +291,19 @@ git commit -m "fix(core): restore todowrite to direct and align tool_search guid
 // 斷言 materialize 結果。
 ```
 
-- [ ] **Step 2: 跑測試確認失敗/通過**
+- [x] **Step 2: 跑測試確認失敗/通過**
 
 Run: `cd packages/core && bun test test/mcp-tool-exposure.test.ts`
 
-- [ ] **Step 3: 檢查 V1 路徑**
+- [x] **Step 3: 檢查 V1 路徑**
 
 `packages/opencode/src/session/tools.ts` 的 MCP 工具循環（`for (const [key, entry] of Object.entries(yield* mcp.tools()))`）——確認 V1 是否仍會把 MCP 工具直接註冊。fork 是 V2-first（legacy-session-execution 路由到 V2），若 V1 循環仍在活躍路徑，需同樣套用 Deferred/黑名單；若為死路徑則記錄並在報告說明。
 
-- [ ] **Step 4: 全量測試 + typecheck**
+- [x] **Step 4: 全量測試 + typecheck**
 
 Run: `cd packages/core && bun test && bun typecheck`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/test/mcp-tool-exposure.test.ts

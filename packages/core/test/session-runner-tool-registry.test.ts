@@ -122,6 +122,15 @@ describe("ToolRegistry", () => {
     }),
   )
 
+  it.effect("advertises tool_search only when a deferred tool is registered", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ deferred: Tool.withExposure(make(), "deferred") })
+
+      expect((yield* toolDefinitions(service)).map((tool) => tool.name)).toEqual(["tool_search"])
+    }),
+  )
+
   it.effect("materializes managed Playwright tools without exposing other managed MCP tools", () =>
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service

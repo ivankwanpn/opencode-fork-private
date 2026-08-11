@@ -27,6 +27,7 @@ import { lt } from "drizzle-orm"
 import { or } from "drizzle-orm"
 import type { SQL } from "drizzle-orm"
 import { PartTable, SessionTable } from "@opencode-ai/core/session/sql"
+import { toV1Rules, toV2Rules } from "@opencode-ai/core/session/info"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { MessageV2 } from "./message-v2"
 import type { InstanceContext } from "../project/instance-context"
@@ -108,7 +109,7 @@ export function fromRow(row: SessionRow): Info {
     share,
     metadata: row.metadata ?? undefined,
     revert,
-    permission: row.permission ? [...row.permission] : undefined,
+    permission: row.permission ? [...toV1Rules(row.permission)] : undefined,
     time: {
       created: row.time_created,
       updated: row.time_updated,
@@ -151,7 +152,7 @@ export function toRow(info: Info) {
           diff: info.revert.diff,
         }
       : null,
-    permission: info.permission,
+    permission: info.permission ? toV2Rules(info.permission) : undefined,
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,

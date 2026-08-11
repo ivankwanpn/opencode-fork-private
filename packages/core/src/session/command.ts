@@ -15,7 +15,6 @@ import { InstallationVersion } from "../installation/version"
 import { Location } from "../location"
 import { ModelV2 } from "../model"
 import { PermissionV2 } from "../permission"
-import { PermissionV1 } from "../v1/permission"
 import { PluginRuntime } from "../plugin/runtime"
 import { ProjectV2 } from "../project"
 import { ProviderV2 } from "../provider"
@@ -23,7 +22,7 @@ import { ProjectTable } from "../project/sql"
 import { WorkspaceV2 } from "../workspace"
 import { SessionAttempt } from "./attempt"
 import { SessionEvent } from "./event"
-import { fromRow } from "./info"
+import { fromRow, toV1Rules } from "./info"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { Prompt, dematerialize } from "./prompt"
@@ -68,11 +67,6 @@ export type CreateInput = {
   readonly location: Location.Ref
   readonly permissions?: PermissionV2.Ruleset
 }
-
-// Grants are persisted in the V1 rule shape ({ permission, pattern, action })
-// so the session permission column stays compatible with the V1 service.
-const toV1Rules = (rules: PermissionV2.Ruleset): PermissionV1.Ruleset =>
-  rules.map((rule) => ({ permission: rule.action, pattern: rule.resource, action: rule.effect }))
 
 export interface Interface {
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>

@@ -17,6 +17,7 @@ import simplifyIntegrationCredentialsMigration from "@opencode-ai/core/database/
 import simplifySessionInputMigration from "@opencode-ai/core/database/migration/20260622202450_simplify_session_input"
 import taskCompletionDeliveryMigration from "@opencode-ai/core/database/migration/20260803144306_task_completion_delivery"
 import taskRequestedCompletionDeliveryMigration from "@opencode-ai/core/database/migration/20260803200310_task_requested_completion_delivery"
+import sessionPermissionV2Migration from "@opencode-ai/core/database/migration/20260811000000_session_permission_v2"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -512,6 +513,50 @@ describe("DatabaseMigration", () => {
           tokens_cache_read: 5,
           tokens_cache_write: 6,
         })
+      }),
+    )
+  })
+
+  test("rewrites session permission rows from the V1 to the V2 rule shape", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* db.run(sql`CREATE TABLE session (id text PRIMARY KEY, permission text)`)
+        yield* db.run(
+          sql`INSERT INTO session (id, permission) VALUES ('legacy', ${JSON.stringify([
+            { permission: "bash", pattern: "*", action: "allow" },
+            { permission: "edit", pattern: "*", action: "ask" },
+          ])})`,
+        )
+        yield* db.run(
+          sql`INSERT INTO session (id, permission) VALUES ('current', ${JSON.stringify([
+            { action: "bash", resource: "*", effect: "allow" },
+          ])})`,
+        )
+        yield* db.run(sql`INSERT INTO session (id, permission) VALUES ('empty', ${JSON.stringify([])})`)
+        yield* db.run(sql`INSERT INTO session (id, permission) VALUES ('null', NULL)`)
+
+        yield* DatabaseMigration.applyOnly(db, [sessionPermissionV2Migration])
+
+        expect(
+          yield* db.get<{ permission: string }>(sql`SELECT permission FROM session WHERE id = 'legacy'`),
+        ).toEqual({
+          permission: JSON.stringify([
+            { action: "bash", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "ask" },
+          ]),
+        })
+        expect(
+          yield* db.get<{ permission: string }>(sql`SELECT permission FROM session WHERE id = 'current'`),
+        ).toEqual({
+          permission: JSON.stringify([{ action: "bash", resource: "*", effect: "allow" }]),
+        })
+        expect(yield* db.get<{ permission: string }>(sql`SELECT permission FROM session WHERE id = 'empty'`)).toEqual({
+          permission: JSON.stringify([]),
+        })
+        expect(yield* db.get<{ permission: string | null }>(sql`SELECT permission FROM session WHERE id = 'null'`)).toEqual(
+          { permission: null },
+        )
       }),
     )
   })

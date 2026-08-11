@@ -2,6 +2,7 @@ import { DateTime } from "effect"
 import { AgentV2 } from "../agent"
 import { Location } from "../location"
 import { ModelV2 } from "../model"
+import { PermissionV2 } from "../permission"
 import { ProjectV2 } from "../project"
 import { ProviderV2 } from "../provider"
 import { AbsolutePath, RelativePath } from "../schema"
@@ -11,6 +12,20 @@ import { SessionTable } from "./sql"
 import { SessionMessage } from "./message"
 import { Snapshot } from "../snapshot"
 import { SessionV1 } from "../v1/session"
+import { PermissionV1 } from "../v1/permission"
+
+// The session permission column stores the V2 rule shape
+// ({ action, resource, effect }); the V1 service and events consume
+// { permission, pattern, action }. Convert at the read boundary.
+export const toV1Rules = (rules: PermissionV2.Ruleset): PermissionV1.Ruleset =>
+  rules.map((rule) => ({ permission: rule.action, pattern: rule.resource, action: rule.effect }))
+
+// The V1 event projector writes the legacy rule shape; convert back to the
+// V2 column shape when materializing session rows.
+export const toV2Rules = (
+  rules: readonly { readonly permission: string; readonly pattern: string; readonly action: "allow" | "ask" | "deny" }[],
+): PermissionV2.Ruleset =>
+  rules.map((rule) => ({ action: rule.permission, resource: rule.pattern, effect: rule.action }))
 
 export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.Info {
   return SessionSchema.Info.make({
@@ -97,7 +112,7 @@ export function toLegacyInfo(row: typeof SessionTable.$inferSelect): SessionV1.S
       compacting: row.time_compacting ?? undefined,
       archived: row.time_archived ?? undefined,
     },
-    permission: row.permission ? [...row.permission] : undefined,
+    permission: row.permission ? toV1Rules(row.permission) : undefined,
     revert: row.revert
       ? {
           ...row.revert,

@@ -28,12 +28,8 @@ export interface Interface {
   ) => Effect.Effect<{ readonly sessionID: SessionSchema.ID; readonly message: SessionMessage.Message } | undefined>
 }
 
-// The session table persists permissions in the V1 rule shape
-// ({ permission, pattern, action }); the V2 runner consumes them as
-// { action, resource, effect }. Convert on read so callers never see V1.
-export const toV2Rules = (rules: readonly { readonly permission: string; readonly pattern: string; readonly action: "allow" | "ask" | "deny" }[]): PermissionV2.Ruleset =>
-  rules.map((rule) => ({ action: rule.permission, resource: rule.pattern, effect: rule.action }))
-
+// The session table persists permissions in the V2 rule shape
+// ({ action, resource, effect }); the V2 runner consumes them as-is.
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionStore") {}
 
 const layer = Layer.effect(
@@ -54,7 +50,7 @@ const layer = Layer.effect(
           .where(eq(SessionTable.id, sessionID))
           .get()
           .pipe(Effect.orDie)
-        return row?.permission ? toV2Rules(row.permission) : []
+        return row?.permission ? [...row.permission] : []
       }),
       context: Effect.fn("SessionStore.context")(function* (sessionID) {
         return yield* SessionHistory.load(db, sessionID)

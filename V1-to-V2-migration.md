@@ -243,6 +243,13 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 
 ### 批次 5：存储格式迁移（高风险，影响用户数据）
 
+> ✅ **部分完成（999.0.17）**：**permission 列切 V2（5a）**
+> - `session` 表 `permission` 列从 `PermissionV1.Ruleset` → `PermissionV2.Ruleset`（`{permission,pattern,action}` → `{action,resource,effect}`）
+> - 新增数据迁移 `20260811000000_session_permission_v2`（用现有 `DatabaseMigration` 机制；SQL 将既有 V1 JSON 原地重写为 V2 形状，防御性跳过已 V2 的行）
+> - `store.ts` 移除 `toV2Rules` 读取转换（列已是 V2），V2 runner 直接消费
+> - `command.ts` 复用 `info.ts` 导出的 `toV1Rules`（V1 事件载荷保持 V1 形状）；projector `sessionRow` 写列时 `toV2Rules`（V1→V2）；V1 读侧 `fromRow`/`toLegacyInfo` 用 `toV1Rules`（V2→V1 投影）
+> - `data_migration` 表保留（未消费的死表，不删除避免 schema 变更）；V1 消息表（`V1MessageData`/`V1PartData`）退役推迟到批次 8 删除 V1 时一并处理
+
 1. `core/src/session/sql.ts`：`V1MessageData` → `SessionMessage.Message`、`PermissionV1.Ruleset` → `PermissionV2.Ruleset`
 2. 更新 `data-migration.sql.ts` 与既有用户库迁移路径
 3. 更新 `session/info.ts` `toLegacyInfo`（或删除）

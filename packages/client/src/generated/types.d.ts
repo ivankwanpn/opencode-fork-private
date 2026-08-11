@@ -3030,6 +3030,32 @@ export type SessionsHistoryOutput = {
         readonly metadata?: {
             readonly [x: string]: JsonValue;
         };
+        readonly type: "session.next.diff";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly diff: ReadonlyArray<{
+                readonly file?: string;
+                readonly patch?: string;
+                readonly additions: number;
+                readonly deletions: number;
+                readonly status?: "added" | "deleted" | "modified";
+            }>;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly type: "session.next.agent.switched";
         readonly durable?: {
             readonly aggregateID: string;
@@ -4823,6 +4849,32 @@ export type SessionsEventsOutput = {
         } | {
             readonly type: "busy";
         };
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.diff";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly diff: ReadonlyArray<{
+            readonly file?: string;
+            readonly patch?: string;
+            readonly additions: number;
+            readonly deletions: number;
+            readonly status?: "added" | "deleted" | "modified";
+        }>;
     };
 } | {
     readonly id: string;

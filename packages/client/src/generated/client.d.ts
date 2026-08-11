@@ -2807,6 +2807,40 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "lsp.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "vcs.branch.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly branch?: string | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.compaction.started";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -3091,6 +3125,32 @@ export declare function make(options: ClientOptions): {
                         }[] | undefined;
                     } | undefined;
                 };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.diff";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly diff: readonly {
+                    readonly file?: string | undefined;
+                    readonly patch?: string | undefined;
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly status?: "added" | "deleted" | "modified" | undefined;
+                }[];
             };
         } | {
             readonly id: string;
@@ -4991,22 +5051,6 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "lsp.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "permission.asked";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -5236,24 +5280,6 @@ export declare function make(options: ClientOptions): {
             } | undefined;
             readonly data: {
                 readonly sessionID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "vcs.branch.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly branch?: string | undefined;
             };
         } | {
             readonly id: string;

@@ -1,12 +1,13 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionID } from "./schema"
-import { Effect, Layer, Context } from "effect"
+import { DateTime, Effect, Layer, Context } from "effect"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 
-export const Info = SessionStatusEvent.Info
-export type Info = SessionStatusEvent.Info
+export const Info = SessionEvent.StatusInfo
+export type Info = SessionEvent.StatusInfo
 
 export const Event = SessionStatusEvent
 
@@ -38,7 +39,11 @@ const layer = Layer.effect(
 
     const set = Effect.fn("SessionStatus.set")(function* (sessionID: SessionID, status: Info) {
       const data = yield* InstanceState.get(state)
-      yield* events.publish(Event.Status, { sessionID, status })
+      yield* events.publish(SessionEvent.Status, {
+        timestamp: yield* DateTime.now,
+        sessionID,
+        status,
+      })
       if (status.type === "idle") {
         yield* events.publish(Event.Idle, { sessionID })
         data.delete(sessionID)

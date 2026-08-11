@@ -110,6 +110,39 @@ export const Deleted = Event.define({
 })
 export type Deleted = typeof Deleted.Type
 
+// V2 session execution status, derived from the durable Turn / ProviderAttempt
+// stream. Consumers project busy/idle from turn and provider-attempt activity;
+// retry carries the recovery action surfaced to the UI.
+export const StatusInfo = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("idle") }),
+  Schema.Struct({
+    type: Schema.Literal("retry"),
+    attempt: NonNegativeInt,
+    message: Schema.String,
+    action: Schema.Struct({
+      reason: Schema.String,
+      provider: Schema.String,
+      title: Schema.String,
+      message: Schema.String,
+      label: Schema.String,
+      link: Schema.String.pipe(optional),
+    }).pipe(optional),
+    next: NonNegativeInt,
+  }),
+  Schema.Struct({ type: Schema.Literal("busy") }),
+]).annotate({ identifier: "session.next.status.info" })
+export type StatusInfo = Schema.Schema.Type<typeof StatusInfo>
+
+export const Status = Event.define({
+  type: "session.next.status",
+  ...options,
+  schema: {
+    ...Base,
+    status: StatusInfo,
+  },
+})
+export type Status = typeof Status.Type
+
 const PromptFields = {
   ...Base,
   messageID: SessionMessage.ID,
@@ -641,6 +674,7 @@ export const DurableDefinitions = Event.inventory(
   Created,
   Updated,
   Deleted,
+  Status,
   AgentSwitched,
   ModelSwitched,
   Moved,
@@ -683,6 +717,7 @@ export const Definitions = Event.inventory(
   Created,
   Updated,
   Deleted,
+  Status,
   AgentSwitched,
   ModelSwitched,
   Moved,

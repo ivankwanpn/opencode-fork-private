@@ -2956,6 +2956,8 @@ export declare function make(options: ClientOptions): {
                     readonly id: string;
                     readonly parentID?: string | undefined;
                     readonly projectID: string;
+                    readonly slug: string;
+                    readonly version: string;
                     readonly agent?: string | undefined;
                     readonly model?: {
                         readonly id: string;
@@ -2980,9 +2982,17 @@ export declare function make(options: ClientOptions): {
                         readonly archived?: number | undefined;
                     };
                     readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: import("effect/Schema").Json;
+                    } | undefined;
                     readonly share?: {
                         readonly url: string;
                     } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
                     readonly location: {
                         readonly directory: string;
                         readonly workspaceID?: string | undefined;
@@ -3025,6 +3035,8 @@ export declare function make(options: ClientOptions): {
                     readonly id: string;
                     readonly parentID?: string | undefined;
                     readonly projectID: string;
+                    readonly slug: string;
+                    readonly version: string;
                     readonly agent?: string | undefined;
                     readonly model?: {
                         readonly id: string;
@@ -3049,9 +3061,17 @@ export declare function make(options: ClientOptions): {
                         readonly archived?: number | undefined;
                     };
                     readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: import("effect/Schema").Json;
+                    } | undefined;
                     readonly share?: {
                         readonly url: string;
                     } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
                     readonly location: {
                         readonly directory: string;
                         readonly workspaceID?: string | undefined;
@@ -4075,6 +4095,43 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "session.next.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly status: {
+                    readonly type: "idle";
+                } | {
+                    readonly type: "retry";
+                    readonly attempt: number;
+                    readonly message: string;
+                    readonly action?: {
+                        readonly reason: string;
+                        readonly provider: string;
+                        readonly title: string;
+                        readonly message: string;
+                        readonly label: string;
+                        readonly link?: string | undefined;
+                    } | undefined;
+                    readonly next: number;
+                } | {
+                    readonly type: "busy";
+                };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.step.ended";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4584,6 +4641,8 @@ export declare function make(options: ClientOptions): {
                     readonly id: string;
                     readonly parentID?: string | undefined;
                     readonly projectID: string;
+                    readonly slug: string;
+                    readonly version: string;
                     readonly agent?: string | undefined;
                     readonly model?: {
                         readonly id: string;
@@ -4608,9 +4667,17 @@ export declare function make(options: ClientOptions): {
                         readonly archived?: number | undefined;
                     };
                     readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: import("effect/Schema").Json;
+                    } | undefined;
                     readonly share?: {
                         readonly url: string;
                     } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
                     readonly location: {
                         readonly directory: string;
                         readonly workspaceID?: string | undefined;

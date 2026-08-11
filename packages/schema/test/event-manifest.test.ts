@@ -9,7 +9,7 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(98)
+    expect(EventManifest.ServerDefinitions.length).toBe(99)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
@@ -26,7 +26,7 @@ describe("public event manifest", () => {
       SessionV1.Event.Error,
     ])
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
-    expect(EventManifest.Durable.size).toBe(46)
+    expect(EventManifest.Durable.size).toBe(47)
   })
 
   test("uses canonical definitions for current public events", () => {
@@ -53,6 +53,7 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.get("session.next.created")).toBe(SessionEvent.Created)
     expect(EventManifest.Latest.get("session.next.updated")).toBe(SessionEvent.Updated)
     expect(EventManifest.Latest.get("session.next.deleted")).toBe(SessionEvent.Deleted)
+    expect(EventManifest.Latest.get("session.next.status")).toBe(SessionEvent.Status)
     expect(EventManifest.Durable.has("session.next.step.ended.1")).toBe(false)
     expect(EventManifest.Durable.get("session.next.step.ended.2")).toBe(SessionEvent.Step.Ended)
   })

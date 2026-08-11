@@ -862,8 +862,8 @@ const layer = Layer.effect(
         let shouldContinue = false
         const work = Effect.gen(function* () {
           yield* events.publish(
-            SessionStatusEvent.Status,
-            { sessionID: session.id, status: { type: "busy" } },
+            SessionEvent.Status,
+            { timestamp: yield* DateTime.now, sessionID: session.id, status: { type: "busy" } },
             { location: session.location },
           )
           yield* Effect.ensuring(
@@ -883,16 +883,18 @@ const layer = Layer.effect(
               ),
               Effect.asVoid,
             ),
-            events
-              .publish(
-                SessionStatusEvent.Status,
-                { sessionID: session.id, status: { type: "idle" } },
+            Effect.gen(function* () {
+              yield* events.publish(
+                SessionEvent.Status,
+                { timestamp: yield* DateTime.now, sessionID: session.id, status: { type: "idle" } },
                 { location: session.location },
               )
-              .pipe(
-                Effect.andThen(events.publish(SessionStatusEvent.Idle, { sessionID: session.id }, { location: session.location })),
-                Effect.asVoid,
-              ),
+              yield* events.publish(
+                SessionStatusEvent.Idle,
+                { sessionID: session.id },
+                { location: session.location },
+              )
+            }).pipe(Effect.asVoid),
           )
         })
         yield* execution.exclusive(session.id, work)

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -18,7 +18,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionRunCoordinator } from "@opencode-ai/core/session/run-coordinator"
 import { SessionRunner } from "@opencode-ai/core/session/runner"
 import { SessionStore } from "@opencode-ai/core/session/store"
-import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { testEffect } from "./lib/effect"
 
 const location = Location.Ref.make({ directory: AbsolutePath.make(process.cwd()) })
@@ -108,8 +108,8 @@ describe("SessionV2.compact", () => {
       const idleSeen = yield* Deferred.make<void>()
       const unsubscribe = yield* events.listen((event) =>
         Effect.gen(function* () {
-          if (event.type !== SessionStatusEvent.Status.type) return
-          const data = Schema.decodeUnknownSync(SessionStatusEvent.Status.data)(event.data)
+          if (event.type !== SessionEvent.Status.type) return
+          const data = event.data as SessionEvent.Status["data"]
           if (data.sessionID !== session.id) return
           statuses.push(data.status.type)
           if (data.status.type === "idle") yield* Deferred.succeed(idleSeen, undefined)

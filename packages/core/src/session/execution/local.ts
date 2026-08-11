@@ -262,14 +262,17 @@ const layer = Layer.effect(
         const session = yield* store.get(sessionID)
         if (!session) return yield* Effect.die(`Session not found: ${sessionID}`)
         const publish = (status: "busy" | "idle") =>
-          events.publish(
-            SessionStatusEvent.Status,
-            { sessionID, status: { type: status } },
-            { location: session.location },
-          )
-        const idle = publish("idle").pipe(
-          Effect.andThen(events.publish(SessionStatusEvent.Idle, { sessionID }, { location: session.location })),
-        )
+          Effect.gen(function* () {
+            yield* events.publish(
+              SessionEvent.Status,
+              { timestamp: yield* DateTime.now, sessionID, status: { type: status } },
+              { location: session.location },
+            )
+          })
+        const idle = Effect.gen(function* () {
+          yield* publish("idle")
+          yield* events.publish(SessionStatusEvent.Idle, { sessionID }, { location: session.location })
+        })
         yield* publish("busy")
         yield* Effect.gen(function* () {
           yield* SessionRunner.Service.use((runner) => runner.run({ sessionID, force })).pipe(

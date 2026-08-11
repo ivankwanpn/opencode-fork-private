@@ -2173,6 +2173,8 @@ export type SessionsHistoryOutput = {
             readonly id: string
             readonly parentID?: string
             readonly projectID: string
+            readonly slug: string
+            readonly version: string
             readonly agent?: string
             readonly model?: {
               readonly id: string
@@ -2194,7 +2196,13 @@ export type SessionsHistoryOutput = {
               readonly archived?: number
             }
             readonly title: string
+            readonly metadata?: { readonly [x: string]: JsonValue }
             readonly share?: { readonly url: string }
+            readonly permission?: ReadonlyArray<{
+              readonly action: string
+              readonly resource: string
+              readonly effect: "allow" | "deny" | "ask"
+            }>
             readonly location: { readonly directory: string; readonly workspaceID?: string }
             readonly subpath?: string
             readonly revert?: {
@@ -2226,6 +2234,8 @@ export type SessionsHistoryOutput = {
             readonly id: string
             readonly parentID?: string
             readonly projectID: string
+            readonly slug: string
+            readonly version: string
             readonly agent?: string
             readonly model?: {
               readonly id: string
@@ -2247,7 +2257,13 @@ export type SessionsHistoryOutput = {
               readonly archived?: number
             }
             readonly title: string
+            readonly metadata?: { readonly [x: string]: JsonValue }
             readonly share?: { readonly url: string }
+            readonly permission?: ReadonlyArray<{
+              readonly action: string
+              readonly resource: string
+              readonly effect: "allow" | "deny" | "ask"
+            }>
             readonly location: { readonly directory: string; readonly workspaceID?: string }
             readonly subpath?: string
             readonly revert?: {
@@ -2279,6 +2295,8 @@ export type SessionsHistoryOutput = {
             readonly id: string
             readonly parentID?: string
             readonly projectID: string
+            readonly slug: string
+            readonly version: string
             readonly agent?: string
             readonly model?: {
               readonly id: string
@@ -2300,7 +2318,13 @@ export type SessionsHistoryOutput = {
               readonly archived?: number
             }
             readonly title: string
+            readonly metadata?: { readonly [x: string]: JsonValue }
             readonly share?: { readonly url: string }
+            readonly permission?: ReadonlyArray<{
+              readonly action: string
+              readonly resource: string
+              readonly effect: "allow" | "deny" | "ask"
+            }>
             readonly location: { readonly directory: string; readonly workspaceID?: string }
             readonly subpath?: string
             readonly revert?: {
@@ -2317,6 +2341,34 @@ export type SessionsHistoryOutput = {
               }>
             }
           }
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.status"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly status:
+            | { readonly type: "idle" }
+            | {
+                readonly type: "retry"
+                readonly attempt: number
+                readonly message: string
+                readonly action?: {
+                  readonly reason: string
+                  readonly provider: string
+                  readonly title: string
+                  readonly message: string
+                  readonly label: string
+                  readonly link?: string
+                }
+                readonly next: number
+              }
+            | { readonly type: "busy" }
         }
       }
     | {
@@ -3320,6 +3372,8 @@ export type SessionsEventsOutput =
           readonly id: string
           readonly parentID?: string
           readonly projectID: string
+          readonly slug: string
+          readonly version: string
           readonly agent?: string
           readonly model?: {
             readonly id: string
@@ -3341,7 +3395,13 @@ export type SessionsEventsOutput =
             readonly archived?: number
           }
           readonly title: string
+          readonly metadata?: { readonly [x: string]: JsonValue }
           readonly share?: { readonly url: string }
+          readonly permission?: ReadonlyArray<{
+            readonly action: string
+            readonly resource: string
+            readonly effect: "allow" | "deny" | "ask"
+          }>
           readonly location: { readonly directory: string; readonly workspaceID?: string }
           readonly subpath?: string
           readonly revert?: {
@@ -3373,6 +3433,8 @@ export type SessionsEventsOutput =
           readonly id: string
           readonly parentID?: string
           readonly projectID: string
+          readonly slug: string
+          readonly version: string
           readonly agent?: string
           readonly model?: {
             readonly id: string
@@ -3394,7 +3456,13 @@ export type SessionsEventsOutput =
             readonly archived?: number
           }
           readonly title: string
+          readonly metadata?: { readonly [x: string]: JsonValue }
           readonly share?: { readonly url: string }
+          readonly permission?: ReadonlyArray<{
+            readonly action: string
+            readonly resource: string
+            readonly effect: "allow" | "deny" | "ask"
+          }>
           readonly location: { readonly directory: string; readonly workspaceID?: string }
           readonly subpath?: string
           readonly revert?: {
@@ -3426,6 +3494,8 @@ export type SessionsEventsOutput =
           readonly id: string
           readonly parentID?: string
           readonly projectID: string
+          readonly slug: string
+          readonly version: string
           readonly agent?: string
           readonly model?: {
             readonly id: string
@@ -3447,7 +3517,13 @@ export type SessionsEventsOutput =
             readonly archived?: number
           }
           readonly title: string
+          readonly metadata?: { readonly [x: string]: JsonValue }
           readonly share?: { readonly url: string }
+          readonly permission?: ReadonlyArray<{
+            readonly action: string
+            readonly resource: string
+            readonly effect: "allow" | "deny" | "ask"
+          }>
           readonly location: { readonly directory: string; readonly workspaceID?: string }
           readonly subpath?: string
           readonly revert?: {
@@ -3464,6 +3540,34 @@ export type SessionsEventsOutput =
             }>
           }
         }
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.status"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly status:
+          | { readonly type: "idle" }
+          | {
+              readonly type: "retry"
+              readonly attempt: number
+              readonly message: string
+              readonly action?: {
+                readonly reason: string
+                readonly provider: string
+                readonly title: string
+                readonly message: string
+                readonly label: string
+                readonly link?: string
+              }
+              readonly next: number
+            }
+          | { readonly type: "busy" }
       }
     }
   | {

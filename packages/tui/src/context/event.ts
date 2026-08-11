@@ -59,6 +59,7 @@ export function useEvent() {
     ["session.next.created", "session.created"],
     ["session.next.updated", "session.updated"],
     ["session.next.deleted", "session.deleted"],
+    ["session.next.status", "session.status"],
   ])
 
   function subscribe(handler: (event: Event, metadata: EventMetadata) => void) {

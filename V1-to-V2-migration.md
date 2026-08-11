@@ -282,7 +282,17 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 
 ### 批次 8：删除 V1 目录（最终）
 
-按顺序：`v1/config/config.ts`（已依赖 V2，最容易）→ `core/src/v1/permission.ts` → `core/src/v1/session.ts` → `packages/schema/src/v1/*` 中不再被引用的部分
+> 🔄 **已改为「删除前置条件审计」（999.0.17）**：批次 8 的删除门槛是「没有 runtime import、没有新 V1 写入、没有直接 V1 consumer、旧资料与旧设定有明确升级路径、完整测试与 typecheck 通过」。当前审计结论：
+>
+> **前置条件 ① TUI consumer 边界** ✅：`useEvent` 是明确的 V1/V2 边界 adapter（V2 原生流 → V1 词汇投影），满足产品决策「迁移到 V2 词汇或明确的边界 adapter」。强制 consumer 改用 V2 会破坏 6 个调用方的 Event 类型联合，边界 adapter 是正确选择。
+>
+> **前置条件 ② compatibilityDefinitions 缩减** ⏸️：producer 已切 V2（session.status/question/session.diff），但 V1 definition 仍被依赖——`share-next.ts` 消费 `Session.Event.Updated/Deleted/Diff`（share 同步依赖 V1 事件形状的 SDK 转换），`summary.ts` 发布 `Session.Event.Diff`。需先迁移 share 的 SDK 转换与这些辅助 producer，才能逐项移除 V1 definition。
+>
+> **前置条件 ③ v1/config 一次性 migration boundary** ✅：`config.ts` 的 `decode` 已是明确的一次性迁移路径——旧配置（`ConfigMigrateV1.isV1`）走 `decodeV1Info + migrate`，新配置直接 V2 解码。新 runtime 配置只使用 V2 结构；旧配置兼容完成前 v1/config 不删除。
+>
+> **前置条件 ④ V1 消息表写入停止** ⏸️：V1 消息表仍被辅助写入（`reminders.ts`/`revert.ts`/`summary.ts`/`tool/plan.ts` 的 `updateMessage`/`updatePart`/`removeMessage`/`removePart`）通过 V1 Session.Service 发布 V1 事件写入。V2 无公开合成消息写入 API（批次 5 调研结论）——需先为 V2 提供 `updateMessage`/`updatePart` 等价物并迁移这些辅助写入，才能停止 V1 消息表写入并移除 Core V1 message projector。
+>
+> **批次 8 实际删除（待上述前置条件完成）**：按顺序 `v1/config/config.ts`（已依赖 V2）→ `core/src/v1/permission.ts` → `core/src/v1/session.ts` → `packages/schema/src/v1/*` 中不再被引用的部分。
 
 ### 批次 9：全量 V2-only regression gate
 

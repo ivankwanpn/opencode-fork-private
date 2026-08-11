@@ -12,7 +12,6 @@ import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Cause, Context, Effect, Layer, Schema, Scope } from "effect"
 import { MessageV2 } from "./message-v2"
 import { LegacySessionRead } from "./legacy-session-read"
-import { SessionRevert } from "./revert"
 import { SessionRunState } from "./run-state"
 import { Session } from "./session"
 import { MessageID, SessionID } from "./schema"
@@ -84,7 +83,6 @@ const make = Effect.gen(function* () {
   const events = yield* EventV2Bridge.Service
   const legacy = yield* Session.Service
   const read = yield* LegacySessionRead.Service
-  const revert = yield* SessionRevert.Service
   const runState = yield* SessionRunState.Service
   const canonical = yield* SessionV2.Service
   const status = yield* SessionStatus.Service
@@ -98,7 +96,6 @@ const make = Effect.gen(function* () {
       messageID: SessionMessage.ID.make(session.revert.messageID),
     })
     if (boundary) yield* canonical.revert.commit(sessionID)
-    yield* revert.cleanup(session)
   })
 
   const resume = Effect.fn("LegacySessionExecution.resume")(function* (sessionID: SessionID) {

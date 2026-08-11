@@ -7,6 +7,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
@@ -14,7 +15,6 @@ import { LegacySessionExecution } from "@/session/legacy-session-execution"
 import { LegacySessionRead } from "@/session/legacy-session-read"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
-import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
@@ -138,7 +138,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const sessionRead = yield* LegacySessionRead.Service
     const sessionExecution = yield* LegacySessionExecution.Service
     const shareSvc = yield* SessionShare.Service
-    const revertSvc = yield* SessionRevert.Service
+    const revertSvc = yield* SessionV2.Service
     const runState = yield* SessionRunState.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
@@ -527,12 +527,36 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof RevertPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
-      return yield* SessionError.mapBusy(revertSvc.revert({ sessionID: ctx.params.sessionID, ...ctx.payload }))
+      // V1 revert was lenient when the boundary message did not exist
+      // (no-op, still returning the session); keep that observable behavior
+      // through the V2 stage command by treating MessageNotFoundError as a
+      // no-op instead of a 404.
+      yield* revertSvc.revert
+        .stage({
+          sessionID: SessionV2.ID.make(ctx.params.sessionID),
+          messageID: SessionMessage.ID.make(ctx.payload.messageID),
+        })
+        .pipe(
+          SessionError.mapSessionNotFound,
+          Effect.catchTag("Session.MessageNotFoundError", () => Effect.void),
+          Effect.catchTag("Snapshot.Error", () =>
+            Effect.fail(new ApiNotFoundError({ name: "NotFoundError", data: { message: "Snapshot failed" } })),
+          ),
+        )
+      return yield* requireSession(ctx.params.sessionID)
     })
 
     const unrevert = Effect.fn("SessionHttpApi.unrevert")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
-      return yield* SessionError.mapBusy(revertSvc.unrevert({ sessionID: ctx.params.sessionID }))
+      yield* revertSvc.revert
+        .clear(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(
+          SessionError.mapSessionNotFound,
+          Effect.catchTag("Snapshot.Error", () =>
+            Effect.fail(new ApiNotFoundError({ name: "NotFoundError", data: { message: "Snapshot failed" } })),
+          ),
+        )
+      return yield* requireSession(ctx.params.sessionID)
     })
 
     const permissionRespond = Effect.fn("SessionHttpApi.permissionRespond")(function* (ctx: {

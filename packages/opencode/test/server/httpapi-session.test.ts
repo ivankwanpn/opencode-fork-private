@@ -32,6 +32,7 @@ import { Prompt } from "@opencode-ai/core/session/prompt"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import {
   MessageTable,
+  PartTable,
   SessionInputTable,
   SessionMessageTable,
   SessionTable,
@@ -45,7 +46,7 @@ import { SessionStatus } from "../../src/session/status"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
-import { and, eq } from "drizzle-orm"
+import { and, eq, sql } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
@@ -2302,6 +2303,13 @@ describe("session HttpApi", () => {
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const session = yield* createSession({ title: "remaining" })
 
+        const v1Rows = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
+
         expect(
           yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
             method: "POST",
@@ -2316,6 +2324,16 @@ describe("session HttpApi", () => {
             headers,
           }),
         ).toMatchObject({ id: session.id })
+
+        // Revert/unrevert route through the V2 revert command and must not
+        // create any new V1 message/part rows.
+        const after = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
+        expect(after).toEqual(v1Rows)
 
         const permissionID = String(PermissionV1.ID.ascending())
         const permission = yield* request(

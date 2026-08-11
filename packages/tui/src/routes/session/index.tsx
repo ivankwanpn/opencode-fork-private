@@ -20,7 +20,7 @@ import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
 import { useData } from "../../context/data"
-import { useEvent } from "../../context/event"
+import { useEvent, useNativeEvent } from "../../context/event"
 import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
 import { Spinner } from "../../component/spinner"
@@ -323,19 +323,23 @@ export function Session() {
   })
 
   let lastSwitch: string | undefined = undefined
-  event.on("message.part.updated", (evt) => {
-    const part = evt.properties.part
-    if (part.type !== "tool") return
-    if (part.sessionID !== route.sessionID) return
-    if (part.state.status !== "completed") return
-    if (part.id === lastSwitch) return
-
-    if (part.tool === "plan_exit") {
+  const nativeEvent = useNativeEvent()
+  const toolNames = new Map<string, string>()
+  nativeEvent.on("session.next.tool.input.started", (event) => {
+    if (event.data.sessionID !== route.sessionID) return
+    toolNames.set(event.data.callID, event.data.name)
+  })
+  nativeEvent.on("session.next.tool.success", (event) => {
+    if (event.data.sessionID !== route.sessionID) return
+    const name = toolNames.get(event.data.callID)
+    if (name === undefined) return
+    if (event.data.callID === lastSwitch) return
+    if (name === "plan_exit") {
       local.agent.set("build")
-      lastSwitch = part.id
-    } else if (part.tool === "plan_enter") {
+      lastSwitch = event.data.callID
+    } else if (name === "plan_enter") {
       local.agent.set("plan")
-      lastSwitch = part.id
+      lastSwitch = event.data.callID
     }
   })
 

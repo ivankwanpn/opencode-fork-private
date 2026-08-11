@@ -262,7 +262,8 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 > - **第三步（TUI 执行面迁移）部分完成**：`routes/session/index.tsx` 的 plan_exit/plan_enter 从 `message.part.updated`（V1）迁移到 V2 `session.next.tool.input.started`/`tool.success`（callID→工具名追踪）；permission 链路已就位（V2 runner 发布 `permission.v2.asked/replied` → EventV2Bridge 投影 `permission.asked/replied` → TUI 消费）
 > - **批次 7（出口收口）逐域推进中**：
 >   - **session.status 域（已完成）**：新增 V2 `session.next.status` 事件（`StatusInfo` = busy/idle/retry，含 retry action）；producer 切 V2（core execution 路径 `execution/local.ts`/`session.ts` compact、opencode `SessionStatus.set`）；EventV2Bridge 投影 V2→V1（`session.status`）保 CLI/TUI 兼容；TUI `useEvent` lifecycleMap 加 status 映射；V2 regression 测试（schema `session-event-status.test.ts`）；`SessionStatus.Info` 类型换 V2 `StatusInfo`（wire 结构不变）；compact 测试更新监听 V2 Status
-> - **后续步骤**：②question.* 域；③session.diff 域；④LSP/VCS 独立 V2 domain events；⑤ACP 确认；⑥CLI presenter 改 V2 events；⑦compatibilityDefinitions 逐域移除
+>   - **question.* 域（已完成 producer 切换）**：opencode `Question` 服务类型/ID/Event 切 V2（`@opencode-ai/schema/question`，`question.v2.asked/replied/rejected`）；`QuestionID` 用 V2 `Question.ID`；EventV2Bridge 投影 V2→V1（`question.asked/replied/rejected`）保 CLI/TUI；TUI `useEvent` lifecycleMap 加 question 映射；V2 regression 测试（schema `question-event-v2.test.ts`）。consumer（CLI/TUI）仍走 V1 投影，V1 definition 保留到 consumer 迁移后移除
+> - **后续步骤**：③session.diff 域；④LSP/VCS 独立 V2 domain events；⑤ACP 确认；⑥CLI presenter 改 V2 events；⑦compatibilityDefinitions 逐域移除（含 question/status 的 V1 definition，待 consumer 迁移）
 
 1. 替换 `core/src/session.ts`/`command.ts`/`execution/local.ts` 的 `SessionV1.Event.*` 发布点为 V2 `SessionEvent`（`@opencode-ai/schema/session-event`）
 2. TUI `useEvent()` legacy 事件集迁移到 V2 事件（`routes/session/index.tsx` 的 plan_exit/plan_enter、`sync.tsx` 的 session.updated/permission.*）

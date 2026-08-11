@@ -241,6 +241,34 @@ export function legacyEventProjection() {
       ]
     }
 
+    if (source.type === "question.v2.asked") {
+      return [
+        event("question.asked", {
+          id: data.id,
+          sessionID: SessionID.make(sessionID),
+          questions: data.questions,
+          ...(data.tool === undefined ? {} : { tool: data.tool }),
+        }),
+      ]
+    }
+    if (source.type === "question.v2.replied") {
+      return [
+        event("question.replied", {
+          sessionID: SessionID.make(sessionID),
+          requestID: data.requestID,
+          answers: data.answers,
+        }),
+      ]
+    }
+    if (source.type === "question.v2.rejected") {
+      return [
+        event("question.rejected", {
+          sessionID: SessionID.make(sessionID),
+          requestID: data.requestID,
+        }),
+      ]
+    }
+
     if (source.type === "session.next.prompted") {
       parents.set(sessionID, messageID(String(data.messageID)))
       return []

@@ -7,6 +7,7 @@ import { ProviderMetadata, ToolContent } from "./llm"
 import { Delivery } from "./session-delivery"
 import { Agent } from "./agent"
 import { Model } from "./model"
+import { Permission } from "./permission"
 import { Project } from "./project"
 import { DateTimeUtcFromMillis, NonNegativeInt, RelativePath } from "./schema"
 import { FileAttachment, Prompt } from "./prompt"
@@ -42,12 +43,15 @@ const options = {
 
 // V2 session lifecycle snapshot: the V2 data model view of a session row,
 // mirroring Session.Info without importing ./session (which imports this
-// module). Retained for the V2 lifecycle events below so consumers never see
-// the V1 session info shape.
+// module). slug/version mirror the SessionTable storage columns so the V2
+// lifecycle projector can materialize rows; permission uses the V2 ruleset
+// shape (the session permission column is already V2 after batch 5a).
 export const SessionSnapshot = Schema.Struct({
   id: SessionID,
   parentID: SessionID.pipe(optional),
   projectID: Project.ID,
+  slug: Schema.String,
+  version: Schema.String,
   agent: Agent.ID.pipe(optional),
   model: Model.Ref.pipe(optional),
   cost: Schema.Finite,
@@ -67,7 +71,9 @@ export const SessionSnapshot = Schema.Struct({
     archived: DateTimeUtcFromMillis.pipe(optional),
   }),
   title: Schema.String,
+  metadata: Schema.Record(Schema.String, Schema.Json).pipe(optional),
   share: Schema.Struct({ url: Schema.String }).pipe(optional),
+  permission: Permission.Ruleset.pipe(optional),
   location: Location.Ref,
   subpath: RelativePath.pipe(optional),
   revert: Revert.State.pipe(optional),

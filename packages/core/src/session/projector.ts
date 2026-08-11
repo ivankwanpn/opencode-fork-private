@@ -78,6 +78,36 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
   }
 }
 
+function sessionRowFromSnapshot(snapshot: SessionEvent.SessionSnapshot): typeof SessionTable.$inferInsert {
+  return {
+    id: snapshot.id,
+    project_id: snapshot.projectID,
+    workspace_id: snapshot.location.workspaceID ?? null,
+    parent_id: snapshot.parentID,
+    slug: snapshot.slug,
+    directory: snapshot.location.directory,
+    path: snapshot.subpath,
+    title: snapshot.title,
+    agent: snapshot.agent,
+    model: snapshot.model,
+    version: snapshot.version,
+    share_url: snapshot.share?.url,
+    metadata: snapshot.metadata,
+    cost: snapshot.cost,
+    tokens_input: snapshot.tokens.input,
+    tokens_output: snapshot.tokens.output,
+    tokens_reasoning: snapshot.tokens.reasoning,
+    tokens_cache_read: snapshot.tokens.cache.read,
+    tokens_cache_write: snapshot.tokens.cache.write,
+    revert: snapshot.revert ? { ...snapshot.revert, messageID: SessionMessage.ID.make(snapshot.revert.messageID) } : null,
+    permission: snapshot.permission ? [...snapshot.permission] : undefined,
+    time_created: DateTime.toEpochMillis(snapshot.time.created),
+    time_updated: DateTime.toEpochMillis(snapshot.time.updated),
+    time_compacting: snapshot.time.compacting ? DateTime.toEpochMillis(snapshot.time.compacting) : null,
+    time_archived: snapshot.time.archived ? DateTime.toEpochMillis(snapshot.time.archived) : null,
+  }
+}
+
 function messageData(
   info: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["info"],
 ): typeof MessageTable.$inferInsert.data {
@@ -215,6 +245,26 @@ const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const events = yield* EventV2.Service
     const { db } = yield* Database.Service
+    yield* events.project(SessionEvent.Created, (event) =>
+      Effect.gen(function* () {
+        const stored = yield* db
+          .insert(SessionTable)
+          .values(sessionRowFromSnapshot(event.data.info))
+          .onConflictDoNothing()
+          .returning({ sessionID: SessionTable.id })
+          .get()
+          .pipe(Effect.orDie)
+        if (!stored) return yield* Effect.die(new SessionAlreadyProjected())
+        if (event.data.info.location.workspaceID) {
+          yield* db
+            .update(WorkspaceTable)
+            .set({ time_used: Date.now() })
+            .where(eq(WorkspaceTable.id, event.data.info.location.workspaceID))
+            .run()
+            .pipe(Effect.orDie)
+        }
+      }),
+    )
     yield* events.project(SessionV1.Event.Created, (event) =>
       Effect.gen(function* () {
         const stored = yield* db
@@ -236,6 +286,14 @@ const layer = Layer.effectDiscard(
       }),
     )
     yield* events.project(SessionEvent.MessageImported, (event) => insertMessage(db, event, event.data.message))
+    yield* events.project(SessionEvent.Updated, (event) =>
+      db
+        .update(SessionTable)
+        .set(sessionRowFromSnapshot(event.data.info))
+        .where(eq(SessionTable.id, event.data.info.id))
+        .run()
+        .pipe(Effect.orDie),
+    )
     yield* events.project(SessionV1.Event.Updated, (event) =>
       db
         .update(SessionTable)
@@ -259,6 +317,9 @@ const layer = Layer.effectDiscard(
           .pipe(Effect.orDie)
         yield* SessionContextEpoch.reset(db, event.data.sessionID)
       }),
+    )
+    yield* events.project(SessionEvent.Deleted, (event) =>
+      db.delete(SessionTable).where(eq(SessionTable.id, event.data.info.id)).run().pipe(Effect.orDie),
     )
     yield* events.project(SessionV1.Event.Deleted, (event) =>
       db.delete(SessionTable).where(eq(SessionTable.id, event.data.sessionID)).run().pipe(Effect.orDie),

@@ -17,7 +17,7 @@ import { SessionProjector } from "./session/projector"
 import { SessionMessageTable, SessionTable } from "./session/sql"
 import { SessionSchema } from "./session/schema"
 import { AbsolutePath, PositiveInt, RelativePath } from "./schema"
-import { fromRow, toLegacyInfo } from "./session/info"
+import { fromRow } from "./session/info"
 import { SessionRunner } from "./session/runner/index"
 import { SessionStore } from "./session/store"
 import { SessionExecution } from "./session/execution"
@@ -315,11 +315,32 @@ const layer = Layer.effect(
             }),
         ),
       )
+    const rowToSnapshot = (row: typeof SessionTable.$inferSelect): SessionEvent.SessionSnapshot => {
+      const info = fromRow(row)
+      return SessionEvent.SessionSnapshot.make({
+        id: info.id,
+        parentID: info.parentID,
+        projectID: info.projectID,
+        slug: row.slug,
+        version: row.version,
+        agent: info.agent,
+        model: info.model,
+        cost: info.cost,
+        tokens: info.tokens,
+        time: info.time,
+        title: info.title,
+        metadata: row.metadata ?? undefined,
+        share: info.share,
+        permission: row.permission ? [...row.permission] : undefined,
+        location: info.location,
+        subpath: info.subpath,
+        revert: info.revert,
+      })
+    }
     const settleRecoveryAssistant = Effect.fn("V2Session.settleRecoveryAssistant")(function* (
       sessionID: SessionSchema.ID,
       assistantMessageID: SessionMessage.ID,
-    ) {
-      const stored = yield* store.message(assistantMessageID)
+    ) {      const stored = yield* store.message(assistantMessageID)
       if (stored?.sessionID !== sessionID || stored.message.type !== "assistant") return
       const assistant = stored.message
       for (const tool of assistant.content) {
@@ -355,9 +376,10 @@ const layer = Layer.effect(
         .get()
         .pipe(Effect.orDie)
       if (!row) return yield* new NotFoundError({ sessionID })
+      const timestamp = yield* DateTime.now
       yield* events.publish(
-        SessionV1.Event.Updated,
-        { sessionID, info: toLegacyInfo(row) },
+        SessionEvent.Updated,
+        { timestamp, sessionID, info: rowToSnapshot(row) },
         { location: fromRow(row).location },
       )
       return fromRow(row)
@@ -421,24 +443,26 @@ const layer = Layer.effect(
           .get()
           .pipe(Effect.orDie)
         if (!row) return yield* new NotFoundError({ sessionID: input.sessionID })
-        const current = toLegacyInfo(row)
-        const info = SessionV1.SessionInfo.make({
-          ...current,
-          title: input.title ?? current.title,
+        const now = Date.now()
+        const snapshot = rowToSnapshot(row)
+        const next = SessionEvent.SessionSnapshot.make({
+          ...snapshot,
+          title: input.title ?? snapshot.title,
           time: {
-            ...current.time,
-            updated: Date.now(),
+            ...snapshot.time,
+            updated: DateTime.makeUnsafe(now),
             archived:
               input.archived === undefined
-                ? current.time.archived
+                ? snapshot.time.archived
                 : input.archived === null
                   ? undefined
-                  : DateTime.toEpochMillis(input.archived),
+                  : DateTime.makeUnsafe(input.archived),
           },
         })
+        const timestamp = yield* DateTime.now
         yield* events.publish(
-          SessionV1.Event.Updated,
-          { sessionID: input.sessionID, info },
+          SessionEvent.Updated,
+          { timestamp, sessionID: input.sessionID, info: next },
           { location: fromRow(row).location },
         )
         return yield* result.get(input.sessionID)
@@ -460,9 +484,10 @@ const layer = Layer.effect(
           .all()
           .pipe(Effect.orDie)
         for (const child of childRows) yield* result.remove(child.id)
+        const timestamp = yield* DateTime.now
         yield* events.publish(
-          SessionV1.Event.Deleted,
-          { sessionID, info: toLegacyInfo(row) },
+          SessionEvent.Deleted,
+          { timestamp, sessionID, info: rowToSnapshot(row) },
           { location: fromRow(row).location },
         )
         yield* events.remove(sessionID)

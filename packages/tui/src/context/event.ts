@@ -51,11 +51,22 @@ const compatibilityEventTypes = new Set<string>([
 export function useEvent() {
   const sdk = useSDK()
 
+  // Map the V2 session lifecycle events onto their V1 vocabulary so views
+  // that consume session.created/updated/deleted keep working while V2
+  // publishes them. Both carry { sessionID, info }; the V2 snapshot exposes
+  // info.id which is all current views read.
+  const lifecycleMap = new Map<string, string>([
+    ["session.next.created", "session.created"],
+    ["session.next.updated", "session.updated"],
+    ["session.next.deleted", "session.deleted"],
+  ])
+
   function subscribe(handler: (event: Event, metadata: EventMetadata) => void) {
     return sdk.nativeEvent.on("event", (event) => {
-      if (!compatibilityEventTypes.has(event.type)) return
+      const type = lifecycleMap.get(event.type) ?? event.type
+      if (!compatibilityEventTypes.has(type)) return
       handler(
-        { id: event.id, type: event.type, properties: event.data } as Event,
+        { id: event.id, type, properties: event.data } as Event,
         {
           directory: event.location?.directory ?? sdk.directory ?? "",
           workspace: event.location?.workspaceID,

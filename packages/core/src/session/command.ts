@@ -5,6 +5,7 @@ import type { Part, UserMessage } from "@opencode-ai/sdk/v2/types"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Context, DateTime, Effect, Layer, Schema } from "effect"
 import { eq, sql } from "drizzle-orm"
+import { AbsolutePath, RelativePath } from "../schema"
 import { AgentV2 } from "../agent"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
@@ -22,7 +23,7 @@ import { ProjectTable } from "../project/sql"
 import { WorkspaceV2 } from "../workspace"
 import { SessionAttempt } from "./attempt"
 import { SessionEvent } from "./event"
-import { fromRow, toV1Rules } from "./info"
+import { fromRow } from "./info"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
 import { Prompt, dematerialize } from "./prompt"
@@ -30,7 +31,6 @@ import { SessionProjector } from "./projector"
 import { SessionSchema } from "./schema"
 import { SessionCancellationTable, SessionTable } from "./sql"
 import { SessionTurn } from "./turn"
-import { SessionV1 } from "../v1/session"
 import { Slug } from "../util/slug"
 
 export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Session.NotFoundError", {
@@ -205,32 +205,28 @@ const layer = Layer.effect(
           .run()
           .pipe(Effect.orDie)
         const now = Date.now()
-        const info = SessionV1.SessionInfo.make({
+        const snapshot = SessionEvent.SessionSnapshot.make({
           id: sessionID,
           parentID: input.parentID,
+          projectID: project.id,
           slug: Slug.create(),
           version: InstallationVersion,
-          projectID: project.id,
-          directory: input.location.directory,
-          path: path.relative(project.directory, input.location.directory).replaceAll("\\", "/"),
-          workspaceID: input.location.workspaceID ? WorkspaceV2.ID.make(input.location.workspaceID) : undefined,
-          title: input.title ?? `New session - ${new Date(now).toISOString()}`,
           agent: input.agent,
-          model: input.model
-            ? {
-                id: ModelV2.ID.make(input.model.id),
-                providerID: input.model.providerID,
-                variant: input.model.variant,
-                protocol: input.model.protocol,
-              }
-            : undefined,
+          model: input.model,
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now, updated: now },
-          permission: input.permissions ? toV1Rules(input.permissions) : undefined,
+          time: { created: DateTime.makeUnsafe(now), updated: DateTime.makeUnsafe(now) },
+          title: input.title ?? `New session - ${new Date(now).toISOString()}`,
+          permission: input.permissions,
+          location: Location.Ref.make({
+            directory: AbsolutePath.make(input.location.directory),
+            workspaceID: input.location.workspaceID ? WorkspaceV2.ID.make(input.location.workspaceID) : undefined,
+          }),
+          subpath: RelativePath.make(path.relative(project.directory, input.location.directory).replaceAll("\\", "/")),
         })
+        const timestamp = DateTime.makeUnsafe(now)
         yield* events
-          .publish(SessionV1.Event.Created, { sessionID, info }, { location: input.location })
+          .publish(SessionEvent.Created, { timestamp, sessionID, info: snapshot }, { location: input.location })
           .pipe(
             Effect.catchDefect((defect) =>
               defect instanceof SessionProjector.SessionAlreadyProjected ? Effect.void : Effect.die(defect),

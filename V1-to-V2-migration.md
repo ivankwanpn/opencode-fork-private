@@ -257,8 +257,9 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 ### 批次 6：事件兼容面收口
 
 > 🔄 **进行中（999.0.17）**：
-> - **第一步（schema 契约）已完成**：`schema/src/session-event.ts` 新增 V2 生命周期事件 `Created`/`Updated`/`Deleted`（`session.next.created/updated/deleted`），payload 用独立 `SessionSnapshot`（V2 Info 形状，避免 `session.ts`↔`session-event.ts` 循环依赖）；`message-updater.ts` 的 `All.match` 增加 no-op 分支；client 已重新生成（`generated/types.ts`/`types.d.ts`/`client.d.ts` 含新事件）；event-manifest 契约测试断言 95→98、durable 43→46
-> - **后续步骤**：②projector 双轨（V1 保留）+ V2 发布点切换；③EventV2Bridge 投影 V1 兼容事件保 TUI；④TUI 逐步迁移；⑤event-manifest 移除 `compatibilityDefinitions`
+> - **第一步（schema 契约）已完成**：`schema/src/session-event.ts` 新增 V2 生命周期事件 `Created`/`Updated`/`Deleted`（`session.next.created/updated/deleted`），payload 用独立 `SessionSnapshot`（V2 Info 形状 + slug/version/metadata/permission，避免 `session.ts`↔`session-event.ts` 循环依赖）；`message-updater.ts` 的 `All.match` 增加 no-op 分支；client 已重新生成（`generated/types.ts`/`types.d.ts`/`client.d.ts` 含新事件）；event-manifest 契约测试断言 95→98、durable 43→46
+> - **第二步（projector 双轨 + V2 发布点切换）已完成**：projector 新增 V2 生命周期投影（`sessionRowFromSnapshot` 从 `SessionSnapshot` 构造 SessionTable 行），V1 生命周期投影保留（V1 Session.Service 仍活跃）；`command.create`/`SessionV2.update`/`remove` 发布点切到 `SessionEvent.Created/Updated/Deleted`；`execution/local.ts` 的 `session.error` 保留（TUI 错误通知面，V2 无等价物，随 TUI 迁移一并处理）；TUI `useEvent` 增加 V2→V1 生命周期映射（`session.next.created/updated/deleted` → `session.created/updated/deleted`），sync.tsx 等零改动；core 全量 1529 pass
+> - **后续步骤**：③EventV2Bridge 消息事件投影（V1 message.* 词汇）；④TUI 剩余迁移（plan_exit/plan_enter、permission.*、question.*）；⑤event-manifest 移除 `compatibilityDefinitions`
 
 1. 替换 `core/src/session.ts`/`command.ts`/`execution/local.ts` 的 `SessionV1.Event.*` 发布点为 V2 `SessionEvent`（`@opencode-ai/schema/session-event`）
 2. TUI `useEvent()` legacy 事件集迁移到 V2 事件（`routes/session/index.tsx` 的 plan_exit/plan_enter、`sync.tsx` 的 session.updated/permission.*）

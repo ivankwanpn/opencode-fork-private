@@ -229,6 +229,12 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 
 ### 批次 4：httpapi 各 group 迁移到 V2 数据模型（核心）
 
+> ✅ **部分完成（999.0.17）**：
+> - **command group**：`instance.command` 端点切到 V2 `CommandV2`（wire schema 用 `@opencode-ai/schema/command` 的 `Command.Info`，经 `LocationServiceMap` 解析）；契约测试通过
+> - **session group**：保留 V1 读壳。调研发现 V1 `Session.Service` 已直接读 V2 存储表（`SessionTable`），切换到 V2 需新建 V2→V1 Info 投影（V2 缺 metadata/permission 等字段），收益小风险大。`LegacySessionRead.history` 的 V1 merge 保留到批次 5
+> - **config/provider/event group**：标注待办。调研确认其核心迁移点在 core（配置双路径、事件投影），httpapi 是最后一层出口，归批次 6/8。且这 5 个 group 无生产客户端（TUI/Web 走 `packages/server` V2 handler），主要是契约测试消费
+
+原计划：
 1. **session group**：CRUD 从 V1 `Session.Service` 迁到 V2（`SessionV2` 持久化 + 投影），移除 `LegacySessionRead` 的 V1 merge
 2. **config group**：`ConfigV1` → V2 config 解码；移除 `ConfigMigrateV1`（保留一次性迁移入口）
 3. **provider group**：V1 provider/auth → V2 provider

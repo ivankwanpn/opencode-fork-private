@@ -1,5 +1,5 @@
+import { Command } from "@opencode-ai/schema/command"
 import { Agent } from "@/agent/agent"
-import { Command } from "@/command"
 import { Format } from "@/format"
 import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"

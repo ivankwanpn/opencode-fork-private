@@ -1,5 +1,8 @@
+import { CommandV2 } from "@opencode-ai/core/command"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Agent } from "@/agent/agent"
-import { Command } from "@/command"
 import * as InstanceState from "@/effect/instance-state"
 import { Format } from "@/format"
 import { Global } from "@opencode-ai/core/global"
@@ -15,11 +18,26 @@ import { markInstanceForDisposal } from "../lifecycle"
 export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance", (handlers) =>
   Effect.gen(function* () {
     const agent = yield* Agent.Service
-    const command = yield* Command.Service
     const format = yield* Format.Service
     const lsp = yield* LSP.Service
     const skill = yield* Skill.Service
     const vcs = yield* Vcs.Service
+    const locations = yield* LocationServiceMap.Service
+
+    const location = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      return yield* effect.pipe(
+        Effect.provide(
+          locations.get(
+            Location.Ref.make({
+              directory: AbsolutePath.make(ctx.directory),
+              ...(workspaceID === undefined ? {} : { workspaceID }),
+            }),
+          ),
+        ),
+      )
+    })
 
     const dispose = Effect.fn("InstanceHttpApi.dispose")(function* () {
       yield* markInstanceForDisposal(yield* InstanceState.context)
@@ -74,7 +92,12 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
     })
 
     const getCommand = Effect.fn("InstanceHttpApi.command")(function* () {
-      return yield* command.list()
+      return yield* location(
+        Effect.gen(function* () {
+          const command = yield* CommandV2.Service
+          return yield* command.list()
+        }),
+      )
     })
 
     const getAgent = Effect.fn("InstanceHttpApi.agent")(function* () {

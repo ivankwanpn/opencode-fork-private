@@ -51,10 +51,11 @@ const compatibilityEventTypes = new Set<string>([
 export function useEvent() {
   const sdk = useSDK()
 
-  // Map the V2 session lifecycle events onto their V1 vocabulary so views
-  // that consume session.created/updated/deleted keep working while V2
-  // publishes them. Both carry { sessionID, info }; the V2 snapshot exposes
-  // info.id which is all current views read.
+  // Boundary adapter: the V2 native event stream is filtered to the events
+  // the views consume. Producers that already publish V2 vocabulary are
+  // mapped onto the V1 names the views still switch on (session.next.*,
+  // question.v2.*); events with no V2 producer pass through unchanged. The
+  // handler type stays the V1 SDK Event; data is projected onto properties.
   const lifecycleMap = new Map<string, string>([
     ["session.next.created", "session.created"],
     ["session.next.updated", "session.updated"],

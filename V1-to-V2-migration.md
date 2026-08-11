@@ -256,6 +256,10 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 
 ### 批次 6：事件兼容面收口
 
+> 🔄 **进行中（999.0.17）**：
+> - **第一步（schema 契约）已完成**：`schema/src/session-event.ts` 新增 V2 生命周期事件 `Created`/`Updated`/`Deleted`（`session.next.created/updated/deleted`），payload 用独立 `SessionSnapshot`（V2 Info 形状，避免 `session.ts`↔`session-event.ts` 循环依赖）；`message-updater.ts` 的 `All.match` 增加 no-op 分支；client 已重新生成（`generated/types.ts`/`types.d.ts`/`client.d.ts` 含新事件）；event-manifest 契约测试断言 95→98、durable 43→46
+> - **后续步骤**：②projector 双轨（V1 保留）+ V2 发布点切换；③EventV2Bridge 投影 V1 兼容事件保 TUI；④TUI 逐步迁移；⑤event-manifest 移除 `compatibilityDefinitions`
+
 1. 替换 `core/src/session.ts`/`command.ts`/`execution/local.ts` 的 `SessionV1.Event.*` 发布点为 V2 `SessionEvent`（`@opencode-ai/schema/session-event`）
 2. TUI `useEvent()` legacy 事件集迁移到 V2 事件（`routes/session/index.tsx` 的 plan_exit/plan_enter、`sync.tsx` 的 session.updated/permission.*）
 3. `event-manifest.ts` 移除 `compatibilityDefinitions`

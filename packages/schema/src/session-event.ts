@@ -5,7 +5,9 @@ import { optional } from "./schema"
 import { Event } from "./event"
 import { ProviderMetadata, ToolContent } from "./llm"
 import { Delivery } from "./session-delivery"
+import { Agent } from "./agent"
 import { Model } from "./model"
+import { Project } from "./project"
 import { DateTimeUtcFromMillis, NonNegativeInt, RelativePath } from "./schema"
 import { FileAttachment, Prompt } from "./prompt"
 import { SessionID } from "./session-id"
@@ -30,6 +32,78 @@ const Base = {
   timestamp: DateTimeUtcFromMillis,
   sessionID: SessionID,
 }
+
+const options = {
+  durable: {
+    aggregate: "sessionID",
+    version: 1,
+  },
+} as const
+
+// V2 session lifecycle snapshot: the V2 data model view of a session row,
+// mirroring Session.Info without importing ./session (which imports this
+// module). Retained for the V2 lifecycle events below so consumers never see
+// the V1 session info shape.
+export const SessionSnapshot = Schema.Struct({
+  id: SessionID,
+  parentID: SessionID.pipe(optional),
+  projectID: Project.ID,
+  agent: Agent.ID.pipe(optional),
+  model: Model.Ref.pipe(optional),
+  cost: Schema.Finite,
+  tokens: Schema.Struct({
+    input: Schema.Finite,
+    output: Schema.Finite,
+    reasoning: Schema.Finite,
+    cache: Schema.Struct({
+      read: Schema.Finite,
+      write: Schema.Finite,
+    }),
+  }),
+  time: Schema.Struct({
+    created: DateTimeUtcFromMillis,
+    updated: DateTimeUtcFromMillis,
+    compacting: DateTimeUtcFromMillis.pipe(optional),
+    archived: DateTimeUtcFromMillis.pipe(optional),
+  }),
+  title: Schema.String,
+  share: Schema.Struct({ url: Schema.String }).pipe(optional),
+  location: Location.Ref,
+  subpath: RelativePath.pipe(optional),
+  revert: Revert.State.pipe(optional),
+}).annotate({ identifier: "session.next.session.snapshot" })
+export interface SessionSnapshot extends Schema.Schema.Type<typeof SessionSnapshot> {}
+
+export const Created = Event.define({
+  type: "session.next.created",
+  ...options,
+  schema: {
+    ...Base,
+    info: SessionSnapshot,
+  },
+})
+export type Created = typeof Created.Type
+
+export const Updated = Event.define({
+  type: "session.next.updated",
+  ...options,
+  schema: {
+    ...Base,
+    info: SessionSnapshot,
+  },
+})
+export type Updated = typeof Updated.Type
+
+export const Deleted = Event.define({
+  type: "session.next.deleted",
+  ...options,
+  schema: {
+    ...Base,
+    info: SessionSnapshot,
+  },
+})
+export type Deleted = typeof Deleted.Type
+
 const PromptFields = {
   ...Base,
   messageID: SessionMessage.ID,
@@ -39,12 +113,6 @@ const PromptFields = {
   intent: SessionInput.Intent.pipe(optional),
 }
 
-const options = {
-  durable: {
-    aggregate: "sessionID",
-    version: 1,
-  },
-} as const
 const stepSettlementOptions = {
   durable: {
     aggregate: "sessionID",
@@ -564,6 +632,9 @@ export namespace RevertEvent {
 }
 
 export const DurableDefinitions = Event.inventory(
+  Created,
+  Updated,
+  Deleted,
   AgentSwitched,
   ModelSwitched,
   Moved,
@@ -603,6 +674,9 @@ export const DurableDefinitions = Event.inventory(
 )
 
 export const Definitions = Event.inventory(
+  Created,
+  Updated,
+  Deleted,
   AgentSwitched,
   ModelSwitched,
   Moved,

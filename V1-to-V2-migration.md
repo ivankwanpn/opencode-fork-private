@@ -266,7 +266,8 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 >   - **session.diff 域（已完成 producer 切换）**：新增 V2 `session.next.diff` 事件（`{ sessionID, diff: FileDiff.Info[] }`）；revert.ts producer 切 V2 `SessionEvent.Diff`；EventV2Bridge 投影 V2→V1（`session.diff`）；TUI `useEvent` lifecycleMap 加 diff 映射；V2 regression 测试（schema `session-event-diff.test.ts`）
 >   - **LSP/VCS 域（已完成）**：`LspEvent`（`lsp.updated`）与 `VcsEvent`（`vcs.branch.updated`）从 compatibilityDefinitions 移到 foundationDefinitions，作为独立 V2 domain events（不并入 session.next.*，符合产品决策）。两者无 producer（纯消费端触发拉取），保留在 ServerDefinitions 供 TUI/app 消费
 >   - **ACP 域（已确认就绪）**：ACP adapter 已符合产品决策——`acp/client.ts` 全部通过 V2 `OpenCode.make`（native client）获取数据（sessions.get/list、messages.list），`native-v1-session/transcript/catalog` 是纯 V2→V1 形状转换（无任何 DB/存储读取）；`acp/content.ts` 的 `SessionV1.TextPartInput/FilePartInput` 仅作 ACP 协议边界形状（对外协议保持兼容）。无需代码改动
-> - **后续步骤**：⑥CLI presenter 改 V2 events；⑦compatibilityDefinitions 逐域移除（含 question/status/diff 的 V1 definition，待 consumer 迁移）
+>   - **CLI presenter（--format json）已确认满足**：CLI 的 JSONL 输出数据源已是 V2 事件——`run.ts` 通过 `native-compat.ts`（CLI 的 compatibility adapter）消费，其 `event.subscribe` 从 `native.events.subscribe()`（V2 事件源）经 `legacyEventProjection` 投影 V1 形状；`--format json` 的 JSONL 契约（reasoning/tool/step/continuation ordering + V1 part 形状）由 run-process 契约测试验证通过（12 pass；1 个权限交互测试为 baseline 环境预存失败）。无需代码改动
+> - **后续步骤**：⑦compatibilityDefinitions 逐域移除（含 question/status/diff 的 V1 definition，待 consumer 迁移）
 
 1. 替换 `core/src/session.ts`/`command.ts`/`execution/local.ts` 的 `SessionV1.Event.*` 发布点为 V2 `SessionEvent`（`@opencode-ai/schema/session-event`）
 2. TUI `useEvent()` legacy 事件集迁移到 V2 事件（`routes/session/index.tsx` 的 plan_exit/plan_enter、`sync.tsx` 的 session.updated/permission.*）

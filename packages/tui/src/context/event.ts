@@ -60,6 +60,7 @@ export function useEvent() {
     ["session.next.updated", "session.updated"],
     ["session.next.deleted", "session.deleted"],
     ["session.next.status", "session.status"],
+    ["session.next.diff", "session.diff"],
     ["question.v2.asked", "question.asked"],
     ["question.v2.replied", "question.replied"],
     ["question.v2.rejected", "question.rejected"],

@@ -1,7 +1,8 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer, Context, Schema } from "effect"
+import { DateTime, Effect, Layer, Context, Schema } from "effect"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { Snapshot } from "../snapshot"
 import { Storage } from "@/storage/storage"
 import { Session } from "./session"
@@ -74,7 +75,11 @@ const layer = Layer.effect(
       const range = all.filter((msg) => msg.info.id >= rev.messageID)
       const diffs = yield* summary.computeDiff({ messages: range })
       yield* storage.write(["session_diff", input.sessionID], diffs).pipe(Effect.ignore)
-      yield* events.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: diffs })
+      yield* events.publish(SessionEvent.Diff, {
+        timestamp: yield* DateTime.now,
+        sessionID: input.sessionID,
+        diff: diffs,
+      })
       yield* sessions.setRevert({
         sessionID: input.sessionID,
         revert: rev,

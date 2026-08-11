@@ -143,6 +143,18 @@ export const Status = Event.define({
 })
 export type Status = typeof Status.Type
 
+// V2 session diff event: carries the file diff summary for a reverted session
+// so the UI can render change lists from the V2 vocabulary.
+export const Diff = Event.define({
+  type: "session.next.diff",
+  ...options,
+  schema: {
+    ...Base,
+    diff: Schema.Array(FileDiff.Info),
+  },
+})
+export type Diff = typeof Diff.Type
+
 const PromptFields = {
   ...Base,
   messageID: SessionMessage.ID,
@@ -675,6 +687,7 @@ export const DurableDefinitions = Event.inventory(
   Updated,
   Deleted,
   Status,
+  Diff,
   AgentSwitched,
   ModelSwitched,
   Moved,
@@ -718,6 +731,7 @@ export const Definitions = Event.inventory(
   Updated,
   Deleted,
   Status,
+  Diff,
   AgentSwitched,
   ModelSwitched,
   Moved,

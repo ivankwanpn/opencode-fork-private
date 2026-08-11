@@ -241,6 +241,15 @@ export function legacyEventProjection() {
       ]
     }
 
+    if (source.type === "session.next.diff") {
+      return [
+        event("session.diff", {
+          sessionID: SessionID.make(sessionID),
+          diff: data.diff,
+        }),
+      ]
+    }
+
     if (source.type === "question.v2.asked") {
       return [
         event("question.asked", {

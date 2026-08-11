@@ -39,6 +39,8 @@ const foundationDefinitions = Event.inventory(
   ...ModelsDev.Event.Definitions,
   ...Integration.Event.Definitions,
   ...Catalog.Event.Definitions,
+  ...LspEvent.Definitions,
+  ...VcsEvent.Definitions,
   ...coreDefinitions,
 )
 
@@ -55,7 +57,6 @@ const featureDefinitions = Event.inventory(
 
 const compatibilityDefinitions = Event.inventory(
   ...sessionV1LiveDefinitions,
-  ...LspEvent.Definitions,
   ...PermissionV1.Event.Definitions,
   ...TuiEvent.Definitions,
   ...McpEvent.Definitions,
@@ -64,7 +65,6 @@ const compatibilityDefinitions = Event.inventory(
   ...SessionStatusEvent.Definitions,
   ...QuestionV1.Event.Definitions,
   ...SessionCompactionEvent.Definitions,
-  ...VcsEvent.Definitions,
   ...WorkspaceEvent.Definitions,
   ...WorktreeEvent.Definitions,
   ...ServerEvent.Definitions,

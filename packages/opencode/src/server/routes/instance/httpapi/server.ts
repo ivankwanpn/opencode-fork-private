@@ -113,7 +113,7 @@ import { corsVaryFix } from "./middleware/cors-vary"
 import { errorLayer } from "./middleware/error"
 import { fenceLayer } from "./middleware/fence"
 import { schemaErrorLayer } from "./middleware/schema-error"
-import { TranscriptRead } from "@/session/transcript-read"
+import { SessionRead } from "@opencode-ai/server/session-read"
 import { NativeSessionShare } from "@/share/native-session-share"
 import { NativeSessionDiff } from "@/session/native-session-diff"
 import { NativeVcs } from "@/project/native-vcs"
@@ -189,7 +189,7 @@ const instanceRoutes = instanceApiRoutes.pipe(
   Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
 )
 const serverHandlers = handlers.pipe(
-  Layer.provide(TranscriptRead.layer),
+  Layer.provide(SessionRead.layer),
   Layer.provide(NativeSessionShare.layer),
   Layer.provide(NativeSessionDiff.layer),
   Layer.provide(NativeVcs.layer),

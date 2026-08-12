@@ -1,24 +1,22 @@
 import { afterEach, describe, expect } from "bun:test"
+import { Database } from "@opencode-ai/core/database/database"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionMessageTable } from "@opencode-ai/core/session/sql"
 import { Effect, Layer } from "effect"
+import * as DateTime from "effect/DateTime"
 import { HttpClientResponse } from "effect/unstable/http"
 import { Session as SessionNs } from "@/session/session"
-import { MessageV2 } from "../../src/session/message-v2"
 
-import { MessageID, PartID, type SessionID } from "../../src/session/schema"
+import { MessageID, type SessionID } from "../../src/session/schema"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { ProviderV2 } from "@opencode-ai/core/provider"
-import { ModelV2 } from "@opencode-ai/core/model"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(SessionNs.node), httpApiLayer))
-
-const model = {
-  providerID: ProviderV2.ID.make("test"),
-  modelID: ModelV2.ID.make("test"),
-}
+const it = testEffect(
+  Layer.mergeAll(LayerNode.compile(LayerNode.group([SessionNs.node, Database.node])), httpApiLayer),
+)
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -50,31 +48,34 @@ const fill = Effect.fn("SessionMessagesTest.fill")(function* (
   count: number,
   time = (i: number) => Date.now() + i,
 ) {
-  const session = yield* SessionNs.Service
-  return yield* Effect.forEach(
-    Array.from({ length: count }, (_, i) => i),
-    (i) =>
-      Effect.gen(function* () {
-        const id = MessageID.ascending()
-        yield* session.updateMessage({
-          id,
-          sessionID,
-          role: "user",
-          time: { created: time(i) },
-          agent: "test",
-          model,
-          tools: {},
-        } satisfies SessionV1.User)
-        yield* session.updatePart({
-          id: PartID.ascending(),
-          sessionID,
-          messageID: id,
-          type: "text",
-          text: `m${i}`,
-        } satisfies SessionV1.TextPart)
-        return id
-      }),
+  const ids = Array.from({ length: count }, () => MessageID.ascending())
+  const messages = ids.map((id, i) =>
+    SessionMessage.User.make({
+      id: SessionMessage.ID.make(id),
+      type: "user",
+      text: `m${i}`,
+      time: { created: DateTime.fromDateUnsafe(new Date(time(i))) },
+    }),
   )
+  const { db } = yield* Database.Service
+  yield* db
+    .insert(SessionMessageTable)
+    .values(
+      messages.map((message, i) => ({
+        id: message.id,
+        session_id: sessionID,
+        type: message.type,
+        seq: i + 1,
+        time_created: DateTime.toEpochMillis(message.time.created),
+        data: {
+          text: message.text,
+          time: { created: DateTime.toEpochMillis(message.time.created) },
+        } as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+      })),
+    )
+    .run()
+    .pipe(Effect.orDie)
+  return ids
 })
 
 function request(path: string) {

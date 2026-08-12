@@ -238,10 +238,15 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
             catch: () => new HttpApiError.BadRequest({}),
           })
         : undefined
-      yield* requireSession(ctx.params.sessionID)
-      const history = yield* sessionRead
-        .history(ctx.params.sessionID)
-        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)
+      const current = yield* revertSvc
+        .get(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(SessionError.mapSessionNotFound)
+      const history = MessageV2.toLegacy(
+        current,
+        yield* revertSvc
+          .messages({ sessionID: current.id, order: "asc" })
+          .pipe(SessionError.mapSessionNotFound, Effect.catchTag("Session.MessageDecodeError", Effect.die)),
+      )
       if (ctx.query.limit === undefined || ctx.query.limit === 0) return history
 
       const boundary = before ? history.findIndex((message) => message.info.id === before.id) : history.length
@@ -284,25 +289,29 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const message = Effect.fn("SessionHttpApi.message")(function* (ctx: {
       params: { sessionID: SessionID; messageID: MessageID }
     }) {
-      yield* requireSession(ctx.params.sessionID)
-      const found = (yield* sessionRead
-        .history(ctx.params.sessionID)
-        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)).find(
-        (message) => message.info.id === ctx.params.messageID,
-      )
-      if (found) return found
-      const removed = yield* revertSvc.transcript
-        .removedMessages(SessionV2.ID.make(ctx.params.sessionID))
-        .pipe(SessionError.mapSessionNotFound)
-      if (removed.has(SessionMessage.ID.make(ctx.params.messageID))) {
+      const sessionID = SessionV2.ID.make(ctx.params.sessionID)
+      const current = yield* revertSvc.get(sessionID).pipe(SessionError.mapSessionNotFound)
+      const found = yield* revertSvc.message({
+        sessionID,
+        messageID: SessionMessage.ID.make(ctx.params.messageID),
+      })
+      if (!found) {
         return yield* new ApiNotFoundError({
           name: "NotFoundError",
           data: { message: `Message not found: ${ctx.params.messageID}` },
         })
       }
-      return yield* SessionError.mapStorageNotFound(
-        MessageV2.get({ sessionID: ctx.params.sessionID, messageID: ctx.params.messageID }),
-      )
+      const projected = MessageV2.toLegacy(
+        current,
+        yield* revertSvc
+          .messages({ sessionID, order: "asc" })
+          .pipe(SessionError.mapSessionNotFound, Effect.catchTag("Session.MessageDecodeError", Effect.die)),
+      ).find((message) => message.info.id === ctx.params.messageID)
+      if (projected) return projected
+      return yield* new ApiNotFoundError({
+        name: "NotFoundError",
+        data: { message: `Message not found: ${ctx.params.messageID}` },
+      })
     })
 
     const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: Session.CreateInput }) {
@@ -559,48 +568,26 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const current = yield* revertSvc
         .get(SessionV2.ID.make(ctx.params.sessionID))
         .pipe(SessionError.mapSessionNotFound)
-      const history = yield* sessionRead
-        .history(ctx.params.sessionID)
-        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)
-      const projected = TranscriptRead.project(history)
       const canonical = yield* revertSvc
         .messages({ sessionID: current.id, order: "asc" })
         .pipe(SessionError.mapSessionNotFound, Effect.catchTag("Session.MessageDecodeError", Effect.die))
-      const boundary = MessageV2.resolveRevertBoundary(current, projected, ctx.payload)
+      const boundary = MessageV2.resolveRevertBoundary(current, canonical, ctx.payload)
       if (boundary.status === "unsupported" || (ctx.payload.partID && boundary.status === "not-found")) {
         return yield* new HttpApiError.BadRequest({})
       }
       if (boundary.status === "not-found") return yield* requireSession(ctx.params.sessionID)
-      const boundaryIndex = projected.findIndex((message) => message.id === boundary.messageID)
+      const boundaryIndex = canonical.findIndex((message) => message.id === boundary.messageID)
       if (boundaryIndex < 0) return yield* new HttpApiError.BadRequest({})
-      const boundaryMessage = projected[boundaryIndex]!
-      const removedMessageIDs = new Set(
-        projected
-          .slice(boundaryIndex + (boundary.contentIndex === undefined ? 0 : 1))
-          .map((message) => message.id),
-      )
-      for (const message of canonical) {
-        const order =
-          DateTime.toEpochMillis(message.time.created) - DateTime.toEpochMillis(boundaryMessage.time.created) ||
-          message.id.localeCompare(boundaryMessage.id)
-        if (boundary.contentIndex === undefined ? order >= 0 : order > 0) removedMessageIDs.add(message.id)
-      }
-      const adopted = yield* adoptRetainedMessage(
-        ctx.params.sessionID,
-        MessageID.ascending(boundary.messageID),
-      )
-      if (!adopted) return yield* new HttpApiError.BadRequest({})
-      // V1 revert was lenient when the boundary message did not exist
-      // (no-op, still returning the session); keep that observable behavior
-      // through the V2 stage command by treating MessageNotFoundError as a
-      // no-op instead of a 404.
+      const removedMessageIDs = canonical
+        .slice(boundaryIndex + (boundary.contentIndex === undefined ? 0 : 1))
+        .map((message) => message.id)
       yield* revertSvc.revert
         .stage({
-          sessionID: SessionV2.ID.make(ctx.params.sessionID),
+          sessionID: current.id,
           messageID: boundary.messageID,
           partID: boundary.partID,
           contentIndex: boundary.contentIndex,
-          removedMessageIDs: Array.from(removedMessageIDs),
+          removedMessageIDs,
         })
         .pipe(
           SessionError.mapSessionNotFound,

@@ -160,6 +160,33 @@ function createTextMessage(sessionID: SessionIDType, text: string) {
   })
 }
 
+const insertCanonicalUserMessage = (sessionID: SessionIDType, text: string, seq: number) =>
+  Effect.gen(function* () {
+    const message = SessionMessage.User.make({
+      id: SessionMessage.ID.create(),
+      type: "user",
+      text,
+      time: { created: DateTime.makeUnsafe(Date.now()) },
+    })
+    const { db } = yield* Database.Service
+    yield* db
+      .insert(SessionMessageTable)
+      .values({
+        id: message.id,
+        session_id: sessionID,
+        type: message.type,
+        seq,
+        time_created: DateTime.toEpochMillis(message.time.created),
+        data: {
+          text: message.text,
+          time: { created: DateTime.toEpochMillis(message.time.created) },
+        } as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+      })
+      .run()
+      .pipe(Effect.orDie)
+    return message
+  })
+
 const localAdapter = (directory: string): WorkspaceAdapter => ({
   name: "Local Test",
   description: "Create a local test workspace",
@@ -399,8 +426,8 @@ describe("session HttpApi", () => {
         const headers = { "x-opencode-directory": test.directory }
         const parent = yield* createSession({ title: "parent" })
         const child = yield* createSession({ title: "child", parentID: parent.id })
-        const message = yield* createTextMessage(parent.id, "hello")
-        yield* createTextMessage(parent.id, "world")
+        const message = yield* insertCanonicalUserMessage(parent.id, "hello", 1)
+        yield* insertCanonicalUserMessage(parent.id, "world", 2)
 
         const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?roots=true`, { headers })
         expect(listed.map((item) => item.id)).toContain(parent.id)
@@ -447,18 +474,81 @@ describe("session HttpApi", () => {
 
         expect(
           yield* requestJson<SessionV1.WithParts>(
-            pathFor(SessionPaths.message, { sessionID: parent.id, messageID: message.info.id }),
+            pathFor(SessionPaths.message, { sessionID: parent.id, messageID: MessageID.ascending(message.id) }),
             { headers },
           ),
-        ).toMatchObject({ info: { id: message.info.id } })
+        ).toMatchObject({ info: { id: message.id } })
 
-        yield* insertLegacyAssistantMessage(parent.id)
+        yield* insertLegacyAssistantMessage(parent.id, 3)
 
         expect(
           (yield* requestJson<{ data: SessionMessage.Message[] }>(`/api/session/${parent.id}/message`, {
             headers,
           })).data.some((item) => item.type === "assistant"),
         ).toBeTrue()
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "omits legacy-only messages from transcript lists",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory }
+        const session = yield* createSession({ title: "canonical transcript only" })
+        yield* createTextMessage(session.id, "retained legacy text")
+
+        expect(
+          yield* requestJson<SessionV1.WithParts[]>(pathFor(SessionPaths.messages, { sessionID: session.id }), {
+            headers,
+          }),
+        ).toEqual([])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "returns not found for legacy-only transcript messages",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory }
+        const session = yield* createSession({ title: "canonical transcript lookup" })
+        const retained = yield* createTextMessage(session.id, "retained legacy text")
+
+        const response = yield* request(
+          pathFor(SessionPaths.message, { sessionID: session.id, messageID: retained.info.id }),
+          { headers },
+        )
+        expect(response.status).toBe(404)
+        expect(yield* responseJson(response)).toEqual({
+          name: "NotFoundError",
+          data: { message: `Message not found: ${retained.info.id}` },
+        })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "does not stage reverts for legacy-only transcript messages",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "canonical revert only" })
+        const retained = yield* createTextMessage(session.id, "retained legacy text")
+
+        const response = yield* requestJson<Session.Info>(
+          pathFor(SessionPaths.revert, { sessionID: session.id }),
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ messageID: retained.info.id }),
+          },
+        )
+        expect(response.id).toBe(session.id)
+        expect(Object.hasOwn(response, "revert")).toBeFalse()
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -1471,9 +1561,9 @@ describe("session HttpApi", () => {
         const messageBody = yield* json<{ data: SessionMessage.Message[]; cursor: { next?: string } }>(messagePage)
         const messageCursor = messageBody.cursor.next
         expect(messageCursor).toBeTruthy()
-        expect(messageBody.data.map((message) => message.id)).toEqual([firstMessage.id])
+        expect(messageBody.data.map((message) => message.id)).toEqual([secondMessage.id])
         expect(JSON.parse(Buffer.from(messageCursor!, "base64url").toString("utf8"))).toEqual({
-          id: firstMessage.id,
+          id: secondMessage.id,
           order: "desc",
           direction: "next",
         })
@@ -1483,17 +1573,17 @@ describe("session HttpApi", () => {
         })
         expect(
           (yield* json<{ data: SessionMessage.Message[] }>(nextMessagePage)).data.map((message) => message.id),
-        ).toEqual([secondMessage.id])
+        ).toEqual([firstMessage.id])
 
         const legacyMessageCursor = Buffer.from(
-          JSON.stringify({ id: firstMessage.id, time: 2, order: "desc", direction: "next" }),
+          JSON.stringify({ id: secondMessage.id, time: 1, order: "desc", direction: "next" }),
         ).toString("base64url")
         const legacyMessagePage = yield* request(`/api/session/${session.id}/message?cursor=${legacyMessageCursor}`, {
           headers,
         })
         expect(
           (yield* json<{ data: SessionMessage.Message[] }>(legacyMessagePage)).data.map((message) => message.id),
-        ).toEqual([secondMessage.id])
+        ).toEqual([firstMessage.id])
 
         const messageCursorWithOrder = yield* request(
           `/api/session/${session.id}/message?cursor=${messageCursor}&order=asc`,
@@ -2234,8 +2324,8 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory }
         const session = yield* createSession({ title: "messages" })
-        yield* createTextMessage(session.id, "first")
-        yield* createTextMessage(session.id, "second")
+        yield* insertCanonicalUserMessage(session.id, "first", 1)
+        yield* insertCanonicalUserMessage(session.id, "second", 2)
         const route = `${pathFor(SessionPaths.messages, { sessionID: session.id })}?limit=1`
 
         const response = yield* request(route, { headers })
@@ -2708,168 +2798,4 @@ describe("session HttpApi", () => {
     { git: true, config: { formatter: false, lsp: false } },
   )
 
-  it.instance(
-    "reverts retained assistant parts across mixed V1 and V2 history",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const current = yield* createSession({ title: "retained part revert" })
-        const parent = yield* createTextMessage(current.id, "parent")
-        const created = Date.now() + 1
-        const session = yield* Session.Service
-        const boundary = yield* session.updateMessage({
-          id: MessageID.ascending("msg_retained_revert_boundary"),
-          sessionID: current.id,
-          role: "assistant",
-          time: { created, completed: created },
-          parentID: parent.info.id,
-          modelID: ModelV2.ID.make("model"),
-          providerID: ProviderV2.ID.make("provider"),
-          mode: "build",
-          agent: "build",
-          path: { cwd: test.directory, root: test.directory },
-          cost: 0,
-          tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
-          finish: "stop",
-        })
-        const keep = yield* session.updatePart({
-          id: PartID.ascending("prt_retained_revert_keep"),
-          sessionID: current.id,
-          messageID: boundary.id,
-          type: "text",
-          text: "keep",
-        })
-        const remove = yield* session.updatePart({
-          id: PartID.ascending("prt_retained_revert_remove"),
-          sessionID: current.id,
-          messageID: boundary.id,
-          type: "text",
-          text: "remove",
-        })
-        const internalLater = SessionMessage.AgentSwitched.make({
-          id: SessionMessage.ID.make("msg_retained_revert_internal"),
-          type: "agent-switched",
-          agent: "plan",
-          time: { created: DateTime.makeUnsafe(created + 1) },
-        })
-        yield* Database.Service.use(({ db }) =>
-          db
-            .insert(SessionMessageTable)
-            .values({
-              id: internalLater.id,
-              session_id: current.id,
-              type: internalLater.type,
-              seq: 1,
-              time_created: created + 1,
-              data: { agent: internalLater.agent, time: { created: created + 1 } } as NonNullable<
-                (typeof SessionMessageTable.$inferInsert)["data"]
-              >,
-            })
-            .run()
-            .pipe(Effect.orDie),
-        )
-        const canonicalLater = yield* insertLegacyAssistantMessage(current.id, 2, created + 2, [
-          SessionMessage.AssistantText.make({ type: "text", id: "text_canonical_later", text: "canonical later" }),
-        ])
-        const retainedLater = yield* session.updateMessage({
-          id: MessageID.ascending("msg_retained_revert_later"),
-          sessionID: current.id,
-          role: "assistant",
-          time: { created: created + 3, completed: created + 3 },
-          parentID: parent.info.id,
-          modelID: ModelV2.ID.make("model"),
-          providerID: ProviderV2.ID.make("provider"),
-          mode: "build",
-          agent: "build",
-          path: { cwd: test.directory, root: test.directory },
-          cost: 0,
-          tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
-          finish: "stop",
-        })
-        yield* session.updatePart({
-          id: PartID.ascending("prt_retained_revert_later"),
-          sessionID: current.id,
-          messageID: retainedLater.id,
-          type: "text",
-          text: "retained later",
-        })
-        const pendingInputID = SessionMessage.ID.make("msg_retained_revert_pending")
-        yield* Database.Service.use(({ db }) =>
-          db
-            .insert(SessionInputTable)
-            .values({
-              id: pendingInputID,
-              session_id: current.id,
-              prompt: { text: "pending after boundary" },
-              delivery: "queue",
-              admitted_seq: 3,
-              time_created: created + 4,
-            })
-            .run()
-            .pipe(Effect.orDie),
-        )
-        const rowsBefore = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-
-        expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: current.id }), {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ messageID: boundary.id, partID: remove.id }),
-          }),
-        ).toMatchObject({ id: current.id, revert: { messageID: boundary.id, partID: remove.id } })
-        expect((yield* request(`/api/session/${current.id}/revert/commit`, { method: "POST", headers })).status).toBe(204)
-
-        const history = yield* requestJson<SessionV1.WithParts[]>(
-          pathFor(SessionPaths.messages, { sessionID: current.id }),
-          { headers },
-        )
-        expect(history.map((message) => message.info.id)).toEqual([parent.info.id, boundary.id])
-        expect(history[1]?.parts).toMatchObject([{ id: keep.id, type: "text", text: "keep" }])
-        const canonical = yield* Database.Service.use(({ db }) =>
-          db
-            .select({ data: SessionMessageTable.data })
-            .from(SessionMessageTable)
-            .where(eq(SessionMessageTable.id, SessionMessage.ID.make(boundary.id)))
-            .get()
-            .pipe(Effect.orDie),
-        )
-        expect(canonical).toMatchObject({
-          data: {
-            content: [{ type: "text", id: keep.id, text: "keep" }],
-            metadata: { legacy: { parts: [{ id: keep.id, type: "text", text: "keep" }] } },
-          },
-        })
-        const tombstones = yield* Database.Service.use(({ db }) =>
-          db
-            .select({ messageID: SessionMessageTombstoneTable.message_id })
-            .from(SessionMessageTombstoneTable)
-            .where(eq(SessionMessageTombstoneTable.session_id, current.id))
-            .all()
-            .pipe(Effect.orDie),
-        )
-        expect(tombstones.map((row) => row.messageID).toSorted()).toEqual(
-          [internalLater.id, canonicalLater.id, SessionMessage.ID.make(retainedLater.id)].toSorted(),
-        )
-        expect(
-          yield* Database.Service.use(({ db }) =>
-            db.select().from(SessionInputTable).where(eq(SessionInputTable.id, pendingInputID)).get().pipe(Effect.orDie),
-          ),
-        ).toBeUndefined()
-        expect(
-          yield* Database.Service.use(({ db }) =>
-            Effect.all([
-              db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-              db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-            ]),
-          ),
-        ).toEqual(rowsBefore)
-      }),
-    { git: true, config: { formatter: false, lsp: false } },
-  )
 })

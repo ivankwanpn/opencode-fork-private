@@ -25,7 +25,6 @@ import {
   SessionCancellationTable,
   SessionInputTable,
   SessionMessageTable,
-  SessionMessageTombstoneTable,
   SessionTable,
 } from "@opencode-ai/core/session/sql"
 import { SessionAttempt } from "@opencode-ai/core/session/attempt"
@@ -384,13 +383,6 @@ describe("SessionProjector", () => {
 
       expect(yield* db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get()).toBeUndefined()
       expect(yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, messageID)).get()).toBeUndefined()
-      expect(
-        yield* db
-          .select({ messageID: SessionMessageTombstoneTable.message_id })
-          .from(SessionMessageTombstoneTable)
-          .where(eq(SessionMessageTombstoneTable.message_id, messageID))
-          .get(),
-      ).toBeUndefined()
     }),
   )
 

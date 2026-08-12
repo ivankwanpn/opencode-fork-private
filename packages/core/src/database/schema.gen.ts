@@ -125,27 +125,6 @@ export default {
         );
       `)
       yield* tx.run(`
-        CREATE TABLE \`message\` (
-          \`id\` text PRIMARY KEY,
-          \`session_id\` text NOT NULL,
-          \`time_created\` integer NOT NULL,
-          \`time_updated\` integer NOT NULL,
-          \`data\` text NOT NULL,
-          CONSTRAINT \`fk_message_session_id_session_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session\`(\`id\`) ON DELETE CASCADE
-        );
-      `)
-      yield* tx.run(`
-        CREATE TABLE \`part\` (
-          \`id\` text PRIMARY KEY,
-          \`message_id\` text NOT NULL,
-          \`session_id\` text NOT NULL,
-          \`time_created\` integer NOT NULL,
-          \`time_updated\` integer NOT NULL,
-          \`data\` text NOT NULL,
-          CONSTRAINT \`fk_part_message_id_message_id_fk\` FOREIGN KEY (\`message_id\`) REFERENCES \`message\`(\`id\`) ON DELETE CASCADE
-        );
-      `)
-      yield* tx.run(`
         CREATE TABLE \`session_provider_attempt\` (
           \`session_id\` text PRIMARY KEY,
           \`attempt_id\` text NOT NULL,
@@ -206,15 +185,6 @@ export default {
           \`time_updated\` integer NOT NULL,
           \`data\` text NOT NULL,
           CONSTRAINT \`fk_session_message_session_id_session_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session\`(\`id\`) ON DELETE CASCADE
-        );
-      `)
-      yield* tx.run(`
-        CREATE TABLE \`session_message_tombstone\` (
-          \`message_id\` text PRIMARY KEY,
-          \`session_id\` text NOT NULL,
-          \`time_created\` integer NOT NULL,
-          \`time_updated\` integer NOT NULL,
-          CONSTRAINT \`fk_session_message_tombstone_session_id_session_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session\`(\`id\`) ON DELETE CASCADE
         );
       `)
       yield* tx.run(`
@@ -334,11 +304,6 @@ export default {
         `CREATE UNIQUE INDEX \`permission_project_action_resource_idx\` ON \`permission\` (\`project_id\`,\`action\`,\`resource\`);`,
       )
       yield* tx.run(
-        `CREATE INDEX \`message_session_time_created_id_idx\` ON \`message\` (\`session_id\`,\`time_created\`,\`id\`);`,
-      )
-      yield* tx.run(`CREATE INDEX \`part_message_id_id_idx\` ON \`part\` (\`message_id\`,\`id\`);`)
-      yield* tx.run(`CREATE INDEX \`part_session_idx\` ON \`part\` (\`session_id\`);`)
-      yield* tx.run(
         `CREATE INDEX \`session_provider_attempt_status_retry_idx\` ON \`session_provider_attempt\` (\`status\`,\`retry_at\`);`,
       )
       yield* tx.run(
@@ -360,9 +325,6 @@ export default {
         `CREATE INDEX \`session_message_session_time_created_id_idx\` ON \`session_message\` (\`session_id\`,\`time_created\`,\`id\`);`,
       )
       yield* tx.run(`CREATE INDEX \`session_message_time_created_idx\` ON \`session_message\` (\`time_created\`);`)
-      yield* tx.run(
-        `CREATE INDEX \`session_message_tombstone_session_idx\` ON \`session_message_tombstone\` (\`session_id\`);`,
-      )
       yield* tx.run(`CREATE INDEX \`session_project_idx\` ON \`session\` (\`project_id\`);`)
       yield* tx.run(`CREATE INDEX \`session_workspace_idx\` ON \`session\` (\`workspace_id\`);`)
       yield* tx.run(`CREATE INDEX \`session_parent_idx\` ON \`session\` (\`parent_id\`);`)

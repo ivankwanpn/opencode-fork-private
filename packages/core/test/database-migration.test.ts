@@ -346,7 +346,7 @@ describe("DatabaseMigration", () => {
     )
   })
 
-  test("preserves canonical V1 state and restarts its event stream", async () => {
+  test("preserves session state and restarts its event stream", async () => {
     await run(
       Effect.gen(function* () {
         const db = yield* makeDb
@@ -360,12 +360,6 @@ describe("DatabaseMigration", () => {
         )
         yield* db.run(
           sql`INSERT INTO session (id, project_id, workspace_id, slug, directory, title, version, time_created, time_updated) VALUES ('session', 'global', 'workspace', 'session', '/project', 'Before', 'test', 1, 1)`,
-        )
-        yield* db.run(
-          sql`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES ('message', 'session', 1, 1, '{}')`,
-        )
-        yield* db.run(
-          sql`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES ('part', 'message', 'session', 1, 1, '{}')`,
         )
         yield* db.run(sql`INSERT INTO event_sequence (aggregate_id, seq) VALUES ('session', 9)`)
         yield* db.run(
@@ -408,8 +402,6 @@ describe("DatabaseMigration", () => {
             SELECT
               (SELECT title FROM session WHERE id = 'session') AS title,
               (SELECT workspace_id FROM session WHERE id = 'session') AS workspaceID,
-              (SELECT COUNT(*) FROM message WHERE id = 'message') AS messages,
-              (SELECT COUNT(*) FROM part WHERE id = 'part') AS parts,
               (SELECT COUNT(*) FROM workspace) AS workspaces,
               (SELECT COUNT(*) FROM session_input) AS sessionInputs,
               (SELECT COUNT(*) FROM session_message) AS sessionMessages,
@@ -420,8 +412,6 @@ describe("DatabaseMigration", () => {
         ).toEqual({
           title: "After",
           workspaceID: null,
-          messages: 1,
-          parts: 1,
           workspaces: 0,
           sessionInputs: 0,
           sessionMessages: 0,

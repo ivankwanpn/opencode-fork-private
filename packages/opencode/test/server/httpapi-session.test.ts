@@ -31,8 +31,6 @@ import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import {
-  MessageTable,
-  PartTable,
   SessionInputTable,
   SessionMessageTable,
   SessionTable,
@@ -47,7 +45,7 @@ import { SessionStatus } from "../../src/session/status"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
-import { and, eq, sql } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
@@ -137,54 +135,6 @@ function expectWake(sessionID: string, inputID: string, kind: "promote" | "cance
 
 function createSession(input?: Session.CreateInput) {
   return Session.use.create(input)
-}
-
-function createTextMessage(sessionID: SessionIDType, text: string) {
-  return Effect.gen(function* () {
-    const info: SessionV1.User = {
-      id: MessageID.ascending(),
-      role: "user",
-      sessionID,
-      agent: "build",
-      model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-      time: { created: Date.now() },
-    }
-    const part: SessionV1.TextPart = {
-      id: PartID.ascending(),
-      sessionID,
-      messageID: info.id,
-      type: "text",
-      text,
-    }
-    const { db } = yield* Database.Service
-    yield* db
-      .insert(MessageTable)
-      .values({
-        id: info.id,
-        session_id: sessionID,
-        time_created: info.time.created,
-        data: {
-          role: info.role,
-          time: info.time,
-          agent: info.agent,
-          model: info.model,
-        } as NonNullable<(typeof MessageTable.$inferInsert)["data"]>,
-      })
-      .run()
-      .pipe(Effect.orDie)
-    yield* db
-      .insert(PartTable)
-      .values({
-        id: part.id,
-        message_id: info.id,
-        session_id: sessionID,
-        time_created: info.time.created,
-        data: { type: part.type, text: part.text } as NonNullable<(typeof PartTable.$inferInsert)["data"]>,
-      })
-      .run()
-      .pipe(Effect.orDie)
-    return { info, part }
-  })
 }
 
 const insertCanonicalUserMessage = (sessionID: SessionIDType, text: string, seq: number) =>
@@ -517,69 +467,6 @@ describe("session HttpApi", () => {
     { git: true, config: { formatter: false, lsp: false } },
   )
 
-  it.instance(
-    "omits legacy-only messages from transcript lists",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory }
-        const session = yield* createSession({ title: "canonical transcript only" })
-        yield* createTextMessage(session.id, "retained legacy text")
-
-        expect(
-          yield* requestJson<SessionV1.WithParts[]>(pathFor(SessionPaths.messages, { sessionID: session.id }), {
-            headers,
-          }),
-        ).toEqual([])
-      }),
-    { git: true, config: { formatter: false, lsp: false } },
-  )
-
-  it.instance(
-    "returns not found for legacy-only transcript messages",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory }
-        const session = yield* createSession({ title: "canonical transcript lookup" })
-        const retained = yield* createTextMessage(session.id, "retained legacy text")
-
-        const response = yield* request(
-          pathFor(SessionPaths.message, { sessionID: session.id, messageID: retained.info.id }),
-          { headers },
-        )
-        expect(response.status).toBe(404)
-        expect(yield* responseJson(response)).toEqual({
-          name: "NotFoundError",
-          data: { message: `Message not found: ${retained.info.id}` },
-        })
-      }),
-    { git: true, config: { formatter: false, lsp: false } },
-  )
-
-  it.instance(
-    "does not stage reverts for legacy-only transcript messages",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const session = yield* createSession({ title: "canonical revert only" })
-        const retained = yield* createTextMessage(session.id, "retained legacy text")
-
-        const response = yield* requestJson<Session.Info>(
-          pathFor(SessionPaths.revert, { sessionID: session.id }),
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ messageID: retained.info.id }),
-          },
-        )
-        expect(response.id).toBe(session.id)
-        expect(Object.hasOwn(response, "revert")).toBeFalse()
-      }),
-    { git: true, config: { formatter: false, lsp: false } },
-  )
-
   it.live(
     "uses the persisted session directory for prompt requests",
     () =>
@@ -718,19 +605,15 @@ describe("session HttpApi", () => {
             }),
           }),
         )
-        const rows = yield* Database.Service.use(({ db }) =>
-          Effect.all({
-            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
-            canonical: db
-              .select()
-              .from(SessionMessageTable)
-              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(messageID)))
-              .get()
-              .pipe(Effect.orDie),
-          }),
+        const row = yield* Database.Service.use(({ db }) =>
+          db
+            .select()
+            .from(SessionMessageTable)
+            .where(eq(SessionMessageTable.id, SessionMessage.ID.make(messageID)))
+            .get()
+            .pipe(Effect.orDie),
         )
-        expect(rows.legacy).toBeUndefined()
-        expect(rows.canonical?.data).toMatchObject({ format: { type: "json_schema" } })
+        expect(row?.data).toMatchObject({ format: { type: "json_schema" } })
         expect(yield* llm.calls).toBe(1)
       }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
     30_000,
@@ -760,19 +643,15 @@ describe("session HttpApi", () => {
 
         expect(response.status).toBe(200)
         expect(yield* json<boolean>(response)).toBeTrue()
-        const rows = yield* Database.Service.use(({ db }) =>
-          Effect.all({
-            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
-            canonical: db
-              .select()
-              .from(SessionMessageTable)
-              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(messageID)))
-              .get()
-              .pipe(Effect.orDie),
-          }),
+        const row = yield* Database.Service.use(({ db }) =>
+          db
+            .select()
+            .from(SessionMessageTable)
+            .where(eq(SessionMessageTable.id, SessionMessage.ID.make(messageID)))
+            .get()
+            .pipe(Effect.orDie),
         )
-        expect(rows.legacy).toBeUndefined()
-        expect(rows.canonical?.data).toMatchObject({ text: expect.stringContaining("AGENTS.md") })
+        expect(row?.data).toMatchObject({ text: expect.stringContaining("AGENTS.md") })
         expect(yield* llm.calls).toBe(1)
       }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
     30_000,
@@ -839,7 +718,6 @@ describe("session HttpApi", () => {
         )
         const rows = yield* Database.Service.use(({ db }) =>
           Effect.all({
-            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
             canonical: db
               .select()
               .from(SessionMessageTable)
@@ -854,7 +732,6 @@ describe("session HttpApi", () => {
               .pipe(Effect.orDie),
           }),
         )
-        expect(rows.legacy).toBeUndefined()
         expect(rows.canonical?.data).toMatchObject({ text: "Review src tests" })
         expect(rows.messages.find((row) => row.type === "assistant")?.data).toMatchObject({
           model: { providerID: "test", id: "test-model", variant: "high" },
@@ -913,7 +790,6 @@ describe("session HttpApi", () => {
         expect(response.status).toBe(400)
         const rows = yield* Database.Service.use(({ db }) =>
           Effect.all({
-            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
             admitted: db
               .select()
               .from(SessionInputTable)
@@ -928,7 +804,6 @@ describe("session HttpApi", () => {
               .pipe(Effect.orDie),
           }),
         )
-        expect(rows.legacy).toBeUndefined()
         expect(rows.admitted).toBeUndefined()
         expect(rows.canonical).toBeUndefined()
         expect(yield* llm.calls).toBe(0)
@@ -985,7 +860,6 @@ describe("session HttpApi", () => {
       expect(response.status).toBe(200)
       const rows = yield* Database.Service.use(({ db }) =>
         Effect.all({
-          legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
           admitted: db
             .select()
             .from(SessionInputTable)
@@ -994,7 +868,6 @@ describe("session HttpApi", () => {
             .pipe(Effect.orDie),
         }),
       )
-      expect(rows.legacy).toBeUndefined()
       expect(rows.admitted?.prompt).toMatchObject({
         text: "Read the guide",
         files: [
@@ -1096,7 +969,6 @@ describe("session HttpApi", () => {
 
         const rows = yield* Database.Service.use(({ db }) =>
           Effect.all({
-            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
             admitted: db
               .select()
               .from(SessionInputTable)
@@ -1111,7 +983,6 @@ describe("session HttpApi", () => {
               .pipe(Effect.orDie),
           }),
         )
-        expect(rows.legacy, item.name).toBeUndefined()
         expect(rows.admitted, item.name).toBeUndefined()
         expect(rows.canonical, item.name).toBeUndefined()
       }
@@ -1183,7 +1054,6 @@ describe("session HttpApi", () => {
         expect(prompt.status).toBe(400)
         const rows = yield* Database.Service.use(({ db }) =>
           Effect.all({
-            legacy: db.select().from(MessageTable).where(eq(MessageTable.id, messageID)).get().pipe(Effect.orDie),
             admitted: db
               .select()
               .from(SessionInputTable)
@@ -1198,7 +1068,6 @@ describe("session HttpApi", () => {
               .pipe(Effect.orDie),
           }),
         )
-        expect(rows.legacy).toBeUndefined()
         expect(rows.admitted).toBeUndefined()
         expect(rows.canonical).toBeUndefined()
         expect(yield* llm.calls).toBe(0)
@@ -1345,13 +1214,6 @@ describe("session HttpApi", () => {
       })
       expect(prompt.status).toBe(200)
 
-      const v1Rows = yield* Database.Service.use(({ db }) =>
-        Effect.all([
-          db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-          db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-        ]),
-      )
-
       const summarize = yield* request(route(pathFor(SessionPaths.summarize, { sessionID: session.id })), {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1359,16 +1221,6 @@ describe("session HttpApi", () => {
       })
       expect(summarize.status).toBe(200)
       expect(yield* json<boolean>(summarize)).toBeTrue()
-
-      // Summarize routes through the V2 compaction pipeline and must not
-      // create any new V1 message/part rows.
-      const after = yield* Database.Service.use(({ db }) =>
-        Effect.all([
-          db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-          db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-        ]),
-      )
-      expect(after).toEqual(v1Rows)
 
       const history = yield* requestJson<SessionV1.WithParts[]>(
         route(pathFor(SessionPaths.messages, { sessionID: session.id })),
@@ -2365,7 +2217,7 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
-    "serves message mutation routes from the canonical transcript without V1 writes",
+    "serves message mutation routes from the canonical transcript",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
@@ -2378,13 +2230,6 @@ describe("session HttpApi", () => {
           SessionMessage.AssistantText.make({ type: "text", id: "text_second", text: "second" }),
         ])
         const partID = PartID.ascending(`prt_${first.id}_text_0`)
-        const rowsBefore = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-
         const updated = yield* requestJson<SessionV1.Part>(
           pathFor(SessionPaths.updatePart, {
             sessionID: session.id,
@@ -2431,234 +2276,6 @@ describe("session HttpApi", () => {
             db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, second.id)).get().pipe(Effect.orDie),
           ),
         ).toBeUndefined()
-        const rowsAfter = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-        expect(rowsAfter).toEqual(rowsBefore)
-      }),
-    { git: true, config: { formatter: false, lsp: false } },
-  )
-
-  it.instance(
-    "rejects mutations for retained-only user messages without adopting them",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const current = yield* createSession({ title: "retained mutation" })
-        const retained = yield* createTextMessage(current.id, "retained")
-
-        const updated = yield* request(
-          pathFor(SessionPaths.updatePart, {
-            sessionID: current.id,
-            messageID: retained.info.id,
-            partID: retained.part.id,
-          }),
-          {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({ ...retained.part, text: "canonical" }),
-          },
-        )
-        expect(updated.status).toBe(400)
-        expect(
-          yield* Database.Service.use(({ db }) =>
-            db
-              .select({ data: SessionMessageTable.data })
-              .from(SessionMessageTable)
-              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(retained.info.id)))
-              .get()
-              .pipe(Effect.orDie),
-          ),
-        ).toBeUndefined()
-        expect(
-          yield* Database.Service.use(({ db }) =>
-            db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, retained.part.id)).get().pipe(Effect.orDie),
-          ),
-        ).toMatchObject({ data: { text: "retained" } })
-
-        expect(
-          (
-            yield* request(
-            pathFor(SessionPaths.deletePart, {
-              sessionID: current.id,
-              messageID: retained.info.id,
-              partID: retained.part.id,
-            }),
-            { method: "DELETE", headers },
-            )
-          ).status,
-        ).toBe(400)
-
-        expect(
-          (
-            yield* request(
-            pathFor(SessionPaths.deleteMessage, { sessionID: current.id, messageID: retained.info.id }),
-            { method: "DELETE", headers },
-            )
-          ).status,
-        ).toBe(404)
-        expect(
-          (
-            yield* request(
-              pathFor(SessionPaths.message, { sessionID: current.id, messageID: retained.info.id }),
-              { headers },
-            )
-          ).status,
-        ).toBe(404)
-      }),
-    { git: true, config: { formatter: false, lsp: false } },
-  )
-
-  it.instance(
-    "rejects mutations for retained-only assistant messages without adopting them",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const current = yield* createSession({ title: "retained assistant mutation" })
-        const parent = yield* createTextMessage(current.id, "parent")
-        const message: SessionV1.Assistant = {
-          id: MessageID.ascending("msg_retained_assistant"),
-          sessionID: current.id,
-          role: "assistant",
-          time: { created: 2, completed: 3 },
-          parentID: parent.info.id,
-          modelID: ModelV2.ID.make("model"),
-          providerID: ProviderV2.ID.make("provider"),
-          mode: "build",
-          agent: "build",
-          path: { cwd: test.directory, root: test.directory },
-          cost: 0,
-          tokens: { input: 1, output: 2, reasoning: 1, cache: { read: 0, write: 0 } },
-          finish: "stop",
-        }
-        const reasoning: SessionV1.ReasoningPart = {
-          id: PartID.ascending("prt_retained_reasoning"),
-          sessionID: current.id,
-          messageID: message.id,
-          type: "reasoning",
-          text: "considering",
-          time: { start: 2, end: 2 },
-        }
-        const text: SessionV1.TextPart = {
-          id: PartID.ascending("prt_retained_text"),
-          sessionID: current.id,
-          messageID: message.id,
-          type: "text",
-          text: "answer",
-        }
-        yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db
-              .insert(MessageTable)
-              .values({
-                id: message.id,
-                session_id: current.id,
-                time_created: message.time.created,
-                data: {
-                  role: message.role,
-                  time: message.time,
-                  parentID: message.parentID,
-                  modelID: message.modelID,
-                  providerID: message.providerID,
-                  mode: message.mode,
-                  agent: message.agent,
-                  path: message.path,
-                  cost: message.cost,
-                  tokens: message.tokens,
-                  finish: message.finish,
-                } as NonNullable<(typeof MessageTable.$inferInsert)["data"]>,
-              })
-              .run()
-              .pipe(Effect.orDie),
-            db
-              .insert(PartTable)
-              .values([
-                {
-                  id: reasoning.id,
-                  message_id: message.id,
-                  session_id: current.id,
-                  time_created: message.time.created,
-                  data: {
-                    type: reasoning.type,
-                    text: reasoning.text,
-                    time: reasoning.time,
-                  } as NonNullable<(typeof PartTable.$inferInsert)["data"]>,
-                },
-                {
-                  id: text.id,
-                  message_id: message.id,
-                  session_id: current.id,
-                  time_created: message.time.created,
-                  data: { type: text.type, text: text.text } as NonNullable<
-                    (typeof PartTable.$inferInsert)["data"]
-                  >,
-                },
-              ])
-              .run()
-              .pipe(Effect.orDie),
-          ]).pipe(Effect.asVoid),
-        )
-        const rowsBefore = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ data: MessageTable.data }).from(MessageTable).where(eq(MessageTable.id, message.id)).get().pipe(Effect.orDie),
-            db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, reasoning.id)).get().pipe(Effect.orDie),
-            db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, text.id)).get().pipe(Effect.orDie),
-          ]),
-        )
-
-        expect(
-          (
-            yield* request(
-            pathFor(SessionPaths.updatePart, {
-              sessionID: current.id,
-              messageID: message.id,
-              partID: reasoning.id,
-            }),
-            {
-              method: "PATCH",
-              headers,
-              body: JSON.stringify({ ...reasoning, text: "reconsidered" }),
-            },
-            )
-          ).status,
-        ).toBe(400)
-        expect(
-          (
-            yield* request(
-            pathFor(SessionPaths.deletePart, {
-              sessionID: current.id,
-              messageID: message.id,
-              partID: text.id,
-            }),
-            { method: "DELETE", headers },
-            )
-          ).status,
-        ).toBe(400)
-
-        expect(
-          yield* Database.Service.use(({ db }) =>
-            db
-              .select({ data: SessionMessageTable.data })
-              .from(SessionMessageTable)
-              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(message.id)))
-              .get()
-              .pipe(Effect.orDie),
-          ),
-        ).toBeUndefined()
-        expect(
-          yield* Database.Service.use(({ db }) =>
-            Effect.all([
-              db.select({ data: MessageTable.data }).from(MessageTable).where(eq(MessageTable.id, message.id)).get().pipe(Effect.orDie),
-              db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, reasoning.id)).get().pipe(Effect.orDie),
-              db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, text.id)).get().pipe(Effect.orDie),
-            ]),
-          ),
-        ).toEqual(rowsBefore)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -2772,13 +2389,6 @@ describe("session HttpApi", () => {
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const session = yield* createSession({ title: "remaining" })
 
-        const v1Rows = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-
         expect(
           yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
             method: "POST",
@@ -2793,16 +2403,6 @@ describe("session HttpApi", () => {
             headers,
           }),
         ).toMatchObject({ id: session.id })
-
-        // Revert/unrevert route through the V2 revert command and must not
-        // create any new V1 message/part rows.
-        const after = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-        expect(after).toEqual(v1Rows)
 
         const permissionID = String(PermissionV1.ID.ascending())
         const permission = yield* request(
@@ -2838,13 +2438,6 @@ describe("session HttpApi", () => {
           SessionMessage.AssistantText.make({ type: "text", id: "text_remove", text: "remove" }),
         ])
         const partID = PartID.ascending(`prt_${message.id}_text_1`)
-        const before = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-
         expect(
           yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
             method: "POST",
@@ -2864,13 +2457,6 @@ describe("session HttpApi", () => {
             .pipe(Effect.orDie),
         )
         expect(row?.data).toMatchObject({ content: [{ type: "text", id: "text_keep", text: "keep" }] })
-        const after = yield* Database.Service.use(({ db }) =>
-          Effect.all([
-            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
-            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
-          ]),
-        )
-        expect(after).toEqual(before)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

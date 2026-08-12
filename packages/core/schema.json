@@ -1,9 +1,9 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "c279cae1-dba0-4e4d-985a-e1a61874aad6",
+  "id": "3af04ebe-796f-4630-8c96-d75a227676d2",
   "prevIds": [
-    "59835e31-1db6-411a-8db2-4eda8ebc2034"
+    "c279cae1-dba0-4e4d-985a-e1a61874aad6"
   ],
   "ddl": [
     {
@@ -51,14 +51,6 @@
       "entityType": "tables"
     },
     {
-      "name": "message",
-      "entityType": "tables"
-    },
-    {
-      "name": "part",
-      "entityType": "tables"
-    },
-    {
       "name": "session_provider_attempt",
       "entityType": "tables"
     },
@@ -76,10 +68,6 @@
     },
     {
       "name": "session_message",
-      "entityType": "tables"
-    },
-    {
-      "name": "session_message_tombstone",
       "entityType": "tables"
     },
     {
@@ -802,116 +790,6 @@
       "autoincrement": false,
       "default": null,
       "generated": null,
-      "name": "id",
-      "entityType": "columns",
-      "table": "message"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "session_id",
-      "entityType": "columns",
-      "table": "message"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "time_created",
-      "entityType": "columns",
-      "table": "message"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "time_updated",
-      "entityType": "columns",
-      "table": "message"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "data",
-      "entityType": "columns",
-      "table": "message"
-    },
-    {
-      "type": "text",
-      "notNull": false,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "id",
-      "entityType": "columns",
-      "table": "part"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "message_id",
-      "entityType": "columns",
-      "table": "part"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "session_id",
-      "entityType": "columns",
-      "table": "part"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "time_created",
-      "entityType": "columns",
-      "table": "part"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "time_updated",
-      "entityType": "columns",
-      "table": "part"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "data",
-      "entityType": "columns",
-      "table": "part"
-    },
-    {
-      "type": "text",
-      "notNull": false,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
       "name": "session_id",
       "entityType": "columns",
       "table": "session_provider_attempt"
@@ -1285,46 +1163,6 @@
       "name": "data",
       "entityType": "columns",
       "table": "session_message"
-    },
-    {
-      "type": "text",
-      "notNull": false,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "message_id",
-      "entityType": "columns",
-      "table": "session_message_tombstone"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "session_id",
-      "entityType": "columns",
-      "table": "session_message_tombstone"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "time_created",
-      "entityType": "columns",
-      "table": "session_message_tombstone"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "time_updated",
-      "entityType": "columns",
-      "table": "session_message_tombstone"
     },
     {
       "type": "text",
@@ -2192,36 +2030,6 @@
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
-      "name": "fk_message_session_id_session_id_fk",
-      "entityType": "fks",
-      "table": "message"
-    },
-    {
-      "columns": [
-        "message_id"
-      ],
-      "tableTo": "message",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "nameExplicit": false,
-      "name": "fk_part_message_id_message_id_fk",
-      "entityType": "fks",
-      "table": "part"
-    },
-    {
-      "columns": [
-        "session_id"
-      ],
-      "tableTo": "session",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "nameExplicit": false,
       "name": "fk_session_provider_attempt_session_id_session_id_fk",
       "entityType": "fks",
       "table": "session_provider_attempt"
@@ -2285,21 +2093,6 @@
       "name": "fk_session_message_session_id_session_id_fk",
       "entityType": "fks",
       "table": "session_message"
-    },
-    {
-      "columns": [
-        "session_id"
-      ],
-      "tableTo": "session",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "nameExplicit": false,
-      "name": "fk_session_message_tombstone_session_id_session_id_fk",
-      "entityType": "fks",
-      "table": "session_message_tombstone"
     },
     {
       "columns": [
@@ -2534,24 +2327,6 @@
     },
     {
       "columns": [
-        "id"
-      ],
-      "nameExplicit": false,
-      "name": "message_pk",
-      "table": "message",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
-        "id"
-      ],
-      "nameExplicit": false,
-      "name": "part_pk",
-      "table": "part",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
         "session_id"
       ],
       "nameExplicit": false,
@@ -2593,15 +2368,6 @@
       "nameExplicit": false,
       "name": "session_message_pk",
       "table": "session_message",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
-        "message_id"
-      ],
-      "nameExplicit": false,
-      "name": "session_message_tombstone_pk",
-      "table": "session_message_tombstone",
       "entityType": "pks"
     },
     {
@@ -2710,60 +2476,6 @@
       "name": "permission_project_action_resource_idx",
       "entityType": "indexes",
       "table": "permission"
-    },
-    {
-      "columns": [
-        {
-          "value": "session_id",
-          "isExpression": false
-        },
-        {
-          "value": "time_created",
-          "isExpression": false
-        },
-        {
-          "value": "id",
-          "isExpression": false
-        }
-      ],
-      "isUnique": false,
-      "where": null,
-      "origin": "manual",
-      "name": "message_session_time_created_id_idx",
-      "entityType": "indexes",
-      "table": "message"
-    },
-    {
-      "columns": [
-        {
-          "value": "message_id",
-          "isExpression": false
-        },
-        {
-          "value": "id",
-          "isExpression": false
-        }
-      ],
-      "isUnique": false,
-      "where": null,
-      "origin": "manual",
-      "name": "part_message_id_id_idx",
-      "entityType": "indexes",
-      "table": "part"
-    },
-    {
-      "columns": [
-        {
-          "value": "session_id",
-          "isExpression": false
-        }
-      ],
-      "isUnique": false,
-      "where": null,
-      "origin": "manual",
-      "name": "part_session_idx",
-      "entityType": "indexes",
-      "table": "part"
     },
     {
       "columns": [
@@ -2920,20 +2632,6 @@
       "name": "session_message_time_created_idx",
       "entityType": "indexes",
       "table": "session_message"
-    },
-    {
-      "columns": [
-        {
-          "value": "session_id",
-          "isExpression": false
-        }
-      ],
-      "isUnique": false,
-      "where": null,
-      "origin": "manual",
-      "name": "session_message_tombstone_session_idx",
-      "entityType": "indexes",
-      "table": "session_message_tombstone"
     },
     {
       "columns": [

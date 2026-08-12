@@ -408,6 +408,8 @@ export type SessionsListOutput = {
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
+      readonly contentIndex?: number
+      readonly removedMessageIDs?: ReadonlyArray<string>
       readonly snapshot?: string
       readonly diff?: string
       readonly files?: ReadonlyArray<{
@@ -501,6 +503,8 @@ export type SessionsCreateOutput = {
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
+      readonly contentIndex?: number
+      readonly removedMessageIDs?: ReadonlyArray<string>
       readonly snapshot?: string
       readonly diff?: string
       readonly files?: ReadonlyArray<{
@@ -558,6 +562,8 @@ export type SessionsGetOutput = {
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
+      readonly contentIndex?: number
+      readonly removedMessageIDs?: ReadonlyArray<string>
       readonly snapshot?: string
       readonly diff?: string
       readonly files?: ReadonlyArray<{
@@ -605,6 +611,8 @@ export type SessionsChildrenOutput = {
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
+      readonly contentIndex?: number
+      readonly removedMessageIDs?: ReadonlyArray<string>
       readonly snapshot?: string
       readonly diff?: string
       readonly files?: ReadonlyArray<{
@@ -661,6 +669,8 @@ export type SessionsForkOutput = {
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
+      readonly contentIndex?: number
+      readonly removedMessageIDs?: ReadonlyArray<string>
       readonly snapshot?: string
       readonly diff?: string
       readonly files?: ReadonlyArray<{
@@ -712,6 +722,8 @@ export type SessionsUpdateOutput = {
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
+      readonly contentIndex?: number
+      readonly removedMessageIDs?: ReadonlyArray<string>
       readonly snapshot?: string
       readonly diff?: string
       readonly files?: ReadonlyArray<{
@@ -1829,6 +1841,8 @@ export type SessionsStageOutput = {
   readonly data: {
     readonly messageID: string
     readonly partID?: string
+    readonly contentIndex?: number
+    readonly removedMessageIDs?: ReadonlyArray<string>
     readonly snapshot?: string
     readonly diff?: string
     readonly files?: ReadonlyArray<{
@@ -2208,6 +2222,8 @@ export type SessionsHistoryOutput = {
             readonly revert?: {
               readonly messageID: string
               readonly partID?: string
+              readonly contentIndex?: number
+              readonly removedMessageIDs?: ReadonlyArray<string>
               readonly snapshot?: string
               readonly diff?: string
               readonly files?: ReadonlyArray<{
@@ -2269,6 +2285,8 @@ export type SessionsHistoryOutput = {
             readonly revert?: {
               readonly messageID: string
               readonly partID?: string
+              readonly contentIndex?: number
+              readonly removedMessageIDs?: ReadonlyArray<string>
               readonly snapshot?: string
               readonly diff?: string
               readonly files?: ReadonlyArray<{
@@ -2330,6 +2348,8 @@ export type SessionsHistoryOutput = {
             readonly revert?: {
               readonly messageID: string
               readonly partID?: string
+              readonly contentIndex?: number
+              readonly removedMessageIDs?: ReadonlyArray<string>
               readonly snapshot?: string
               readonly diff?: string
               readonly files?: ReadonlyArray<{
@@ -2744,6 +2764,241 @@ export type SessionsHistoryOutput = {
                 readonly metadata?: { readonly [x: string]: JsonValue }
                 readonly time: { readonly created: number }
               }
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.transcript.message.removed"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: { readonly timestamp: number; readonly sessionID: string; readonly messageID: string }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.transcript.user-text.updated"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly messageID: string
+          readonly partID: string
+          readonly text: string
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.transcript.user-text.removed"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly messageID: string
+          readonly partID: string
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.transcript.content.updated"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly assistantMessageID: string
+          readonly contentIndex: number
+          readonly partID: string
+          readonly content:
+            | { readonly type: "text"; readonly id: string; readonly text: string }
+            | {
+                readonly type: "reasoning"
+                readonly id: string
+                readonly text: string
+                readonly providerMetadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
+                readonly time?: { readonly created: number; readonly completed?: number }
+              }
+            | {
+                readonly type: "tool"
+                readonly id: string
+                readonly name: string
+                readonly provider?: {
+                  readonly executed: boolean
+                  readonly metadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
+                  readonly resultMetadata?: { readonly [x: string]: { readonly [x: string]: JsonValue } }
+                }
+                readonly state:
+                  | { readonly status: "pending"; readonly input: string }
+                  | {
+                      readonly status: "running"
+                      readonly input: { readonly [x: string]: JsonValue }
+                      readonly structured: { readonly [x: string]: JsonValue }
+                      readonly content: ReadonlyArray<
+                        | {
+                            readonly type: "text"
+                            readonly text: string
+                            readonly provenance?: {
+                              readonly type: "mcp"
+                              readonly clientName: string
+                              readonly uri: string
+                              readonly kind: "resource" | "resource_link"
+                              readonly mime?: string
+                              readonly name?: string
+                              readonly description?: string
+                              readonly size?: number | "Infinity" | "-Infinity" | "NaN"
+                              readonly annotations?: { readonly [x: string]: JsonValue }
+                              readonly meta?: { readonly [x: string]: JsonValue }
+                            }
+                          }
+                        | {
+                            readonly type: "file"
+                            readonly uri: string
+                            readonly mime: string
+                            readonly name?: string
+                            readonly provenance?: {
+                              readonly type: "mcp"
+                              readonly clientName: string
+                              readonly uri: string
+                              readonly kind: "resource" | "resource_link"
+                              readonly mime?: string
+                              readonly name?: string
+                              readonly description?: string
+                              readonly size?: number | "Infinity" | "-Infinity" | "NaN"
+                              readonly annotations?: { readonly [x: string]: JsonValue }
+                              readonly meta?: { readonly [x: string]: JsonValue }
+                            }
+                          }
+                      >
+                    }
+                  | {
+                      readonly status: "completed"
+                      readonly input: { readonly [x: string]: JsonValue }
+                      readonly attachments?: ReadonlyArray<{
+                        readonly uri: string
+                        readonly mime: string
+                        readonly name?: string
+                        readonly description?: string
+                        readonly source?: { readonly start: number; readonly end: number; readonly text: string }
+                        readonly resource?: { readonly clientName: string; readonly uri: string }
+                        readonly materialized?: ReadonlyArray<
+                          | { readonly type: "text"; readonly text: string }
+                          | {
+                              readonly type: "file"
+                              readonly uri: string
+                              readonly mime: string
+                              readonly name?: string
+                            }
+                          | { readonly type: "error"; readonly message: string }
+                        >
+                      }>
+                      readonly content: ReadonlyArray<
+                        | {
+                            readonly type: "text"
+                            readonly text: string
+                            readonly provenance?: {
+                              readonly type: "mcp"
+                              readonly clientName: string
+                              readonly uri: string
+                              readonly kind: "resource" | "resource_link"
+                              readonly mime?: string
+                              readonly name?: string
+                              readonly description?: string
+                              readonly size?: number | "Infinity" | "-Infinity" | "NaN"
+                              readonly annotations?: { readonly [x: string]: JsonValue }
+                              readonly meta?: { readonly [x: string]: JsonValue }
+                            }
+                          }
+                        | {
+                            readonly type: "file"
+                            readonly uri: string
+                            readonly mime: string
+                            readonly name?: string
+                            readonly provenance?: {
+                              readonly type: "mcp"
+                              readonly clientName: string
+                              readonly uri: string
+                              readonly kind: "resource" | "resource_link"
+                              readonly mime?: string
+                              readonly name?: string
+                              readonly description?: string
+                              readonly size?: number | "Infinity" | "-Infinity" | "NaN"
+                              readonly annotations?: { readonly [x: string]: JsonValue }
+                              readonly meta?: { readonly [x: string]: JsonValue }
+                            }
+                          }
+                      >
+                      readonly outputPaths?: ReadonlyArray<string>
+                      readonly structured: { readonly [x: string]: JsonValue }
+                      readonly result?: JsonValue
+                    }
+                  | {
+                      readonly status: "error"
+                      readonly input: { readonly [x: string]: JsonValue }
+                      readonly content: ReadonlyArray<
+                        | {
+                            readonly type: "text"
+                            readonly text: string
+                            readonly provenance?: {
+                              readonly type: "mcp"
+                              readonly clientName: string
+                              readonly uri: string
+                              readonly kind: "resource" | "resource_link"
+                              readonly mime?: string
+                              readonly name?: string
+                              readonly description?: string
+                              readonly size?: number | "Infinity" | "-Infinity" | "NaN"
+                              readonly annotations?: { readonly [x: string]: JsonValue }
+                              readonly meta?: { readonly [x: string]: JsonValue }
+                            }
+                          }
+                        | {
+                            readonly type: "file"
+                            readonly uri: string
+                            readonly mime: string
+                            readonly name?: string
+                            readonly provenance?: {
+                              readonly type: "mcp"
+                              readonly clientName: string
+                              readonly uri: string
+                              readonly kind: "resource" | "resource_link"
+                              readonly mime?: string
+                              readonly name?: string
+                              readonly description?: string
+                              readonly size?: number | "Infinity" | "-Infinity" | "NaN"
+                              readonly annotations?: { readonly [x: string]: JsonValue }
+                              readonly meta?: { readonly [x: string]: JsonValue }
+                            }
+                          }
+                      >
+                      readonly structured: { readonly [x: string]: JsonValue }
+                      readonly error: { readonly type: "unknown"; readonly message: string }
+                      readonly result?: JsonValue
+                    }
+                readonly time: {
+                  readonly created: number
+                  readonly ran?: number
+                  readonly completed?: number
+                  readonly pruned?: number
+                }
+              }
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.transcript.content.removed"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly assistantMessageID: string
+          readonly contentIndex: number
+          readonly partID: string
         }
       }
     | {
@@ -3339,6 +3594,8 @@ export type SessionsHistoryOutput = {
           readonly revert: {
             readonly messageID: string
             readonly partID?: string
+            readonly contentIndex?: number
+            readonly removedMessageIDs?: ReadonlyArray<string>
             readonly snapshot?: string
             readonly diff?: string
             readonly files?: ReadonlyArray<{
@@ -3365,7 +3622,14 @@ export type SessionsHistoryOutput = {
         readonly type: "session.next.revert.committed"
         readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
         readonly location?: { readonly directory: string; readonly workspaceID?: string }
-        readonly data: { readonly timestamp: number; readonly sessionID: string; readonly messageID: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly messageID: string
+          readonly partID?: string
+          readonly contentIndex?: number
+          readonly removedMessageIDs?: ReadonlyArray<string>
+        }
       }
   >
   readonly hasMore: boolean
@@ -3425,6 +3689,8 @@ export type SessionsEventsOutput =
           readonly revert?: {
             readonly messageID: string
             readonly partID?: string
+            readonly contentIndex?: number
+            readonly removedMessageIDs?: ReadonlyArray<string>
             readonly snapshot?: string
             readonly diff?: string
             readonly files?: ReadonlyArray<{
@@ -3486,6 +3752,8 @@ export type SessionsEventsOutput =
           readonly revert?: {
             readonly messageID: string
             readonly partID?: string
+            readonly contentIndex?: number
+            readonly removedMessageIDs?: ReadonlyArray<string>
             readonly snapshot?: string
             readonly diff?: string
             readonly files?: ReadonlyArray<{
@@ -3547,6 +3815,8 @@ export type SessionsEventsOutput =
           readonly revert?: {
             readonly messageID: string
             readonly partID?: string
+            readonly contentIndex?: number
+            readonly removedMessageIDs?: ReadonlyArray<string>
             readonly snapshot?: string
             readonly diff?: string
             readonly files?: ReadonlyArray<{
@@ -3961,6 +4231,236 @@ export type SessionsEventsOutput =
               readonly metadata?: { readonly [x: string]: unknown }
               readonly time: { readonly created: number }
             }
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.transcript.message.removed"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: { readonly timestamp: number; readonly sessionID: string; readonly messageID: string }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.transcript.user-text.updated"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly messageID: string
+        readonly partID: string
+        readonly text: string
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.transcript.user-text.removed"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly messageID: string
+        readonly partID: string
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.transcript.content.updated"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly assistantMessageID: string
+        readonly contentIndex: number
+        readonly partID: string
+        readonly content:
+          | { readonly type: "text"; readonly id: string; readonly text: string }
+          | {
+              readonly type: "reasoning"
+              readonly id: string
+              readonly text: string
+              readonly providerMetadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+              readonly time?: { readonly created: number; readonly completed?: number }
+            }
+          | {
+              readonly type: "tool"
+              readonly id: string
+              readonly name: string
+              readonly provider?: {
+                readonly executed: boolean
+                readonly metadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+                readonly resultMetadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
+              }
+              readonly state:
+                | { readonly status: "pending"; readonly input: string }
+                | {
+                    readonly status: "running"
+                    readonly input: { readonly [x: string]: unknown }
+                    readonly structured: { readonly [x: string]: unknown }
+                    readonly content: ReadonlyArray<
+                      | {
+                          readonly type: "text"
+                          readonly text: string
+                          readonly provenance?: {
+                            readonly type: "mcp"
+                            readonly clientName: string
+                            readonly uri: string
+                            readonly kind: "resource" | "resource_link"
+                            readonly mime?: string
+                            readonly name?: string
+                            readonly description?: string
+                            readonly size?: number
+                            readonly annotations?: { readonly [x: string]: unknown }
+                            readonly meta?: { readonly [x: string]: unknown }
+                          }
+                        }
+                      | {
+                          readonly type: "file"
+                          readonly uri: string
+                          readonly mime: string
+                          readonly name?: string
+                          readonly provenance?: {
+                            readonly type: "mcp"
+                            readonly clientName: string
+                            readonly uri: string
+                            readonly kind: "resource" | "resource_link"
+                            readonly mime?: string
+                            readonly name?: string
+                            readonly description?: string
+                            readonly size?: number
+                            readonly annotations?: { readonly [x: string]: unknown }
+                            readonly meta?: { readonly [x: string]: unknown }
+                          }
+                        }
+                    >
+                  }
+                | {
+                    readonly status: "completed"
+                    readonly input: { readonly [x: string]: unknown }
+                    readonly attachments?: ReadonlyArray<{
+                      readonly uri: string
+                      readonly mime: string
+                      readonly name?: string
+                      readonly description?: string
+                      readonly source?: { readonly start: number; readonly end: number; readonly text: string }
+                      readonly resource?: { readonly clientName: string; readonly uri: string }
+                      readonly materialized?: ReadonlyArray<
+                        | { readonly type: "text"; readonly text: string }
+                        | { readonly type: "file"; readonly uri: string; readonly mime: string; readonly name?: string }
+                        | { readonly type: "error"; readonly message: string }
+                      >
+                    }>
+                    readonly content: ReadonlyArray<
+                      | {
+                          readonly type: "text"
+                          readonly text: string
+                          readonly provenance?: {
+                            readonly type: "mcp"
+                            readonly clientName: string
+                            readonly uri: string
+                            readonly kind: "resource" | "resource_link"
+                            readonly mime?: string
+                            readonly name?: string
+                            readonly description?: string
+                            readonly size?: number
+                            readonly annotations?: { readonly [x: string]: unknown }
+                            readonly meta?: { readonly [x: string]: unknown }
+                          }
+                        }
+                      | {
+                          readonly type: "file"
+                          readonly uri: string
+                          readonly mime: string
+                          readonly name?: string
+                          readonly provenance?: {
+                            readonly type: "mcp"
+                            readonly clientName: string
+                            readonly uri: string
+                            readonly kind: "resource" | "resource_link"
+                            readonly mime?: string
+                            readonly name?: string
+                            readonly description?: string
+                            readonly size?: number
+                            readonly annotations?: { readonly [x: string]: unknown }
+                            readonly meta?: { readonly [x: string]: unknown }
+                          }
+                        }
+                    >
+                    readonly outputPaths?: ReadonlyArray<string>
+                    readonly structured: { readonly [x: string]: unknown }
+                    readonly result?: unknown
+                  }
+                | {
+                    readonly status: "error"
+                    readonly input: { readonly [x: string]: unknown }
+                    readonly content: ReadonlyArray<
+                      | {
+                          readonly type: "text"
+                          readonly text: string
+                          readonly provenance?: {
+                            readonly type: "mcp"
+                            readonly clientName: string
+                            readonly uri: string
+                            readonly kind: "resource" | "resource_link"
+                            readonly mime?: string
+                            readonly name?: string
+                            readonly description?: string
+                            readonly size?: number
+                            readonly annotations?: { readonly [x: string]: unknown }
+                            readonly meta?: { readonly [x: string]: unknown }
+                          }
+                        }
+                      | {
+                          readonly type: "file"
+                          readonly uri: string
+                          readonly mime: string
+                          readonly name?: string
+                          readonly provenance?: {
+                            readonly type: "mcp"
+                            readonly clientName: string
+                            readonly uri: string
+                            readonly kind: "resource" | "resource_link"
+                            readonly mime?: string
+                            readonly name?: string
+                            readonly description?: string
+                            readonly size?: number
+                            readonly annotations?: { readonly [x: string]: unknown }
+                            readonly meta?: { readonly [x: string]: unknown }
+                          }
+                        }
+                    >
+                    readonly structured: { readonly [x: string]: unknown }
+                    readonly error: { readonly type: "unknown"; readonly message: string }
+                    readonly result?: unknown
+                  }
+              readonly time: {
+                readonly created: number
+                readonly ran?: number
+                readonly completed?: number
+                readonly pruned?: number
+              }
+            }
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.transcript.content.removed"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly assistantMessageID: string
+        readonly contentIndex: number
+        readonly partID: string
       }
     }
   | {
@@ -4556,6 +5056,8 @@ export type SessionsEventsOutput =
         readonly revert: {
           readonly messageID: string
           readonly partID?: string
+          readonly contentIndex?: number
+          readonly removedMessageIDs?: ReadonlyArray<string>
           readonly snapshot?: string
           readonly diff?: string
           readonly files?: ReadonlyArray<{
@@ -4582,7 +5084,14 @@ export type SessionsEventsOutput =
       readonly type: "session.next.revert.committed"
       readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
       readonly location?: { readonly directory: string; readonly workspaceID?: string }
-      readonly data: { readonly timestamp: number; readonly sessionID: string; readonly messageID: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly messageID: string
+        readonly partID?: string
+        readonly contentIndex?: number
+        readonly removedMessageIDs?: ReadonlyArray<string>
+      }
     }
 
 export type SessionsInterruptInput = { readonly sessionID: { readonly sessionID: string }["sessionID"] }

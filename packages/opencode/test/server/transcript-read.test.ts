@@ -60,6 +60,7 @@ function assistant(id: SessionMessage.ID, created: number, text: string) {
 const canonicalOverlap = assistant(overlapID, 3, "canonical overlap")
 const canonicalOnly = assistant(nativeID, 4, "canonical")
 const canonical = [canonicalOverlap, canonicalOnly]
+const removed = new Set<SessionMessage.ID>()
 
 const legacyLayer = Layer.mock(Session.Service, {
   messages: () => Effect.succeed([legacyOnly, legacyOverlap]),
@@ -78,6 +79,15 @@ const canonicalLayer = Layer.mock(SessionV2.Service, {
     }),
   messages: () => Effect.succeed(canonical),
   message: ({ messageID }) => Effect.succeed(canonical.find((message) => message.id === messageID)),
+  transcript: {
+    removedMessages: () => Effect.succeed(removed),
+    importMessage: () => Effect.die("unexpected SessionV2.transcript.importMessage"),
+    removeMessage: () => Effect.die("unexpected SessionV2.transcript.removeMessage"),
+    updateUserText: () => Effect.die("unexpected SessionV2.transcript.updateUserText"),
+    removeUserText: () => Effect.die("unexpected SessionV2.transcript.removeUserText"),
+    updateContent: () => Effect.die("unexpected SessionV2.transcript.updateContent"),
+    removeContent: () => Effect.die("unexpected SessionV2.transcript.removeContent"),
+  },
   revert: {
     stage: () => Effect.die("unexpected SessionV2.revert.stage"),
     clear: () => Effect.die("unexpected SessionV2.revert.clear"),
@@ -159,5 +169,17 @@ it.effect("reads canonical and normalized retained messages by ID", () =>
       id: normalizedLegacyID,
       metadata: { legacy: legacyOnly },
     })
+  }),
+)
+
+it.effect("does not revive retained messages hidden by canonical tombstones", () =>
+  Effect.gen(function* () {
+    removed.add(normalizedLegacyID)
+    const read = yield* SessionRead.Service
+    expect((yield* read.messages({ sessionID, order: "asc" })).map((message) => message.id)).not.toContain(
+      normalizedLegacyID,
+    )
+    expect(yield* read.message({ sessionID, messageID: normalizedLegacyID })).toBeUndefined()
+    removed.delete(normalizedLegacyID)
   }),
 )

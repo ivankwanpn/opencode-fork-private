@@ -413,6 +413,92 @@ describe("legacy event projection", () => {
       properties: source.data as Record<string, unknown>,
     })
   })
+
+  test("projects transcript mutation compatibility events", () => {
+    const project = legacyEventProjection()
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.message.removed", {
+          sessionID: "ses_test",
+          messageID: "msg_removed",
+          timestamp: 9,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.removed",
+        properties: { sessionID: "ses_test", messageID: "msg_removed" },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.user-text.updated", {
+          sessionID: "ses_test",
+          messageID: "msg_user",
+          partID: "prt_user",
+          text: "updated",
+          timestamp: 10,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_user", messageID: "msg_user", type: "text", text: "updated" },
+        },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.user-text.removed", {
+          sessionID: "ses_test",
+          messageID: "msg_user",
+          partID: "prt_user",
+          timestamp: 11,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.removed",
+        properties: { messageID: "msg_user", partID: "prt_user" },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.content.updated", {
+          sessionID: "ses_test",
+          assistantMessageID: "msg_assistant",
+          contentIndex: 0,
+          partID: "prt_assistant",
+          content: { type: "text", id: "text", text: "updated" },
+          timestamp: 12,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_assistant", messageID: "msg_assistant", type: "text", text: "updated" },
+        },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.content.removed", {
+          sessionID: "ses_test",
+          assistantMessageID: "msg_assistant",
+          contentIndex: 0,
+          partID: "prt_assistant",
+          timestamp: 13,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.removed",
+        properties: { messageID: "msg_assistant", partID: "prt_assistant" },
+      },
+    ])
+  })
 })
 
 afterEach(async () => {

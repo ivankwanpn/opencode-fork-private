@@ -13,7 +13,10 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 - V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor` + V1 `ToolRegistry` + V1 `TaskTool`）已断线——仍装配在 layer 图里但无任何生产调用方（死代码）。
 - V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
 
-当前状态与 Codex 评估一致：**V2 基础完成约 50%，剩余难点是"让 V2 成为唯一执行路径、然后删除 V1"**。
+当前已推进到**批次 8 的删除前置条件收口**。V2 已是唯一模型执行路径，当前子批次正在关闭
+transcript mutation、revert 与 diff 的 V1 写入/读取依赖；之后仍需迁移 retained V1 transcript、
+legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才能实际删除 V1 表和目录。
+由于剩余工作集中在旧资料升级与外部兼容边界，不能再用早期「约 50%」估算代表当前风险或工作量。
 
 ---
 
@@ -63,8 +66,9 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
    permission 组 + `permissionRespond`。V1 pending 表为主，`replyCompatible` 兜底 V2。
    **风险**：V2 工具发起的 `PermissionV2.ask` 不出现在 V1 `/permission` list。
 
-6. **V1 Session 维护服务** — SessionRevert / SessionRunState / SessionStatus / SessionSummary / Todo
-   httpapi 相应端点；`LegacySessionExecution.cleanupRevert` 先 V2 commit 再 V1 收尾。
+6. **Session 维护兼容服务** — SessionRunState / SessionStatus / SessionSummary / Todo
+   httpapi 相应端点仍保留 V1 wire 形状；`SessionRevert.Service`、其 runtime layer 与
+   `LegacySessionExecution.cleanupRevert` 已移除，revert/unrevert 直接适配 V2 canonical state。
 
 7. **V1 Plugin 加载/触发/TUI** — `opencode/src/plugin/index.ts`、`loader.ts`、`plugin/tui/runtime.ts`
    插件安装/发现/TUI 插件仍 V1；运行时 hooks 已桥接 V2。
@@ -286,19 +290,26 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 >
 > **前置条件 ① TUI consumer 边界** ✅：`useEvent` 是明确的 V1/V2 边界 adapter（V2 原生流 → V1 词汇投影），满足产品决策「迁移到 V2 词汇或明确的边界 adapter」。强制 consumer 改用 V2 会破坏 6 个调用方的 Event 类型联合，边界 adapter 是正确选择。
 >
-> **前置条件 ② compatibilityDefinitions 缩减** ⏸️：producer 已切 V2（session.status/question/session.diff），但 V1 definition 仍被依赖——`share-next.ts` 消费 `Session.Event.Updated/Deleted/Diff`（share 同步依赖 V1 事件形状的 SDK 转换），`summary.ts` 发布 `Session.Event.Diff`。需先迁移 share 的 SDK 转换与这些辅助 producer，才能逐项移除 V1 definition。
+> **前置条件 ② compatibilityDefinitions 缩减** ⏸️：producer 已切 V2（session.status/question/session.diff），`SessionSummary.diff` 也已改读 canonical assistant `snapshot.patch`，不再发布或依赖 V1 diff。V1 definition 仍被 `share-next.ts`、CLI/TUI compatibility projection 等 consumer 依赖；需先迁移这些 consumer，才能逐项移除 definition。
 >
 > **前置条件 ③ v1/config 一次性 migration boundary** ✅：`config.ts` 的 `decode` 已是明确的一次性迁移路径——旧配置（`ConfigMigrateV1.isV1`）走 `decodeV1Info + migrate`，新配置直接 V2 解码。新 runtime 配置只使用 V2 结构；旧配置兼容完成前 v1/config 不删除。
 >
-> **前置条件 ④ V1 消息表写入停止** ⏸️：V1 消息表仍被辅助写入（`reminders.ts`/`revert.ts`/`summary.ts`/`tool/plan.ts` 的 `updateMessage`/`updatePart`/`removeMessage`/`removePart`）通过 V1 Session.Service 发布 V1 事件写入。V2 无公开合成消息写入 API（批次 5 调研结论）——需先为 V2 提供 `updateMessage`/`updatePart` 等价物并迁移这些辅助写入，才能停止 V1 消息表写入并移除 Core V1 message projector。
+> **前置条件 ④ runtime transcript mutation 停止写 V1** ✅：HTTP `updatePart`/`deletePart`/`deleteMessage`、revert commit、reminders/plan 与 summarize 已改走 V2 command/event/projector；这些路径不再写 `MessageTable` / `PartTable`。支持的 retained V1 user/assistant mutation 会先 lazy adopt 到 `SessionMessageTable`，删除和 revert 使用 durable tombstone 防止合并读取时复活。
 >
-> 进展（999.0.17）：
-> - ① `reminders.ts` 已删除（`SessionCommand.synthetic` 接管 reminders/plan）
-> - ② `revert.ts` V1 `updateMessage`/`removeMessage` 路径已停用：httpapi revert/unrevert 走 `SessionV2.revert.stage/clear/commit` 薄 adapter，`LegacySessionExecution.cleanupRevert` 不再调 V1 `revert.cleanup`
-> - ③ `summary.ts` 的 V1 `updateMessage` 写入（`SessionSummary.summarize`）已删除；httpapi summarize 端点改走新的窄命令 `SessionV2.summarize`（`commitStagedRevert` + `switchModel` + `compact`），`LegacySessionExecution.summarize` 移除
-> - ④ 剩余：`tool/plan.ts` 的 V1 `updateMessage`/`updatePart`（下一步转为 `SessionCommand.synthetic` 或标记不可执行）
+> **本轮 transcript mutation closeout（999.0.17）**：
+> - Part-level revert 现在持久化 canonical `contentIndex`，message-level revert 的边界不再误删前一条消息。
+> - 混合 V1/V2 历史会存储精确 `removedMessageIDs`；commit 原子截断 assistant content、同步 retained legacy parts、tombstone 后续 retained/canonical messages，并清除边界后的 pending inputs。
+> - retained assistant/user message 和任意 legacy Part ID 可在支持的操作中 lazy adopt；不支持的 Part 形状明确返回 400，不再回落到 V1 写入。
+> - `SessionSummary.diff` 读取 canonical `snapshot.patch`；obsolete `SessionRevert.Service`、runtime/server layer 与 V1-only compact/revert test 已移除。
 >
-> **批次 8 实际删除（待上述前置条件完成）**：按顺序 `v1/config/config.ts`（已依赖 V2）→ `core/src/v1/permission.ts` → `core/src/v1/session.ts` → `packages/schema/src/v1/*` 中不再被引用的部分。
+> **仍阻止实际删表/删目录的依赖** ⏸️：
+> - `LegacySessionRead`、`TranscriptRead` 与 `message-v2.ts` 仍合并/读取 retained `MessageTable` / `PartTable`。
+> - `cli/cmd/import.ts` 仍直接插入 `MessageTable` / `PartTable`，是目前明确的新 V1 transcript 写入入口。
+> - `Session.Service` 仍被 CRUD、import、stats、share、legacy read/execution、middleware、TUI/sync handler 与部分 legacy tool 路径使用。
+> - Core projector 仍消费 V1 message/Part events，以维持旧 API、旧资料和兼容事件投影。
+> - 删除 legacy tables 前必须先完成 import 迁移，并为 retained 资料确定一次性迁移或明确退役策略；否则旧 session 会丢失 transcript。
+>
+> **批次 8 实际删除（待上述前置条件完成）**：先迁移 import 和 retained transcript，再移除 compatibility readers/projectors 与 `Session.Service` runtime consumer；最后按引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*` 和 legacy tables。`v1/config` 必须保留到旧配置一次性升级路径不再需要时。
 
 ### 批次 9：全量 V2-only regression gate
 

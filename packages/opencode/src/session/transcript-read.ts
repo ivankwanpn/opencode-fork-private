@@ -18,11 +18,16 @@ export const layer = Layer.effect(
 
     const all = Effect.fn("TranscriptRead.all")(function* (sessionID: SessionSchema.ID) {
       yield* canonical.get(sessionID)
-      const [current, retained] = yield* Effect.all([
+      const [current, retained, removed] = yield* Effect.all([
         canonical.messages({ sessionID, order: "asc" }),
         legacy.messages({ sessionID }).pipe(Effect.orDie),
+        canonical.transcript.removedMessages(sessionID),
       ])
-      const merged = new Map(project(retained).map((message) => [message.id, message]))
+      const merged = new Map(
+        project(retained)
+          .filter((message) => !removed.has(message.id))
+          .map((message) => [message.id, message]),
+      )
       for (const message of current) merged.set(message.id, message)
       return Array.from(merged.values()).toSorted(compare)
     })
@@ -42,6 +47,7 @@ export const layer = Layer.effect(
     const message: SessionRead.Interface["message"] = Effect.fn("TranscriptRead.message")(function* (input) {
       const current = yield* canonical.message(input)
       if (current) return current
+      if ((yield* canonical.transcript.removedMessages(input.sessionID).pipe(Effect.orDie)).has(input.messageID)) return
       const retained = yield* legacy
         .messages({ sessionID: input.sessionID })
         .pipe(Effect.orDie)
@@ -52,7 +58,7 @@ export const layer = Layer.effect(
   }),
 )
 
-function project(messages: readonly SessionV1.WithParts[]): SessionMessage.Message[] {
+export function project(messages: readonly SessionV1.WithParts[]): SessionMessage.Message[] {
   return messages.map((message) => (message.info.role === "user" ? user(message) : assistant(message)))
 }
 

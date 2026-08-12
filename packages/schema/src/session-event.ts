@@ -217,6 +217,65 @@ export const MessageImported = Event.define({
 })
 export type MessageImported = typeof MessageImported.Type
 
+export namespace TranscriptMutation {
+  export const MessageRemoved = Event.define({
+    type: "session.next.transcript.message.removed",
+    ...options,
+    schema: {
+      ...Base,
+      messageID: SessionMessage.ID,
+    },
+  })
+  export type MessageRemoved = typeof MessageRemoved.Type
+
+  export const UserTextUpdated = Event.define({
+    type: "session.next.transcript.user-text.updated",
+    ...options,
+    schema: {
+      ...Base,
+      messageID: SessionMessage.ID,
+      partID: Schema.String,
+      text: Schema.String,
+    },
+  })
+  export type UserTextUpdated = typeof UserTextUpdated.Type
+
+  export const UserTextRemoved = Event.define({
+    type: "session.next.transcript.user-text.removed",
+    ...options,
+    schema: {
+      ...Base,
+      messageID: SessionMessage.ID,
+      partID: Schema.String,
+    },
+  })
+  export type UserTextRemoved = typeof UserTextRemoved.Type
+
+  const ContentBase = {
+    ...Base,
+    assistantMessageID: SessionMessage.ID,
+    contentIndex: NonNegativeInt,
+    partID: Schema.String,
+  }
+
+  export const ContentUpdated = Event.define({
+    type: "session.next.transcript.content.updated",
+    ...options,
+    schema: {
+      ...ContentBase,
+      content: SessionMessage.AssistantContent,
+    },
+  })
+  export type ContentUpdated = typeof ContentUpdated.Type
+
+  export const ContentRemoved = Event.define({
+    type: "session.next.transcript.content.removed",
+    ...options,
+    schema: ContentBase,
+  })
+  export type ContentRemoved = typeof ContentRemoved.Type
+}
+
 export const Prompted = Event.define({
   type: "session.next.prompted",
   ...options,
@@ -678,7 +737,13 @@ export namespace RevertEvent {
   export const Committed = Event.define({
     type: "session.next.revert.committed",
     ...options,
-    schema: { ...Base, messageID: SessionMessage.ID },
+    schema: {
+      ...Base,
+      messageID: SessionMessage.ID,
+      partID: Schema.String.pipe(optional),
+      contentIndex: NonNegativeInt.pipe(optional),
+      removedMessageIDs: Schema.Array(SessionMessage.ID).pipe(optional),
+    },
   })
 }
 
@@ -692,6 +757,11 @@ export const DurableDefinitions = Event.inventory(
   ModelSwitched,
   Moved,
   MessageImported,
+  TranscriptMutation.MessageRemoved,
+  TranscriptMutation.UserTextUpdated,
+  TranscriptMutation.UserTextRemoved,
+  TranscriptMutation.ContentUpdated,
+  TranscriptMutation.ContentRemoved,
   Prompted,
   PromptAdmitted,
   Turn.Started,
@@ -736,6 +806,11 @@ export const Definitions = Event.inventory(
   ModelSwitched,
   Moved,
   MessageImported,
+  TranscriptMutation.MessageRemoved,
+  TranscriptMutation.UserTextUpdated,
+  TranscriptMutation.UserTextRemoved,
+  TranscriptMutation.ContentUpdated,
+  TranscriptMutation.ContentRemoved,
   Prompted,
   PromptAdmitted,
   Turn.Started,

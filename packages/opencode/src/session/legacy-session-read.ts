@@ -1,4 +1,5 @@
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Effect, Layer, Context } from "effect"
 import { MessageV2 } from "./message-v2"
@@ -18,9 +19,12 @@ const make = Effect.gen(function* () {
     const messages = yield* canonical
       .messages({ sessionID: current.id, order: "asc" })
       .pipe(Effect.catchTag("Session.MessageDecodeError", Effect.die))
+    const removed = yield* canonical.transcript.removedMessages(current.id)
     const retained = yield* legacy.messages({ sessionID })
     const merged = new Map<SessionV1.MessageID, SessionV1.WithParts>(
-      retained.map((message) => [message.info.id, message]),
+      retained
+        .filter((message) => !removed.has(SessionMessage.ID.make(message.info.id)))
+        .map((message) => [message.info.id, message]),
     )
     MessageV2.toLegacy(current, messages).forEach((message) => merged.set(message.info.id, message))
     return Array.from(merged.values()).toSorted(

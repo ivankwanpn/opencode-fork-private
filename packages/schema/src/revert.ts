@@ -9,6 +9,8 @@ import { FileDiff } from "./file-diff"
 export const State = Schema.Struct({
   messageID: SessionMessage.ID,
   partID: Schema.String.pipe(optional),
+  contentIndex: NonNegativeInt.pipe(optional),
+  removedMessageIDs: Schema.Array(SessionMessage.ID).pipe(optional),
   snapshot: Schema.String.pipe(optional),
   diff: Schema.String.pipe(optional),
   files: Schema.Array(FileDiff.Core).pipe(optional),

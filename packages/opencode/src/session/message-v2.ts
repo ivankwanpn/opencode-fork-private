@@ -4,6 +4,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import type { SessionSchema } from "@opencode-ai/core/session/schema"
+import type { DeepMutable } from "@opencode-ai/core/schema"
 import {
   APIError,
   AbortedError,
@@ -696,6 +697,29 @@ export function toLegacy(
       model = message.model
       continue
     }
+    const retained = Schema.is(SessionV1.WithParts)(message.metadata?.legacy)
+      ? (structuredClone(message.metadata.legacy) as DeepMutable<typeof SessionV1.WithParts.Type>)
+      : undefined
+    if (retained) {
+      retained.info.id = id(message.id)
+      retained.info.sessionID = sessionID
+      retained.parts = retained.parts.map((part) => ({
+        ...part,
+        sessionID,
+        messageID: retained.info.id,
+      }))
+      result.push(retained)
+      if (retained.info.role === "user") parentID = retained.info.id
+      if (retained.info.role === "assistant") {
+        agent = retained.info.agent
+        model = {
+          providerID: retained.info.providerID,
+          id: retained.info.modelID,
+          ...(retained.info.variant === undefined ? {} : { variant: ModelV2.VariantID.make(retained.info.variant) }),
+        }
+      }
+      continue
+    }
     if (message.type === "user") {
       const messageID = id(message.id)
       const info: SessionV1.User = {
@@ -918,6 +942,98 @@ export function toLegacy(
   }
 
   return result
+}
+
+export function resolveRevertBoundary(
+  session: SessionSchema.Info,
+  messages: readonly SessionMessage.Message[],
+  input: { messageID: MessageID; partID?: PartID },
+) {
+  const projected = toLegacy(session, messages)
+  const targetIndex = projected.findIndex((message) => message.info.id === input.messageID)
+  if (targetIndex < 0) return { status: "not-found" as const }
+  const target = projected[targetIndex]
+  const partIndex = input.partID
+    ? target.parts.findIndex((part) => part.id === input.partID)
+    : target.parts.length > 0
+      ? 0
+      : -1
+  if (partIndex < 0) return { status: "not-found" as const }
+  const previousUser = projected
+    .slice(0, targetIndex + 1)
+    .findLast((message) => message.info.role === "user")
+  const keepsContent = target.parts
+    .slice(0, partIndex)
+    .some((part) => part.type === "text" || part.type === "tool")
+  if (!input.partID || !keepsContent) {
+    return {
+      status: "resolved" as const,
+      messageID: SessionMessage.ID.make(previousUser?.info.id ?? target.info.id),
+    }
+  }
+
+  const canonical = messages.find((message) => String(message.id) === String(target.info.id))
+  if (canonical?.type !== "assistant") return { status: "unsupported" as const }
+  const contentIndex = resolveAssistantContentIndex(canonical, input.partID)
+  if (contentIndex >= 0) {
+    return {
+      status: "resolved" as const,
+      messageID: canonical.id,
+      partID: input.partID,
+      contentIndex,
+    }
+  }
+  if (target.parts[partIndex]?.type === "step-finish") {
+    return {
+      status: "resolved" as const,
+      messageID: canonical.id,
+      partID: input.partID,
+      contentIndex: canonical.content.length,
+    }
+  }
+  return { status: "unsupported" as const }
+}
+
+export function resolveTranscriptContent(
+  session: SessionSchema.Info,
+  messages: readonly SessionMessage.Message[],
+  input: { messageID: MessageID; partID: PartID },
+) {
+  const projected = toLegacy(session, messages).find((message) => message.info.id === input.messageID)
+  const part = projected?.parts.find((item) => item.id === input.partID)
+  const message = messages.find((item) => String(item.id) === String(input.messageID))
+  if (!part || !message) return { status: "unsupported" as const }
+  if (message.type === "user" && part.type === "text") {
+    return { status: "resolved" as const, kind: "user" as const, message, part }
+  }
+  if (message.type !== "assistant") return { status: "unsupported" as const }
+  const contentIndex = resolveAssistantContentIndex(message, input.partID)
+  if (contentIndex < 0) return { status: "unsupported" as const }
+  return {
+    status: "resolved" as const,
+    kind: "assistant" as const,
+    message,
+    part,
+    content: message.content[contentIndex],
+    contentIndex,
+    isLast: contentIndex === message.content.length - 1,
+  }
+}
+
+function resolveAssistantContentIndex(message: SessionMessage.Assistant, partID: PartID) {
+  const projected = message.content.findIndex(
+    (item, index) => PartID.ascending(`prt_${message.id}_${item.type}_${index}`) === partID,
+  )
+  if (projected >= 0) return projected
+  if (!Schema.is(SessionV1.WithParts)(message.metadata?.legacy) || message.metadata.legacy.info.role !== "assistant") {
+    return -1
+  }
+  const retained = message.metadata.legacy.parts.filter(
+    (part) => part.type === "text" || part.type === "reasoning" || part.type === "tool",
+  )
+  const index = retained.findIndex((part) => part.id === partID)
+  if (index < 0 || retained[index]?.type !== message.content[index]?.type) return -1
+  return index
 }
 
 export function filterCompacted(msgs: Iterable<WithParts>) {

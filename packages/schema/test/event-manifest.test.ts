@@ -9,7 +9,7 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(100)
+    expect(EventManifest.ServerDefinitions.length).toBe(105)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
@@ -26,7 +26,7 @@ describe("public event manifest", () => {
       SessionV1.Event.Error,
     ])
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
-    expect(EventManifest.Durable.size).toBe(48)
+    expect(EventManifest.Durable.size).toBe(53)
   })
 
   test("uses canonical definitions for current public events", () => {
@@ -55,6 +55,21 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.get("session.next.deleted")).toBe(SessionEvent.Deleted)
     expect(EventManifest.Latest.get("session.next.status")).toBe(SessionEvent.Status)
     expect(EventManifest.Latest.get("session.next.diff")).toBe(SessionEvent.Diff)
+    expect(EventManifest.Latest.get("session.next.transcript.message.removed")).toBe(
+      SessionEvent.TranscriptMutation.MessageRemoved,
+    )
+    expect(EventManifest.Latest.get("session.next.transcript.user-text.updated")).toBe(
+      SessionEvent.TranscriptMutation.UserTextUpdated,
+    )
+    expect(EventManifest.Latest.get("session.next.transcript.user-text.removed")).toBe(
+      SessionEvent.TranscriptMutation.UserTextRemoved,
+    )
+    expect(EventManifest.Latest.get("session.next.transcript.content.updated")).toBe(
+      SessionEvent.TranscriptMutation.ContentUpdated,
+    )
+    expect(EventManifest.Latest.get("session.next.transcript.content.removed")).toBe(
+      SessionEvent.TranscriptMutation.ContentRemoved,
+    )
     expect(EventManifest.Durable.has("session.next.step.ended.1")).toBe(false)
     expect(EventManifest.Durable.get("session.next.step.ended.2")).toBe(SessionEvent.Step.Ended)
   })

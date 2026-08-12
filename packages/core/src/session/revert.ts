@@ -1,6 +1,6 @@
 export * as SessionRevert from "./revert"
 
-import { and, asc, eq, gt } from "drizzle-orm"
+import { and, asc, eq, gt, inArray } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -22,6 +22,7 @@ export class MessageNotFoundError extends Schema.TaggedErrorClass<MessageNotFoun
 interface BoundaryInput {
   readonly sessionID: SessionSchema.ID
   readonly messageID: SessionMessage.ID
+  readonly removedMessageIDs?: readonly SessionMessage.ID[]
 }
 
 const plan = Effect.fn("SessionRevert.plan")(function* (input: BoundaryInput) {
@@ -33,19 +34,35 @@ const plan = Effect.fn("SessionRevert.plan")(function* (input: BoundaryInput) {
     .get()
     .pipe(Effect.orDie)
   if (!boundary) return yield* new MessageNotFoundError(input)
-  const rows = yield* db
-    .select()
-    .from(SessionMessageTable)
-    .where(
-      and(
-        eq(SessionMessageTable.session_id, input.sessionID),
-        eq(SessionMessageTable.type, "assistant"),
-        gt(SessionMessageTable.seq, boundary.seq),
-      ),
-    )
-    .orderBy(asc(SessionMessageTable.seq))
-    .all()
-    .pipe(Effect.orDie)
+  const rows = input.removedMessageIDs
+    ? input.removedMessageIDs.length === 0
+      ? []
+      : yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, input.sessionID),
+              eq(SessionMessageTable.type, "assistant"),
+              inArray(SessionMessageTable.id, input.removedMessageIDs),
+            ),
+          )
+          .orderBy(asc(SessionMessageTable.seq))
+          .all()
+          .pipe(Effect.orDie)
+    : yield* db
+        .select()
+        .from(SessionMessageTable)
+        .where(
+          and(
+            eq(SessionMessageTable.session_id, input.sessionID),
+            eq(SessionMessageTable.type, "assistant"),
+            gt(SessionMessageTable.seq, boundary.seq),
+          ),
+        )
+        .orderBy(asc(SessionMessageTable.seq))
+        .all()
+        .pipe(Effect.orDie)
   const decode = Schema.decodeUnknownEffect(SessionMessage.Message)
   const files = new Map<RelativePath, Snapshot.ID>()
   for (const row of rows) {
@@ -60,6 +77,9 @@ const plan = Effect.fn("SessionRevert.plan")(function* (input: BoundaryInput) {
 export const stage = Effect.fn("SessionRevert.stage")(function* (input: {
   readonly session: SessionSchema.Info
   readonly messageID: SessionMessage.ID
+  readonly partID?: string
+  readonly contentIndex?: number
+  readonly removedMessageIDs?: readonly SessionMessage.ID[]
   readonly files?: boolean
 }) {
   const snapshot = yield* Snapshot.Service
@@ -67,7 +87,11 @@ export const stage = Effect.fn("SessionRevert.stage")(function* (input: {
   const original = input.session.revert?.snapshot
     ? Snapshot.ID.make(input.session.revert.snapshot)
     : yield* snapshot.capture()
-  const next = yield* plan({ sessionID: input.session.id, messageID: input.messageID })
+  const next = yield* plan({
+    sessionID: input.session.id,
+    messageID: input.messageID,
+    removedMessageIDs: input.removedMessageIDs,
+  })
   const restore = new Map<RelativePath, Snapshot.ID>()
   if (original) {
     for (const file of input.session.revert?.files ?? []) restore.set(file.path, original)
@@ -80,6 +104,9 @@ export const stage = Effect.fn("SessionRevert.stage")(function* (input: {
     : []
   const revert = {
     messageID: input.messageID,
+    partID: input.partID,
+    contentIndex: input.contentIndex,
+    removedMessageIDs: input.removedMessageIDs ? [...input.removedMessageIDs] : undefined,
     snapshot: original,
     diff: files
       .map((file) => file.patch)
@@ -116,6 +143,9 @@ export const commit = Effect.fn("SessionRevert.commit")(function* (session: Sess
   yield* events.publish(SessionEvent.RevertEvent.Committed, {
     sessionID: session.id,
     messageID: session.revert.messageID,
+    partID: session.revert.partID,
+    contentIndex: session.revert.contentIndex,
+    removedMessageIDs: session.revert.removedMessageIDs,
     timestamp: yield* DateTime.now,
   })
 })

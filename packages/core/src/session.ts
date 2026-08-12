@@ -14,7 +14,7 @@ import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { EventV2 } from "./event"
 import { Database } from "./database/database"
 import { SessionProjector } from "./session/projector"
-import { SessionMessageTable, SessionTable } from "./session/sql"
+import { SessionMessageTable, SessionMessageTombstoneTable, SessionTable } from "./session/sql"
 import { SessionSchema } from "./session/schema"
 import { AbsolutePath, PositiveInt, RelativePath } from "./schema"
 import { fromRow } from "./session/info"
@@ -284,10 +284,48 @@ export interface Interface {
   readonly recover: (input: RecoveryInput) => Effect.Effect<void, NotFoundError | RecoveryConflictError>
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  readonly transcript: {
+    readonly removedMessages: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlySet<SessionMessage.ID>, NotFoundError>
+    readonly importMessage: (input: {
+      sessionID: SessionSchema.ID
+      message: SessionMessage.Message
+    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+    readonly removeMessage: (input: {
+      sessionID: SessionSchema.ID
+      messageID: SessionMessage.ID
+    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+    readonly updateUserText: (input: {
+      sessionID: SessionSchema.ID
+      messageID: SessionMessage.ID
+      partID: string
+      text: string
+    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+    readonly removeUserText: (input: {
+      sessionID: SessionSchema.ID
+      messageID: SessionMessage.ID
+      partID: string
+    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+    readonly updateContent: (input: {
+      sessionID: SessionSchema.ID
+      assistantMessageID: SessionMessage.ID
+      contentIndex: number
+      partID: string
+      content: SessionMessage.AssistantContent
+    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+    readonly removeContent: (input: {
+      sessionID: SessionSchema.ID
+      assistantMessageID: SessionMessage.ID
+      contentIndex: number
+      partID: string
+    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+  }
   readonly revert: {
     readonly stage: (input: {
       sessionID: SessionSchema.ID
       messageID: SessionMessage.ID
+      partID?: string
+      contentIndex?: number
+      removedMessageIDs?: SessionMessage.ID[]
       files?: boolean
     }) => Effect.Effect<Revert.State, NotFoundError | MessageNotFoundError | Snapshot.Error>
     readonly clear: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | Snapshot.Error>
@@ -983,10 +1021,114 @@ const layer = Layer.effect(
       interrupt: Effect.fn("V2Session.interrupt")((sessionID) =>
         Effect.uninterruptible(execution.interrupt(sessionID)),
       ),
+      transcript: {
+        removedMessages: Effect.fn("V2Session.transcript.removedMessages")(function* (sessionID) {
+          yield* result.get(sessionID)
+          const rows = yield* db
+            .select({ messageID: SessionMessageTombstoneTable.message_id })
+            .from(SessionMessageTombstoneTable)
+            .where(eq(SessionMessageTombstoneTable.session_id, sessionID))
+            .all()
+            .pipe(Effect.orDie)
+          return new Set(rows.map((row) => row.messageID))
+        }),
+        importMessage: Effect.fn("V2Session.transcript.importMessage")(function* (input) {
+          const session = yield* result.get(input.sessionID)
+          const stored = yield* store.message(input.message.id)
+          if (stored) {
+            if (stored.sessionID === input.sessionID) return
+            return yield* new MessageNotFoundError({ sessionID: input.sessionID, messageID: input.message.id })
+          }
+          yield* events.publish(
+            SessionEvent.MessageImported,
+            { sessionID: input.sessionID, message: input.message, timestamp: yield* DateTime.now },
+            { location: session.location },
+          )
+        }),
+        removeMessage: Effect.fn("V2Session.transcript.removeMessage")(function* (input) {
+          const session = yield* result.get(input.sessionID)
+          const stored = yield* store.message(input.messageID)
+          if (stored?.sessionID !== input.sessionID) return yield* new MessageNotFoundError(input)
+          yield* events.publish(
+            SessionEvent.TranscriptMutation.MessageRemoved,
+            { ...input, timestamp: yield* DateTime.now },
+            { location: session.location },
+          )
+        }),
+        updateUserText: Effect.fn("V2Session.transcript.updateUserText")(function* (input) {
+          const session = yield* result.get(input.sessionID)
+          const stored = yield* store.message(input.messageID)
+          if (stored?.sessionID !== input.sessionID || stored.message.type !== "user") {
+            return yield* new MessageNotFoundError(input)
+          }
+          yield* events.publish(
+            SessionEvent.TranscriptMutation.UserTextUpdated,
+            { ...input, timestamp: yield* DateTime.now },
+            { location: session.location },
+          )
+        }),
+        removeUserText: Effect.fn("V2Session.transcript.removeUserText")(function* (input) {
+          const session = yield* result.get(input.sessionID)
+          const stored = yield* store.message(input.messageID)
+          if (stored?.sessionID !== input.sessionID || stored.message.type !== "user") {
+            return yield* new MessageNotFoundError(input)
+          }
+          yield* events.publish(
+            SessionEvent.TranscriptMutation.UserTextRemoved,
+            { ...input, timestamp: yield* DateTime.now },
+            { location: session.location },
+          )
+        }),
+        updateContent: Effect.fn("V2Session.transcript.updateContent")(function* (input) {
+          const session = yield* result.get(input.sessionID)
+          const stored = yield* store.message(input.assistantMessageID)
+          if (
+            stored?.sessionID !== input.sessionID ||
+            stored.message.type !== "assistant" ||
+            !stored.message.content[input.contentIndex]
+          ) {
+            return yield* new MessageNotFoundError({
+              sessionID: input.sessionID,
+              messageID: input.assistantMessageID,
+            })
+          }
+          yield* events.publish(
+            SessionEvent.TranscriptMutation.ContentUpdated,
+            { ...input, timestamp: yield* DateTime.now },
+            { location: session.location },
+          )
+        }),
+        removeContent: Effect.fn("V2Session.transcript.removeContent")(function* (input) {
+          const session = yield* result.get(input.sessionID)
+          const stored = yield* store.message(input.assistantMessageID)
+          if (
+            stored?.sessionID !== input.sessionID ||
+            stored.message.type !== "assistant" ||
+            !stored.message.content[input.contentIndex]
+          ) {
+            return yield* new MessageNotFoundError({
+              sessionID: input.sessionID,
+              messageID: input.assistantMessageID,
+            })
+          }
+          yield* events.publish(
+            SessionEvent.TranscriptMutation.ContentRemoved,
+            { ...input, timestamp: yield* DateTime.now },
+            { location: session.location },
+          )
+        }),
+      },
       revert: {
         stage: Effect.fn("V2Session.revert.stage")(function* (input) {
           const session = yield* result.get(input.sessionID)
-          const revert = yield* SessionRevert.stage({ session, messageID: input.messageID, files: input.files }).pipe(
+          const revert = yield* SessionRevert.stage({
+            session,
+            messageID: input.messageID,
+            partID: input.partID,
+            contentIndex: input.contentIndex,
+            removedMessageIDs: input.removedMessageIDs,
+            files: input.files,
+          }).pipe(
             Effect.provideService(Database.Service, database),
             Effect.provideService(EventV2.Service, events),
             Effect.provide(locations.get(session.location)),

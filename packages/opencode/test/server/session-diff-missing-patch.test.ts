@@ -12,20 +12,25 @@
  */
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { DateTime, Effect, Layer } from "effect"
 import { SessionPaths } from "@/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
 import { Storage } from "@/storage/storage"
-import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { MessageID } from "@/session/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionMessageTable } from "@opencode-ai/core/session/sql"
+import { Database } from "@opencode-ai/core/database/database"
+import { RelativePath } from "@opencode-ai/core/schema"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Storage.node])), httpApiLayer))
+const it = testEffect(
+  Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Storage.node, Database.node])), httpApiLayer),
+)
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -66,23 +71,71 @@ describe("session diff with missing patch (#26574)", () => {
   )
 
   it.instance(
-    "GET /session/<id>/diff returns requested turn diffs",
+    "GET /session/<id>/diff returns requested canonical turn diffs",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
         const session = yield* withSession({ title: "turn-diff" })
         const messageID = MessageID.ascending()
-        yield* Session.use.updateMessage({
-          id: messageID,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
+        const assistantID = MessageID.ascending()
+        const model = { providerID: ProviderV2.ID.make("test"), id: ModelV2.ID.make("model") }
+        const user = SessionMessage.User.make({
+          id: SessionMessage.ID.make(messageID),
+          type: "user",
+          text: "change the file",
+          time: { created: DateTime.makeUnsafe(1) },
+        })
+        const assistant = SessionMessage.Assistant.make({
+          id: SessionMessage.ID.make(assistantID),
+          type: "assistant",
           agent: "build",
-          model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("model") },
-          summary: {
-            diffs: [{ file: "turn.ts", additions: 1, deletions: 0, status: "modified" }],
+          model,
+          content: [],
+          snapshot: {
+            patch: [
+              {
+                path: RelativePath.make('"turn.ts"'),
+                additions: 1,
+                deletions: 0,
+                status: "modified",
+                patch: "@@ -0,0 +1 @@\n+change",
+              },
+            ],
           },
-        } satisfies SessionV1.User)
+          time: { created: DateTime.makeUnsafe(2), completed: DateTime.makeUnsafe(3) },
+        })
+        yield* Database.Service.use(({ db }) =>
+          db
+            .insert(SessionMessageTable)
+            .values([
+              {
+                id: user.id,
+                session_id: session.id,
+                type: user.type,
+                seq: 1,
+                time_created: 1,
+                data: { text: user.text, time: { created: 1 } } as NonNullable<
+                  (typeof SessionMessageTable.$inferInsert)["data"]
+                >,
+              },
+              {
+                id: assistant.id,
+                session_id: session.id,
+                type: assistant.type,
+                seq: 2,
+                time_created: 2,
+                data: {
+                  agent: assistant.agent,
+                  model: assistant.model,
+                  content: assistant.content,
+                  snapshot: assistant.snapshot,
+                  time: { created: 2, completed: 3 },
+                } as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+              },
+            ])
+            .run()
+            .pipe(Effect.orDie),
+        )
 
         const response = yield* requestInDirectory(
           `${pathFor(SessionPaths.diff, { sessionID: session.id })}?messageID=${messageID}`,
@@ -90,7 +143,15 @@ describe("session diff with missing patch (#26574)", () => {
         )
 
         expect(response.status).toBe(200)
-        expect(yield* response.json).toEqual([{ file: "turn.ts", additions: 1, deletions: 0, status: "modified" }])
+        expect(yield* response.json).toEqual([
+          {
+            file: "turn.ts",
+            additions: 1,
+            deletions: 0,
+            status: "modified",
+            patch: "@@ -0,0 +1 @@\n+change",
+          },
+        ])
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

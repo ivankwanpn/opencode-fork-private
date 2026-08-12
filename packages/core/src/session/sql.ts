@@ -141,6 +141,19 @@ export const SessionMessageTable = sqliteTable(
   ],
 )
 
+export const SessionMessageTombstoneTable = sqliteTable(
+  "session_message_tombstone",
+  {
+    message_id: text().$type<SessionMessage.ID>().primaryKey(),
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    ...Timestamps,
+  },
+  (table) => [index("session_message_tombstone_session_idx").on(table.session_id)],
+)
+
 export const SessionInputTable = sqliteTable(
   "session_input",
   {

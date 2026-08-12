@@ -1,8 +1,7 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer, Context, Schema } from "effect"
-import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { Snapshot } from "@/snapshot"
-import { Session } from "./session"
 import { SessionID, MessageID } from "./schema"
 
 function unquoteGitPath(input: string) {
@@ -63,7 +62,6 @@ function unquoteGitPath(input: string) {
 
 export interface Interface {
   readonly diff: (input: { sessionID: SessionID; messageID?: MessageID }) => Effect.Effect<Snapshot.FileDiff[]>
-  readonly computeDiff: (input: { messages: SessionV1.WithParts[] }) => Effect.Effect<Snapshot.FileDiff[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionSummary") {}
@@ -71,45 +69,34 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const sessions = yield* Session.Service
-    const snapshot = yield* Snapshot.Service
-
-    const computeDiff = Effect.fn("SessionSummary.computeDiff")(function* (input: { messages: SessionV1.WithParts[] }) {
-      let from: string | undefined
-      let to: string | undefined
-      for (const item of input.messages) {
-        if (!from) {
-          for (const part of item.parts) {
-            if (part.type === "step-start" && part.snapshot) {
-              from = part.snapshot
-              break
-            }
-          }
-        }
-        for (const part of item.parts) {
-          if (part.type === "step-finish" && part.snapshot) to = part.snapshot
-        }
-      }
-      if (from && to) return yield* snapshot.diffFull(from, to)
-      return []
-    })
+    const sessions = yield* SessionV2.Service
 
     const diff = Effect.fn("SessionSummary.diff")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {
       if (!input.messageID) return []
-      const message = (yield* sessions.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)).find(
-        (item) => item.info.id === input.messageID,
+      const messages = yield* sessions
+        .messages({ sessionID: SessionV2.ID.make(input.sessionID), order: "asc" })
+        .pipe(Effect.orDie)
+      const boundary = messages.findIndex(
+        (message) => String(message.id) === String(input.messageID) && message.type === "user",
       )
-      if (!message || message.info.role !== "user") return []
-      const diffs = message.info.summary?.diffs ?? []
+      if (boundary < 0) return []
+      const following = messages.slice(boundary + 1)
+      const nextUser = following.findIndex((message) => message.type === "user")
+      const diffs = (nextUser < 0 ? following : following.slice(0, nextUser))
+        .flatMap((message) => (message.type === "assistant" ? (message.snapshot?.patch ?? []) : []))
       return diffs.map((item) => {
-        if (item.file === undefined) return item
-        const file = unquoteGitPath(item.file)
-        if (file === item.file) return item
-        return { ...item, file }
+        const file = unquoteGitPath(item.path)
+        return {
+          file,
+          status: item.status,
+          additions: item.additions,
+          deletions: item.deletions,
+          patch: item.patch,
+        }
       })
     })
 
-    return Service.of({ diff, computeDiff })
+    return Service.of({ diff })
   }),
 )
 
@@ -122,7 +109,7 @@ export type DiffInput = Schema.Schema.Type<typeof DiffInput>
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Session.node, Snapshot.node],
+  deps: [SessionV2.node],
 })
 
 export * as SessionSummary from "./summary"

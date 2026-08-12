@@ -18,9 +18,10 @@ import { MessageV2 } from "@/session/message-v2"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
+import { TranscriptRead } from "@/session/transcript-read"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
-import { Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { InstanceState } from "@/effect/instance-state"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -181,6 +182,30 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return yield* SessionError.mapStorageNotFound(session.get(sessionID))
     })
 
+    const adoptRetainedMessage = Effect.fn("SessionHttpApi.adoptRetainedMessage")(function* (
+      sessionID: SessionID,
+      messageID: MessageID,
+    ) {
+      const id = SessionMessage.ID.make(messageID)
+      const existing = yield* revertSvc.message({ sessionID: SessionV2.ID.make(sessionID), messageID: id })
+      if (existing) return existing
+      const retained = (
+        yield* sessionRead
+          .history(sessionID)
+          .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)
+      ).find((message) => message.info.id === messageID)
+      if (!retained) return
+      const imported = TranscriptRead.project([retained])[0]
+      if (!imported || imported.id !== id) return
+      yield* revertSvc.transcript
+        .importMessage({ sessionID: SessionV2.ID.make(sessionID), message: imported })
+        .pipe(
+          SessionError.mapSessionNotFound,
+          Effect.catchTag("Session.MessageNotFoundError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+        )
+      return imported
+    })
+
     const get = Effect.fn("SessionHttpApi.get")(function* (ctx: { params: { sessionID: SessionID } }) {
       return yield* requireSession(ctx.params.sessionID)
     })
@@ -266,6 +291,15 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         (message) => message.info.id === ctx.params.messageID,
       )
       if (found) return found
+      const removed = yield* revertSvc.transcript
+        .removedMessages(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(SessionError.mapSessionNotFound)
+      if (removed.has(SessionMessage.ID.make(ctx.params.messageID))) {
+        return yield* new ApiNotFoundError({
+          name: "NotFoundError",
+          data: { message: `Message not found: ${ctx.params.messageID}` },
+        })
+      }
       return yield* SessionError.mapStorageNotFound(
         MessageV2.get({ sessionID: ctx.params.sessionID, messageID: ctx.params.messageID }),
       )
@@ -522,6 +556,40 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof RevertPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
+      const current = yield* revertSvc
+        .get(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(SessionError.mapSessionNotFound)
+      const history = yield* sessionRead
+        .history(ctx.params.sessionID)
+        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)
+      const projected = TranscriptRead.project(history)
+      const canonical = yield* revertSvc
+        .messages({ sessionID: current.id, order: "asc" })
+        .pipe(SessionError.mapSessionNotFound, Effect.catchTag("Session.MessageDecodeError", Effect.die))
+      const boundary = MessageV2.resolveRevertBoundary(current, projected, ctx.payload)
+      if (boundary.status === "unsupported" || (ctx.payload.partID && boundary.status === "not-found")) {
+        return yield* new HttpApiError.BadRequest({})
+      }
+      if (boundary.status === "not-found") return yield* requireSession(ctx.params.sessionID)
+      const boundaryIndex = projected.findIndex((message) => message.id === boundary.messageID)
+      if (boundaryIndex < 0) return yield* new HttpApiError.BadRequest({})
+      const boundaryMessage = projected[boundaryIndex]!
+      const removedMessageIDs = new Set(
+        projected
+          .slice(boundaryIndex + (boundary.contentIndex === undefined ? 0 : 1))
+          .map((message) => message.id),
+      )
+      for (const message of canonical) {
+        const order =
+          DateTime.toEpochMillis(message.time.created) - DateTime.toEpochMillis(boundaryMessage.time.created) ||
+          message.id.localeCompare(boundaryMessage.id)
+        if (boundary.contentIndex === undefined ? order >= 0 : order > 0) removedMessageIDs.add(message.id)
+      }
+      const adopted = yield* adoptRetainedMessage(
+        ctx.params.sessionID,
+        MessageID.ascending(boundary.messageID),
+      )
+      if (!adopted) return yield* new HttpApiError.BadRequest({})
       // V1 revert was lenient when the boundary message did not exist
       // (no-op, still returning the session); keep that observable behavior
       // through the V2 stage command by treating MessageNotFoundError as a
@@ -529,7 +597,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       yield* revertSvc.revert
         .stage({
           sessionID: SessionV2.ID.make(ctx.params.sessionID),
-          messageID: SessionMessage.ID.make(ctx.payload.messageID),
+          messageID: boundary.messageID,
+          partID: boundary.partID,
+          contentIndex: boundary.contentIndex,
+          removedMessageIDs: Array.from(removedMessageIDs),
         })
         .pipe(
           SessionError.mapSessionNotFound,
@@ -585,7 +656,23 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     }) {
       yield* requireSession(ctx.params.sessionID)
       yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
-      yield* session.removeMessage(ctx.params)
+      yield* adoptRetainedMessage(ctx.params.sessionID, ctx.params.messageID)
+      yield* revertSvc.transcript
+        .removeMessage({
+          sessionID: SessionV2.ID.make(ctx.params.sessionID),
+          messageID: SessionMessage.ID.make(ctx.params.messageID),
+        })
+        .pipe(
+          SessionError.mapSessionNotFound,
+          Effect.catchTag("Session.MessageNotFoundError", () =>
+            Effect.fail(
+              new ApiNotFoundError({
+                name: "NotFoundError",
+                data: { message: `Message not found: ${ctx.params.messageID}` },
+              }),
+            ),
+          ),
+        )
       return true
     })
 
@@ -593,7 +680,36 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID; messageID: MessageID; partID: PartID }
     }) {
       yield* requireSession(ctx.params.sessionID)
-      yield* session.removePart(ctx.params)
+      const current = yield* revertSvc.get(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      const message = yield* adoptRetainedMessage(ctx.params.sessionID, ctx.params.messageID)
+      if (!message) return yield* new HttpApiError.BadRequest({})
+      const content = MessageV2.resolveTranscriptContent(current, [message], ctx.params)
+      if (content.status !== "resolved") return yield* new HttpApiError.BadRequest({})
+      if (content.kind === "user") {
+        yield* revertSvc.transcript
+          .removeUserText({
+            sessionID: current.id,
+            messageID: content.message.id,
+            partID: ctx.params.partID,
+          })
+          .pipe(
+            SessionError.mapSessionNotFound,
+            Effect.catchTag("Session.MessageNotFoundError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+          )
+        return true
+      }
+      if (!content.isLast) return yield* new HttpApiError.BadRequest({})
+      yield* revertSvc.transcript
+        .removeContent({
+          sessionID: current.id,
+          assistantMessageID: content.message.id,
+          contentIndex: content.contentIndex,
+          partID: ctx.params.partID,
+        })
+        .pipe(
+          SessionError.mapSessionNotFound,
+          Effect.catchTag("Session.MessageNotFoundError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+        )
       return true
     })
 
@@ -610,7 +726,46 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       ) {
         return yield* new HttpApiError.BadRequest({})
       }
-      return yield* session.updatePart(payload)
+      const current = yield* revertSvc.get(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      const message = yield* adoptRetainedMessage(ctx.params.sessionID, ctx.params.messageID)
+      if (!message) return yield* new HttpApiError.BadRequest({})
+      const content = MessageV2.resolveTranscriptContent(current, [message], ctx.params)
+      if (
+        content.status !== "resolved" ||
+        (payload.type !== "text" && payload.type !== "reasoning") ||
+        content.part.type !== payload.type
+      ) {
+        return yield* new HttpApiError.BadRequest({})
+      }
+      if (content.kind === "user") {
+        if (payload.type !== "text") return yield* new HttpApiError.BadRequest({})
+        yield* revertSvc.transcript
+          .updateUserText({
+            sessionID: current.id,
+            messageID: content.message.id,
+            partID: ctx.params.partID,
+            text: payload.text,
+          })
+          .pipe(
+            SessionError.mapSessionNotFound,
+            Effect.catchTag("Session.MessageNotFoundError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+          )
+        return payload
+      }
+      if (content.content.type !== payload.type) return yield* new HttpApiError.BadRequest({})
+      yield* revertSvc.transcript
+        .updateContent({
+          sessionID: current.id,
+          assistantMessageID: content.message.id,
+          contentIndex: content.contentIndex,
+          partID: ctx.params.partID,
+          content: { ...content.content, text: payload.text },
+        })
+        .pipe(
+          SessionError.mapSessionNotFound,
+          Effect.catchTag("Session.MessageNotFoundError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+        )
+      return payload
     })
 
     return handlers

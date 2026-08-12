@@ -25,11 +25,13 @@ import {
   SessionCancellationTable,
   SessionInputTable,
   SessionMessageTable,
+  SessionMessageTombstoneTable,
   SessionTable,
 } from "@opencode-ai/core/session/sql"
 import { SessionAttempt } from "@opencode-ai/core/session/attempt"
 import { testEffect } from "./lib/effect"
 import { Snapshot } from "@opencode-ai/core/snapshot"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 
 const it = testEffect(AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node])))
 const sessionsLayer = AppNodeBuilder.build(SessionV2.node, [[SessionExecution.node, SessionExecution.noopLayer]])
@@ -42,12 +44,13 @@ const assistantRow = (
   id: SessionMessage.ID,
   seq: number,
   time: { created: DateTime.Utc; completed?: DateTime.Utc } = { created },
+  content: SessionMessage.AssistantContent[] = [],
 ) => {
   const {
     id: _,
     type,
     ...data
-  } = encodeMessage(SessionMessage.Assistant.make({ id, type: "assistant", agent: "build", model, content: [], time }))
+  } = encodeMessage(SessionMessage.Assistant.make({ id, type: "assistant", agent: "build", model, content, time }))
   return { id, session_id: sessionID, type, seq, time_created: DateTime.toEpochMillis(time.created), data }
 }
 
@@ -100,7 +103,294 @@ describe("SessionProjector", () => {
       })
       expect(
         (yield* db.select({ id: SessionMessageTable.id }).from(SessionMessageTable).all()).map((row) => row.id),
-      ).toEqual([boundary])
+      ).toEqual([])
+    }),
+  )
+
+  it.effect("commits reverts at assistant content boundaries", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "test",
+          directory: "/project",
+          title: "test",
+          version: "test",
+          revert: { messageID: SessionMessage.ID.make("msg_boundary"), partID: "prt_remove" },
+        })
+        .run()
+      const boundary = SessionMessage.ID.make("msg_boundary")
+      yield* db
+        .insert(SessionMessageTable)
+        .values([
+          assistantRow(boundary, 1, { created, completed: DateTime.makeUnsafe(1) }, [
+            SessionMessage.AssistantText.make({ type: "text", id: "text_keep", text: "keep" }),
+            SessionMessage.AssistantText.make({ type: "text", id: "text_remove", text: "remove" }),
+          ]),
+          assistantRow(SessionMessage.ID.make("msg_later"), 2),
+        ])
+        .run()
+      const events = yield* EventV2.Service
+      const committed = {
+        sessionID,
+        messageID: boundary,
+        contentIndex: 1,
+        timestamp: DateTime.makeUnsafe(4),
+      }
+      yield* events.publish(SessionEvent.RevertEvent.Committed, committed)
+
+      const rows = yield* db
+        .select()
+        .from(SessionMessageTable)
+        .where(eq(SessionMessageTable.session_id, sessionID))
+        .orderBy(asc(SessionMessageTable.seq))
+        .all()
+        .pipe(Effect.orDie)
+      expect(rows.map((row) => row.id)).toEqual([boundary])
+      expect(
+        rows.map((row) =>
+          Schema.decodeUnknownSync(SessionMessage.Message)({ ...row.data, id: row.id, type: row.type }),
+        ),
+      ).toEqual([
+        SessionMessage.Assistant.make({
+          id: boundary,
+          type: "assistant",
+          agent: "build",
+          model,
+          content: [SessionMessage.AssistantText.make({ type: "text", id: "text_keep", text: "keep" })],
+          time: { created },
+        }),
+      ])
+      expect((yield* db.select({ revert: SessionTable.revert }).from(SessionTable).get())?.revert).toBeNull()
+    }),
+  )
+
+  it.effect("projects imported user text mutations without changing retained V1 storage", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "test",
+          directory: "/project",
+          title: "test",
+          version: "test",
+        })
+        .run()
+      const messageID = SessionMessage.ID.make("msg_imported_user")
+      const partID = "prt_imported_user"
+      const legacy = Schema.decodeUnknownSync(SessionV1.WithParts)({
+        info: {
+          id: messageID,
+          sessionID,
+          role: "user",
+          time: { created: 1 },
+          agent: "build",
+          model: { providerID: "provider", modelID: "model" },
+        },
+        parts: [{ id: partID, sessionID, messageID, type: "text", text: "retained" }],
+      })
+      const events = yield* EventV2.Service
+      yield* events.publish(SessionEvent.MessageImported, {
+        sessionID,
+        timestamp: DateTime.makeUnsafe(1),
+        message: SessionMessage.User.make({
+          id: messageID,
+          type: "user",
+          text: "retained",
+          metadata: { legacy },
+          time: { created: DateTime.makeUnsafe(1) },
+        }),
+      })
+      yield* events.publish(SessionEvent.TranscriptMutation.UserTextUpdated, {
+        sessionID,
+        messageID,
+        partID,
+        text: "updated",
+        timestamp: DateTime.makeUnsafe(2),
+      })
+
+      const updated = yield* db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get()
+      expect(
+        Schema.decodeUnknownSync(SessionMessage.Message)({ ...updated?.data, id: updated?.id, type: updated?.type }),
+      ).toMatchObject({
+        type: "user",
+        text: "updated",
+        metadata: { legacy: { parts: [{ id: partID, text: "updated" }] } },
+      })
+
+      yield* events.publish(SessionEvent.TranscriptMutation.UserTextRemoved, {
+        sessionID,
+        messageID,
+        partID,
+        timestamp: DateTime.makeUnsafe(3),
+      })
+      const removed = yield* db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get()
+      expect(
+        Schema.decodeUnknownSync(SessionMessage.Message)({ ...removed?.data, id: removed?.id, type: removed?.type }),
+      ).toMatchObject({
+        type: "user",
+        text: "",
+        metadata: { legacy: { parts: [] } },
+      })
+    }),
+  )
+
+  it.effect("projects imported assistant mutations and exact replay idempotently", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "test",
+          directory: "/project",
+          title: "test",
+          version: "test",
+        })
+        .run()
+      const messageID = SessionMessage.ID.make("msg_imported_assistant")
+      const firstPartID = "prt_imported_reasoning"
+      const lastPartID = "prt_imported_text"
+      const legacy = Schema.decodeUnknownSync(SessionV1.WithParts)({
+        info: {
+          id: messageID,
+          sessionID,
+          role: "assistant",
+          time: { created: 1, completed: 2 },
+          parentID: messageID,
+          modelID: "model",
+          providerID: "provider",
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/project", root: "/project" },
+          cost: 0,
+          tokens: { input: 1, output: 2, reasoning: 1, cache: { read: 0, write: 0 } },
+          finish: "stop",
+        },
+        parts: [
+          { id: firstPartID, sessionID, messageID, type: "reasoning", text: "thinking", time: { start: 1, end: 1 } },
+          { id: lastPartID, sessionID, messageID, type: "text", text: "answer" },
+        ],
+      })
+      const events = yield* EventV2.Service
+      yield* events.publish(SessionEvent.MessageImported, {
+        sessionID,
+        timestamp: DateTime.makeUnsafe(1),
+        message: SessionMessage.Assistant.make({
+          id: messageID,
+          type: "assistant",
+          agent: "build",
+          model,
+          content: [
+            SessionMessage.AssistantReasoning.make({ type: "reasoning", id: firstPartID, text: "thinking" }),
+            SessionMessage.AssistantText.make({ type: "text", id: lastPartID, text: "answer" }),
+          ],
+          metadata: { legacy },
+          time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
+        }),
+      })
+      const updated = yield* events.publish(SessionEvent.TranscriptMutation.ContentUpdated, {
+        sessionID,
+        assistantMessageID: messageID,
+        contentIndex: 0,
+        partID: firstPartID,
+        content: SessionMessage.AssistantReasoning.make({ type: "reasoning", id: firstPartID, text: "reconsidered" }),
+        timestamp: DateTime.makeUnsafe(3),
+      })
+      const stored = yield* db.select().from(EventTable).where(eq(EventTable.id, updated.id)).get().pipe(Effect.orDie)
+      yield* events.replay({
+        id: stored!.id,
+        type: stored!.type,
+        seq: stored!.seq,
+        aggregateID: stored!.aggregate_id,
+        data: stored!.data,
+      })
+      yield* events.publish(SessionEvent.TranscriptMutation.ContentRemoved, {
+        sessionID,
+        assistantMessageID: messageID,
+        contentIndex: 1,
+        partID: lastPartID,
+        timestamp: DateTime.makeUnsafe(4),
+      })
+
+      const row = yield* db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get()
+      expect(
+        Schema.decodeUnknownSync(SessionMessage.Message)({ ...row?.data, id: row?.id, type: row?.type }),
+      ).toMatchObject({
+        type: "assistant",
+        content: [{ type: "reasoning", id: firstPartID, text: "reconsidered" }],
+        metadata: { legacy: { parts: [{ id: firstPartID, type: "reasoning", text: "reconsidered" }] } },
+      })
+    }),
+  )
+
+  it.effect("removes canonical messages, inputs, and retained fallbacks with one tombstone", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "test",
+          directory: "/project",
+          title: "test",
+          version: "test",
+        })
+        .run()
+      const messageID = SessionMessage.ID.make("msg_removed_transcript")
+      yield* db.insert(SessionMessageTable).values(assistantRow(messageID, 1)).run()
+      yield* db
+        .insert(SessionInputTable)
+        .values({
+          id: messageID,
+          session_id: sessionID,
+          prompt: Prompt.make({ text: "remove" }),
+          delivery: "steer",
+          admitted_seq: 1,
+          promoted_seq: 1,
+          time_created: 0,
+        })
+        .run()
+      const events = yield* EventV2.Service
+      yield* events.publish(SessionEvent.TranscriptMutation.MessageRemoved, {
+        sessionID,
+        messageID,
+        timestamp: DateTime.makeUnsafe(1),
+      })
+
+      expect(yield* db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get()).toBeUndefined()
+      expect(yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, messageID)).get()).toBeUndefined()
+      expect(
+        yield* db
+          .select({ messageID: SessionMessageTombstoneTable.message_id })
+          .from(SessionMessageTombstoneTable)
+          .where(eq(SessionMessageTombstoneTable.message_id, messageID))
+          .get(),
+      ).toEqual({ messageID })
     }),
   )
 

@@ -30,7 +30,6 @@ import { Provider } from "@/provider/provider"
 import { Question } from "@/question"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
-import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
@@ -293,7 +292,6 @@ const hostNodes = [
 
 const legacySessionRuntimeNodes = [
   SessionRunState.node,
-  SessionRevert.node,
   Instruction.node,
 ] as const
 

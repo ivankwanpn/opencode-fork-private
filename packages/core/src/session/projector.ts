@@ -1,6 +1,6 @@
 export * as SessionProjector from "./projector"
 
-import { and, desc, eq, gt, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, gte, inArray, or, sql } from "drizzle-orm"
 import { DateTime, Effect, Layer, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
@@ -16,13 +16,42 @@ import { WorkspaceV2 } from "../workspace"
 import { SessionContextEpoch } from "./context-epoch"
 import { SessionAttempt } from "./attempt"
 import { SessionTurn } from "./turn"
-import { MessageTable, PartTable, SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
+import {
+  MessageTable,
+  PartTable,
+  SessionInputTable,
+  SessionMessageTable,
+  SessionMessageTombstoneTable,
+  SessionTable,
+} from "./sql"
 import type { DeepMutable } from "../schema"
 
 type DatabaseService = Database.Interface["db"]
 
 const decodeMessage = Schema.decodeUnknownSync(SessionMessage.Message)
 const encodeMessage = Schema.encodeSync(SessionMessage.Message)
+
+function legacyMessage(message: SessionMessage.Message) {
+  const legacy = message.metadata?.legacy
+  return Schema.is(SessionV1.WithParts)(legacy) ? legacy : undefined
+}
+
+function legacyUserText(parts: ReadonlyArray<{ readonly type: string; readonly text?: string; readonly prompt?: string }>) {
+  return parts
+    .flatMap((part) => {
+      if (part.type === "text") return [part.text]
+      if (part.type === "subtask") return [part.prompt]
+      if (part.type === "compaction") return ["What did we do so far?"]
+      return []
+    })
+    .join("\n")
+}
+
+function withLegacyParts(message: SessionMessage.Message, parts: ReadonlyArray<unknown>) {
+  const legacy = legacyMessage(message)
+  if (!legacy) return message.metadata
+  return { ...message.metadata, legacy: { ...legacy, parts: [...parts] } }
+}
 
 export class SessionAlreadyProjected extends Error {}
 
@@ -286,6 +315,195 @@ const layer = Layer.effectDiscard(
       }),
     )
     yield* events.project(SessionEvent.MessageImported, (event) => insertMessage(db, event, event.data.message))
+    yield* events.project(SessionEvent.TranscriptMutation.MessageRemoved, (event) =>
+      Effect.gen(function* () {
+        yield* db
+          .insert(SessionMessageTombstoneTable)
+          .values({ session_id: event.data.sessionID, message_id: event.data.messageID })
+          .onConflictDoNothing()
+          .run()
+          .pipe(Effect.orDie)
+        yield* db
+          .delete(SessionMessageTable)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, event.data.sessionID),
+              eq(SessionMessageTable.id, event.data.messageID),
+            ),
+          )
+          .run()
+          .pipe(Effect.orDie)
+        yield* db
+          .delete(SessionInputTable)
+          .where(
+            and(eq(SessionInputTable.session_id, event.data.sessionID), eq(SessionInputTable.id, event.data.messageID)),
+          )
+          .run()
+          .pipe(Effect.orDie)
+        yield* SessionContextEpoch.reset(db, event.data.sessionID)
+      }),
+    )
+    yield* events.project(SessionEvent.TranscriptMutation.UserTextUpdated, (event) =>
+      Effect.gen(function* () {
+        const row = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, event.data.sessionID),
+              eq(SessionMessageTable.id, event.data.messageID),
+            ),
+          )
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.messageID}`)
+        const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
+        if (message.type !== "user") return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
+        const legacy = legacyMessage(message)
+        const parts = legacy?.parts.map((part) =>
+          part.id === event.data.partID && part.type === "text" ? { ...part, text: event.data.text } : part,
+        )
+        if (legacy && !legacy.parts.some((part) => part.id === event.data.partID && part.type === "text")) {
+          return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
+        }
+        const encoded = encodeMessage(
+          SessionMessage.User.make({
+            ...message,
+            text: parts ? legacyUserText(parts) : event.data.text,
+            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
+          }),
+        )
+        const { id: _, type: __, ...data } = encoded
+        yield* db
+          .update(SessionMessageTable)
+          .set({ data })
+          .where(eq(SessionMessageTable.id, event.data.messageID))
+          .run()
+          .pipe(Effect.orDie)
+        yield* SessionContextEpoch.reset(db, event.data.sessionID)
+      }),
+    )
+    yield* events.project(SessionEvent.TranscriptMutation.UserTextRemoved, (event) =>
+      Effect.gen(function* () {
+        const row = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, event.data.sessionID),
+              eq(SessionMessageTable.id, event.data.messageID),
+            ),
+          )
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.messageID}`)
+        const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
+        if (message.type !== "user") return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
+        const legacy = legacyMessage(message)
+        const parts = legacy?.parts.filter((part) => part.id !== event.data.partID)
+        if (legacy && parts?.length === legacy.parts.length) {
+          return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
+        }
+        const encoded = encodeMessage(
+          SessionMessage.User.make({
+            ...message,
+            text: parts ? legacyUserText(parts) : "",
+            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
+          }),
+        )
+        const { id: _, type: __, ...data } = encoded
+        yield* db
+          .update(SessionMessageTable)
+          .set({ data })
+          .where(eq(SessionMessageTable.id, event.data.messageID))
+          .run()
+          .pipe(Effect.orDie)
+        yield* SessionContextEpoch.reset(db, event.data.sessionID)
+      }),
+    )
+    yield* events.project(SessionEvent.TranscriptMutation.ContentUpdated, (event) =>
+      Effect.gen(function* () {
+        const row = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, event.data.sessionID),
+              eq(SessionMessageTable.id, event.data.assistantMessageID),
+            ),
+          )
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.assistantMessageID}`)
+        const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
+        if (message.type !== "assistant" || !message.content[event.data.contentIndex])
+          return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
+        const legacy = legacyMessage(message)
+        const parts = legacy?.parts.map((part) => {
+          if (part.id !== event.data.partID) return part
+          if (part.type === "text" && event.data.content.type === "text") {
+            return { ...part, text: event.data.content.text }
+          }
+          if (part.type === "reasoning" && event.data.content.type === "reasoning") {
+            return { ...part, text: event.data.content.text }
+          }
+          return part
+        })
+        const encoded = encodeMessage(
+          SessionMessage.Assistant.make({
+            ...message,
+            content: message.content.map((content, index) =>
+              index === event.data.contentIndex ? event.data.content : content,
+            ),
+            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
+          }),
+        )
+        const { id: _, type: __, ...data } = encoded
+        yield* db
+          .update(SessionMessageTable)
+          .set({ data })
+          .where(eq(SessionMessageTable.id, event.data.assistantMessageID))
+          .run()
+          .pipe(Effect.orDie)
+        yield* SessionContextEpoch.reset(db, event.data.sessionID)
+      }),
+    )
+    yield* events.project(SessionEvent.TranscriptMutation.ContentRemoved, (event) =>
+      Effect.gen(function* () {
+        const row = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, event.data.sessionID),
+              eq(SessionMessageTable.id, event.data.assistantMessageID),
+            ),
+          )
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.assistantMessageID}`)
+        const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
+        if (message.type !== "assistant" || !message.content[event.data.contentIndex])
+          return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
+        const legacy = legacyMessage(message)
+        const parts = legacy?.parts.filter((part) => part.id !== event.data.partID)
+        const encoded = encodeMessage(
+          SessionMessage.Assistant.make({
+            ...message,
+            content: message.content.filter((_, index) => index !== event.data.contentIndex),
+            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
+          }),
+        )
+        const { id: _, type: __, ...data } = encoded
+        yield* db
+          .update(SessionMessageTable)
+          .set({ data })
+          .where(eq(SessionMessageTable.id, event.data.assistantMessageID))
+          .run()
+          .pipe(Effect.orDie)
+        yield* SessionContextEpoch.reset(db, event.data.sessionID)
+      }),
+    )
     yield* events.project(SessionEvent.Updated, (event) =>
       db
         .update(SessionTable)
@@ -518,7 +736,7 @@ const layer = Layer.effectDiscard(
     yield* events.project(SessionEvent.RevertEvent.Committed, (event) =>
       Effect.gen(function* () {
         const boundary = yield* db
-          .select({ seq: SessionMessageTable.seq })
+          .select()
           .from(SessionMessageTable)
           .where(
             and(
@@ -529,23 +747,125 @@ const layer = Layer.effectDiscard(
           .get()
           .pipe(Effect.orDie)
         if (!boundary) return yield* Effect.die(`Revert boundary message not found: ${event.data.messageID}`)
-        yield* db
-          .delete(SessionMessageTable)
-          .where(
-            and(eq(SessionMessageTable.session_id, event.data.sessionID), gt(SessionMessageTable.seq, boundary.seq)),
+        if (event.data.contentIndex !== undefined) {
+          const message = decodeMessage({ ...boundary.data, id: boundary.id, type: boundary.type })
+          if (message.type !== "assistant")
+            return yield* Effect.die(`Revert content boundary is not an assistant message: ${event.data.messageID}`)
+          const legacy = legacyMessage(message)
+          const partIndex = event.data.partID ? legacy?.parts.findIndex((part) => part.id === event.data.partID) : undefined
+          if (legacy && partIndex === -1) return yield* Effect.die(`Revert part boundary not found: ${event.data.partID}`)
+          const encoded = encodeMessage(
+            SessionMessage.Assistant.make({
+              ...message,
+              content: message.content.slice(0, event.data.contentIndex),
+              metadata:
+                legacy && partIndex !== undefined
+                  ? withLegacyParts(message, legacy.parts.slice(0, partIndex))
+                  : message.metadata,
+              finish: undefined,
+              structured: undefined,
+              cost: undefined,
+              tokens: undefined,
+              error: undefined,
+              time: { created: message.time.created },
+            }),
           )
-          .run()
-          .pipe(Effect.orDie)
-        yield* db
-          .delete(SessionInputTable)
-          .where(
-            and(
-              eq(SessionInputTable.session_id, event.data.sessionID),
-              or(gt(SessionInputTable.admitted_seq, boundary.seq), gt(SessionInputTable.promoted_seq, boundary.seq)),
-            ),
-          )
-          .run()
-          .pipe(Effect.orDie)
+          const { id: _, type: __, ...data } = encoded
+          yield* db
+            .update(SessionMessageTable)
+            .set({ data })
+            .where(
+              and(
+                eq(SessionMessageTable.session_id, event.data.sessionID),
+                eq(SessionMessageTable.id, event.data.messageID),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }
+        const removed = event.data.removedMessageIDs
+          ? event.data.removedMessageIDs.map((messageID) => ({ messageID }))
+          : yield* db
+              .select({ messageID: SessionMessageTable.id })
+              .from(SessionMessageTable)
+              .where(
+                and(
+                  eq(SessionMessageTable.session_id, event.data.sessionID),
+                  event.data.contentIndex === undefined
+                    ? gte(SessionMessageTable.seq, boundary.seq)
+                    : gt(SessionMessageTable.seq, boundary.seq),
+                ),
+              )
+              .all()
+              .pipe(Effect.orDie)
+        if (removed.length > 0) {
+          yield* db
+            .insert(SessionMessageTombstoneTable)
+            .values(removed.map((row) => ({ session_id: event.data.sessionID, message_id: row.messageID })))
+            .onConflictDoNothing()
+            .run()
+            .pipe(Effect.orDie)
+        }
+        if (event.data.removedMessageIDs) {
+          if (event.data.removedMessageIDs.length > 0) {
+            yield* db
+              .delete(SessionMessageTable)
+              .where(
+                and(
+                  eq(SessionMessageTable.session_id, event.data.sessionID),
+                  inArray(SessionMessageTable.id, event.data.removedMessageIDs),
+                ),
+              )
+              .run()
+              .pipe(Effect.orDie)
+          }
+          yield* db
+            .delete(SessionInputTable)
+            .where(
+              and(
+                eq(SessionInputTable.session_id, event.data.sessionID),
+                or(
+                  gt(SessionInputTable.time_created, boundary.time_created),
+                  and(
+                    eq(SessionInputTable.time_created, boundary.time_created),
+                    event.data.contentIndex === undefined
+                      ? gte(SessionInputTable.id, event.data.messageID)
+                      : gt(SessionInputTable.id, event.data.messageID),
+                  ),
+                ),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        } else {
+          yield* db
+            .delete(SessionMessageTable)
+            .where(
+              and(
+                eq(SessionMessageTable.session_id, event.data.sessionID),
+                event.data.contentIndex === undefined
+                  ? gte(SessionMessageTable.seq, boundary.seq)
+                  : gt(SessionMessageTable.seq, boundary.seq),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+          yield* db
+            .delete(SessionInputTable)
+            .where(
+              and(
+                eq(SessionInputTable.session_id, event.data.sessionID),
+                event.data.contentIndex === undefined
+                  ? or(
+                      gte(SessionInputTable.admitted_seq, boundary.seq),
+                      gte(SessionInputTable.promoted_seq, boundary.seq),
+                    )
+                  : or(gt(SessionInputTable.admitted_seq, boundary.seq), gt(SessionInputTable.promoted_seq, boundary.seq)),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        }
         yield* db
           .update(SessionTable)
           .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })

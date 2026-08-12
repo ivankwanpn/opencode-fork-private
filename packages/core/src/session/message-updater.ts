@@ -132,6 +132,13 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
       // Imported messages are inserted directly by the durable projector; replaying
       // them through the incremental updater would append the same row twice.
       "session.next.message.imported": () => Effect.void,
+      // Transcript mutations are applied by the durable projector after resolving
+      // their explicit message/content identity.
+      "session.next.transcript.message.removed": () => Effect.void,
+      "session.next.transcript.user-text.updated": () => Effect.void,
+      "session.next.transcript.user-text.removed": () => Effect.void,
+      "session.next.transcript.content.updated": () => Effect.void,
+      "session.next.transcript.content.removed": () => Effect.void,
       "session.next.prompted": (event) => {
         if (event.data.synthetic)
           return adapter.appendMessage(

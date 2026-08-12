@@ -250,6 +250,80 @@ export function legacyEventProjection() {
       ]
     }
 
+    if (source.type === "session.next.transcript.message.removed") {
+      return [
+        event("message.removed", {
+          sessionID: SessionID.make(sessionID),
+          messageID: MessageID.ascending(String(data.messageID)),
+        }),
+      ]
+    }
+    if (source.type === "session.next.transcript.user-text.removed") {
+      return [
+        event("message.part.removed", {
+          sessionID: SessionID.make(sessionID),
+          messageID: MessageID.ascending(String(data.messageID)),
+          partID: PartID.ascending(String(data.partID)),
+        }),
+      ]
+    }
+    if (source.type === "session.next.transcript.user-text.updated") {
+      return [
+        event("message.part.updated", {
+          sessionID: SessionID.make(sessionID),
+          part: {
+            id: PartID.ascending(String(data.partID)),
+            sessionID: SessionID.make(sessionID),
+            messageID: MessageID.ascending(String(data.messageID)),
+            type: "text",
+            text: String(data.text),
+          },
+          time: epochMillis(data.timestamp),
+        }),
+      ]
+    }
+    if (source.type === "session.next.transcript.content.removed") {
+      return [
+        event("message.part.removed", {
+          sessionID: SessionID.make(sessionID),
+          messageID: MessageID.ascending(String(data.assistantMessageID)),
+          partID: PartID.ascending(String(data.partID)),
+        }),
+      ]
+    }
+    if (source.type === "session.next.transcript.content.updated") {
+      const content = data.content as Record<string, unknown>
+      if (content.type !== "text" && content.type !== "reasoning") return []
+      return [
+        event("message.part.updated", {
+          sessionID: SessionID.make(sessionID),
+          part: {
+            id: PartID.ascending(String(data.partID)),
+            sessionID: SessionID.make(sessionID),
+            messageID: MessageID.ascending(String(data.assistantMessageID)),
+            type: content.type,
+            text: String(content.text),
+            ...(content.type === "reasoning"
+              ? {
+                  metadata: content.providerMetadata,
+                  time: {
+                    start: epochMillis((content.time as Record<string, unknown> | undefined)?.created ?? data.timestamp),
+                    ...((content.time as Record<string, unknown> | undefined)?.completed === undefined
+                      ? {}
+                      : {
+                          end: epochMillis(
+                            (content.time as Record<string, unknown> | undefined)?.completed,
+                          ),
+                        }),
+                  },
+                }
+              : {}),
+          },
+          time: epochMillis(data.timestamp),
+        }),
+      ]
+    }
+
     if (source.type === "question.v2.asked") {
       return [
         event("question.asked", {

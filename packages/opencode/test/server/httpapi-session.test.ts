@@ -35,6 +35,7 @@ import {
   PartTable,
   SessionInputTable,
   SessionMessageTable,
+  SessionMessageTombstoneTable,
   SessionTable,
   TaskNotificationOutboxTable,
   TaskSubmissionTable,
@@ -186,7 +187,12 @@ const createLocalWorkspace = (input: { projectID: Project.Info["id"]; type: stri
     (info) => Workspace.use.remove(info.id).pipe(Effect.ignore),
   )
 
-const insertLegacyAssistantMessage = (sessionID: SessionIDType, seq = 1, time = seq) =>
+const insertLegacyAssistantMessage = (
+  sessionID: SessionIDType,
+  seq = 1,
+  time = seq,
+  content: SessionMessage.AssistantContent[] = [],
+) =>
   Effect.gen(function* () {
     const message = SessionMessage.Assistant.make({
       id: SessionMessage.ID.create(),
@@ -198,7 +204,7 @@ const insertLegacyAssistantMessage = (sessionID: SessionIDType, seq = 1, time = 
         variant: ModelV2.VariantID.make("default"),
       },
       time: { created: DateTime.makeUnsafe(time) },
-      content: [],
+      content,
     })
     const { db } = yield* Database.Service
     yield* db
@@ -2242,46 +2248,257 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
-    "serves message mutation routes",
+    "serves message mutation routes from the canonical transcript without V1 writes",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const session = yield* createSession({ title: "messages" })
-        const first = yield* createTextMessage(session.id, "first")
-        const second = yield* createTextMessage(session.id, "second")
+        const first = yield* insertLegacyAssistantMessage(session.id, 1, 1, [
+          SessionMessage.AssistantText.make({ type: "text", id: "text_first", text: "first" }),
+        ])
+        const second = yield* insertLegacyAssistantMessage(session.id, 2, 2, [
+          SessionMessage.AssistantText.make({ type: "text", id: "text_second", text: "second" }),
+        ])
+        const partID = PartID.ascending(`prt_${first.id}_text_0`)
+        const rowsBefore = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
 
         const updated = yield* requestJson<SessionV1.Part>(
           pathFor(SessionPaths.updatePart, {
             sessionID: session.id,
-            messageID: first.info.id,
-            partID: first.part.id,
+            messageID: first.id,
+            partID,
           }),
           {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ ...first.part, text: "updated" }),
+            body: JSON.stringify({ id: partID, sessionID: session.id, messageID: first.id, type: "text", text: "updated" }),
           },
         )
-        expect(updated).toMatchObject({ id: first.part.id, type: "text", text: "updated" })
+        expect(updated).toMatchObject({ id: partID, type: "text", text: "updated" })
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            db.select({ data: SessionMessageTable.data }).from(SessionMessageTable).where(eq(SessionMessageTable.id, first.id)).get().pipe(Effect.orDie),
+          ),
+        ).toMatchObject({ data: { content: [{ type: "text", id: "text_first", text: "updated" }] } })
 
         expect(
           yield* requestJson<boolean>(
             pathFor(SessionPaths.deletePart, {
               sessionID: session.id,
-              messageID: first.info.id,
-              partID: first.part.id,
+              messageID: first.id,
+              partID,
+            }),
+            { method: "DELETE", headers },
+          ),
+        ).toBe(true)
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            db.select({ data: SessionMessageTable.data }).from(SessionMessageTable).where(eq(SessionMessageTable.id, first.id)).get().pipe(Effect.orDie),
+          ),
+        ).toMatchObject({ data: { content: [] } })
+
+        expect(
+          yield* requestJson<boolean>(
+            pathFor(SessionPaths.deleteMessage, { sessionID: session.id, messageID: second.id }),
+            { method: "DELETE", headers },
+          ),
+        ).toBe(true)
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, second.id)).get().pipe(Effect.orDie),
+          ),
+        ).toBeUndefined()
+        const rowsAfter = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
+        expect(rowsAfter).toEqual(rowsBefore)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "lazily adopts retained user text mutations without writing V1 tables",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const current = yield* createSession({ title: "retained mutation" })
+        const retained = yield* createTextMessage(current.id, "retained")
+
+        const updated = yield* requestJson<SessionV1.Part>(
+          pathFor(SessionPaths.updatePart, {
+            sessionID: current.id,
+            messageID: retained.info.id,
+            partID: retained.part.id,
+          }),
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ ...retained.part, text: "canonical" }),
+          },
+        )
+        expect(updated).toMatchObject({ id: retained.part.id, text: "canonical" })
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            db
+              .select({ data: SessionMessageTable.data })
+              .from(SessionMessageTable)
+              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(retained.info.id)))
+              .get()
+              .pipe(Effect.orDie),
+          ),
+        ).toMatchObject({ data: { text: "canonical" } })
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, retained.part.id)).get().pipe(Effect.orDie),
+          ),
+        ).toMatchObject({ data: { text: "retained" } })
+
+        expect(
+          yield* requestJson<boolean>(
+            pathFor(SessionPaths.deletePart, {
+              sessionID: current.id,
+              messageID: retained.info.id,
+              partID: retained.part.id,
+            }),
+            { method: "DELETE", headers },
+          ),
+        ).toBe(true)
+        expect(
+          (
+            yield* requestJson<SessionV1.WithParts>(
+              pathFor(SessionPaths.message, { sessionID: current.id, messageID: retained.info.id }),
+              { headers },
+            )
+          ).parts,
+        ).toEqual([])
+
+        expect(
+          yield* requestJson<boolean>(
+            pathFor(SessionPaths.deleteMessage, { sessionID: current.id, messageID: retained.info.id }),
+            { method: "DELETE", headers },
+          ),
+        ).toBe(true)
+        expect(
+          (
+            yield* request(
+              pathFor(SessionPaths.message, { sessionID: current.id, messageID: retained.info.id }),
+              { headers },
+            )
+          ).status,
+        ).toBe(404)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "lazily adopts retained assistant parts with legacy IDs without writing V1 tables",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const current = yield* createSession({ title: "retained assistant mutation" })
+        const parent = yield* createTextMessage(current.id, "parent")
+        const session = yield* Session.Service
+        const message = yield* session.updateMessage({
+          id: MessageID.ascending("msg_retained_assistant"),
+          sessionID: current.id,
+          role: "assistant",
+          time: { created: 2, completed: 3 },
+          parentID: parent.info.id,
+          modelID: ModelV2.ID.make("model"),
+          providerID: ProviderV2.ID.make("provider"),
+          mode: "build",
+          agent: "build",
+          path: { cwd: test.directory, root: test.directory },
+          cost: 0,
+          tokens: { input: 1, output: 2, reasoning: 1, cache: { read: 0, write: 0 } },
+          finish: "stop",
+        })
+        const reasoning = yield* session.updatePart({
+          id: PartID.ascending("prt_retained_reasoning"),
+          sessionID: current.id,
+          messageID: message.id,
+          type: "reasoning",
+          text: "considering",
+          time: { start: 2, end: 2 },
+        })
+        const text = yield* session.updatePart({
+          id: PartID.ascending("prt_retained_text"),
+          sessionID: current.id,
+          messageID: message.id,
+          type: "text",
+          text: "answer",
+        })
+        const rowsBefore = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ data: MessageTable.data }).from(MessageTable).where(eq(MessageTable.id, message.id)).get().pipe(Effect.orDie),
+            db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, reasoning.id)).get().pipe(Effect.orDie),
+            db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, text.id)).get().pipe(Effect.orDie),
+          ]),
+        )
+
+        expect(
+          yield* requestJson<SessionV1.Part>(
+            pathFor(SessionPaths.updatePart, {
+              sessionID: current.id,
+              messageID: message.id,
+              partID: reasoning.id,
+            }),
+            {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ ...reasoning, text: "reconsidered" }),
+            },
+          ),
+        ).toMatchObject({ id: reasoning.id, type: "reasoning", text: "reconsidered" })
+        expect(
+          yield* requestJson<boolean>(
+            pathFor(SessionPaths.deletePart, {
+              sessionID: current.id,
+              messageID: message.id,
+              partID: text.id,
             }),
             { method: "DELETE", headers },
           ),
         ).toBe(true)
 
         expect(
-          yield* requestJson<boolean>(
-            pathFor(SessionPaths.deleteMessage, { sessionID: session.id, messageID: second.info.id }),
-            { method: "DELETE", headers },
+          yield* Database.Service.use(({ db }) =>
+            db
+              .select({ data: SessionMessageTable.data })
+              .from(SessionMessageTable)
+              .where(eq(SessionMessageTable.id, SessionMessage.ID.make(message.id)))
+              .get()
+              .pipe(Effect.orDie),
           ),
-        ).toBe(true)
+        ).toMatchObject({ data: { content: [{ type: "reasoning", id: reasoning.id, text: "reconsidered" }] } })
+        expect(
+          (
+            yield* requestJson<SessionV1.WithParts>(
+              pathFor(SessionPaths.message, { sessionID: current.id, messageID: message.id }),
+              { headers },
+            )
+          ).parts,
+        ).toMatchObject([{ id: reasoning.id, type: "reasoning", text: "reconsidered" }])
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            Effect.all([
+              db.select({ data: MessageTable.data }).from(MessageTable).where(eq(MessageTable.id, message.id)).get().pipe(Effect.orDie),
+              db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, reasoning.id)).get().pipe(Effect.orDie),
+              db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, text.id)).get().pipe(Effect.orDie),
+            ]),
+          ),
+        ).toEqual(rowsBefore)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -2308,6 +2525,74 @@ describe("session HttpApi", () => {
         )
 
         expect(response.status).toBe(400)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "returns declared errors for unsupported transcript mutations",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const current = yield* createSession({ title: "invalid transcript mutations" })
+        const message = yield* insertLegacyAssistantMessage(current.id, 1, 1, [
+          SessionMessage.AssistantText.make({ type: "text", id: "text_first", text: "first" }),
+          SessionMessage.AssistantText.make({ type: "text", id: "text_last", text: "last" }),
+        ])
+        const firstPartID = PartID.ascending(`prt_${message.id}_text_0`)
+        const unknownPartID = PartID.ascending("prt_unknown_transcript")
+
+        const unknown = yield* request(
+          pathFor(SessionPaths.deletePart, {
+            sessionID: current.id,
+            messageID: message.id,
+            partID: unknownPartID,
+          }),
+          { method: "DELETE", headers },
+        )
+        expect(unknown.status).toBe(400)
+
+        const nonFinal = yield* request(
+          pathFor(SessionPaths.deletePart, {
+            sessionID: current.id,
+            messageID: message.id,
+            partID: firstPartID,
+          }),
+          { method: "DELETE", headers },
+        )
+        expect(nonFinal.status).toBe(400)
+
+        const unsupportedPartID = PartID.ascending(`prt_${message.id}_step-start_0`)
+        const unsupported = yield* request(
+          pathFor(SessionPaths.updatePart, {
+            sessionID: current.id,
+            messageID: message.id,
+            partID: unsupportedPartID,
+          }),
+          {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+              id: unsupportedPartID,
+              sessionID: current.id,
+              messageID: message.id,
+              type: "step-start",
+            }),
+          },
+        )
+        expect(unsupported.status).toBe(400)
+
+        const missingMessageID = MessageID.ascending("msg_missing_transcript")
+        const missing = yield* request(
+          pathFor(SessionPaths.deleteMessage, { sessionID: current.id, messageID: missingMessageID }),
+          { method: "DELETE", headers },
+        )
+        expect(missing.status).toBe(404)
+        expect(yield* responseJson(missing)).toEqual({
+          name: "NotFoundError",
+          data: { message: `Message not found: ${missingMessageID}` },
+        })
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -2370,6 +2655,220 @@ describe("session HttpApi", () => {
           requestID: permissionID,
           message: `Permission request not found: ${permissionID}`,
         })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "preserves a canonical assistant prefix when reverting to a projected part",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "part revert" })
+        const message = yield* insertLegacyAssistantMessage(session.id, 1, 1, [
+          SessionMessage.AssistantText.make({ type: "text", id: "text_keep", text: "keep" }),
+          SessionMessage.AssistantText.make({ type: "text", id: "text_remove", text: "remove" }),
+        ])
+        const partID = PartID.ascending(`prt_${message.id}_text_1`)
+        const before = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
+
+        expect(
+          yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ messageID: message.id, partID }),
+          }),
+        ).toMatchObject({ id: session.id, revert: { messageID: message.id, partID } })
+
+        const committed = yield* request(`/api/session/${session.id}/revert/commit`, { method: "POST", headers })
+        expect(committed.status).toBe(204)
+        const row = yield* Database.Service.use(({ db }) =>
+          db
+            .select()
+            .from(SessionMessageTable)
+            .where(eq(SessionMessageTable.id, message.id))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(row?.data).toMatchObject({ content: [{ type: "text", id: "text_keep", text: "keep" }] })
+        const after = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
+        expect(after).toEqual(before)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "reverts retained assistant parts across mixed V1 and V2 history",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const current = yield* createSession({ title: "retained part revert" })
+        const parent = yield* createTextMessage(current.id, "parent")
+        const created = Date.now() + 1
+        const session = yield* Session.Service
+        const boundary = yield* session.updateMessage({
+          id: MessageID.ascending("msg_retained_revert_boundary"),
+          sessionID: current.id,
+          role: "assistant",
+          time: { created, completed: created },
+          parentID: parent.info.id,
+          modelID: ModelV2.ID.make("model"),
+          providerID: ProviderV2.ID.make("provider"),
+          mode: "build",
+          agent: "build",
+          path: { cwd: test.directory, root: test.directory },
+          cost: 0,
+          tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+          finish: "stop",
+        })
+        const keep = yield* session.updatePart({
+          id: PartID.ascending("prt_retained_revert_keep"),
+          sessionID: current.id,
+          messageID: boundary.id,
+          type: "text",
+          text: "keep",
+        })
+        const remove = yield* session.updatePart({
+          id: PartID.ascending("prt_retained_revert_remove"),
+          sessionID: current.id,
+          messageID: boundary.id,
+          type: "text",
+          text: "remove",
+        })
+        const internalLater = SessionMessage.AgentSwitched.make({
+          id: SessionMessage.ID.make("msg_retained_revert_internal"),
+          type: "agent-switched",
+          agent: "plan",
+          time: { created: DateTime.makeUnsafe(created + 1) },
+        })
+        yield* Database.Service.use(({ db }) =>
+          db
+            .insert(SessionMessageTable)
+            .values({
+              id: internalLater.id,
+              session_id: current.id,
+              type: internalLater.type,
+              seq: 1,
+              time_created: created + 1,
+              data: { agent: internalLater.agent, time: { created: created + 1 } } as NonNullable<
+                (typeof SessionMessageTable.$inferInsert)["data"]
+              >,
+            })
+            .run()
+            .pipe(Effect.orDie),
+        )
+        const canonicalLater = yield* insertLegacyAssistantMessage(current.id, 2, created + 2, [
+          SessionMessage.AssistantText.make({ type: "text", id: "text_canonical_later", text: "canonical later" }),
+        ])
+        const retainedLater = yield* session.updateMessage({
+          id: MessageID.ascending("msg_retained_revert_later"),
+          sessionID: current.id,
+          role: "assistant",
+          time: { created: created + 3, completed: created + 3 },
+          parentID: parent.info.id,
+          modelID: ModelV2.ID.make("model"),
+          providerID: ProviderV2.ID.make("provider"),
+          mode: "build",
+          agent: "build",
+          path: { cwd: test.directory, root: test.directory },
+          cost: 0,
+          tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+          finish: "stop",
+        })
+        yield* session.updatePart({
+          id: PartID.ascending("prt_retained_revert_later"),
+          sessionID: current.id,
+          messageID: retainedLater.id,
+          type: "text",
+          text: "retained later",
+        })
+        const pendingInputID = SessionMessage.ID.make("msg_retained_revert_pending")
+        yield* Database.Service.use(({ db }) =>
+          db
+            .insert(SessionInputTable)
+            .values({
+              id: pendingInputID,
+              session_id: current.id,
+              prompt: { text: "pending after boundary" },
+              delivery: "queue",
+              admitted_seq: 3,
+              time_created: created + 4,
+            })
+            .run()
+            .pipe(Effect.orDie),
+        )
+        const rowsBefore = yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+            db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+          ]),
+        )
+
+        expect(
+          yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: current.id }), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ messageID: boundary.id, partID: remove.id }),
+          }),
+        ).toMatchObject({ id: current.id, revert: { messageID: boundary.id, partID: remove.id } })
+        expect((yield* request(`/api/session/${current.id}/revert/commit`, { method: "POST", headers })).status).toBe(204)
+
+        const history = yield* requestJson<SessionV1.WithParts[]>(
+          pathFor(SessionPaths.messages, { sessionID: current.id }),
+          { headers },
+        )
+        expect(history.map((message) => message.info.id)).toEqual([parent.info.id, boundary.id])
+        expect(history[1]?.parts).toMatchObject([{ id: keep.id, type: "text", text: "keep" }])
+        const canonical = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ data: SessionMessageTable.data })
+            .from(SessionMessageTable)
+            .where(eq(SessionMessageTable.id, SessionMessage.ID.make(boundary.id)))
+            .get()
+            .pipe(Effect.orDie),
+        )
+        expect(canonical).toMatchObject({
+          data: {
+            content: [{ type: "text", id: keep.id, text: "keep" }],
+            metadata: { legacy: { parts: [{ id: keep.id, type: "text", text: "keep" }] } },
+          },
+        })
+        const tombstones = yield* Database.Service.use(({ db }) =>
+          db
+            .select({ messageID: SessionMessageTombstoneTable.message_id })
+            .from(SessionMessageTombstoneTable)
+            .where(eq(SessionMessageTombstoneTable.session_id, current.id))
+            .all()
+            .pipe(Effect.orDie),
+        )
+        expect(tombstones.map((row) => row.messageID).toSorted()).toEqual(
+          [internalLater.id, canonicalLater.id, SessionMessage.ID.make(retainedLater.id)].toSorted(),
+        )
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            db.select().from(SessionInputTable).where(eq(SessionInputTable.id, pendingInputID)).get().pipe(Effect.orDie),
+          ),
+        ).toBeUndefined()
+        expect(
+          yield* Database.Service.use(({ db }) =>
+            Effect.all([
+              db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+              db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+            ]),
+          ),
+        ).toEqual(rowsBefore)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

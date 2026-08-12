@@ -201,7 +201,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         .importMessage({ sessionID: SessionV2.ID.make(sessionID), message: imported })
         .pipe(
           SessionError.mapSessionNotFound,
-          Effect.catchTag("Session.MessageNotFoundError", () => Effect.fail(new HttpApiError.BadRequest({}))),
+          Effect.catchTag("Session.MessageConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
         )
       return imported
     })

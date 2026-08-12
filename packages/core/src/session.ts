@@ -42,6 +42,7 @@ import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 import { SessionV1 } from "./v1/session"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
+import { isDeepStrictEqual } from "node:util"
 
 export const RevertState = Revert.State
 export type RevertState = Revert.State
@@ -152,6 +153,13 @@ export const BusyError = SessionExecution.BusyError
 export type BusyError = SessionExecution.BusyError
 export const MessageNotFoundError = SessionRevert.MessageNotFoundError
 export type MessageNotFoundError = SessionRevert.MessageNotFoundError
+export class MessageConflictError extends Schema.TaggedErrorClass<MessageConflictError>()(
+  "Session.MessageConflictError",
+  {
+    sessionID: SessionSchema.ID,
+    messageID: SessionMessage.ID,
+  },
+) {}
 
 export type Error =
   | NotFoundError
@@ -160,6 +168,8 @@ export type Error =
   | ActiveAttemptConflictError
   | TurnConflictError
   | InputConflictError
+  | MessageConflictError
+  | SessionCommand.RestoreConflictError
   | CommandExpansionError
   | BusyError
   | SkillNotFoundError
@@ -168,6 +178,9 @@ export type Error =
 export interface Interface {
   readonly list: (input?: ListInput) => Effect.Effect<SessionSchema.Info[]>
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>
+  readonly restore: (
+    input: SessionCommand.RestoreInput,
+  ) => Effect.Effect<SessionSchema.Info, SessionCommand.RestoreConflictError>
   readonly fork: (input: {
     sessionID: SessionSchema.ID
     messages: readonly SessionMessage.Message[]
@@ -289,7 +302,7 @@ export interface Interface {
     readonly importMessage: (input: {
       sessionID: SessionSchema.ID
       message: SessionMessage.Message
-    }) => Effect.Effect<void, NotFoundError | MessageNotFoundError>
+    }) => Effect.Effect<void, NotFoundError | MessageConflictError>
     readonly removeMessage: (input: {
       sessionID: SessionSchema.ID
       messageID: SessionMessage.ID
@@ -347,6 +360,7 @@ const layer = Layer.effect(
     const locations = yield* LocationServiceMap.Service
     const scope = yield* Scope.Scope
     const decodeMessage = Schema.decodeUnknownEffect(SessionMessage.Message)
+    const encodeMessage = Schema.encodeSync(SessionMessage.Message)
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
     const decode = (row: typeof SessionMessageTable.$inferSelect) =>
       decodeMessage({ ...row.data, id: row.id, type: row.type }).pipe(
@@ -438,6 +452,7 @@ const layer = Layer.effect(
 
     const result = Service.of({
       create: commands.create,
+      restore: commands.restore,
       fork: Effect.fn("V2Session.fork")(function* (input) {
         const source = yield* result.get(input.sessionID)
         const target = yield* commands.create({
@@ -1036,8 +1051,12 @@ const layer = Layer.effect(
           const session = yield* result.get(input.sessionID)
           const stored = yield* store.message(input.message.id)
           if (stored) {
-            if (stored.sessionID === input.sessionID) return
-            return yield* new MessageNotFoundError({ sessionID: input.sessionID, messageID: input.message.id })
+            if (
+              stored.sessionID === input.sessionID &&
+              isDeepStrictEqual(encodeMessage(stored.message), encodeMessage(input.message))
+            )
+              return
+            return yield* new MessageConflictError({ sessionID: input.sessionID, messageID: input.message.id })
           }
           yield* events.publish(
             SessionEvent.MessageImported,

@@ -60,6 +60,7 @@ const commandLayer = Layer.succeed(
   SessionCommand.Service,
   SessionCommand.Service.of({
     create: () => Effect.die("unused"),
+    restore: () => Effect.die("unused"),
     plan: () => Effect.die("unused"),
     synthetic: () => Effect.die("unused"),
     admitSynthetic: (input) =>

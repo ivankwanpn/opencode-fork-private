@@ -281,6 +281,7 @@ const commandLayer = Layer.succeed(
         sessions.set(id, created)
         return created
       }),
+    restore: () => Effect.die("unused"),
     plan: () => Effect.die("unused"),
     synthetic: () => Effect.die("unused"),
     switchAgent: (input) =>

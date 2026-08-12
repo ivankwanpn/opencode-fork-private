@@ -32,6 +32,7 @@ import { SessionSchema } from "./schema"
 import { SessionCancellationTable, SessionTable } from "./sql"
 import { SessionTurn } from "./turn"
 import { Slug } from "../util/slug"
+import { isDeepStrictEqual } from "node:util"
 
 export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Session.NotFoundError", {
   sessionID: SessionSchema.ID,
@@ -68,8 +69,19 @@ export type CreateInput = {
   readonly permissions?: PermissionV2.Ruleset
 }
 
+export type RestoreInput = {
+  readonly session: SessionSchema.Info
+  readonly location: Location.Ref
+}
+
+export class RestoreConflictError extends Schema.TaggedErrorClass<RestoreConflictError>()(
+  "Session.RestoreConflictError",
+  { sessionID: SessionSchema.ID },
+) {}
+
 export interface Interface {
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>
+  readonly restore: (input: RestoreInput) => Effect.Effect<SessionSchema.Info, RestoreConflictError>
   readonly plan: (sessionID: SessionSchema.ID) => Effect.Effect<string, NotFoundError>
   readonly synthetic: (input: {
     sessionID: SessionSchema.ID
@@ -116,6 +128,7 @@ const layer = Layer.effect(
     const events = yield* EventV2.Service
     const global = yield* Global.Service
     const projects = yield* ProjectV2.Service
+    const encodeSession = Schema.encodeSync(SessionSchema.Info)
 
     const get = Effect.fn("SessionCommand.get")(function* (sessionID: SessionSchema.ID) {
       const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get().pipe(Effect.orDie)
@@ -126,6 +139,44 @@ const layer = Layer.effect(
       const session = yield* get(sessionID)
       if (!session) return yield* new NotFoundError({ sessionID })
       return session
+    })
+
+    const prepareLocation = Effect.fn("SessionCommand.prepareLocation")(function* (location: Location.Ref) {
+      const project = yield* projects.resolve(location.directory)
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: project.id, worktree: project.directory, vcs: project.vcs?.type, sandboxes: [] })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
+      return {
+        project,
+        location: Location.Ref.make({
+          directory: AbsolutePath.make(location.directory),
+          workspaceID: location.workspaceID ? WorkspaceV2.ID.make(location.workspaceID) : undefined,
+        }),
+        subpath: RelativePath.make(path.relative(project.directory, location.directory).replaceAll("\\", "/")),
+      }
+    })
+
+    const publishCreated = Effect.fn("SessionCommand.publishCreated")(function* (
+      snapshot: SessionEvent.SessionSnapshot,
+      timestamp: DateTime.Utc,
+    ) {
+      yield* events
+        .publish(
+          SessionEvent.Created,
+          { timestamp, sessionID: snapshot.id, info: snapshot },
+          { location: snapshot.location },
+        )
+        .pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof SessionProjector.SessionAlreadyProjected ? Effect.void : Effect.die(defect),
+          ),
+        )
+      const created = yield* get(snapshot.id)
+      if (!created) return yield* Effect.die(`Created Session was not projected: ${snapshot.id}`)
+      return created
     })
 
     const isCancelled = Effect.fn("SessionCommand.isCancelled")(function* (sessionID: SessionSchema.ID) {
@@ -197,18 +248,12 @@ const layer = Layer.effect(
         const sessionID = input.id ?? SessionSchema.ID.create()
         const recorded = yield* get(sessionID)
         if (recorded) return recorded
-        const project = yield* projects.resolve(input.location.directory)
-        yield* db
-          .insert(ProjectTable)
-          .values({ id: project.id, worktree: project.directory, vcs: project.vcs?.type, sandboxes: [] })
-          .onConflictDoNothing()
-          .run()
-          .pipe(Effect.orDie)
+        const target = yield* prepareLocation(input.location)
         const now = Date.now()
         const snapshot = SessionEvent.SessionSnapshot.make({
           id: sessionID,
           parentID: input.parentID,
-          projectID: project.id,
+          projectID: target.project.id,
           slug: Slug.create(),
           version: InstallationVersion,
           agent: input.agent,
@@ -218,23 +263,36 @@ const layer = Layer.effect(
           time: { created: DateTime.makeUnsafe(now), updated: DateTime.makeUnsafe(now) },
           title: input.title ?? `New session - ${new Date(now).toISOString()}`,
           permission: input.permissions,
-          location: Location.Ref.make({
-            directory: AbsolutePath.make(input.location.directory),
-            workspaceID: input.location.workspaceID ? WorkspaceV2.ID.make(input.location.workspaceID) : undefined,
-          }),
-          subpath: RelativePath.make(path.relative(project.directory, input.location.directory).replaceAll("\\", "/")),
+          location: target.location,
+          subpath: target.subpath,
         })
-        const timestamp = DateTime.makeUnsafe(now)
-        yield* events
-          .publish(SessionEvent.Created, { timestamp, sessionID, info: snapshot }, { location: input.location })
-          .pipe(
-            Effect.catchDefect((defect) =>
-              defect instanceof SessionProjector.SessionAlreadyProjected ? Effect.void : Effect.die(defect),
-            ),
-          )
-        const created = yield* get(sessionID)
-        if (!created) return yield* Effect.die(`Created Session was not projected: ${sessionID}`)
-        return created
+        return yield* publishCreated(snapshot, DateTime.makeUnsafe(now))
+      }),
+      restore: Effect.fn("SessionCommand.restore")(function* (input) {
+        const target = yield* prepareLocation(input.location)
+        const expected = SessionSchema.Info.make({
+          ...input.session,
+          model: input.session.model
+            ? {
+                ...input.session.model,
+                variant: input.session.model.variant ?? ModelV2.VariantID.make("default"),
+              }
+            : undefined,
+          projectID: target.project.id,
+          location: target.location,
+          subpath: target.subpath || undefined,
+        })
+        const recorded = yield* get(input.session.id)
+        if (recorded) {
+          if (isDeepStrictEqual(encodeSession(recorded), encodeSession(expected))) return recorded
+          return yield* new RestoreConflictError({ sessionID: input.session.id })
+        }
+        const restored = yield* publishCreated(
+          SessionEvent.SessionSnapshot.make({ ...expected, slug: Slug.create(), version: InstallationVersion }),
+          yield* DateTime.now,
+        )
+        if (isDeepStrictEqual(encodeSession(restored), encodeSession(expected))) return restored
+        return yield* new RestoreConflictError({ sessionID: input.session.id })
       }),
       plan: Effect.fn("SessionCommand.plan")(function* (sessionID) {
         const row = yield* db

@@ -10,13 +10,15 @@
 `@opencode-ai/core/session`（`SessionV2`）+ `SessionExecutionLocal` + `SessionRunner` +
 V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**：
 
-- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor` + V1 `ToolRegistry` + V1 `TaskTool`）已断线——仍装配在 layer 图里但无任何生产调用方（死代码）。
+- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor` + V1 `ToolRegistry`）已从生产 layer 图与源码删除；仍保留的 legacy 工具定义只服务兼容出口。
 - V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
 
-当前已推进到**批次 8 的删除前置条件收口**。V2 已是唯一模型执行路径，当前子批次正在关闭
-transcript mutation、revert 与 diff 的 V1 写入/读取依赖；之后仍需迁移 retained V1 transcript、
-legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才能实际删除 V1 表和目录。
-由于剩余工作集中在旧资料升级与外部兼容边界，不能再用早期「约 50%」估算代表当前风险或工作量。
+当前已推进到**批次 8 的删除前置条件收口**。V2 已是唯一模型执行路径，transcript storage hard cut
+也已完成：运行时读取、mutation/revert 与 CLI import/export 全部只使用 canonical V2 transcript；retained
+legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
+`session_message_tombstone` 已从当前 schema 删除并生成 drop migration。下一阻塞点是广泛迁移仍依赖
+`Session.Service` 的 CRUD、stats/share、middleware、TUI/sync 与 legacy execution consumer，而不再是
+retained transcript storage。整个 V1 → V2 迁移尚未完成，不能以 transcript hard cut 代替最终完成状态。
 
 ---
 
@@ -24,9 +26,9 @@ legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才�
 
 | 区域 | 现状 | 判定 |
 |---|---|---|
-| Session 执行（prompt/command/shell/init） | `LegacySessionExecution`（V1 壳）内部全部委托 V2 `SessionV2`；V1 `SessionPrompt.loop` 仅测试调用 | **V2 主路径，V1 壳待收** |
+| Session 执行（prompt/command/shell/init） | `LegacySessionExecution`（V1 壳）内部全部委托 V2 `SessionV2`；V1 `SessionPrompt.loop` 已删除 | **V2 主路径，V1 壳待收** |
 | Session CRUD（list/get/create/fork/title/metadata） | V1 `Session.Service` 读同一张 `SessionTable`，httpapi CRUD 端点仍依赖 | **V1-only，待迁移** |
-| Session 读取（messages） | `LegacySessionRead` = V2 读 + V1 保留消息 merge | **V2 主，V1 merge 待收** |
+| Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
 | Tool registry | V1 `ToolRegistry`（opencode 包）死代码；V2 `ToolRegistry`（core）完整（direct/deferred/hidden + settlement） | **V2 已接管** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
 | Agent | V1 `Agent`（`@/agent`）仍在 `LegacySessionExecution.select` 使用；V2 `AgentV2.Service` 独立 | **双路径** |
@@ -76,19 +78,20 @@ legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才�
 8. **V1 Command** — `opencode/src/command/index.ts`
    只服务 legacy instance HTTP API 的 `command.list` 端点。
 
-### 2.2 死代码（已装配但不可达，可安全下线）
+### 2.2 V1 执行死代码（已删除）
 
 | 文件 | 说明 |
 |---|---|
-| `opencode/src/session/prompt.ts`（`SessionPrompt.loop`，L1373） | V1 主循环，无生产调用，仅测试 35 处 `.loop(` |
-| `opencode/src/session/processor.ts`（`SessionProcessor`） | V1 处理器，无调用方 |
-| `opencode/src/session/compaction.ts`（V1 `SessionCompaction`） | V1 压缩，无调用方 |
-| `opencode/src/session/tools.ts`（V1 tool 组装） | 只被已断线的 `prompt.ts` 引用 |
-| `opencode/src/tool/registry.ts`（V1 `ToolRegistry`） | 只被 `prompt.ts`/`tools.ts` 引用 |
-| `opencode/src/tool/task.ts`（V1 `TaskTool`） | 依赖 `promptOps`，仅死路径提供 |
-| `opencode/src/agent/subagent-permissions.ts` | 只被死 V1 `TaskTool` 引用 |
+| `opencode/src/session/prompt.ts`（`SessionPrompt.loop`） | 已删除 |
+| `opencode/src/session/processor.ts`（`SessionProcessor`） | 已删除 |
+| `opencode/src/session/compaction.ts`（V1 `SessionCompaction`） | 已删除 |
+| `opencode/src/session/tools.ts`（V1 tool 组装） | 已删除 |
+| `opencode/src/agent/subagent-permissions.ts` | 已删除 |
+| V1 loop/processor/compaction 对应测试 | 已删除或迁移到 V2 contract |
 
-这些节点仍出现在 `app-runtime.ts`（L88-110）与 `httpapi/server.ts`（`legacySessionRuntimeNodes` L296-300）的 layer 图里。
+`app-runtime.ts` 与 `httpapi/server.ts` 的 production layer 图已移除上述节点。`opencode/src/tool/registry.ts`
+暂留给 plugin compatibility parity test，不属于模型执行路径；legacy 工具定义仍被 run/外部展示层引用，随
+对应 consumer 迁移再删除。
 
 ### 2.3 刻意保留的 V1 出口（外部兼容，迁移完成后独立评估）
 
@@ -106,20 +109,21 @@ legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才�
 `v1/permission.ts` = schema `permission-v1` re-export + 4 错误类。
 `v1/config/` = 18 个文件，V1 配置 schema。
 
-它承载三类活跃资产，**删除前必须完成**：
-1. **存储格式**：`core/src/session/sql.ts` 的 message/part/permission 列按 V1 形状存（`V1MessageData`、`PermissionV1.Ruleset`）
-2. **事件兼容面**：`core/src/session.ts`（L359/425/440/464/652）、`session/command.ts`（L239）、`execution/local.ts`（L224）发布 `SessionV1.Event.*`/`LegacyEvent`
+它目前承载三类兼容资产，**删除前必须完成**：
+1. **Session/wire 类型投影**：`SessionV1` ID、Info 与错误类型仍被 legacy API、CLI/TUI/ACP compatibility 边界消费
+2. **事件兼容面**：V2 producer 大多已切换，但 `execution/local.ts` 仍发布 V1 error，projector/bridge 仍消费或投影部分 V1 lifecycle/event
 3. **配置迁移链**：`core/src/config.ts` 用 `ConfigV1.Info + ConfigMigrateV1` 解码旧配置
 
-### 3.2 V2 → V1 交叉引用清单（core 内 11 处）
+canonical transcript 与 permission 已使用 V2 schema；legacy `message` / `part` / tombstone tables 已从当前
+schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
+
+### 3.2 V2 → V1 主要交叉引用清单
 
 | V2 文件 | 引用 V1 | 性质 |
 |---|---|---|
-| `core/src/session.ts` | `SessionV1`、`LegacyEvent` | 发布兼容事件、V1 SessionInfo |
-| `core/src/session/command.ts` | `PermissionV1`、`SessionV1` | 权限存 V1 规则、发布 V1 Created |
-| `core/src/session/info.ts` | `SessionV1` | `toLegacyInfo` |
+| `core/src/session.ts` | `SessionV1.MessageID` | exact-retry legacy ID 投影 |
+| `core/src/session/info.ts` | `SessionV1`、`PermissionV1` | `toLegacyInfo` / `toV1Rules` 外部投影 |
 | `core/src/session/projector.ts` | `SessionV1.Event.*` | V1 事件投影到 V2 表 |
-| `core/src/session/sql.ts` | `PermissionV1`、`V1MessageData` | DB 列类型 |
 | `core/src/session/execution/local.ts` | `SessionV1.Event.Error` | drain 失败事件 |
 | `core/src/config.ts` | `ConfigV1`、`ConfigMigrateV1` | 配置加载双路径 |
 | `core/src/config/plugin/{provider,agent}.ts` | `ConfigV1/MigrateV1` | 配置迁移 |
@@ -235,28 +239,35 @@ legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才�
 
 > ✅ **部分完成（999.0.17）**：
 > - **command group**：`instance.command` 端点切到 V2 `CommandV2`（wire schema 用 `@opencode-ai/schema/command` 的 `Command.Info`，经 `LocationServiceMap` 解析）；契约测试通过
-> - **session group**：保留 V1 读壳。调研发现 V1 `Session.Service` 已直接读 V2 存储表（`SessionTable`），切换到 V2 需新建 V2→V1 Info 投影（V2 缺 metadata/permission 等字段），收益小风险大。`LegacySessionRead.history` 的 V1 merge 保留到批次 5
+> - **session group**：transcript list/get/revert/mutation 已切 canonical `SessionV2`，`LegacySessionRead` 的 retained merge 已删除；Session CRUD 仍保留 V1 `Session.Service` 读壳。`Session.Service` 直接读 `SessionTable`，下一批必须扩充 V2 等价能力并逐个迁移 consumer，不能回退 legacy transcript。
 > - **config/provider/event group**：标注待办。调研确认其核心迁移点在 core（配置双路径、事件投影），httpapi 是最后一层出口，归批次 6/8。且这 5 个 group 无生产客户端（TUI/Web 走 `packages/server` V2 handler），主要是契约测试消费
 
 原计划：
-1. **session group**：CRUD 从 V1 `Session.Service` 迁到 V2（`SessionV2` 持久化 + 投影），移除 `LegacySessionRead` 的 V1 merge
+1. **session group**：CRUD 从 V1 `Session.Service` 迁到 V2（`SessionV2` 持久化 + 投影）；transcript merge 已先行移除
 2. **config group**：`ConfigV1` → V2 config 解码；移除 `ConfigMigrateV1`（保留一次性迁移入口）
 3. **provider group**：V1 provider/auth → V2 provider
 4. **event group**：`EventV2Bridge` 的 V1 序列化 → V2 事件词汇
 5. **command group**：V1 `@/command` → V2 `CommandV2`
 
-### 批次 5：存储格式迁移（高风险，影响用户数据）
+### 批次 5：存储格式迁移（transcript hard cut 已完成）
 
 > ✅ **部分完成（999.0.17）**：**permission 列切 V2（5a）**
 > - `session` 表 `permission` 列从 `PermissionV1.Ruleset` → `PermissionV2.Ruleset`（`{permission,pattern,action}` → `{action,resource,effect}`）
 > - 新增数据迁移 `20260811000000_session_permission_v2`（用现有 `DatabaseMigration` 机制；SQL 将既有 V1 JSON 原地重写为 V2 形状，防御性跳过已 V2 的行）
 > - `store.ts` 移除 `toV2Rules` 读取转换（列已是 V2），V2 runner 直接消费
 > - `command.ts` 复用 `info.ts` 导出的 `toV1Rules`（V1 事件载荷保持 V1 形状）；projector `sessionRow` 写列时 `toV2Rules`（V1→V2）；V1 读侧 `fromRow`/`toLegacyInfo` 用 `toV1Rules`（V2→V1 投影）
-> - `data_migration` 表保留（未消费的死表，不删除避免 schema 变更）；V1 消息表（`V1MessageData`/`V1PartData`）退役推迟到批次 8 删除 V1 时一并处理
-
-1. `core/src/session/sql.ts`：`V1MessageData` → `SessionMessage.Message`、`PermissionV1.Ruleset` → `PermissionV2.Ruleset`
-2. 更新 `data-migration.sql.ts` 与既有用户库迁移路径
-3. 更新 `session/info.ts` `toLegacyInfo`（或删除）
+> - `data_migration` 表保留（未消费的死表，另批处理）
+>
+> ✅ **transcript storage hard cut（999.0.17）**：
+> - CLI export/import 改为 `{ version: 2, session, messages }` canonical envelope；versionless V1 export 与旧 flat share payload 明确拒绝
+> - HTTP/runtime transcript list/get/revert/mutation 只读写 `SessionV2` 与 `SessionMessageTable`，不再 merge、adopt 或回写 retained rows
+> - retained legacy `message` / `part` 用户资料按产品决策直接放弃，不做一次性迁移
+> - `MessageTable`、`PartTable`、`SessionMessageTombstoneTable` 已从 runtime schema/export 删除
+> - migration `20260812130609_drop_legacy_transcript` 会删除 `message`、`part`、`session_message_tombstone`
+> - source isolation gate 阻止 production runtime 重新引用上述 legacy table symbols
+>
+> 存储面的下一步不是恢复 retained compatibility，而是随着 `Session.Service` consumer 迁移，删除其余只为
+> V1 CRUD/wire projection 存在的 schema 与 projector 分支。
 
 ### 批次 6：事件兼容面收口
 
@@ -294,22 +305,25 @@ legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才�
 >
 > **前置条件 ③ v1/config 一次性 migration boundary** ✅：`config.ts` 的 `decode` 已是明确的一次性迁移路径——旧配置（`ConfigMigrateV1.isV1`）走 `decodeV1Info + migrate`，新配置直接 V2 解码。新 runtime 配置只使用 V2 结构；旧配置兼容完成前 v1/config 不删除。
 >
-> **前置条件 ④ runtime transcript mutation 停止写 V1** ✅：HTTP `updatePart`/`deletePart`/`deleteMessage`、revert commit、reminders/plan 与 summarize 已改走 V2 command/event/projector；这些路径不再写 `MessageTable` / `PartTable`。支持的 retained V1 user/assistant mutation 会先 lazy adopt 到 `SessionMessageTable`，删除和 revert 使用 durable tombstone 防止合并读取时复活。
+> **前置条件 ④ transcript storage hard cut** ✅：HTTP `updatePart`/`deletePart`/`deleteMessage`、revert commit、reminders/plan、summarize、CLI import/export 与 transcript reads 全部走 V2 command/event/projector；不再读取、写入或 adopt retained V1 rows。
 >
 > **本轮 transcript mutation closeout（999.0.17）**：
 > - Part-level revert 现在持久化 canonical `contentIndex`，message-level revert 的边界不再误删前一条消息。
-> - 混合 V1/V2 历史会存储精确 `removedMessageIDs`；commit 原子截断 assistant content、同步 retained legacy parts、tombstone 后续 retained/canonical messages，并清除边界后的 pending inputs。
-> - retained assistant/user message 和任意 legacy Part ID 可在支持的操作中 lazy adopt；不支持的 Part 形状明确返回 400，不再回落到 V1 写入。
+> - commit 原子截断 canonical assistant content、删除边界后的 canonical messages，并清除边界后的 pending inputs。
 > - `SessionSummary.diff` 读取 canonical `snapshot.patch`；obsolete `SessionRevert.Service`、runtime/server layer 与 V1-only compact/revert test 已移除。
+> - retained legacy transcript rows 明确退役且不迁移；legacy-only message/part ID 统一按 not found 处理。
+> - CLI import/export 使用 version 2 canonical envelope；runtime schema 与生成 migration 已删除三张 legacy transcript tables。
 >
 > **仍阻止实际删表/删目录的依赖** ⏸️：
-> - `LegacySessionRead`、`TranscriptRead` 与 `message-v2.ts` 仍合并/读取 retained `MessageTable` / `PartTable`。
-> - `cli/cmd/import.ts` 仍直接插入 `MessageTable` / `PartTable`，是目前明确的新 V1 transcript 写入入口。
-> - `Session.Service` 仍被 CRUD、import、stats、share、legacy read/execution、middleware、TUI/sync handler 与部分 legacy tool 路径使用。
-> - Core projector 仍消费 V1 message/Part events，以维持旧 API、旧资料和兼容事件投影。
-> - 删除 legacy tables 前必须先完成 import 迁移，并为 retained 资料确定一次性迁移或明确退役策略；否则旧 session 会丢失 transcript。
+> - `Session.Service` 仍被 CRUD、stats、share、legacy execution、middleware、TUI/sync handler 与部分 legacy tool 路径使用。
+> - Core projector 仍消费部分 V1 session lifecycle/event 形状，以维持尚未迁移的旧 API 与兼容事件投影。
+> - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
+> - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
-> **批次 8 实际删除（待上述前置条件完成）**：先迁移 import 和 retained transcript，再移除 compatibility readers/projectors 与 `Session.Service` runtime consumer；最后按引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*` 和 legacy tables。`v1/config` 必须保留到旧配置一次性升级路径不再需要时。
+> **批次 8 下一步**：先扩充 V2 Session CRUD/metadata/permission 等缺口并广泛迁移 `Session.Service`
+> runtime consumer，再移除对应 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部 wire
+> 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
+> 升级路径不再需要时。整个批次仍未完成。
 
 ### 批次 9：全量 V2-only regression gate
 
@@ -320,7 +334,7 @@ legacy import、广泛的 `Session.Service` consumer 与兼容 projector，才�
 
 ## 6. 风险与注意事项
 
-1. **双表读写一致性**：V1 `Session.Service` 与 V2 `SessionV2` 共享 `SessionTable`。任何 V2 消息格式变更都会影响 V1 投影（`MessageV2.toLegacy`）。迁移完成前不要移除 V1 CRUD。
+1. **共享 Session row 一致性**：V1 `Session.Service` 与 V2 `SessionV2` 仍共享 `SessionTable`；迁移 CRUD consumer 时必须先补齐 V2 metadata/permission 等等价能力，再移除 V1 projection。Transcript 已是 canonical-only，不得恢复双表读写。
 2. **两套 route 树执行语义不同**：TUI worker/native routes 用 `locationServiceMapV2Layer`（forwarding）；`packages/server/src/routes.ts` 独立 route 树仍绑 `noopLayer`（V2 工具彼处 recording-only）。需确认生产 server 入口。
 3. **Permission 双轨盲区**：V2 工具请求不出现在 V1 `/permission` list，用户 UI 可能看不到待授权请求。
 4. **`tool_search` selection 持久化**：若未来接入非 runner 的 V2 工具调用面（MCP/session-scoped 注册），需显式设计 selection 持久化。

@@ -402,6 +402,7 @@ export type SessionsListOutput = {
       readonly archived?: number
     }
     readonly title: string
+    readonly metadata?: { readonly [x: string]: JsonValue }
     readonly share?: { readonly url: string }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
@@ -497,6 +498,7 @@ export type SessionsCreateOutput = {
       readonly archived?: number
     }
     readonly title: string
+    readonly metadata?: { readonly [x: string]: JsonValue }
     readonly share?: { readonly url: string }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
@@ -556,6 +558,7 @@ export type SessionsGetOutput = {
       readonly archived?: number
     }
     readonly title: string
+    readonly metadata?: { readonly [x: string]: JsonValue }
     readonly share?: { readonly url: string }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
@@ -605,6 +608,7 @@ export type SessionsChildrenOutput = {
       readonly archived?: number
     }
     readonly title: string
+    readonly metadata?: { readonly [x: string]: JsonValue }
     readonly share?: { readonly url: string }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
@@ -663,6 +667,7 @@ export type SessionsForkOutput = {
       readonly archived?: number
     }
     readonly title: string
+    readonly metadata?: { readonly [x: string]: JsonValue }
     readonly share?: { readonly url: string }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
@@ -716,6 +721,7 @@ export type SessionsUpdateOutput = {
       readonly archived?: number
     }
     readonly title: string
+    readonly metadata?: { readonly [x: string]: JsonValue }
     readonly share?: { readonly url: string }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string

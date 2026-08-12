@@ -10,7 +10,7 @@ import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
-import { Database } from "@opencode-ai/core/database/database"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -332,6 +332,7 @@ export const node = LayerNode.make({
     Agent.node,
     Skill.node,
     Session.node,
+    SessionV2.node,
     BackgroundJob.node,
     Provider.node,
     LSP.node,
@@ -349,7 +350,6 @@ export const node = LayerNode.make({
     TaskSubmission.node,
     SessionStatus.node,
     MCP.node,
-    Database.node,
     Ripgrep.node,
   ],
 })

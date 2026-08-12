@@ -172,7 +172,7 @@ describe("SessionProjector", () => {
     }),
   )
 
-  it.effect("projects imported user text mutations without changing retained V1 storage", () =>
+  it.effect("projects imported user text mutations into canonical content only", () =>
     Effect.gen(function* () {
       const db = (yield* Database.Service).db
       yield* db
@@ -211,7 +211,7 @@ describe("SessionProjector", () => {
           id: messageID,
           type: "user",
           text: "retained",
-          metadata: { legacy },
+          metadata: { source: "archive", legacy },
           time: { created: DateTime.makeUnsafe(1) },
         }),
       })
@@ -229,7 +229,7 @@ describe("SessionProjector", () => {
       ).toMatchObject({
         type: "user",
         text: "updated",
-        metadata: { legacy: { parts: [{ id: partID, text: "updated" }] } },
+        metadata: { source: "archive", legacy },
       })
 
       yield* events.publish(SessionEvent.TranscriptMutation.UserTextRemoved, {
@@ -244,7 +244,7 @@ describe("SessionProjector", () => {
       ).toMatchObject({
         type: "user",
         text: "",
-        metadata: { legacy: { parts: [] } },
+        metadata: { source: "archive", legacy },
       })
     }),
   )
@@ -304,7 +304,7 @@ describe("SessionProjector", () => {
             SessionMessage.AssistantReasoning.make({ type: "reasoning", id: firstPartID, text: "thinking" }),
             SessionMessage.AssistantText.make({ type: "text", id: lastPartID, text: "answer" }),
           ],
-          metadata: { legacy },
+          metadata: { source: "archive", legacy },
           time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
         }),
       })
@@ -338,12 +338,12 @@ describe("SessionProjector", () => {
       ).toMatchObject({
         type: "assistant",
         content: [{ type: "reasoning", id: firstPartID, text: "reconsidered" }],
-        metadata: { legacy: { parts: [{ id: firstPartID, type: "reasoning", text: "reconsidered" }] } },
+        metadata: { source: "archive", legacy },
       })
     }),
   )
 
-  it.effect("removes canonical messages, inputs, and retained fallbacks with one tombstone", () =>
+  it.effect("removes canonical messages and inputs without compatibility state", () =>
     Effect.gen(function* () {
       const db = (yield* Database.Service).db
       yield* db
@@ -390,7 +390,7 @@ describe("SessionProjector", () => {
           .from(SessionMessageTombstoneTable)
           .where(eq(SessionMessageTombstoneTable.message_id, messageID))
           .get(),
-      ).toEqual({ messageID })
+      ).toBeUndefined()
     }),
   )
 

@@ -65,6 +65,7 @@ export type CreateInput = {
   readonly title?: string
   readonly agent?: AgentV2.ID
   readonly model?: ModelV2.Ref
+  readonly metadata?: Readonly<Record<string, Schema.Json>>
   readonly location: Location.Ref
   readonly permissions?: PermissionV2.Ruleset
 }
@@ -262,6 +263,7 @@ const layer = Layer.effect(
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           time: { created: DateTime.makeUnsafe(now), updated: DateTime.makeUnsafe(now) },
           title: input.title ?? `New session - ${new Date(now).toISOString()}`,
+          metadata: input.metadata,
           permission: input.permissions,
           location: target.location,
           subpath: target.subpath,

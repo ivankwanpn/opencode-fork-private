@@ -1,7 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Layer, Schema } from "effect"
 import type * as Scope from "effect/Scope"
 import { HttpServer } from "effect/unstable/http"
 import { ChildProcessSpawner } from "effect/unstable/process"
@@ -18,7 +18,6 @@ import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 
 import type { Config } from "@/config/config"
-import { Session as SessionNs } from "@/session/session"
 import { errorMessage } from "../../src/util/error"
 import { TestLLMServer } from "../lib/llm-server"
 import path from "path"
@@ -33,7 +32,7 @@ import { httpApiLayer } from "./httpapi-layer"
 
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const appLayer = AppNodeBuilder.build(
-  LayerNode.group([FSUtil.node, CrossSpawnSpawner.node, InstanceStore.node, Database.node, SessionNs.node]),
+  LayerNode.group([FSUtil.node, CrossSpawnSpawner.node, InstanceStore.node, Database.node]),
   [[InstanceStore.bootstrapNode, noopBootstrapLayer]],
 )
 const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
@@ -53,7 +52,6 @@ type TestServices =
   | FSUtil.Service
   | ChildProcessSpawner.ChildProcessSpawner
   | InstanceStore.Service
-  | SessionNs.Service
   | HttpServer.HttpServer
 type TestScope = Scope.Scope | TestServices
 
@@ -301,34 +299,22 @@ description: A project skill visible to REST API prompts.
   )
 }
 
-function seedMessage(directory: string, sessionID: string) {
-  const id = SessionID.make(sessionID)
-  return InstanceStore.Service.use((store) =>
-    store.provide(
-      { directory },
-      SessionNs.Service.use((svc) =>
-        Effect.gen(function* () {
-          const message = yield* svc.updateMessage({
-            id: MessageID.ascending(),
-            sessionID: id,
-            role: "user",
-            time: { created: Date.now() },
-            agent: "test",
-            model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-            tools: {},
-          } satisfies SessionV1.User)
-          const part = yield* svc.updatePart({
-            id: PartID.ascending(),
-            sessionID: id,
-            messageID: message.id,
-            type: "text",
-            text: "seeded message",
-          })
-          return { message, part }
-        }),
-      ),
-    ),
-  )
+function seedMessage(sdk: Sdk, sessionID: string) {
+  return Effect.gen(function* () {
+    const result = yield* capture(() =>
+      sdk.session.prompt({
+        sessionID,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "seeded message" }],
+      }),
+    )
+    if (result.status !== 200) return yield* Effect.die(`Failed to seed canonical message: ${result.status}`)
+    const message = Schema.decodeUnknownSync(SessionV1.WithParts)(result.data)
+    const part = message.parts[0]
+    if (!part) return yield* Effect.die("Canonical message fixture did not contain a projected part")
+    return { message: message.info, part }
+  })
 }
 
 afterEach(async () => {
@@ -626,11 +612,11 @@ describe("HttpApi SDK", () => {
   )
 
   serverPathParity("matches generated SDK session message and part routes", (serverPath) =>
-    withStandardProject(serverPath, ({ sdk, directory }) =>
+    withStandardProject(serverPath, ({ sdk }) =>
       Effect.gen(function* () {
         const session = yield* capture(() => sdk.session.create({ title: "messages" }))
         const sessionID = String(record(session.data).id)
-        const seeded = yield* seedMessage(directory, sessionID)
+        const seeded = yield* seedMessage(sdk, sessionID)
         const list = yield* capture(() => sdk.session.messages({ sessionID }))
         const page = yield* capture(() => sdk.session.messages({ sessionID, limit: 1 }))
         const message = yield* capture(() => sdk.session.message({ sessionID, messageID: seeded.message.id }))
@@ -684,11 +670,11 @@ describe("HttpApi SDK", () => {
   // different bus instance (Bug 2 / pre-#27825) or the stream loses context (Bug 1 /
   // pre-#27425).
   serverPathParity("streams sync-backed part updates to /event subscribers", (serverPath) =>
-    withStandardProject(serverPath, ({ sdk, directory }) =>
+    withStandardProject(serverPath, ({ sdk }) =>
       Effect.gen(function* () {
         const session = yield* capture(() => sdk.session.create({ title: "sync-backed part event" }))
         const sessionID = String(record(session.data).id)
-        const seeded = yield* seedMessage(directory, sessionID)
+        const seeded = yield* seedMessage(sdk, sessionID)
 
         const controller = new AbortController()
         yield* Effect.addFinalizer(() => Effect.sync(() => controller.abort()))
@@ -708,7 +694,7 @@ describe("HttpApi SDK", () => {
               Deferred.doneUnsafe(ready, Effect.void)
               continue
             }
-            if (type === MessageV2.Event.PartUpdated.type) {
+            if (type === "message.part.updated") {
               Deferred.doneUnsafe(received, Effect.succeed(payload))
               return
             }

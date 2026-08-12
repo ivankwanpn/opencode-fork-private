@@ -18,7 +18,6 @@ import { MessageV2 } from "@/session/message-v2"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
-import { TranscriptRead } from "@/session/transcript-read"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { DateTime, Effect, Option, Schema } from "effect"
@@ -180,30 +179,6 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const requireSession = Effect.fn("SessionHttpApi.requireSession")(function* (sessionID: SessionID) {
       return yield* SessionError.mapStorageNotFound(session.get(sessionID))
-    })
-
-    const adoptRetainedMessage = Effect.fn("SessionHttpApi.adoptRetainedMessage")(function* (
-      sessionID: SessionID,
-      messageID: MessageID,
-    ) {
-      const id = SessionMessage.ID.make(messageID)
-      const existing = yield* revertSvc.message({ sessionID: SessionV2.ID.make(sessionID), messageID: id })
-      if (existing) return existing
-      const retained = (
-        yield* sessionRead
-          .history(sessionID)
-          .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound)
-      ).find((message) => message.info.id === messageID)
-      if (!retained) return
-      const imported = TranscriptRead.project([retained])[0]
-      if (!imported || imported.id !== id) return
-      yield* revertSvc.transcript
-        .importMessage({ sessionID: SessionV2.ID.make(sessionID), message: imported })
-        .pipe(
-          SessionError.mapSessionNotFound,
-          Effect.catchTag("Session.MessageConflictError", () => Effect.fail(new HttpApiError.BadRequest({}))),
-        )
-      return imported
     })
 
     const get = Effect.fn("SessionHttpApi.get")(function* (ctx: { params: { sessionID: SessionID } }) {
@@ -643,7 +618,6 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     }) {
       yield* requireSession(ctx.params.sessionID)
       yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
-      yield* adoptRetainedMessage(ctx.params.sessionID, ctx.params.messageID)
       yield* revertSvc.transcript
         .removeMessage({
           sessionID: SessionV2.ID.make(ctx.params.sessionID),
@@ -668,7 +642,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     }) {
       yield* requireSession(ctx.params.sessionID)
       const current = yield* revertSvc.get(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
-      const message = yield* adoptRetainedMessage(ctx.params.sessionID, ctx.params.messageID)
+      const message = yield* revertSvc.message({
+        sessionID: current.id,
+        messageID: SessionMessage.ID.make(ctx.params.messageID),
+      })
       if (!message) return yield* new HttpApiError.BadRequest({})
       const content = MessageV2.resolveTranscriptContent(current, [message], ctx.params)
       if (content.status !== "resolved") return yield* new HttpApiError.BadRequest({})
@@ -714,7 +691,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         return yield* new HttpApiError.BadRequest({})
       }
       const current = yield* revertSvc.get(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
-      const message = yield* adoptRetainedMessage(ctx.params.sessionID, ctx.params.messageID)
+      const message = yield* revertSvc.message({
+        sessionID: current.id,
+        messageID: SessionMessage.ID.make(ctx.params.messageID),
+      })
       if (!message) return yield* new HttpApiError.BadRequest({})
       const content = MessageV2.resolveTranscriptContent(current, [message], ctx.params)
       if (

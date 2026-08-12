@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect } from "bun:test"
-import { Effect, Exit, Layer, Option } from "effect"
+import { DateTime, Effect, Exit, Layer, Option } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionEvent } from "@opencode-ai/schema/session-event"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 
 import { AccessToken, AccountID, OrgID, RefreshToken } from "../../src/account/schema"
 import { AccountRepo } from "../../src/account/repo"
@@ -38,6 +43,7 @@ function requestLayer(client: HttpClient.HttpClient) {
   const replacement = [httpClient, Layer.succeed(HttpClient.HttpClient, client)] as const
   return LayerNode.compile(LayerNode.group([ShareNext.node, AccountRepo.node]), [
     replacement,
+    [SessionExecution.node, SessionExecution.noopLayer],
     locationServiceMapReplacement,
   ])
 }
@@ -53,7 +59,11 @@ function integrationLayer(client: HttpClient.HttpClient) {
       AccountRepo.node,
       Database.node,
     ]),
-    [replacement, locationServiceMapReplacement],
+    [
+      replacement,
+      [SessionExecution.node, SessionExecution.noopLayer],
+      locationServiceMapReplacement,
+    ],
   )
 }
 
@@ -320,6 +330,138 @@ describe("ShareNext", () => {
               status: "modified",
             },
           ])
+        }).pipe(Effect.provide(integrationLayer(client)))
+      },
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+    ),
+  )
+
+  it.live("ShareNext syncs canonical imported messages and projected parts", () =>
+    provideTmpdirInstance(
+      () => {
+        const seen: string[] = []
+        const client = HttpClient.make((req) => {
+          if (req.url.endsWith("/sync") && req.body._tag === "Uint8Array") {
+            seen.push(new TextDecoder().decode(req.body.body))
+          }
+          return Effect.succeed(json(req, { ok: true }))
+        })
+
+        return Effect.gen(function* () {
+          const events = yield* EventV2Bridge.Service
+          const share = yield* ShareNext.Service
+          const session = yield* Session.Service
+          const info = yield* session.create({ title: "canonical share" })
+          yield* share.init()
+          const { db } = yield* Database.Service
+          yield* db
+            .insert(SessionShareTable)
+            .values({
+              session_id: info.id,
+              id: "shr_canonical",
+              url: "https://legacy-share.example.com/share/canonical",
+              secret: "sec_canonical",
+            })
+            .run()
+            .pipe(Effect.orDie)
+
+          yield* events.publish(SessionEvent.MessageImported, {
+            sessionID: info.id,
+            timestamp: DateTime.makeUnsafe(1),
+            message: SessionMessage.Assistant.make({
+              id: SessionMessage.ID.make("msg_canonical_share"),
+              type: "assistant",
+              agent: "build",
+              model: {
+                providerID: ProviderV2.ID.make("test"),
+                id: ModelV2.ID.make("test"),
+                variant: ModelV2.VariantID.make("default"),
+              },
+              content: [
+                SessionMessage.AssistantText.make({ type: "text", id: "text_share", text: "shared" }),
+              ],
+              time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
+            }),
+          })
+
+          yield* pollWithTimeout(
+            Effect.sync(() => (seen.length === 1 ? true : undefined)),
+            "timed out waiting for canonical transcript share sync",
+            "5 seconds",
+          )
+          const body = JSON.parse(seen[0]) as { data: Array<{ type: string; data: Record<string, unknown> }> }
+          expect(body.data).toContainEqual({
+            type: "message",
+            data: expect.objectContaining({ id: "msg_canonical_share", role: "assistant" }),
+          })
+          expect(body.data).toContainEqual({
+            type: "part",
+            data: expect.objectContaining({ messageID: "msg_canonical_share", type: "text", text: "shared" }),
+          })
+        }).pipe(Effect.provide(integrationLayer(client)))
+      },
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+    ),
+  )
+
+  it.live("ShareNext syncs canonical user transcript when model lookup fails", () =>
+    provideTmpdirInstance(
+      () => {
+        const seen: string[] = []
+        const client = HttpClient.make((req) => {
+          if (req.url.endsWith("/sync") && req.body._tag === "Uint8Array") {
+            seen.push(new TextDecoder().decode(req.body.body))
+          }
+          return Effect.succeed(json(req, { ok: true }))
+        })
+
+        return Effect.gen(function* () {
+          const events = yield* EventV2Bridge.Service
+          const share = yield* ShareNext.Service
+          const session = yield* Session.Service
+          const info = yield* session.create({ title: "canonical user share" })
+          yield* share.init()
+          const { db } = yield* Database.Service
+          yield* db
+            .insert(SessionShareTable)
+            .values({
+              session_id: info.id,
+              id: "shr_canonical_user",
+              url: "https://legacy-share.example.com/share/canonical-user",
+              secret: "sec_canonical_user",
+            })
+            .run()
+            .pipe(Effect.orDie)
+
+          yield* events.publish(SessionEvent.MessageImported, {
+            sessionID: info.id,
+            timestamp: DateTime.makeUnsafe(1),
+            message: SessionMessage.User.make({
+              id: SessionMessage.ID.make("msg_canonical_user_share"),
+              type: "user",
+              text: "share without a model",
+              time: { created: DateTime.makeUnsafe(1) },
+            }),
+          })
+
+          yield* pollWithTimeout(
+            Effect.sync(() => (seen.length === 1 ? true : undefined)),
+            "timed out waiting for canonical user transcript share sync",
+            "5 seconds",
+          )
+          const body = JSON.parse(seen[0]) as { data: Array<{ type: string; data: Record<string, unknown> }> }
+          expect(body.data).toContainEqual({
+            type: "message",
+            data: expect.objectContaining({ id: "msg_canonical_user_share", role: "user" }),
+          })
+          expect(body.data).toContainEqual({
+            type: "part",
+            data: expect.objectContaining({
+              messageID: "msg_canonical_user_share",
+              type: "text",
+              text: "share without a model",
+            }),
+          })
         }).pipe(Effect.provide(integrationLayer(client)))
       },
       { config: { enterprise: { url: "https://legacy-share.example.com" } } },

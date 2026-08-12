@@ -17,41 +17,15 @@ import { SessionContextEpoch } from "./context-epoch"
 import { SessionAttempt } from "./attempt"
 import { SessionTurn } from "./turn"
 import {
-  MessageTable,
-  PartTable,
   SessionInputTable,
   SessionMessageTable,
-  SessionMessageTombstoneTable,
   SessionTable,
 } from "./sql"
-import type { DeepMutable } from "../schema"
 
 type DatabaseService = Database.Interface["db"]
 
 const decodeMessage = Schema.decodeUnknownSync(SessionMessage.Message)
 const encodeMessage = Schema.encodeSync(SessionMessage.Message)
-
-function legacyMessage(message: SessionMessage.Message) {
-  const legacy = message.metadata?.legacy
-  return Schema.is(SessionV1.WithParts)(legacy) ? legacy : undefined
-}
-
-function legacyUserText(parts: ReadonlyArray<{ readonly type: string; readonly text?: string; readonly prompt?: string }>) {
-  return parts
-    .flatMap((part) => {
-      if (part.type === "text") return [part.text]
-      if (part.type === "subtask") return [part.prompt]
-      if (part.type === "compaction") return ["What did we do so far?"]
-      return []
-    })
-    .join("\n")
-}
-
-function withLegacyParts(message: SessionMessage.Message, parts: ReadonlyArray<unknown>) {
-  const legacy = legacyMessage(message)
-  if (!legacy) return message.metadata
-  return { ...message.metadata, legacy: { ...legacy, parts: [...parts] } }
-}
 
 export class SessionAlreadyProjected extends Error {}
 
@@ -63,14 +37,6 @@ type Usage = {
     reasoning: number
     cache: { read: number; write: number }
   }
-}
-
-function usage(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"] | unknown): Usage | undefined {
-  if (typeof part !== "object" || part === null) return undefined
-  const value = part as Record<string, unknown>
-  if (value.type !== "step-finish") return undefined
-  if (!("cost" in value) || !("tokens" in value)) return undefined
-  return { cost: value.cost as Usage["cost"], tokens: value.tokens as Usage["tokens"] }
 }
 
 function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInsert {
@@ -137,21 +103,9 @@ function sessionRowFromSnapshot(snapshot: SessionEvent.SessionSnapshot): typeof 
   }
 }
 
-function messageData(
-  info: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["info"],
-): typeof MessageTable.$inferInsert.data {
-  const { id: _, sessionID: __, ...rest } = info
-  return rest as DeepMutable<typeof rest>
-}
-
-function partData(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"]): typeof PartTable.$inferInsert.data {
-  const { id: _, messageID: __, sessionID: ___, ...rest } = part
-  return rest as DeepMutable<typeof rest>
-}
-
 function applyUsage(
   db: DatabaseService,
-  sessionID: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["sessionID"],
+  sessionID: SessionEvent.Step.Ended["data"]["sessionID"],
   value: Usage,
   sign = 1,
 ) {
@@ -318,12 +272,6 @@ const layer = Layer.effectDiscard(
     yield* events.project(SessionEvent.TranscriptMutation.MessageRemoved, (event) =>
       Effect.gen(function* () {
         yield* db
-          .insert(SessionMessageTombstoneTable)
-          .values({ session_id: event.data.sessionID, message_id: event.data.messageID })
-          .onConflictDoNothing()
-          .run()
-          .pipe(Effect.orDie)
-        yield* db
           .delete(SessionMessageTable)
           .where(
             and(
@@ -359,18 +307,10 @@ const layer = Layer.effectDiscard(
         if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.messageID}`)
         const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
         if (message.type !== "user") return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
-        const legacy = legacyMessage(message)
-        const parts = legacy?.parts.map((part) =>
-          part.id === event.data.partID && part.type === "text" ? { ...part, text: event.data.text } : part,
-        )
-        if (legacy && !legacy.parts.some((part) => part.id === event.data.partID && part.type === "text")) {
-          return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
-        }
         const encoded = encodeMessage(
           SessionMessage.User.make({
             ...message,
-            text: parts ? legacyUserText(parts) : event.data.text,
-            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
+            text: event.data.text,
           }),
         )
         const { id: _, type: __, ...data } = encoded
@@ -399,16 +339,10 @@ const layer = Layer.effectDiscard(
         if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.messageID}`)
         const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
         if (message.type !== "user") return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
-        const legacy = legacyMessage(message)
-        const parts = legacy?.parts.filter((part) => part.id !== event.data.partID)
-        if (legacy && parts?.length === legacy.parts.length) {
-          return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
-        }
         const encoded = encodeMessage(
           SessionMessage.User.make({
             ...message,
-            text: parts ? legacyUserText(parts) : "",
-            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
+            text: "",
           }),
         )
         const { id: _, type: __, ...data } = encoded
@@ -438,24 +372,12 @@ const layer = Layer.effectDiscard(
         const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
         if (message.type !== "assistant" || !message.content[event.data.contentIndex])
           return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
-        const legacy = legacyMessage(message)
-        const parts = legacy?.parts.map((part) => {
-          if (part.id !== event.data.partID) return part
-          if (part.type === "text" && event.data.content.type === "text") {
-            return { ...part, text: event.data.content.text }
-          }
-          if (part.type === "reasoning" && event.data.content.type === "reasoning") {
-            return { ...part, text: event.data.content.text }
-          }
-          return part
-        })
         const encoded = encodeMessage(
           SessionMessage.Assistant.make({
             ...message,
             content: message.content.map((content, index) =>
               index === event.data.contentIndex ? event.data.content : content,
             ),
-            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
           }),
         )
         const { id: _, type: __, ...data } = encoded
@@ -485,13 +407,10 @@ const layer = Layer.effectDiscard(
         const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
         if (message.type !== "assistant" || !message.content[event.data.contentIndex])
           return yield* Effect.die(`Transcript content not found: ${event.data.partID}`)
-        const legacy = legacyMessage(message)
-        const parts = legacy?.parts.filter((part) => part.id !== event.data.partID)
         const encoded = encodeMessage(
           SessionMessage.Assistant.make({
             ...message,
             content: message.content.filter((_, index) => index !== event.data.contentIndex),
-            metadata: parts ? withLegacyParts(message, parts) : message.metadata,
           }),
         )
         const { id: _, type: __, ...data } = encoded
@@ -541,75 +460,6 @@ const layer = Layer.effectDiscard(
     )
     yield* events.project(SessionV1.Event.Deleted, (event) =>
       db.delete(SessionTable).where(eq(SessionTable.id, event.data.sessionID)).run().pipe(Effect.orDie),
-    )
-    yield* events.project(SessionV1.Event.MessageUpdated, (event) =>
-      Effect.gen(function* () {
-        const time_created = event.data.info.time.created
-        const id = event.data.info.id
-        const sessionID = event.data.info.sessionID
-        const data = messageData(event.data.info)
-        yield* db
-          .insert(MessageTable)
-          .values({ id, session_id: sessionID, time_created, data })
-          .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
-          .run()
-          .pipe(Effect.orDie)
-      }),
-    )
-    yield* events.project(SessionV1.Event.MessageRemoved, (event) =>
-      Effect.gen(function* () {
-        const rows = yield* db
-          .select()
-          .from(PartTable)
-          .where(and(eq(PartTable.message_id, event.data.messageID), eq(PartTable.session_id, event.data.sessionID)))
-          .all()
-          .pipe(Effect.orDie)
-        for (const row of rows) {
-          const previous = usage(row.data)
-          if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
-        }
-        yield* db
-          .delete(MessageTable)
-          .where(and(eq(MessageTable.id, event.data.messageID), eq(MessageTable.session_id, event.data.sessionID)))
-          .run()
-          .pipe(Effect.orDie)
-      }),
-    )
-    yield* events.project(SessionV1.Event.PartRemoved, (event) =>
-      Effect.gen(function* () {
-        const row = yield* db
-          .select()
-          .from(PartTable)
-          .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
-          .get()
-          .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
-        yield* db
-          .delete(PartTable)
-          .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
-          .run()
-          .pipe(Effect.orDie)
-      }),
-    )
-    yield* events.project(SessionV1.Event.PartUpdated, (event) =>
-      Effect.gen(function* () {
-        const id = event.data.part.id
-        const messageID = event.data.part.messageID
-        const sessionID = event.data.part.sessionID
-        const data = partData(event.data.part)
-        const row = yield* db.select().from(PartTable).where(eq(PartTable.id, id)).get().pipe(Effect.orDie)
-        yield* db
-          .insert(PartTable)
-          .values({ id, message_id: messageID, session_id: sessionID, time_created: event.data.time, data })
-          .onConflictDoUpdate({ target: PartTable.id, set: { data } })
-          .run()
-          .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        const next = usage(event.data.part)
-        if (previous) yield* applyUsage(db, row.session_id, previous, -1)
-        if (next) yield* applyUsage(db, sessionID, next)
-      }),
     )
     yield* events.project(SessionEvent.AgentSwitched, (event) =>
       db
@@ -751,17 +601,10 @@ const layer = Layer.effectDiscard(
           const message = decodeMessage({ ...boundary.data, id: boundary.id, type: boundary.type })
           if (message.type !== "assistant")
             return yield* Effect.die(`Revert content boundary is not an assistant message: ${event.data.messageID}`)
-          const legacy = legacyMessage(message)
-          const partIndex = event.data.partID ? legacy?.parts.findIndex((part) => part.id === event.data.partID) : undefined
-          if (legacy && partIndex === -1) return yield* Effect.die(`Revert part boundary not found: ${event.data.partID}`)
           const encoded = encodeMessage(
             SessionMessage.Assistant.make({
               ...message,
               content: message.content.slice(0, event.data.contentIndex),
-              metadata:
-                legacy && partIndex !== undefined
-                  ? withLegacyParts(message, legacy.parts.slice(0, partIndex))
-                  : message.metadata,
               finish: undefined,
               structured: undefined,
               cost: undefined,
@@ -780,29 +623,6 @@ const layer = Layer.effectDiscard(
                 eq(SessionMessageTable.id, event.data.messageID),
               ),
             )
-            .run()
-            .pipe(Effect.orDie)
-        }
-        const removed = event.data.removedMessageIDs
-          ? event.data.removedMessageIDs.map((messageID) => ({ messageID }))
-          : yield* db
-              .select({ messageID: SessionMessageTable.id })
-              .from(SessionMessageTable)
-              .where(
-                and(
-                  eq(SessionMessageTable.session_id, event.data.sessionID),
-                  event.data.contentIndex === undefined
-                    ? gte(SessionMessageTable.seq, boundary.seq)
-                    : gt(SessionMessageTable.seq, boundary.seq),
-                ),
-              )
-              .all()
-              .pipe(Effect.orDie)
-        if (removed.length > 0) {
-          yield* db
-            .insert(SessionMessageTombstoneTable)
-            .values(removed.map((row) => ({ session_id: event.data.sessionID, message_id: row.messageID })))
-            .onConflictDoNothing()
             .run()
             .pipe(Effect.orDie)
         }

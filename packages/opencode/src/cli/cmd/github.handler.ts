@@ -24,8 +24,8 @@ import { Session } from "@/session/session"
 import type { SessionID } from "../../session/schema"
 import { Provider } from "@/provider/provider"
 import { MessageV2 } from "../../session/message-v2"
-import { EventV2Bridge } from "@/event-v2-bridge"
-import { EventV2 } from "@opencode-ai/core/event"
+import type { SessionV1 } from "@opencode-ai/core/v1/session"
+import { EventV2Bridge, legacyEventProjection } from "@/event-v2-bridge"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -844,33 +844,31 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
       }
 
       let text = ""
+      const project = legacyEventProjection()
       await runLocalEffect(
         events.listen((evt) => {
-          if (evt.type !== MessageV2.Event.PartUpdated.type) return Effect.void
-          const data = evt.data as EventV2.Data<typeof MessageV2.Event.PartUpdated>
-          if (data.part.sessionID !== session.id) return Effect.void
-          //if (evt.properties.part.messageID === messageID) return
-          const part = data.part
+          for (const projected of project(evt)) {
+            if (projected.type !== "message.part.updated") continue
+            const part = projected.properties.part as SessionV1.Part
+            if (part.sessionID !== session.id) continue
 
-          if (part.type === "tool" && part.state.status === "completed") {
-            const [tool, color] = TOOL[part.tool] ?? [part.tool, UI.Style.TEXT_INFO_BOLD]
-            const title =
-              part.state.title || Object.keys(part.state.input).length > 0
-                ? JSON.stringify(part.state.input)
-                : "Unknown"
-            console.log()
-            printEvent(color, tool, title)
-          }
+            if (part.type === "tool" && part.state.status === "completed") {
+              const [tool, color] = TOOL[part.tool] ?? [part.tool, UI.Style.TEXT_INFO_BOLD]
+              const title =
+                part.state.title || Object.keys(part.state.input).length > 0
+                  ? JSON.stringify(part.state.input)
+                  : "Unknown"
+              console.log()
+              printEvent(color, tool, title)
+            }
 
-          if (part.type === "text") {
-            text = part.text
-
-            if (part.time?.end) {
+            if (part.type === "text") {
+              text = part.text
+              if (!part.time?.end) continue
               UI.empty()
               UI.println(UI.markdown(text))
               UI.empty()
               text = ""
-              return Effect.void
             }
           }
           return Effect.void

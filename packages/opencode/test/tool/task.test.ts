@@ -8,7 +8,10 @@ import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { SessionCommand } from "@opencode-ai/core/session/command"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -50,6 +53,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       Config.node,
       CrossSpawnSpawner.node,
       Session.node,
+      SessionV2.node,
       SessionProjector.node,
       EventV2.node,
       SessionCommand.node,
@@ -64,7 +68,12 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       RuntimeFlags.node,
       Ripgrep.node,
     ]),
-    [[RuntimeFlags.node, RuntimeFlags.layer(flags)], locationServiceMapReplacement, ...replacements],
+    [
+      [RuntimeFlags.node, RuntimeFlags.layer(flags)],
+      [SessionExecution.node, SessionExecution.noopLayer],
+      locationServiceMapReplacement,
+      ...replacements,
+    ],
   )
 
 const it = testEffect(layer())
@@ -207,32 +216,44 @@ function defer<T>() {
 
 const seed = Effect.fn("TaskToolTest.seed")(function* (title = "Pinned") {
   const session = yield* Session.Service
+  const canonical = yield* SessionV2.Service
   const chat = yield* session.create({ title })
-  const user = yield* session.updateMessage({
-    id: MessageID.ascending(),
-    role: "user",
-    sessionID: chat.id,
-    agent: "build",
-    model: ref,
-    time: { created: Date.now() },
+  const user = SessionMessage.User.make({
+    id: SessionMessage.ID.create(),
+    type: "user",
+    text: "run a subagent",
+    time: { created: yield* DateTime.now },
   })
-  const assistant: SessionV1.Assistant = {
-    id: MessageID.ascending(),
-    role: "assistant",
-    parentID: user.id,
-    sessionID: chat.id,
-    mode: "build",
+  const assistant = SessionMessage.Assistant.make({
+    id: SessionMessage.ID.create(),
+    type: "assistant",
     agent: "build",
-    cost: 0,
-    path: { cwd: "/tmp", root: "/tmp" },
-    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    modelID: ref.modelID,
-    providerID: ref.providerID,
-    variant: "xhigh",
-    time: { created: Date.now() },
+    model: { providerID: ref.providerID, id: ref.modelID, variant: ModelV2.VariantID.make("xhigh") },
+    content: [],
+    time: { created: yield* DateTime.now },
+  })
+  yield* canonical.transcript.importMessage({ sessionID: SessionV2.ID.make(chat.id), message: user })
+  yield* canonical.transcript.importMessage({ sessionID: SessionV2.ID.make(chat.id), message: assistant })
+  return {
+    chat,
+    assistant: {
+      ...assistant,
+      id: MessageID.ascending(assistant.id),
+    },
   }
-  yield* session.updateMessage(assistant)
-  return { chat, assistant }
+})
+
+const importNestedAssistant = Effect.fn("TaskToolTest.importNestedAssistant")(function* (
+  sessionID: SessionID,
+  assistant: Omit<SessionMessage.Assistant, "id"> & { id: MessageID },
+) {
+  const canonical = yield* SessionV2.Service
+  const nested = SessionMessage.Assistant.make({ ...assistant, id: SessionMessage.ID.create() })
+  yield* canonical.transcript.importMessage({ sessionID: SessionV2.ID.make(sessionID), message: nested })
+  return {
+    ...nested,
+    id: MessageID.ascending(nested.id),
+  }
 })
 
 function stubOps(opts?: { onPrompt?: (input: LegacySessionInput.PromptInput) => void; text?: string }): TaskPromptOps {
@@ -720,12 +741,7 @@ describe("tool.task", () => {
       const sessions = yield* Session.Service
       const { chat, assistant } = yield* seed()
       const child = yield* sessions.create({ parentID: chat.id, title: "child" })
-      const nestedAssistant = yield* sessions.updateMessage({
-        ...assistant,
-        id: MessageID.ascending(),
-        parentID: MessageID.ascending(),
-        sessionID: child.id,
-      })
+      const nestedAssistant = yield* importNestedAssistant(child.id, assistant)
       const tool = yield* TaskTool
       const def = yield* tool.init()
       let asked = false
@@ -763,12 +779,7 @@ describe("tool.task", () => {
         const sessions = yield* Session.Service
         const { chat, assistant } = yield* seed()
         const child = yield* sessions.create({ parentID: chat.id, title: "child" })
-        const nestedAssistant = yield* sessions.updateMessage({
-          ...assistant,
-          id: MessageID.ascending(),
-          parentID: MessageID.ascending(),
-          sessionID: child.id,
-        })
+        const nestedAssistant = yield* importNestedAssistant(child.id, assistant)
         const tool = yield* TaskTool
         const def = yield* tool.init()
 

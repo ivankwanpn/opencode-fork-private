@@ -10,7 +10,6 @@ import { InstanceState } from "@/effect/instance-state"
 import { Provider } from "@/provider/provider"
 
 import { Session } from "@/session/session"
-import { MessageV2 } from "@/session/message-v2"
 import type { SessionID } from "@/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { eq } from "drizzle-orm"
@@ -19,6 +18,7 @@ import { SessionShareTable } from "@opencode-ai/core/share/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { EventV2 } from "@opencode-ai/core/event"
+import { SessionEvent } from "@opencode-ai/schema/session-event"
 
 const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
 
@@ -146,6 +146,64 @@ const layer = Layer.effect(
       })
     }
 
+    const transcriptEvents = new Set<string>([
+      SessionEvent.MessageImported.type,
+      SessionEvent.TranscriptMutation.MessageRemoved.type,
+      SessionEvent.TranscriptMutation.UserTextUpdated.type,
+      SessionEvent.TranscriptMutation.UserTextRemoved.type,
+      SessionEvent.TranscriptMutation.ContentUpdated.type,
+      SessionEvent.TranscriptMutation.ContentRemoved.type,
+      SessionEvent.AgentSwitched.type,
+      SessionEvent.ModelSwitched.type,
+      SessionEvent.Prompted.type,
+      SessionEvent.ContextUpdated.type,
+      SessionEvent.Synthetic.type,
+      SessionEvent.Shell.Started.type,
+      SessionEvent.Shell.Ended.type,
+      SessionEvent.Step.Started.type,
+      SessionEvent.Step.Ended.type,
+      SessionEvent.Step.Failed.type,
+      SessionEvent.Text.Started.type,
+      SessionEvent.Text.Ended.type,
+      SessionEvent.Reasoning.Started.type,
+      SessionEvent.Reasoning.Ended.type,
+      SessionEvent.Tool.Input.Started.type,
+      SessionEvent.Tool.Input.Ended.type,
+      SessionEvent.Tool.Called.type,
+      SessionEvent.Tool.Progress.type,
+      SessionEvent.Tool.Success.type,
+      SessionEvent.Tool.Failed.type,
+      SessionEvent.Compaction.Ended.type,
+      SessionEvent.RevertEvent.Committed.type,
+    ])
+
+    const syncTranscript = Effect.fn("ShareNext.syncTranscript")(function* (sessionID: SessionID) {
+      const messages = yield* session.messages({ sessionID })
+      yield* sync(sessionID, [
+        ...messages.map((message) => ({ type: "message" as const, data: message.info })),
+        ...messages.flatMap((message) =>
+          message.parts.map((part) => ({ type: "part" as const, data: part })),
+        ),
+      ])
+      const models = yield* Effect.forEach(
+        Array.from(
+          new Map(
+            messages
+              .filter((message) => message.info.role === "user")
+              .map((message) => (message.info as SDK.UserMessage).model)
+              .map((model) => [`${model.providerID}/${model.modelID}`, model] as const),
+          ).values(),
+        ),
+        (model) => provider.getModel(ProviderV2.ID.make(model.providerID), ModelV2.ID.make(model.modelID)),
+        { concurrency: 8 },
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("share model sync skipped", { sessionID, cause }).pipe(Effect.as([] as SDK.Model[])),
+        ),
+      )
+      if (models.length > 0) yield* sync(sessionID, [{ type: "model", data: models }])
+    })
+
     const state: InstanceState.InstanceState<State> = yield* InstanceState.make<State>(
       Effect.fn("ShareNext.state")(function* (_ctx) {
         const cache: State = { queue: new Map(), scope: yield* Scope.make(), shared: new Map() }
@@ -182,18 +240,16 @@ const layer = Layer.effect(
             yield* sync(info.id, [{ type: "session", data: structuredClone(info) as SDK.Session }])
           }),
         )
-        yield* watch(MessageV2.Event.Updated, (data) =>
-          Effect.gen(function* () {
-            const info = data.info
-            yield* sync(info.sessionID, [{ type: "message", data: structuredClone(info) as SDK.Message }])
-            if (info.role !== "user") return
-            const model = yield* provider.getModel(info.model.providerID, info.model.modelID)
-            yield* sync(info.sessionID, [{ type: "model", data: [model] }])
-          }),
-        )
-        yield* watch(MessageV2.Event.PartUpdated, (data) =>
-          sync(data.part.sessionID, [{ type: "part", data: structuredClone(data.part) as SDK.Part }]),
-        )
+        yield* events.listen((event) => {
+          if (!transcriptEvents.has(event.type) || event.location?.directory !== _ctx.directory) return Effect.void
+          const sessionID = (event.data as { sessionID?: string }).sessionID
+          if (!sessionID) return Effect.void
+          return syncTranscript(sessionID as SessionID).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("share transcript subscriber failed", { type: event.type, cause }),
+            ),
+          )
+        })
         yield* watch(Session.Event.Diff, (data) =>
           sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
         )

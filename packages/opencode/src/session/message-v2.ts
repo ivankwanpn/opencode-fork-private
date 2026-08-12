@@ -22,16 +22,6 @@ import {
 
 import { NamedError } from "@opencode-ai/core/util/error"
 import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
-import { Database } from "@opencode-ai/core/database/database"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { NotFoundError } from "@/storage/storage"
-import { and } from "drizzle-orm"
-import { desc } from "drizzle-orm"
-import { eq } from "drizzle-orm"
-import { inArray } from "drizzle-orm"
-import { lt } from "drizzle-orm"
-import { or } from "drizzle-orm"
-import { MessageTable, PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { ProviderError } from "@/provider/error"
 import { isContextOverflow } from "@opencode-ai/llm"
 import { iife } from "@/util/iife"
@@ -58,11 +48,7 @@ function truncateToolOutput(text: string, maxChars?: number) {
 }
 
 export const Event = {
-  Updated: SessionV1.Event.MessageUpdated,
-  Removed: SessionV1.Event.MessageRemoved,
-  PartUpdated: SessionV1.Event.PartUpdated,
   PartDelta: SessionV1.Event.PartDelta,
-  PartRemoved: SessionV1.Event.PartRemoved,
 }
 
 const Cursor = Schema.Struct({
@@ -80,51 +66,6 @@ export const cursor = {
   decode(input: string) {
     return decodeCursor(JSON.parse(Buffer.from(input, "base64url").toString("utf8")))
   },
-}
-
-const info = (row: typeof MessageTable.$inferSelect) =>
-  ({
-    ...row.data,
-    id: row.id,
-    sessionID: row.session_id,
-  }) as Info
-
-const part = (row: typeof PartTable.$inferSelect) =>
-  ({
-    ...row.data,
-    id: row.id,
-    sessionID: row.session_id,
-    messageID: row.message_id,
-  }) as Part
-
-const older = (row: Cursor) =>
-  or(lt(MessageTable.time_created, row.time), and(eq(MessageTable.time_created, row.time), lt(MessageTable.id, row.id)))
-
-function hydrate(db: Database.Interface["db"], rows: (typeof MessageTable.$inferSelect)[]) {
-  const ids = rows.map((row) => row.id)
-  const partByMessage = new Map<string, Part[]>()
-  return Effect.gen(function* () {
-    if (ids.length > 0) {
-      const partRows = yield* db
-        .select()
-        .from(PartTable)
-        .where(inArray(PartTable.message_id, ids))
-        .orderBy(PartTable.message_id, PartTable.id)
-        .all()
-        .pipe(Effect.orDie)
-      for (const row of partRows) {
-        const next = part(row)
-        const list = partByMessage.get(row.message_id)
-        if (list) list.push(next)
-        else partByMessage.set(row.message_id, [next])
-      }
-    }
-
-    return rows.map((row) => ({
-      info: info(row),
-      parts: partByMessage.get(row.id) ?? [],
-    }))
-  })
 }
 
 function providerMeta(metadata: Record<string, any> | undefined) {
@@ -426,102 +367,6 @@ export function toModelMessages(
 ): Promise<ModelMessage[]> {
   return Effect.runPromise(toModelMessagesEffect(input, model, options))
 }
-
-export const page = Effect.fn("MessageV2.page")(function* (input: {
-  sessionID: SessionID
-  limit: number
-  before?: string
-}) {
-  const { db } = yield* Database.Service
-  const before = input.before ? cursor.decode(input.before) : undefined
-  const where = before
-    ? and(eq(MessageTable.session_id, input.sessionID), older(before))
-    : eq(MessageTable.session_id, input.sessionID)
-  const rows = yield* db
-    .select()
-    .from(MessageTable)
-    .where(where)
-    .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
-    .limit(input.limit + 1)
-    .all()
-    .pipe(Effect.orDie)
-  if (rows.length === 0) {
-    const row = yield* db
-      .select({ id: SessionTable.id })
-      .from(SessionTable)
-      .where(eq(SessionTable.id, input.sessionID))
-      .get()
-      .pipe(Effect.orDie)
-    if (!row) return yield* new NotFoundError({ message: `Session not found: ${input.sessionID}` })
-    return {
-      items: [] as WithParts[],
-      more: false,
-    }
-  }
-
-  const more = rows.length > input.limit
-  const slice = more ? rows.slice(0, input.limit) : rows
-  const items = yield* hydrate(db, slice)
-  items.reverse()
-  const tail = slice.at(-1)
-  return {
-    items,
-    more,
-    cursor: more && tail ? cursor.encode({ id: tail.id, time: tail.time_created }) : undefined,
-  }
-})
-
-export function stream(sessionID: SessionID) {
-  const size = 50
-  return Effect.gen(function* () {
-    const result = [] as WithParts[]
-    let before: string | undefined
-    while (true) {
-      const next = yield* page({ sessionID, limit: size, before }).pipe(
-        Effect.catchIf(NotFoundError.isInstance, () =>
-          Effect.succeed({ items: [] as WithParts[], more: false, cursor: undefined }),
-        ),
-      )
-      if (next.items.length === 0) break
-      for (let i = next.items.length - 1; i >= 0; i--) {
-        const item = next.items[i]
-        if (item) result.push(item)
-      }
-      if (!next.more || !next.cursor) break
-      before = next.cursor
-    }
-    return result
-  })
-}
-
-export function parts(messageID: MessageID) {
-  return Effect.gen(function* () {
-    const { db } = yield* Database.Service
-    const rows = yield* db
-      .select()
-      .from(PartTable)
-      .where(eq(PartTable.message_id, messageID))
-      .orderBy(PartTable.id)
-      .all()
-      .pipe(Effect.orDie)
-    return rows.map(part)
-  })
-}
-
-export const get = Effect.fn("MessageV2.get")(function* (input: { sessionID: SessionID; messageID: MessageID }) {
-  const { db } = yield* Database.Service
-  const row = yield* db
-    .select()
-    .from(MessageTable)
-    .where(and(eq(MessageTable.id, input.messageID), eq(MessageTable.session_id, input.sessionID)))
-    .get()
-    .pipe(Effect.orDie)
-  if (!row) return yield* new NotFoundError({ message: `Message not found: ${input.messageID}` })
-  return {
-    info: info(row),
-    parts: yield* parts(input.messageID),
-  }
-})
 
 export function toLegacy(
   session: SessionSchema.Info,
@@ -1089,10 +934,6 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
   return result
 }
 
-export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: SessionID) {
-  return filterCompacted(yield* stream(sessionID))
-})
-
 // filterCompacted reorders messages for model consumption
 // ([compaction-user, summary, ...retained tail..., continue-user]), so array
 // position is not chronological. Derive each binding by max id (MessageID
@@ -1254,4 +1095,3 @@ export function fromError(
 }
 
 export * as MessageV2 from "./message-v2"
-export const node = LayerNode.group([Database.node])

@@ -11,8 +11,6 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { SessionV2 } from "@opencode-ai/core/session"
-import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
-import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
 
 import { NotFoundError } from "@/storage/storage"
 import { eq } from "drizzle-orm"
@@ -26,7 +24,7 @@ import { inArray } from "drizzle-orm"
 import { lt } from "drizzle-orm"
 import { or } from "drizzle-orm"
 import type { SQL } from "drizzle-orm"
-import { PartTable, SessionTable } from "@opencode-ai/core/session/sql"
+import { SessionTable } from "@opencode-ai/core/session/sql"
 import { toV1Rules, toV2Rules } from "@opencode-ai/core/session/info"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { MessageV2 } from "./message-v2"
@@ -158,16 +156,6 @@ export function toRow(info: Info) {
     time_compacting: info.time.compacting,
     time_archived: info.time.archived,
   }
-}
-
-function getForkedTitle(title: string): string {
-  const match = title.match(/^(.+) \(fork #(\d+)\)$/)
-  if (match) {
-    const base = match[1]
-    const num = parseInt(match[2], 10)
-    return `${base} (fork #${num + 1})`
-  }
-  return `${title} (fork #1)`
 }
 
 function sessionPath(worktree: string, cwd: string) {
@@ -453,22 +441,6 @@ export interface Interface {
   readonly messages: (input: { sessionID: SessionID; limit?: number }) => Effect.Effect<SessionV1.WithParts[], NotFound>
   readonly children: (parentID: SessionID) => Effect.Effect<Info[]>
   readonly remove: (sessionID: SessionID) => Effect.Effect<void, NotFound>
-  readonly updateMessage: <T extends SessionV1.Info>(msg: T) => Effect.Effect<T>
-  readonly removeMessage: (input: { sessionID: SessionID; messageID: MessageID }) => Effect.Effect<MessageID>
-  readonly removePart: (input: { sessionID: SessionID; messageID: MessageID; partID: PartID }) => Effect.Effect<PartID>
-  readonly getPart: (input: {
-    sessionID: SessionID
-    messageID: MessageID
-    partID: PartID
-  }) => Effect.Effect<SessionV1.Part | undefined>
-  readonly updatePart: <T extends SessionV1.Part>(part: T) => Effect.Effect<T>
-  readonly updatePartDelta: (input: {
-    sessionID: SessionID
-    messageID: MessageID
-    partID: PartID
-    field: string
-    delta: string
-  }) => Effect.Effect<void>
   /** Finds the first message matching the predicate, searching newest-first. */
   readonly findMessage: (
     sessionID: SessionID,
@@ -491,15 +463,15 @@ export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" 
 const layer: Layer.Layer<
   Service,
   never,
-  BackgroundJob.Service | RuntimeFlags.Service | Database.Service | EventV2Bridge.Service
+  BackgroundJob.Service | RuntimeFlags.Service | Database.Service | EventV2Bridge.Service | SessionV2.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
     const { db } = yield* Database.Service
-    const database = yield* Database.Service
     const background = yield* BackgroundJob.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const canonical = yield* SessionV2.Service
 
     const createNext = Effect.fn("Session.createNext")(function* (input: {
       id?: SessionID
@@ -631,44 +603,6 @@ const layer: Layer.Layer<
       }
     })
 
-    const updateMessage = <T extends SessionV1.Info>(msg: T): Effect.Effect<T> =>
-      Effect.gen(function* () {
-        yield* events.publish(SessionV1.Event.MessageUpdated, { sessionID: msg.sessionID, info: msg })
-        return msg
-      }).pipe(Effect.withSpan("Session.updateMessage"))
-
-    const updatePart = <T extends SessionV1.Part>(part: T): Effect.Effect<T> =>
-      Effect.gen(function* () {
-        yield* events.publish(SessionV1.Event.PartUpdated, {
-          sessionID: part.sessionID,
-          part: structuredClone(part),
-          time: Date.now(),
-        })
-        return part
-      }).pipe(Effect.withSpan("Session.updatePart"))
-
-    const getPart: Interface["getPart"] = Effect.fn("Session.getPart")(function* (input) {
-      const row = yield* db
-        .select()
-        .from(PartTable)
-        .where(
-          and(
-            eq(PartTable.session_id, input.sessionID),
-            eq(PartTable.message_id, input.messageID),
-            eq(PartTable.id, input.partID),
-          ),
-        )
-        .get()
-        .pipe(Effect.orDie)
-      if (!row) return
-      return {
-        ...row.data,
-        id: row.id,
-        sessionID: row.session_id,
-        messageID: row.message_id,
-      } as SessionV1.Part
-    })
-
     const create = Effect.fn("Session.create")(function* (input?: {
       parentID?: SessionID
       title?: string
@@ -694,46 +628,21 @@ const layer: Layer.Layer<
     })
 
     const fork = Effect.fn("Session.fork")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {
-      const ctx = yield* InstanceState.context
-      const original = yield* get(input.sessionID)
-      const title = getForkedTitle(original.title)
-      const session = yield* createNext({
-        directory: ctx.directory,
-        path: sessionPath(ctx.worktree, ctx.directory),
-        workspaceID: original.workspaceID,
-        title,
-        metadata: structuredClone(original.metadata),
-      })
-      const msgs = yield* messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, MessageID>()
-
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
-        const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
-
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = yield* updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
+      const history = yield* canonical
+        .messages({ sessionID: SessionV2.ID.make(input.sessionID), order: "asc" })
+        .pipe(
+          Effect.catchTag("Session.MessageDecodeError", Effect.die),
+          Effect.mapError(() => new NotFoundError({ message: `Session not found: ${input.sessionID}` })),
+        )
+      const forked = yield* canonical
+        .fork({
+          sessionID: SessionV2.ID.make(input.sessionID),
+          messages: input.messageID
+            ? history.filter((message) => String(message.id) < String(input.messageID))
+            : history,
         })
-
-        for (const part of msg.parts) {
-          const p: SessionV1.Part = {
-            ...part,
-            id: PartID.ascending(),
-            messageID: cloned.id,
-            sessionID: session.id,
-          }
-          if (p.type === "compaction" && p.tail_start_id) {
-            p.tail_start_id = idMap.get(p.tail_start_id)
-          }
-          yield* updatePart(p)
-        }
-      }
-      return session
+        .pipe(Effect.mapError(() => new NotFoundError({ message: `Session not found: ${input.sessionID}` })))
+      return yield* get(SessionID.make(forked.id))
     })
 
     const patch = (sessionID: SessionID, info: Patch) =>
@@ -831,81 +740,23 @@ const layer: Layer.Layer<
     })
 
     const messages: Interface["messages"] = Effect.fn("Session.messages")(function* (input) {
-      if (input.limit) {
-        return (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
-          Effect.provideService(Database.Service, database),
-        )).items
-      }
-
-      const size = 50
-      const result = [] as SessionV1.WithParts[]
-      let before: string | undefined
-      while (true) {
-        const page = yield* MessageV2.page({ sessionID: input.sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
+      const current = yield* canonical
+        .get(SessionV2.ID.make(input.sessionID))
+        .pipe(Effect.mapError(() => new NotFoundError({ message: `Session not found: ${input.sessionID}` })))
+      const history = yield* canonical
+        .messages({ sessionID: current.id, order: "asc" })
+        .pipe(
+          Effect.catchTag("Session.MessageDecodeError", Effect.die),
+          Effect.mapError(() => new NotFoundError({ message: `Session not found: ${input.sessionID}` })),
         )
-        if (page.items.length === 0) break
-        for (let i = page.items.length - 1; i >= 0; i--) {
-          const item = page.items[i]
-          if (item) result.push(item)
-        }
-        if (!page.more || !page.cursor) break
-        before = page.cursor
-      }
-      return result.reverse()
-    })
-
-    const removeMessage = Effect.fn("Session.removeMessage")(function* (input: {
-      sessionID: SessionID
-      messageID: MessageID
-    }) {
-      yield* events.publish(SessionV1.Event.MessageRemoved, {
-        sessionID: input.sessionID,
-        messageID: input.messageID,
-      })
-      return input.messageID
-    })
-
-    const removePart = Effect.fn("Session.removePart")(function* (input: {
-      sessionID: SessionID
-      messageID: MessageID
-      partID: PartID
-    }) {
-      yield* events.publish(SessionV1.Event.PartRemoved, {
-        sessionID: input.sessionID,
-        messageID: input.messageID,
-        partID: input.partID,
-      })
-      return input.partID
-    })
-
-    const updatePartDelta = Effect.fnUntraced(function* (input: {
-      sessionID: SessionID
-      messageID: MessageID
-      partID: PartID
-      field: string
-      delta: string
-    }) {
-      yield* events.publish(MessageV2.Event.PartDelta, input)
+      const projected = MessageV2.toLegacy(current, history)
+      return input.limit ? projected.slice(-input.limit) : projected
     })
 
     /** Finds the first message matching the predicate, searching newest-first. */
     const findMessage: Interface["findMessage"] = Effect.fn("Session.findMessage")(function* (sessionID, predicate) {
-      const size = 50
-      let before: string | undefined
-      while (true) {
-        const page = yield* MessageV2.page({ sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
-        )
-        if (page.items.length === 0) break
-        for (let i = page.items.length - 1; i >= 0; i--) {
-          const item = page.items[i]
-          if (item && predicate(item)) return Option.some(item)
-        }
-        if (!page.more || !page.cursor) break
-        before = page.cursor
-      }
-      return Option.none<SessionV1.WithParts>()
+      const found = (yield* messages({ sessionID })).findLast(predicate)
+      return found ? Option.some(found) : Option.none<SessionV1.WithParts>()
     })
 
     return Service.of({
@@ -929,12 +780,6 @@ const layer: Layer.Layer<
       messages,
       children,
       remove,
-      updateMessage,
-      removeMessage,
-      removePart,
-      updatePart,
-      getPart,
-      updatePartDelta,
       findMessage,
     })
   }),
@@ -1015,7 +860,7 @@ function listByProject(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [BackgroundJob.node, RuntimeFlags.node, Database.node, EventV2Bridge.node],
+  deps: [BackgroundJob.node, RuntimeFlags.node, Database.node, EventV2Bridge.node, SessionV2.node],
 })
 
 export * as Session from "./session"

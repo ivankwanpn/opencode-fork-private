@@ -14,7 +14,7 @@ import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { EventV2 } from "./event"
 import { Database } from "./database/database"
 import { SessionProjector } from "./session/projector"
-import { SessionMessageTable, SessionMessageTombstoneTable, SessionTable } from "./session/sql"
+import { SessionMessageTable, SessionTable } from "./session/sql"
 import { SessionSchema } from "./session/schema"
 import { AbsolutePath, PositiveInt, RelativePath } from "./schema"
 import { fromRow } from "./session/info"
@@ -298,7 +298,6 @@ export interface Interface {
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   readonly transcript: {
-    readonly removedMessages: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlySet<SessionMessage.ID>, NotFoundError>
     readonly importMessage: (input: {
       sessionID: SessionSchema.ID
       message: SessionMessage.Message
@@ -459,6 +458,7 @@ const layer = Layer.effect(
           title: forkTitle(source.title),
           agent: source.agent,
           model: source.model,
+          metadata: source.metadata,
           location: source.location,
         })
         const ids = new Map<SessionMessage.ID, SessionMessage.ID>()
@@ -1037,16 +1037,6 @@ const layer = Layer.effect(
         Effect.uninterruptible(execution.interrupt(sessionID)),
       ),
       transcript: {
-        removedMessages: Effect.fn("V2Session.transcript.removedMessages")(function* (sessionID) {
-          yield* result.get(sessionID)
-          const rows = yield* db
-            .select({ messageID: SessionMessageTombstoneTable.message_id })
-            .from(SessionMessageTombstoneTable)
-            .where(eq(SessionMessageTombstoneTable.session_id, sessionID))
-            .all()
-            .pipe(Effect.orDie)
-          return new Set(rows.map((row) => row.messageID))
-        }),
         importMessage: Effect.fn("V2Session.transcript.importMessage")(function* (input) {
           const session = yield* result.get(input.sessionID)
           const stored = yield* store.message(input.message.id)

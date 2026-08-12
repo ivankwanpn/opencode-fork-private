@@ -1,11 +1,10 @@
 import { describe, expect } from "bun:test"
-import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { Deferred, Effect, Exit, Layer } from "effect"
 import { Session as SessionNs } from "@/session/session"
-import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, PartID, type SessionID } from "../../src/session/schema"
+import { type SessionID } from "../../src/session/schema"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { provideInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -28,6 +27,7 @@ const it = testEffect(
     ]),
     [
       [RuntimeFlags.node, RuntimeFlags.layer({ experimentalWorkspaces: false })],
+      [SessionExecution.node, SessionExecution.noopLayer],
       [
         InstanceBootstrap.node,
         Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void })),
@@ -129,79 +129,6 @@ describe("session.created event", () => {
 
       yield* session.remove(info.id)
     }),
-  )
-})
-
-describe("step-finish token propagation via event", () => {
-  it.instance(
-    "non-zero tokens propagate through PartUpdated event",
-    () =>
-      Effect.gen(function* () {
-        const session = yield* SessionNs.Service
-        const events = yield* EventV2Bridge.Service
-        const info = yield* session.create({})
-
-        const messageID = MessageID.ascending()
-        yield* session.updateMessage({
-          id: messageID,
-          sessionID: info.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as SessionV1.Info)
-
-        // Event subscribers receive readonly Schema.Type payloads; `SessionV1.Part`
-        // is the mutable domain type. Cast bridges the two — safe because the
-        // test only reads the value afterwards.
-        const received = yield* Deferred.make<SessionV1.Part>()
-        const unsub = yield* events.listen((event) => {
-          if (event.type === MessageV2.Event.PartUpdated.type)
-            Deferred.doneUnsafe(
-              received,
-              Effect.succeed((event.data as typeof MessageV2.Event.PartUpdated.data.Type).part as SessionV1.Part),
-            )
-          return Effect.void
-        })
-        yield* Effect.addFinalizer(() => unsub)
-
-        const tokens = {
-          total: 1500,
-          input: 500,
-          output: 800,
-          reasoning: 200,
-          cache: { read: 100, write: 50 },
-        }
-
-        const partInput = {
-          id: PartID.ascending(),
-          messageID,
-          sessionID: info.id,
-          type: "step-finish" as const,
-          reason: "stop",
-          cost: 0.005,
-          tokens,
-        }
-
-        yield* session.updatePart(partInput)
-        const receivedPart = yield* awaitDeferred(received, "timed out waiting for message.part.updated")
-
-        expect(receivedPart.type).toBe("step-finish")
-        const finish = receivedPart as SessionV1.StepFinishPart
-        expect(finish.tokens.input).toBe(500)
-        expect(finish.tokens.output).toBe(800)
-        expect(finish.tokens.reasoning).toBe(200)
-        expect(finish.tokens.total).toBe(1500)
-        expect(finish.tokens.cache.read).toBe(100)
-        expect(finish.tokens.cache.write).toBe(50)
-        expect(finish.cost).toBe(0.005)
-        expect(receivedPart).not.toBe(partInput)
-
-        yield* session.remove(info.id)
-      }),
-    { timeout: 30000 },
   )
 })
 

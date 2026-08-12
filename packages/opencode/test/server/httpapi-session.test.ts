@@ -9,7 +9,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse, HttpRouter, HttpServ
 import { layerWebSocketConstructorGlobal } from "effect/unstable/socket/Socket"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
+import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
@@ -35,12 +35,12 @@ import {
   PartTable,
   SessionInputTable,
   SessionMessageTable,
-  SessionMessageTombstoneTable,
   SessionTable,
   TaskNotificationOutboxTable,
   TaskSubmissionTable,
 } from "@opencode-ai/core/session/sql"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { SessionStatus } from "../../src/session/status"
@@ -70,11 +70,12 @@ const appLayer = AppNodeBuilder.build(
     BackgroundJob.node,
     TaskSubmission.node,
     TaskCancellation.node,
+    SessionExecutionLocal.node,
   ]),
   [
     [InstanceStore.bootstrapNode, noopBootstrapLayer],
-    [LocationServiceMap.node, locationServiceMapLayer],
-    [SessionExecution.node, SessionExecution.noopLayer],
+    [LocationServiceMap.node, locationServiceMapV2Layer],
+    [SessionExecution.node, SessionExecutionLocal.node],
   ],
 )
 const wakeExpectations = new Map<string, { inputID: string; kind: "promote" | "cancel" }>()
@@ -140,22 +141,48 @@ function createSession(input?: Session.CreateInput) {
 
 function createTextMessage(sessionID: SessionIDType, text: string) {
   return Effect.gen(function* () {
-    const svc = yield* Session.Service
-    const info = yield* svc.updateMessage({
+    const info: SessionV1.User = {
       id: MessageID.ascending(),
       role: "user",
       sessionID,
       agent: "build",
       model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
       time: { created: Date.now() },
-    })
-    const part = yield* svc.updatePart({
+    }
+    const part: SessionV1.TextPart = {
       id: PartID.ascending(),
       sessionID,
       messageID: info.id,
       type: "text",
       text,
-    })
+    }
+    const { db } = yield* Database.Service
+    yield* db
+      .insert(MessageTable)
+      .values({
+        id: info.id,
+        session_id: sessionID,
+        time_created: info.time.created,
+        data: {
+          role: info.role,
+          time: info.time,
+          agent: info.agent,
+          model: info.model,
+        } as NonNullable<(typeof MessageTable.$inferInsert)["data"]>,
+      })
+      .run()
+      .pipe(Effect.orDie)
+    yield* db
+      .insert(PartTable)
+      .values({
+        id: part.id,
+        message_id: info.id,
+        session_id: sessionID,
+        time_created: info.time.created,
+        data: { type: part.type, text: part.text } as NonNullable<(typeof PartTable.$inferInsert)["data"]>,
+      })
+      .run()
+      .pipe(Effect.orDie)
     return { info, part }
   })
 }
@@ -214,7 +241,7 @@ const createLocalWorkspace = (input: { projectID: Project.Info["id"]; type: stri
     (info) => Workspace.use.remove(info.id).pipe(Effect.ignore),
   )
 
-const insertLegacyAssistantMessage = (
+const insertCanonicalAssistantMessage = (
   sessionID: SessionIDType,
   seq = 1,
   time = seq,
@@ -479,7 +506,7 @@ describe("session HttpApi", () => {
           ),
         ).toMatchObject({ info: { id: message.id } })
 
-        yield* insertLegacyAssistantMessage(parent.id, 3)
+        yield* insertCanonicalAssistantMessage(parent.id, 3)
 
         expect(
           (yield* requestJson<{ data: SessionMessage.Message[] }>(`/api/session/${parent.id}/message`, {
@@ -1518,8 +1545,8 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory }
         const session = yield* createSession({ title: "v2 cursor" })
-        const firstMessage = yield* insertLegacyAssistantMessage(session.id, 1, 2)
-        const secondMessage = yield* insertLegacyAssistantMessage(session.id, 2, 1)
+        const firstMessage = yield* insertCanonicalAssistantMessage(session.id, 1, 2)
+        const secondMessage = yield* insertCanonicalAssistantMessage(session.id, 2, 1)
 
         const sessionPage = yield* request(
           `/api/session?${new URLSearchParams({
@@ -2344,10 +2371,10 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const session = yield* createSession({ title: "messages" })
-        const first = yield* insertLegacyAssistantMessage(session.id, 1, 1, [
+        const first = yield* insertCanonicalAssistantMessage(session.id, 1, 1, [
           SessionMessage.AssistantText.make({ type: "text", id: "text_first", text: "first" }),
         ])
-        const second = yield* insertLegacyAssistantMessage(session.id, 2, 2, [
+        const second = yield* insertCanonicalAssistantMessage(session.id, 2, 2, [
           SessionMessage.AssistantText.make({ type: "text", id: "text_second", text: "second" }),
         ])
         const partID = PartID.ascending(`prt_${first.id}_text_0`)
@@ -2416,7 +2443,7 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
-    "lazily adopts retained user text mutations without writing V1 tables",
+    "rejects mutations for retained-only user messages without adopting them",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
@@ -2424,7 +2451,7 @@ describe("session HttpApi", () => {
         const current = yield* createSession({ title: "retained mutation" })
         const retained = yield* createTextMessage(current.id, "retained")
 
-        const updated = yield* requestJson<SessionV1.Part>(
+        const updated = yield* request(
           pathFor(SessionPaths.updatePart, {
             sessionID: current.id,
             messageID: retained.info.id,
@@ -2436,7 +2463,7 @@ describe("session HttpApi", () => {
             body: JSON.stringify({ ...retained.part, text: "canonical" }),
           },
         )
-        expect(updated).toMatchObject({ id: retained.part.id, text: "canonical" })
+        expect(updated.status).toBe(400)
         expect(
           yield* Database.Service.use(({ db }) =>
             db
@@ -2446,7 +2473,7 @@ describe("session HttpApi", () => {
               .get()
               .pipe(Effect.orDie),
           ),
-        ).toMatchObject({ data: { text: "canonical" } })
+        ).toBeUndefined()
         expect(
           yield* Database.Service.use(({ db }) =>
             db.select({ data: PartTable.data }).from(PartTable).where(eq(PartTable.id, retained.part.id)).get().pipe(Effect.orDie),
@@ -2454,30 +2481,26 @@ describe("session HttpApi", () => {
         ).toMatchObject({ data: { text: "retained" } })
 
         expect(
-          yield* requestJson<boolean>(
+          (
+            yield* request(
             pathFor(SessionPaths.deletePart, {
               sessionID: current.id,
               messageID: retained.info.id,
               partID: retained.part.id,
             }),
             { method: "DELETE", headers },
-          ),
-        ).toBe(true)
-        expect(
-          (
-            yield* requestJson<SessionV1.WithParts>(
-              pathFor(SessionPaths.message, { sessionID: current.id, messageID: retained.info.id }),
-              { headers },
             )
-          ).parts,
-        ).toEqual([])
+          ).status,
+        ).toBe(400)
 
         expect(
-          yield* requestJson<boolean>(
+          (
+            yield* request(
             pathFor(SessionPaths.deleteMessage, { sessionID: current.id, messageID: retained.info.id }),
             { method: "DELETE", headers },
-          ),
-        ).toBe(true)
+            )
+          ).status,
+        ).toBe(404)
         expect(
           (
             yield* request(
@@ -2491,15 +2514,14 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
-    "lazily adopts retained assistant parts with legacy IDs without writing V1 tables",
+    "rejects mutations for retained-only assistant messages without adopting them",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const current = yield* createSession({ title: "retained assistant mutation" })
         const parent = yield* createTextMessage(current.id, "parent")
-        const session = yield* Session.Service
-        const message = yield* session.updateMessage({
+        const message: SessionV1.Assistant = {
           id: MessageID.ascending("msg_retained_assistant"),
           sessionID: current.id,
           role: "assistant",
@@ -2513,22 +2535,74 @@ describe("session HttpApi", () => {
           cost: 0,
           tokens: { input: 1, output: 2, reasoning: 1, cache: { read: 0, write: 0 } },
           finish: "stop",
-        })
-        const reasoning = yield* session.updatePart({
+        }
+        const reasoning: SessionV1.ReasoningPart = {
           id: PartID.ascending("prt_retained_reasoning"),
           sessionID: current.id,
           messageID: message.id,
           type: "reasoning",
           text: "considering",
           time: { start: 2, end: 2 },
-        })
-        const text = yield* session.updatePart({
+        }
+        const text: SessionV1.TextPart = {
           id: PartID.ascending("prt_retained_text"),
           sessionID: current.id,
           messageID: message.id,
           type: "text",
           text: "answer",
-        })
+        }
+        yield* Database.Service.use(({ db }) =>
+          Effect.all([
+            db
+              .insert(MessageTable)
+              .values({
+                id: message.id,
+                session_id: current.id,
+                time_created: message.time.created,
+                data: {
+                  role: message.role,
+                  time: message.time,
+                  parentID: message.parentID,
+                  modelID: message.modelID,
+                  providerID: message.providerID,
+                  mode: message.mode,
+                  agent: message.agent,
+                  path: message.path,
+                  cost: message.cost,
+                  tokens: message.tokens,
+                  finish: message.finish,
+                } as NonNullable<(typeof MessageTable.$inferInsert)["data"]>,
+              })
+              .run()
+              .pipe(Effect.orDie),
+            db
+              .insert(PartTable)
+              .values([
+                {
+                  id: reasoning.id,
+                  message_id: message.id,
+                  session_id: current.id,
+                  time_created: message.time.created,
+                  data: {
+                    type: reasoning.type,
+                    text: reasoning.text,
+                    time: reasoning.time,
+                  } as NonNullable<(typeof PartTable.$inferInsert)["data"]>,
+                },
+                {
+                  id: text.id,
+                  message_id: message.id,
+                  session_id: current.id,
+                  time_created: message.time.created,
+                  data: { type: text.type, text: text.text } as NonNullable<
+                    (typeof PartTable.$inferInsert)["data"]
+                  >,
+                },
+              ])
+              .run()
+              .pipe(Effect.orDie),
+          ]).pipe(Effect.asVoid),
+        )
         const rowsBefore = yield* Database.Service.use(({ db }) =>
           Effect.all([
             db.select({ data: MessageTable.data }).from(MessageTable).where(eq(MessageTable.id, message.id)).get().pipe(Effect.orDie),
@@ -2538,7 +2612,8 @@ describe("session HttpApi", () => {
         )
 
         expect(
-          yield* requestJson<SessionV1.Part>(
+          (
+            yield* request(
             pathFor(SessionPaths.updatePart, {
               sessionID: current.id,
               messageID: message.id,
@@ -2549,18 +2624,21 @@ describe("session HttpApi", () => {
               headers,
               body: JSON.stringify({ ...reasoning, text: "reconsidered" }),
             },
-          ),
-        ).toMatchObject({ id: reasoning.id, type: "reasoning", text: "reconsidered" })
+            )
+          ).status,
+        ).toBe(400)
         expect(
-          yield* requestJson<boolean>(
+          (
+            yield* request(
             pathFor(SessionPaths.deletePart, {
               sessionID: current.id,
               messageID: message.id,
               partID: text.id,
             }),
             { method: "DELETE", headers },
-          ),
-        ).toBe(true)
+            )
+          ).status,
+        ).toBe(400)
 
         expect(
           yield* Database.Service.use(({ db }) =>
@@ -2571,15 +2649,7 @@ describe("session HttpApi", () => {
               .get()
               .pipe(Effect.orDie),
           ),
-        ).toMatchObject({ data: { content: [{ type: "reasoning", id: reasoning.id, text: "reconsidered" }] } })
-        expect(
-          (
-            yield* requestJson<SessionV1.WithParts>(
-              pathFor(SessionPaths.message, { sessionID: current.id, messageID: message.id }),
-              { headers },
-            )
-          ).parts,
-        ).toMatchObject([{ id: reasoning.id, type: "reasoning", text: "reconsidered" }])
+        ).toBeUndefined()
         expect(
           yield* Database.Service.use(({ db }) =>
             Effect.all([
@@ -2600,17 +2670,24 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const session = yield* createSession({ title: "part mismatch" })
-        const message = yield* createTextMessage(session.id, "first")
+        const message = yield* insertCanonicalUserMessage(session.id, "first", 1)
+        const part = {
+          id: PartID.ascending(`prt_${message.id}_text_0`),
+          sessionID: session.id,
+          messageID: MessageID.ascending(message.id),
+          type: "text" as const,
+          text: message.text,
+        }
         const response = yield* request(
           pathFor(SessionPaths.updatePart, {
             sessionID: session.id,
-            messageID: message.info.id,
-            partID: message.part.id,
+            messageID: part.messageID,
+            partID: part.id,
           }),
           {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ ...message.part, id: PartID.ascending() }),
+            body: JSON.stringify({ ...part, id: PartID.ascending() }),
           },
         )
 
@@ -2626,7 +2703,7 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const current = yield* createSession({ title: "invalid transcript mutations" })
-        const message = yield* insertLegacyAssistantMessage(current.id, 1, 1, [
+        const message = yield* insertCanonicalAssistantMessage(current.id, 1, 1, [
           SessionMessage.AssistantText.make({ type: "text", id: "text_first", text: "first" }),
           SessionMessage.AssistantText.make({ type: "text", id: "text_last", text: "last" }),
         ])
@@ -2756,7 +2833,7 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
         const session = yield* createSession({ title: "part revert" })
-        const message = yield* insertLegacyAssistantMessage(session.id, 1, 1, [
+        const message = yield* insertCanonicalAssistantMessage(session.id, 1, 1, [
           SessionMessage.AssistantText.make({ type: "text", id: "text_keep", text: "keep" }),
           SessionMessage.AssistantText.make({ type: "text", id: "text_remove", text: "remove" }),
         ])

@@ -1,7 +1,7 @@
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Duration, Effect, Layer, Scope } from "effect"
+import { Cause, DateTime, Duration, Effect, Layer, Scope } from "effect"
 import { TestLLMServer } from "../../lib/llm-server"
 import type { Config } from "../../../src/config/config"
 
@@ -146,11 +146,17 @@ function withContext<A, E>(
             }),
           message: (sessionID, input) =>
             Effect.gen(function* () {
+              const canonical = modules.SessionMessage.User.make({
+                id: modules.SessionMessage.ID.create(),
+                type: "user",
+                text: input?.text ?? "hello",
+                time: { created: yield* DateTime.now },
+              })
               const info: SessionV1.User = {
-                id: MessageID.ascending(),
+                id: MessageID.ascending(canonical.id),
                 sessionID,
                 role: "user",
-                time: { created: Date.now() },
+                time: { created: DateTime.toEpochMillis(canonical.time.created) },
                 agent: "build",
                 model: {
                   providerID: ProviderV2.ID.opencode,
@@ -162,14 +168,14 @@ function withContext<A, E>(
                 sessionID,
                 messageID: info.id,
                 type: "text",
-                text: input?.text ?? "hello",
+                text: canonical.text,
               }
               yield* run(
-                modules.Session.Service.use((svc) =>
-                  Effect.gen(function* () {
-                    yield* svc.updateMessage(info)
-                    yield* svc.updatePart(part)
-                  }),
+                modules.SessionV2.Service.use((svc) =>
+                  svc.transcript.importMessage({
+                    sessionID: modules.SessionV2.ID.make(sessionID),
+                    message: canonical,
+                  }).pipe(Effect.orDie),
                 ),
               )
               return { info, part }

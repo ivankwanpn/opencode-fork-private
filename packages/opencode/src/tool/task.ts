@@ -5,7 +5,6 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
-import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { PromptInput } from "../session/legacy-session-input"
@@ -13,7 +12,7 @@ import { Config } from "@/config/config"
 import { Cause, Effect, Exit, Schema } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Database } from "@opencode-ai/core/database/database"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
@@ -122,8 +121,8 @@ export const TaskTool = Tool.define(
     const background = yield* BackgroundJob.Service
     const config = yield* Config.Service
     const sessions = yield* Session.Service
+    const canonical = yield* SessionV2.Service
     const flags = yield* RuntimeFlags.Service
-    const database = yield* Database.Service
     const notifications = yield* TaskNotification.Service
     const cancellation = yield* TaskCancellation.Service
     const submissions = yield* TaskSubmission.Service
@@ -217,16 +216,17 @@ export const TaskTool = Tool.define(
           ],
         }))
 
-      const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(
-        Effect.provideService(Database.Service, database),
-        Effect.orDie,
-      )
-      if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
-      const variant = msg.info.variant
+      const message = yield* canonical.message({
+        sessionID: SessionV2.ID.make(ctx.sessionID),
+        messageID: SessionMessage.ID.make(ctx.messageID),
+      })
+      if (message?.type !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
+      const variant = message.model.variant
 
       const model = next.model ?? {
-        modelID: msg.info.modelID,
-        providerID: msg.info.providerID,
+        modelID: message.model.id,
+        providerID: message.model.providerID,
+        protocol: message.model.protocol,
       }
       const metadata = {
         parentSessionId: ctx.sessionID,

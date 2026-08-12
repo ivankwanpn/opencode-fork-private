@@ -273,6 +273,11 @@ export interface Interface {
     resume?: boolean
   }) => Effect.Effect<void, NotFoundError | SkillNotFoundError>
   readonly compact: (input: CompactInput) => Effect.Effect<void, NotFoundError | BusyError>
+  readonly summarize: (input: {
+    sessionID: SessionSchema.ID
+    model?: ModelV2.Ref
+    auto?: boolean
+  }) => Effect.Effect<void, NotFoundError | BusyError>
   readonly wait: (id: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   readonly status: (sessionID: SessionSchema.ID) => Effect.Effect<Status, NotFoundError>
@@ -899,6 +904,14 @@ const layer = Layer.effect(
         })
         yield* execution.exclusive(session.id, work)
         if (shouldContinue) yield* execution.resume(session.id).pipe(Effect.orDie)
+      }),
+      summarize: Effect.fn("V2Session.summarize")(function* (input) {
+        const session = yield* result.get(input.sessionID)
+        yield* commitStagedRevert(session)
+        if (input.model !== undefined) {
+          yield* result.switchModel({ sessionID: session.id, model: input.model })
+        }
+        yield* result.compact({ sessionID: session.id, reason: input.auto === true ? "auto" : "manual" })
       }),
       wait: Effect.fn("V2Session.wait")(function* (sessionID) {
         yield* result.get(sessionID)

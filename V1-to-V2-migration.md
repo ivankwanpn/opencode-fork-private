@@ -292,6 +292,12 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 >
 > **前置条件 ④ V1 消息表写入停止** ⏸️：V1 消息表仍被辅助写入（`reminders.ts`/`revert.ts`/`summary.ts`/`tool/plan.ts` 的 `updateMessage`/`updatePart`/`removeMessage`/`removePart`）通过 V1 Session.Service 发布 V1 事件写入。V2 无公开合成消息写入 API（批次 5 调研结论）——需先为 V2 提供 `updateMessage`/`updatePart` 等价物并迁移这些辅助写入，才能停止 V1 消息表写入并移除 Core V1 message projector。
 >
+> 进展（999.0.17）：
+> - ① `reminders.ts` 已删除（`SessionCommand.synthetic` 接管 reminders/plan）
+> - ② `revert.ts` V1 `updateMessage`/`removeMessage` 路径已停用：httpapi revert/unrevert 走 `SessionV2.revert.stage/clear/commit` 薄 adapter，`LegacySessionExecution.cleanupRevert` 不再调 V1 `revert.cleanup`
+> - ③ `summary.ts` 的 V1 `updateMessage` 写入（`SessionSummary.summarize`）已删除；httpapi summarize 端点改走新的窄命令 `SessionV2.summarize`（`commitStagedRevert` + `switchModel` + `compact`），`LegacySessionExecution.summarize` 移除
+> - ④ 剩余：`tool/plan.ts` 的 V1 `updateMessage`/`updatePart`（下一步转为 `SessionCommand.synthetic` 或标记不可执行）
+>
 > **批次 8 实际删除（待上述前置条件完成）**：按顺序 `v1/config/config.ts`（已依赖 V2）→ `core/src/v1/permission.ts` → `core/src/v1/session.ts` → `packages/schema/src/v1/*` 中不再被引用的部分。
 
 ### 批次 9：全量 V2-only regression gate

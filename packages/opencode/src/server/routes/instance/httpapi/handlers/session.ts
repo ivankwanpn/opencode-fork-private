@@ -393,21 +393,16 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload: typeof SummarizePayload.Type
     }) {
-      const legacySession = yield* requireSession(ctx.params.sessionID)
-      yield* sessionExecution
+      yield* revertSvc
         .summarize({
-          session: legacySession,
-          providerID: ctx.payload.providerID,
-          modelID: ctx.payload.modelID,
+          sessionID: ctx.params.sessionID,
+          model: { providerID: ctx.payload.providerID, id: ctx.payload.modelID },
           auto: ctx.payload.auto,
         })
         .pipe(
           SessionError.mapStorageNotFound,
           SessionError.mapSessionNotFound,
           SessionError.mapExecutionBusy,
-          Effect.catchTag("LegacySessionExecution.InvalidSelectionError", () =>
-            Effect.fail(new HttpApiError.BadRequest({})),
-          ),
         )
       return true
     })

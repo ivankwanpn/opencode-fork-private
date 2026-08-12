@@ -35,13 +35,6 @@ export type InitInput = {
   readonly modelID: ModelV2.ID
 }
 
-export type SummarizeInput = {
-  readonly session: Session.Info
-  readonly providerID: ProviderV2.ID
-  readonly modelID: ModelV2.ID
-  readonly auto?: boolean
-}
-
 export type PromptExecutionInput = {
   readonly session: Session.Info
   readonly id?: SessionMessage.ID
@@ -206,21 +199,6 @@ const make = Effect.gen(function* () {
     yield* resume(input.session.id)
   })
 
-  const summarize = Effect.fn("LegacySessionExecution.summarize")(function* (input: SummarizeInput) {
-    yield* cleanupRevert(input.session)
-    const history = yield* read.history(input.session.id)
-    const currentAgent =
-      history.findLast((message) => message.info.role === "user")?.info.agent ?? (yield* agent.defaultAgent())
-    const current = yield* select(input.session.id, {
-      agent: currentAgent,
-      model: { providerID: input.providerID, modelID: input.modelID },
-    })
-    yield* canonical.compact({
-      sessionID: current.id,
-      reason: input.auto === true ? "auto" : "manual",
-    })
-  })
-
   const prompt = Effect.fn("LegacySessionExecution.prompt")(function* (input: PromptExecutionInput) {
     const admitted = yield* admitPrompt(input)
     if (input.noReply === true) {
@@ -301,7 +279,7 @@ const make = Effect.gen(function* () {
     return projected
   })
 
-  return { abort, init, summarize, prompt, promptAsync, command, shell }
+  return { abort, init, prompt, promptAsync, command, shell }
 })
 
 export type Interface = Effect.Success<typeof make>

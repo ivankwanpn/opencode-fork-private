@@ -1222,6 +1222,13 @@ describe("session HttpApi", () => {
       })
       expect(prompt.status).toBe(200)
 
+      const v1Rows = yield* Database.Service.use(({ db }) =>
+        Effect.all([
+          db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+          db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+        ]),
+      )
+
       const summarize = yield* request(route(pathFor(SessionPaths.summarize, { sessionID: session.id })), {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1229,6 +1236,16 @@ describe("session HttpApi", () => {
       })
       expect(summarize.status).toBe(200)
       expect(yield* json<boolean>(summarize)).toBeTrue()
+
+      // Summarize routes through the V2 compaction pipeline and must not
+      // create any new V1 message/part rows.
+      const after = yield* Database.Service.use(({ db }) =>
+        Effect.all([
+          db.select({ count: sql`count(*)` }).from(MessageTable).get().pipe(Effect.orDie),
+          db.select({ count: sql`count(*)` }).from(PartTable).get().pipe(Effect.orDie),
+        ]),
+      )
+      expect(after).toEqual(v1Rows)
 
       const history = yield* requestJson<SessionV1.WithParts[]>(
         route(pathFor(SessionPaths.messages, { sessionID: session.id })),

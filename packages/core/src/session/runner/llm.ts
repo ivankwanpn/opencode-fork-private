@@ -360,14 +360,19 @@ const layer = Layer.effect(
             ),
           })
         : undefined
-      const effectivePermissions = PermissionV2.merge(
-        agent.info?.permissions ?? [],
-        // Session-scoped grants (P3 task `permission` parameter) land after the
-        // agent whitelist so an explicit grant can allow a specific external
-        // tool for the lifetime of this child session.
-        sessionPermissions,
-        PermissionV2.fromToolOverrides(prompt?.tools),
-      )
+      const effectivePermissions = agent.info
+        ? PermissionV2.merge(
+            agent.info.permissions,
+            // Session-scoped grants (P3 task `permission` parameter) land after the
+            // agent whitelist so an explicit grant can allow a specific external
+            // tool for the lifetime of this child session.
+            sessionPermissions,
+            PermissionV2.fromToolOverrides(prompt?.tools),
+          )
+        : // Mirror the assert side (PermissionV2.configured): a missing agent is
+          // deny-all and session/prompt rules never join, so the model sees no tools
+          // that the assert side would reject.
+          PermissionV2.missingAgentPermissions
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
       const toolMaterialization = isLastStep
         ? undefined

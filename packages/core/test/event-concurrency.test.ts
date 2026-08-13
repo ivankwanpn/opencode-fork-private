@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Result, Schema } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -110,6 +110,59 @@ describe("EventV2 expectedSeq", () => {
         .all()
         .pipe(Effect.orDie)
       expect(rows.map((row) => row.seq)).toEqual([0, 1, 2]) // no gaps, no duplicates
+    }),
+  )
+})
+
+describe("EventV2 claimed aggregates", () => {
+  it.effect("publishes with expectedSeq after the aggregate is claimed", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const id = SessionV2.ID.make("ses_agg_claim_publish")
+      yield* events.publish(SessionEvent.Updated, updated(fixtureSnapshot(), id))
+      yield* events.claim(id, "owner-a")
+      const seq = yield* EventV2.latestSequence(db, id)
+      const event = yield* events.publish(SessionEvent.Updated, updated(fixtureSnapshot(), id), {
+        expectedSeq: seq,
+      })
+      expect(event.durable?.seq).toBe(seq + 1)
+      const rows = yield* db
+        .select({ seq: EventTable.seq })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, id))
+        .all()
+        .pipe(Effect.orDie)
+      expect(rows.map((row) => row.seq)).toEqual([0, 1]) // both writes persisted
+    }),
+  )
+
+  it.effect("replay by a non-owner of a claimed aggregate still silently skips", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const id = SessionV2.ID.make("ses_agg_claim_replay")
+      yield* events.publish(SessionEvent.Updated, updated(fixtureSnapshot(), id))
+      yield* events.claim(id, "owner-a")
+      const seq = yield* EventV2.latestSequence(db, id)
+      yield* events.replay(
+        {
+          id: EventV2.ID.make("evt_claim_replay"),
+          type: "session.next.updated.1",
+          seq: seq + 1,
+          aggregateID: id,
+          data: Schema.encodeUnknownSync(SessionEvent.Updated.data)(updated(fixtureSnapshot(), id)),
+        },
+        { ownerID: "other" },
+      )
+      const rows = yield* db
+        .select({ seq: EventTable.seq })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, id))
+        .all()
+        .pipe(Effect.orDie)
+      expect(rows.map((row) => row.seq)).toEqual([0]) // the non-owner replay wrote nothing
+      expect(yield* EventV2.latestSequence(db, id)).toBe(seq) // sequence untouched
     }),
   )
 })

@@ -177,6 +177,70 @@ const removeIt = testEffect(
   ),
 )
 
+// Deterministic read-order race: a Database whose session's prepared-query `get`
+// for the EventSequenceTable read (EventV2.latestSequence) first runs one real
+// competing mutation (one-shot flag, no recursion), reproducing "old snapshot
+// paired with a fresh sequence" — the exact interleaving the seq-before-row
+// invariant exists to prevent.
+const toctou = {
+  injected: false,
+  sessionID: undefined as SessionV2.ID | undefined,
+  sessions: undefined as unknown as SessionV2.Interface,
+}
+const toctouDbLayer = Layer.effect(
+  Database.Service,
+  Effect.gen(function* () {
+    const context = yield* Layer.build(Database.node.implementation as Layer.Layer<Database.Service>)
+    const real = yield* Effect.sync(() => Context.get(context, Database.Service))
+    const db = real.db
+    const session = (db as unknown as { session: { prepareOneTimeQuery: (...args: unknown[]) => unknown } }).session
+    const realPrepare = session.prepareOneTimeQuery.bind(session)
+    const proxiedSession = new Proxy(session, {
+      get(target, prop, receiver) {
+        if (prop !== "prepareOneTimeQuery") return Reflect.get(target, prop, receiver)
+        return (query: { sql?: string; params?: unknown[] }, fields: unknown, method: string, ...rest: unknown[]) => {
+          const prepared = realPrepare(query, fields, method, ...rest) as {
+            get: (placeholderValues?: unknown) => Effect.Effect<unknown, unknown, unknown>
+          }
+          if (
+            !toctou.injected &&
+            toctou.sessionID !== undefined &&
+            String(query.sql ?? "").includes("event_sequence") &&
+            query.params?.includes(toctou.sessionID)
+          ) {
+            const realGet = prepared.get.bind(prepared)
+            prepared.get = (placeholderValues) =>
+              Effect.gen(function* () {
+                if (!toctou.injected && toctou.sessionID !== undefined) {
+                  toctou.injected = true
+                  yield* toctou.sessions.update({ sessionID: toctou.sessionID, title: "b" })
+                }
+                return yield* realGet(placeholderValues)
+              })
+          }
+          return prepared
+        }
+      },
+    })
+    const proxiedDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "session") return proxiedSession
+        return Reflect.get(target, prop, receiver)
+      },
+    }) as typeof db
+    return Database.Service.of({ db: proxiedDb })
+  }),
+)
+const toctouIt = testEffect(
+  AppNodeBuilder.build(
+    LayerNode.group([Database.node, SessionV2.node]),
+    [
+      [Database.node, toctouDbLayer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ],
+  ),
+)
+
 describe("SessionV2.create", () => {
   it.effect("creates a fresh projected session when the ID is omitted", () =>
     Effect.gen(function* () {
@@ -729,6 +793,21 @@ describe("SessionV2.create", () => {
           ),
       ).toBe("Session.NotFoundError")
       expect(removeInjection.removed).toBe(true) // the delete really landed between publish and re-read
+    }),
+  )
+
+  toctouIt.effect("update cannot pair a stale snapshot with a fresh sequence and clobber a concurrent mutation", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      toctou.sessions = sessions
+      const { db } = yield* Database.Service
+      const created = yield* sessions.create({ location, title: "mut" })
+      toctou.sessionID = created.id
+      yield* sessions.update({ sessionID: created.id, metadata: { from: "a" } })
+      expect(toctou.injected).toBe(true) // the competing mutation really ran inside the sequence read
+      const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, created.id)).get()
+      expect(row?.title).toBe("b") // the concurrent title survived — no stale-snapshot clobber
+      expect(row?.metadata).toEqual({ from: "a" }) // our update still applied on top
     }),
   )
 })

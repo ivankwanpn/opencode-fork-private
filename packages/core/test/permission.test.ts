@@ -308,6 +308,34 @@ describe("PermissionV2", () => {
     }),
   )
 
+  it.effect("missing-agent deny-all rules are exported and match the assert side's early return", () =>
+    Effect.gen(function* () {
+      // The catalog side (session/runner/llm.ts) merges this same exported constant when
+      // the agent is missing, so the model-visible rules are identical to configured()'s
+      // early return below: deny-all, with session/prompt rules never joining.
+      expect(PermissionV2.missingAgentPermissions).toEqual([{ action: "*", resource: "*", effect: "deny" }])
+      yield* setup()
+      const { db } = yield* Database.Service
+      yield* db
+        .update(SessionTable)
+        .set({ agent: null })
+        .where(eq(SessionTable.id, SessionV2.ID.make("ses_test")))
+        .run()
+        .pipe(Effect.orDie)
+      const agents = yield* AgentV2.Service
+      yield* agents.transform((editor) => {
+        editor.remove(AgentV2.ID.make("test"))
+        editor.remove(AgentV2.ID.make("build"))
+      })
+      const service = yield* PermissionV2.Service
+      // configured() early-returns exactly missingAgentPermissions: any action/resource denies.
+      expect(yield* service.ask(assertion({ action: "bash", resources: ["pwd"] }))).toEqual({
+        id: PermissionV2.ID.create("per_test"),
+        effect: "deny",
+      })
+    }),
+  )
+
   it.effect("evaluates bash with the normal configured-rule semantics", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "*", resource: "*", effect: "allow" }])

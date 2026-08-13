@@ -307,7 +307,16 @@ export const layerWith = (options?: LayerOptions) =>
                               }),
                             )
                           }
-                          if (input && row?.ownerID && row.ownerID !== input.ownerID) {
+                          // Owner fencing applies only to inputs that carry an owner (replay) or an
+                          // explicit seq (replay-with-seq); fresh publishes that only pass
+                          // expectedSeq (live mutations) must not silently skip on a claimed
+                          // aggregate — the expectedSeq conflict guard is their fencing mechanism.
+                          if (
+                            input &&
+                            (input.seq !== undefined || input.ownerID !== undefined) &&
+                            row?.ownerID &&
+                            row.ownerID !== input.ownerID
+                          ) {
                             return
                           }
                           const seq = input?.seq ?? latest + 1

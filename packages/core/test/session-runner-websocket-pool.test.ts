@@ -347,6 +347,11 @@ const setup = Effect.gen(function* () {
     .onConflictDoNothing()
     .run()
     .pipe(Effect.orDie)
+  // The runner resolves the default "build" agent; register it so the catalog
+  // side (effectivePermissions) sees a real agent and exposes tools, consistent
+  // with the assert side's missing-agent deny-all early return.
+  const agents = yield* AgentV2.Service
+  yield* agents.transform((editor) => editor.update(AgentV2.ID.make("build"), (agent) => agent))
 })
 
 describe("SessionRunnerLLM WebSocket pool", () => {

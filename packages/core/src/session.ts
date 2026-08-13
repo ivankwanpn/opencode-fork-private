@@ -435,6 +435,12 @@ const layer = Layer.effect(
       next: (snapshot: SessionEvent.SessionSnapshot, timestamp: DateTime.Utc) => SessionEvent.SessionSnapshot,
     ) {
       const attempt = Effect.gen(function* () {
+        // Invariant: the aggregate sequence must be read before the session row.
+        // Any commit between the two reads makes expectedSeq stale and the publish
+        // conflicts, so the retry re-reads both; reading the row first would let an
+        // old snapshot pair with a fresh sequence and pass the CAS, silently
+        // overwriting the newer mutation's projection.
+        const expectedSeq = yield* EventV2.latestSequence(db, sessionID)
         const row = yield* db
           .select()
           .from(SessionTable)
@@ -442,7 +448,6 @@ const layer = Layer.effect(
           .get()
           .pipe(Effect.orDie)
         if (!row) return yield* new NotFoundError({ sessionID })
-        const expectedSeq = yield* EventV2.latestSequence(db, sessionID)
         const timestamp = yield* DateTime.now
         const info = next(rowToSnapshot(row), timestamp)
         yield* events.publish(
@@ -551,9 +556,16 @@ const layer = Layer.effect(
         )
       }),
       permissions: Effect.fn("V2Session.permissions")(function* (sessionID) {
-        const stored = yield* store.get(sessionID)
-        if (!stored) return yield* new NotFoundError({ sessionID })
-        return yield* store.permissions(sessionID)
+        // Single query: a delete between an existence check and the permission read
+        // would otherwise surface an empty ruleset instead of NotFoundError.
+        const row = yield* db
+          .select({ permission: SessionTable.permission })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, sessionID))
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return yield* new NotFoundError({ sessionID })
+        return row.permission ? [...row.permission] : []
       }),
       setPermissions: Effect.fn("V2Session.setPermissions")(function* (input) {
         yield* mutateSession(input.sessionID, (snapshot, timestamp) =>

@@ -524,6 +524,12 @@ const setup = Effect.gen(function* () {
     .run()
     .pipe(Effect.orDie)
   yield* insertSession(sessionID)
+  // The runner resolves the default "build" agent; register it so the catalog side
+  // (effectivePermissions) sees a real agent and merges session/prompt rules —
+  // identical tool exposure to the pre-fix empty-permissions behavior, now
+  // consistent with the assert side's configured() missing-agent early return.
+  const agents = yield* AgentV2.Service
+  yield* agents.transform((editor) => editor.update(AgentV2.ID.make("build"), (agent) => agent))
 })
 
 const providerUnavailable = () =>

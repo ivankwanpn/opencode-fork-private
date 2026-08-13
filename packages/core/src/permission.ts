@@ -14,7 +14,10 @@ import { PermissionSaved } from "./permission/saved"
 import { PluginRuntime } from "./plugin/runtime"
 
 export { Effect, Rule, Ruleset } from "@opencode-ai/schema/permission"
-const missingAgentPermissions: Permission.Ruleset = [{ action: "*", resource: "*", effect: "deny" }]
+// Shared by the assert side (configured() early-return) and the catalog side
+// (session/runner/llm.ts) so a missing agent presents deny-all rules in both
+// places — the model must not see tools that the assert side will reject.
+export const missingAgentPermissions: Permission.Ruleset = [{ action: "*", resource: "*", effect: "deny" }]
 
 export const ID = Permission.ID
 export type ID = typeof ID.Type

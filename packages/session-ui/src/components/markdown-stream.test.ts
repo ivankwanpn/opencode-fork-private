@@ -132,6 +132,24 @@ describe("markdown stream", () => {
     expect(canReusePendingBlock({ mode: "code", raw: "```ts\none" }, { mode: "live", raw: "one", src: "" })).toBe(false)
   })
 
+  test("reuses the live tail block when the raw text is a prefix of the next raw", () => {
+    expect(
+      canReusePendingBlock(
+        { mode: "live", raw: "hello", src: "hello" },
+        { mode: "live", raw: "hello wor", src: "hello wor" },
+      ),
+    ).toBe(true)
+    expect(
+      canReusePendingBlock(
+        { mode: "live", raw: "hello", src: "hello" },
+        { mode: "live", raw: "he", src: "he" },
+      ),
+    ).toBe(false)
+    expect(
+      canReusePendingBlock({ mode: "full", raw: "a", src: "a" }, { mode: "full", raw: "a", src: "a" }),
+    ).toBe(true)
+  })
+
   test("appends plain code deltas without reprojecting frozen blocks", () => {
     const previous = project(undefined, "# Plan\n\n```ts\nconst one = 1\n", true)
     const next = project(previous, `${previous.text}const two = 2\n`, true)

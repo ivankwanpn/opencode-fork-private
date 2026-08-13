@@ -86,7 +86,7 @@ export function stream(text: string, live: boolean): Block[] {
 
 export function canReusePendingBlock(current: Pick<Block, "mode" | "raw"> | undefined, next: Block) {
   if (!current || current.mode !== next.mode) return false
-  if (next.mode === "code") return next.raw.startsWith(current.raw)
+  if (next.mode === "code" || next.mode === "live") return next.raw.startsWith(current.raw)
   return current.raw === next.raw
 }
 

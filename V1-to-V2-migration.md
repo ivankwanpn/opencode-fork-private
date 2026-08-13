@@ -314,15 +314,22 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - retained legacy transcript rows 明确退役且不迁移；legacy-only message/part ID 统一按 not found 处理。
 > - CLI import/export 使用 version 2 canonical envelope；runtime schema 与生成 migration 已删除三张 legacy transcript tables。
 >
+> **本轮 canonical mutation closeout（999.0.17）**：
+> - `SessionV2.update` 现支持 metadata/share 的原子替换与显式清除（`undefined` 保留 / `null` 清除 / 值整体替换；`{}` 是合法存储值而非清除）；projector 全快照投影改用 SQL null 语义（`?? null`），显式清除不再被 Drizzle 忽略而残留旧值。
+> - 新增 `SessionV2.permissions` / `SessionV2.setPermissions`：V2 ruleset 完整替换、保序保重复、`[]` 为合法清除；权限不进入 `SessionSchema.Info`。
+> - 新增 durable 乐观并发原语：`EventV2.publish` 支持 `expectedSeq`（immediate transaction 内比较 `event_sequence.seq`，不符以 `EventV2.ConflictError` defect 抛出）；`SessionV2` 的 update/setPermissions 走文件内 `mutateSession` 边界（读 row+seq → 推导全快照 → 带 expectedSeq 发布 → 冲突重试，上限 32；`NotFoundError` 不重试）；`publishCompatibilityUpdate`（revert compat echo）同样带 expectedSeq 守衛，不再可能以 stale 快照覆盖 canonical mutation 的投影。已知限制：跨进程下 WAL + `BEGIN IMMEDIATE` 保证事件日志一致，但投影为进程内注册，跨进程投影一致性仍待后续批次。
+> - `PermissionV2.configured` 与 CodeMode 执行期 catalog 过滤统一为 agent → Session → prompt overrides 三源合并（`evaluate` 的 last-match-wins 不变）；Session 级规则可通过 `setPermissions` 生效。
+>
 > **仍阻止实际删表/删目录的依赖** ⏸️：
 > - `Session.Service` 仍被 CRUD、stats、share、legacy execution、middleware、TUI/sync handler 与部分 legacy tool 路径使用。
 > - Core projector 仍消费部分 V1 session lifecycle/event 形状，以维持尚未迁移的旧 API 与兼容事件投影。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
-> **批次 8 下一步**：先扩充 V2 Session CRUD/metadata/permission 等缺口并广泛迁移 `Session.Service`
-> runtime consumer，再移除对应 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部 wire
-> 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
+> **批次 8 下一步**：Session mutation surface 已 canonical（见上「canonical mutation closeout」）。接下来迁移
+> `Session.Service` 的 CRUD/stats/share/middleware/TUI/sync 等 runtime consumer 到 V2（list/get 等 read contract
+> 扩展随 consumer 需求进行），再移除对应 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部
+> wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
 
 ### 批次 9：全量 V2-only regression gate
@@ -334,7 +341,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 
 ## 6. 风险与注意事项
 
-1. **共享 Session row 一致性**：V1 `Session.Service` 与 V2 `SessionV2` 仍共享 `SessionTable`；迁移 CRUD consumer 时必须先补齐 V2 metadata/permission 等等价能力，再移除 V1 projection。Transcript 已是 canonical-only，不得恢复双表读写。
+1. **共享 Session row 一致性**：V1 `Session.Service` 与 V2 `SessionV2` 仍共享 `SessionTable`；迁移 CRUD consumer 时必须先补齐 V2 metadata/permission 等等价能力，再移除 V1 projection。V2 mutation 之间已由 `expectedSeq` 乐观并发守衛（update/setPermissions/compat echo 全覆盖），但 V1 `Session.Service` 经 V1 事件投影的直接写表路径仍无此守衛，consumer 迁移完成前两者仍可能交错。Transcript 已是 canonical-only，不得恢复双表读写。
 2. **两套 route 树执行语义不同**：TUI worker/native routes 用 `locationServiceMapV2Layer`（forwarding）；`packages/server/src/routes.ts` 独立 route 树仍绑 `noopLayer`（V2 工具彼处 recording-only）。需确认生产 server 入口。
 3. **Permission 双轨盲区**：V2 工具请求不出现在 V1 `/permission` list，用户 UI 可能看不到待授权请求。
 4. **`tool_search` selection 持久化**：若未来接入非 runner 的 V2 工具调用面（MCP/session-scoped 注册），需显式设计 selection 持久化。

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { DateTime, Effect, Layer, LayerMap, Schema } from "effect"
 import type { LocationServices } from "@opencode-ai/core/location-services"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
@@ -7,6 +7,7 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
+import { EventTable } from "@opencode-ai/core/event/sql"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Project } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
@@ -153,6 +154,56 @@ const startRecovery = (runnerCalls: { count: number }, onRun?: (sessionID: Sessi
         ]),
       ),
     )
+  })
+
+const titleSessionID = SessionSchema.ID.make("ses_title_update")
+const titleUserID = SessionMessage.ID.make("msg_title_user")
+const titleAssistantID = SessionMessage.ID.make("msg_title_assistant")
+
+const withExecution = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const database = yield* Database.Service
+    const events = yield* EventV2.Service
+    return yield* effect.pipe(
+      Effect.provide(
+        LayerNode.compile(SessionExecutionLocal.node, [
+          [Database.node, Layer.succeed(Database.Service, database)],
+          [EventV2.node, Layer.succeed(EventV2.Service, events)],
+          [LocationServiceMap.node, makeLocationLayer({ count: 0 })],
+          [SessionCommand.node, commandLayer],
+        ]),
+      ),
+    )
+  })
+
+const seedTitleSession = (title: string) =>
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    const events = yield* EventV2.Service
+    yield* setupProject([{ id: titleSessionID }])
+    yield* db.update(SessionTable).set({ title }).where(eq(SessionTable.id, titleSessionID)).run().pipe(Effect.orDie)
+    yield* events.publish(SessionEvent.PromptAdmitted, {
+      sessionID: titleSessionID,
+      messageID: titleUserID,
+      timestamp: DateTime.makeUnsafe(1),
+      prompt: Prompt.make({ text: "Summarize the plan document" }),
+      delivery: "steer",
+      intent: { type: "start" },
+    })
+    yield* SessionInput.promote(db, events, titleSessionID, titleUserID)
+    yield* SessionTurn.start(events, { sessionID: titleSessionID, turnID: titleUserID, timestamp: DateTime.makeUnsafe(2) })
+  })
+
+const updatedCount = () =>
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    const rows = yield* db
+      .select({ seq: EventTable.seq })
+      .from(EventTable)
+      .where(and(eq(EventTable.aggregate_id, titleSessionID), eq(EventTable.type, "session.next.updated.1")))
+      .all()
+      .pipe(Effect.orDie)
+    return rows.length
   })
 
 describe("SessionExecution recovery", () => {
@@ -777,6 +828,44 @@ describe("SessionExecution recovery", () => {
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
       expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
       expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+    }),
+  )
+})
+
+describe("background title update", () => {
+  it.effect("background title update publishes exactly one session.next.updated.1 through a real drain", () =>
+    Effect.gen(function* () {
+      yield* seedTitleSession("New session - title")
+      const before = yield* updatedCount()
+      yield* withExecution(
+        Effect.gen(function* () {
+          const execution = yield* SessionExecution.Service
+          yield* execution.wake(titleSessionID)
+          yield* execution.wait(titleSessionID)
+        }),
+      )
+      const { db } = yield* Database.Service
+      const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, titleSessionID)).get().pipe(Effect.orDie)
+      expect(row?.title).toBe("Summarize the plan document")
+      expect(yield* updatedCount()).toBe(before + 1)
+    }),
+  )
+
+  it.effect("background title update leaves non-default titles untouched", () =>
+    Effect.gen(function* () {
+      yield* seedTitleSession("Keep Me")
+      const before = yield* updatedCount()
+      yield* withExecution(
+        Effect.gen(function* () {
+          const execution = yield* SessionExecution.Service
+          yield* execution.wake(titleSessionID)
+          yield* execution.wait(titleSessionID)
+        }),
+      )
+      const { db } = yield* Database.Service
+      const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, titleSessionID)).get().pipe(Effect.orDie)
+      expect(row?.title).toBe("Keep Me")
+      expect(yield* updatedCount()).toBe(before)
     }),
   )
 })

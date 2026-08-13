@@ -18,6 +18,7 @@ import { SessionMessageTable, SessionTable } from "./session/sql"
 import { SessionSchema } from "./session/schema"
 import { AbsolutePath, PositiveInt, RelativePath } from "./schema"
 import { fromRow } from "./session/info"
+import { mutateSession, rowToSnapshot, type SnapshotTransform } from "./session/mutation"
 import { SessionRunner } from "./session/runner/index"
 import { SessionStore } from "./session/store"
 import { SessionExecution } from "./session/execution"
@@ -379,28 +380,6 @@ const layer = Layer.effect(
             }),
         ),
       )
-    const rowToSnapshot = (row: typeof SessionTable.$inferSelect): SessionEvent.SessionSnapshot => {
-      const info = fromRow(row)
-      return SessionEvent.SessionSnapshot.make({
-        id: info.id,
-        parentID: info.parentID,
-        projectID: info.projectID,
-        slug: row.slug,
-        version: row.version,
-        agent: info.agent,
-        model: info.model,
-        cost: info.cost,
-        tokens: info.tokens,
-        time: info.time,
-        title: info.title,
-        metadata: row.metadata ?? undefined,
-        share: info.share,
-        permission: row.permission ? [...row.permission] : undefined,
-        location: info.location,
-        subpath: info.subpath,
-        revert: info.revert,
-      })
-    }
     const settleRecoveryAssistant = Effect.fn("V2Session.settleRecoveryAssistant")(function* (
       sessionID: SessionSchema.ID,
       assistantMessageID: SessionMessage.ID,
@@ -430,48 +409,7 @@ const layer = Layer.effect(
       })
     })
 
-    const mutateSession = Effect.fn("V2Session.mutateSession")(function* (
-      sessionID: SessionSchema.ID,
-      next: (snapshot: SessionEvent.SessionSnapshot, timestamp: DateTime.Utc) => SessionEvent.SessionSnapshot,
-    ) {
-      const attempt = Effect.gen(function* () {
-        // Invariant: the aggregate sequence must be read before the session row.
-        // Any commit between the two reads makes expectedSeq stale and the publish
-        // conflicts, so the retry re-reads both; reading the row first would let an
-        // old snapshot pair with a fresh sequence and pass the CAS, silently
-        // overwriting the newer mutation's projection.
-        const expectedSeq = yield* EventV2.latestSequence(db, sessionID)
-        const row = yield* db
-          .select()
-          .from(SessionTable)
-          .where(eq(SessionTable.id, sessionID))
-          .get()
-          .pipe(Effect.orDie)
-        if (!row) return yield* new NotFoundError({ sessionID })
-        const timestamp = yield* DateTime.now
-        const info = next(rowToSnapshot(row), timestamp)
-        yield* events.publish(
-          SessionEvent.Updated,
-          { timestamp, sessionID, info },
-          { location: fromRow(row).location, expectedSeq },
-        )
-        const fresh = yield* db
-          .select()
-          .from(SessionTable)
-          .where(eq(SessionTable.id, sessionID))
-          .get()
-          .pipe(Effect.orDie)
-        if (!fresh) return yield* new NotFoundError({ sessionID })
-        return fromRow(fresh)
-      })
-      const retry = (remaining: number): Effect.Effect<SessionSchema.Info, NotFoundError> =>
-        attempt.pipe(
-          Effect.catchDefect((defect) =>
-            defect instanceof EventV2.ConflictError && remaining > 0 ? retry(remaining - 1) : Effect.die(defect),
-          ),
-        )
-      return yield* retry(32)
-    })
+    const mutate = (sessionID: SessionSchema.ID, next: SnapshotTransform) => mutateSession(db, events, sessionID, next)
 
     const publishCompatibilityUpdate = Effect.fn("V2Session.publishCompatibilityUpdate")(function* (
       sessionID: SessionSchema.ID,
@@ -479,7 +417,7 @@ const layer = Layer.effect(
       // Identity next: the compat echo must NOT bump time.updated (revert projections already
       // set it); the expectedSeq guard in mutateSession keeps this full-snapshot echo from
       // clobbering a canonical mutation's projection when interleaved.
-      return yield* mutateSession(sessionID, (snapshot) => snapshot)
+      return yield* mutate(sessionID, (snapshot) => snapshot)
     })
 
     const commitStagedRevert = Effect.fn("V2Session.commitStagedRevert")(function* (
@@ -535,7 +473,7 @@ const layer = Layer.effect(
         return rows.map(fromRow)
       }),
       update: Effect.fn("V2Session.update")(function* (input) {
-        return yield* mutateSession(input.sessionID, (snapshot, timestamp) =>
+        return yield* mutate(input.sessionID, (snapshot, timestamp) =>
           SessionEvent.SessionSnapshot.make({
             ...snapshot,
             title: input.title ?? snapshot.title,
@@ -568,7 +506,7 @@ const layer = Layer.effect(
         return row.permission ? [...row.permission] : []
       }),
       setPermissions: Effect.fn("V2Session.setPermissions")(function* (input) {
-        yield* mutateSession(input.sessionID, (snapshot, timestamp) =>
+        yield* mutate(input.sessionID, (snapshot, timestamp) =>
           SessionEvent.SessionSnapshot.make({
             ...snapshot,
             permission: [...input.permissions],

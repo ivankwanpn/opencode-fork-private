@@ -15,8 +15,9 @@ import { SessionTurn } from "../turn"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
-import { SessionAttemptTable, SessionInputTable, SessionTable, TaskSubmissionTable } from "../sql"
+import { SessionAttemptTable, SessionInputTable, TaskSubmissionTable } from "../sql"
 import { SessionEvent } from "../event"
+import { mutateSession } from "../mutation"
 import { EventV2 } from "../../event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import { SessionV1 } from "@opencode-ai/schema/v1/session"
@@ -249,13 +250,15 @@ const layer = Layer.effect(
       const text = messages.find((message) => message.type === "user")?.text?.trim()
       if (!text) return
       const title = text.split(/\s+/).join(" ").slice(0, 60)
-      const timeUpdated = yield* Clock.currentTimeMillis
-      yield* db
-        .update(SessionTable)
-        .set({ title, time_updated: timeUpdated })
-        .where(eq(SessionTable.id, sessionID))
-        .run()
-        .pipe(Effect.orDie)
+      yield* mutateSession(db, events, sessionID, (snapshot, timestamp) =>
+        SessionEvent.SessionSnapshot.make({
+          ...snapshot,
+          title,
+          time: { ...snapshot.time, updated: timestamp },
+        }),
+      ).pipe(
+        Effect.catchTag("Session.NotFoundError", () => Effect.void),
+      )
     })
     const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, SessionRunner.RunError>({
       drain: Effect.fnUntraced(function* (sessionID: SessionSchema.ID, force) {

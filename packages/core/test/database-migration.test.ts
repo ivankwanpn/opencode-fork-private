@@ -789,4 +789,32 @@ describe("DatabaseMigration", () => {
       }),
     )
   })
+
+  test("disables foreign keys while applying pending migrations and restores them after", async () => {
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* db.run(sql`CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)`)
+        yield* db.run(sql`CREATE TABLE parent (id TEXT PRIMARY KEY)`)
+        yield* db.run(
+          sql`CREATE TABLE child (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parent(id) ON DELETE CASCADE)`,
+        )
+        yield* db.run(sql`INSERT INTO parent (id) VALUES ('p1')`)
+        yield* db.run(sql`INSERT INTO child (id, parent_id) VALUES ('c1', 'p1')`)
+
+        const dropping: DatabaseMigration.Migration = {
+          id: "test_drop_parent",
+          up: (tx) => tx.run(sql`DROP TABLE parent`),
+        }
+        yield* DatabaseMigration.applyOnly(db, [dropping]).pipe(Effect.orDie)
+
+        expect(yield* db.all(sql`SELECT name FROM sqlite_master WHERE type='table' AND name='parent'`)).toEqual([])
+        expect(yield* db.all(sql`SELECT id FROM child`)).toEqual([{ id: "c1" }])
+
+        // FK enforcement restored: a child referencing a missing parent must fail.
+        const insert = yield* db.run(sql`INSERT INTO child (id, parent_id) VALUES ('c2', 'missing')`).pipe(Effect.exit)
+        expect(insert._tag).toBe("Failure")
+      }),
+    )
+  })
 })

@@ -1,5 +1,5 @@
 import { NodeHttpServer } from "@effect/platform-node"
-import { Session } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
@@ -14,7 +14,7 @@ import {
 import { testEffect } from "../lib/effect"
 
 const TestHttpApi = HttpApi.make("opencode-instance").addHttpApi(McpApi)
-const fakeSession = Layer.mock(Session.Service)({})
+const fakeSession = Layer.mock(SessionV2.Service)({})
 const testMcpHandlers = HttpApiBuilder.group(TestHttpApi, "mcp", (handlers) =>
   Effect.succeed(
     handlers

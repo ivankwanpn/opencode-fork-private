@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Context, Effect, Layer, Queue, Ref, Schema, Stream } from "effect"
+import { Context, DateTime, Effect, Layer, Queue, Ref, Schema, Stream } from "effect"
 import {
   FetchHttpClient,
   HttpClient,
@@ -17,12 +17,13 @@ import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { registerAdapter } from "../../src/control-plane/adapters"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { SessionV2 } from "@opencode-ai/core/session"
 import type { WorkspaceAdapter } from "../../src/control-plane/types"
 import { Workspace } from "../../src/control-plane/workspace"
 import { WorkspaceTable } from "@opencode-ai/core/control-plane/workspace.sql"
 import { Database } from "@opencode-ai/core/database/database"
 import { Project } from "../../src/project/project"
-import { Session } from "../../src/session/session"
 import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/workspace"
 import {
   WorkspaceRoutingMiddleware,
@@ -228,6 +229,11 @@ const ProbeApi = HttpApi.make("workspace-routing-probe").add(
       HttpApiEndpoint.get("get", "/probe", { query: WorkspaceRoutingQuery, success: ProbeResult }),
       HttpApiEndpoint.patch("patch", "/probe", { query: WorkspaceRoutingQuery, success: Schema.Boolean }),
       HttpApiEndpoint.get("session", "/session", { query: WorkspaceRoutingQuery, success: ProbeResult }),
+      HttpApiEndpoint.get("sessionByID", "/session/:sessionID", {
+        params: { sessionID: SessionV2.ID },
+        query: WorkspaceRoutingQuery,
+        success: ProbeResult,
+      }),
       HttpApiEndpoint.get("workspace", WorkspacePaths.list, {
         query: WorkspaceRoutingQuery,
         success: ProbeResult,
@@ -246,16 +252,42 @@ const probeHandlers = HttpApiBuilder.group(ProbeApi, "probe", (handlers) =>
     .handle("get", () => routeContextResponse)
     .handle("patch", () => Effect.succeed(false))
     .handle("session", () => routeContextResponse)
+    .handle("sessionByID", () => routeContextResponse)
     .handle("workspace", () => routeContextResponse),
 )
 
-const serveProbe = HttpApiBuilder.layer(ProbeApi).pipe(
-  Layer.provide(probeHandlers),
-  Layer.provide(workspaceRoutingTestLayer),
-  Layer.provide(Layer.mock(Session.Service)({})),
-  HttpRouter.serve,
-  Layer.build,
-)
+const canonicalSession = (input: {
+  id: SessionV2.ID
+  projectID: Project.Info["id"]
+  directory: string
+  workspaceID?: WorkspaceV2.ID
+}) =>
+  SessionV2.Info.make({
+    id: input.id,
+    projectID: input.projectID,
+    title: "Canonical session",
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: {
+      created: DateTime.makeUnsafe(1),
+      updated: DateTime.makeUnsafe(1),
+    },
+    location: {
+      directory: AbsolutePath.make(input.directory),
+      workspaceID: input.workspaceID,
+    },
+  })
+
+const serveProbeWithSessions = (sessions: Layer.Layer<SessionV2.Service>) =>
+  HttpApiBuilder.layer(ProbeApi).pipe(
+    Layer.provide(probeHandlers),
+    Layer.provide(workspaceRoutingTestLayer),
+    Layer.provide(sessions),
+    HttpRouter.serve,
+    Layer.build,
+  )
+
+const serveProbe = serveProbeWithSessions(Layer.mock(SessionV2.Service)({}))
 
 describe("HttpApi workspace routing middleware", () => {
   it.live("proxies remote workspace HTTP requests through the selected workspace target", () =>
@@ -376,7 +408,7 @@ describe("HttpApi workspace routing middleware", () => {
         Layer.provide(probeHandlers),
         Layer.provide(workspaceRoutingTestLayer),
         Layer.provide(Layer.succeed(Workspace.Service, workspace)),
-        Layer.provide(Layer.mock(Session.Service)({})),
+        Layer.provide(Layer.mock(SessionV2.Service)({})),
         HttpRouter.serve,
         Layer.build,
       )
@@ -547,6 +579,100 @@ describe("HttpApi workspace routing middleware", () => {
         directory: workspaceDir,
         workspaceID: workspace.id,
       })
+    }),
+  )
+
+  it.live("uses canonical session directory before request directory hints", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const project = yield* Project.use.fromDirectory(dir)
+      const sessionID = SessionV2.ID.make("ses_canonical_directory")
+      const sessionDirectory = path.join(dir, "session-directory")
+      const queryDirectory = path.join(dir, "query-directory")
+      yield* serveProbeWithSessions(
+        Layer.mock(SessionV2.Service)({
+          get: () => Effect.succeed(canonicalSession({ id: sessionID, projectID: project.project.id, directory: sessionDirectory })),
+        }),
+      )
+
+      const response = yield* HttpClientRequest.get(
+        `/session/${sessionID}?directory=${encodeURIComponent(queryDirectory)}`,
+      ).pipe(HttpClientRequest.setHeader("x-opencode-directory", path.join(dir, "header-directory")), HttpClient.execute)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({ directory: sessionDirectory, workspaceID: null })
+    }),
+  )
+
+  it.live("uses canonical session workspace before a conflicting workspace query", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const project = yield* Project.use.fromDirectory(dir)
+      const firstDirectory = path.join(dir, ".workspace-first")
+      const secondDirectory = path.join(dir, ".workspace-second")
+      const canonicalSessionDirectory = path.join(dir, "canonical-session-directory")
+      const firstWorkspace = yield* createLocalWorkspace({
+        projectID: project.project.id,
+        type: "canonical-session-first-workspace",
+        directory: firstDirectory,
+      })
+      const secondWorkspace = yield* createLocalWorkspace({
+        projectID: project.project.id,
+        type: "canonical-session-second-workspace",
+        directory: secondDirectory,
+      })
+      const sessionID = SessionV2.ID.make("ses_canonical_workspace")
+      yield* serveProbeWithSessions(
+        Layer.mock(SessionV2.Service)({
+          get: () =>
+            Effect.succeed(
+              canonicalSession({
+                id: sessionID,
+                projectID: project.project.id,
+                directory: canonicalSessionDirectory,
+                workspaceID: firstWorkspace.id,
+              }),
+            ),
+        }),
+      )
+
+      const response = yield* HttpClient.get(`/session/${sessionID}?workspace=${secondWorkspace.id}`)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({ directory: canonicalSessionDirectory, workspaceID: firstWorkspace.id })
+    }),
+  )
+
+  it.live("falls back to request placement when the canonical session is missing", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const sessionID = SessionV2.ID.make("ses_missing_canonical")
+      const directory = path.join(dir, "request-directory")
+      yield* serveProbeWithSessions(
+        Layer.mock(SessionV2.Service)({
+          get: (sessionID) => Effect.fail(new SessionV2.NotFoundError({ sessionID })),
+        }),
+      )
+
+      const response = yield* HttpClient.get(`/session/${sessionID}?directory=${encodeURIComponent(directory)}`)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({ directory, workspaceID: null })
+    }),
+  )
+
+  it.live("does not swallow canonical session lookup defects", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionV2.ID.make("ses_canonical_defect")
+      yield* serveProbeWithSessions(
+        Layer.mock(SessionV2.Service)({
+          get: () => Effect.die("session lookup defect"),
+        }),
+      )
+
+      const response = yield* HttpClient.get(`/session/${sessionID}`)
+
+      expect(response.status).toBe(500)
     }),
   )
 })

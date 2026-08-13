@@ -16,6 +16,7 @@ import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { Tool } from "@opencode-ai/core/tool/tool"
@@ -200,6 +201,7 @@ function parityHarness() {
         [Config.node, configLayer],
         [Plugin.node, pluginLayer([])],
         [RuntimeFlags.node, RuntimeFlags.layer()],
+        [SessionExecution.node, SessionExecution.noopLayer],
         [LocationServiceMap.node, locationServiceMapLayer([], [], [])],
         [ToolProgress.node, progressLayer([])],
       ],

@@ -3,6 +3,7 @@ import { describe, expect } from "bun:test"
 import * as fs from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { Effect } from "effect"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
@@ -14,6 +15,7 @@ import { locationServiceMapReplacement } from "../lib/location-service-map"
 const it = testEffect(
   LayerNode.compile(Worktree.node, [
     [InstanceStore.bootstrapNode, InstanceBootstrap.node],
+    [SessionExecution.node, SessionExecution.noopLayer],
     locationServiceMapReplacement,
   ]),
 )

@@ -3,6 +3,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessageTable } from "@opencode-ai/core/session/sql"
 import { Effect, Layer } from "effect"
 import * as DateTime from "effect/DateTime"
@@ -15,7 +16,10 @@ import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 const it = testEffect(
-  Layer.mergeAll(LayerNode.compile(LayerNode.group([SessionNs.node, Database.node])), httpApiLayer),
+  Layer.mergeAll(
+    LayerNode.compile(LayerNode.group([SessionNs.node, Database.node]), [[SessionExecution.node, SessionExecution.noopLayer]]),
+    httpApiLayer,
+  ),
 )
 
 afterEach(async () => {

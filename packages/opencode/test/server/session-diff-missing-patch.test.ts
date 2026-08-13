@@ -15,6 +15,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { DateTime, Effect, Layer } from "effect"
 import { SessionPaths } from "@/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { Storage } from "@/storage/storage"
 import { MessageID } from "@/session/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -29,7 +30,12 @@ import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 const it = testEffect(
-  Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Storage.node, Database.node])), httpApiLayer),
+  Layer.mergeAll(
+    LayerNode.compile(LayerNode.group([Session.node, Storage.node, Database.node]), [
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ]),
+    httpApiLayer,
+  ),
 )
 
 afterEach(async () => {

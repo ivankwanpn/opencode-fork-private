@@ -24,6 +24,7 @@ import { testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 
 const originalEnv = new Map<string, string | undefined>()
 
@@ -1942,6 +1943,7 @@ it.instance(
 
 const instanceStoreLayer = LayerNode.compile(InstanceStore.node, [
   [InstanceStore.bootstrapNode, InstanceBootstrap.node],
+  [SessionExecution.node, SessionExecution.noopLayer],
   locationServiceMapReplacement,
 ])
 const provideMultiInstance = <A, E, R>(eff: Effect.Effect<A, E, R>) =>

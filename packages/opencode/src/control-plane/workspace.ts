@@ -34,7 +34,6 @@ import { WorkspaceRef } from "@/effect/instance-ref"
 import { Vcs } from "@/project/vcs"
 import { InstanceStore } from "@/project/instance-store"
 import { WorkspaceAdapterRuntime } from "./workspace-adapter-runtime"
-import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1"
 import { WorkspaceEvent } from "@opencode-ai/schema/workspace-event"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 
@@ -160,6 +159,7 @@ const layer = Layer.effect(
     const session = yield* Session.Service
     const runState = yield* SessionRunState.Service
     const execution = yield* SessionExecution.Service
+    const instanceStore = yield* InstanceStore.Service
     const http = yield* HttpClient.HttpClient
     const events = yield* EventV2Bridge.Service
     const vcs = yield* Vcs.Service
@@ -271,8 +271,7 @@ const layer = Layer.effect(
         const target = yield* WorkspaceAdapterRuntime.target(workspace)
 
         if (target.type === "local") {
-          const store = yield* InstanceStore.Service
-          return yield* store.provide({ directory: target.directory }, input.local())
+          return yield* instanceStore.provide({ directory: target.directory }, input.local())
         }
 
         const response = yield* http.execute(input.remote({ workspace, target })).pipe(
@@ -604,7 +603,7 @@ const layer = Layer.effect(
                   }),
                 fallback: "",
                 response: "text",
-              }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
+              })
             : ""
 
         if (sourcePatch) {
@@ -618,9 +617,9 @@ const layer = Layer.effect(
               HttpClientRequest.post(route(target.url, "/vcs/apply"), {
                 headers: new Headers(target.headers),
                 body: HttpBody.jsonUnsafe({ patch: sourcePatch }),
-              }),
+            }),
             fallback: { applied: false },
-          }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
+          })
         }
 
         if (input.workspaceID === null) {
@@ -952,6 +951,7 @@ export const node = LayerNode.make({
     Session.node,
     SessionRunState.node,
     SessionExecution.node,
+    InstanceStore.node,
     httpClient,
     EventV2Bridge.node,
     Vcs.node,

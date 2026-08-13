@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Cause, DateTime, Deferred, Effect, Fiber, Layer } from "effect"
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -36,6 +36,53 @@ const it = testEffect(
       PermissionV2.node,
     ]),
     [[Location.node, current]],
+  ),
+)
+
+// Stubbed SessionStore with mutable rule state, mirroring tool-code-mode.test.ts;
+// only the ordering test below runs against this graph, so the real store
+// behavior exercised by the other tests is untouched.
+let sessionPermissions: PermissionV2.Ruleset = []
+let latestPrompt: Prompt | undefined = undefined
+
+const stubSessions = Layer.succeed(
+  SessionStore.Service,
+  SessionStore.Service.of({
+    get: () =>
+      Effect.succeed(
+        SessionV2.Info.make({
+          id: SessionV2.ID.make("ses_test"),
+          projectID: Project.ID.global,
+          title: "test",
+          agent: AgentV2.ID.make("test"),
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
+          location: Location.Ref.make({ directory: AbsolutePath.make("/project") }),
+        }),
+      ),
+    permissions: () => Effect.sync(() => [...sessionPermissions]),
+    context: () => Effect.die("unused"),
+    runnerContext: () => Effect.die("unused"),
+    latestPrompt: () => Effect.succeed(latestPrompt),
+    message: () => Effect.die("unused"),
+  }),
+)
+
+const itStubbed = testEffect(
+  AppNodeBuilder.build(
+    LayerNode.group([
+      Database.node,
+      EventV2.node,
+      SessionStore.node,
+      PermissionSaved.node,
+      AgentV2.node,
+      PermissionV2.node,
+    ]),
+    [
+      [Location.node, current],
+      [SessionStore.node, stubSessions],
+    ],
   ),
 )
 
@@ -355,6 +402,34 @@ describe("PermissionV2", () => {
       yield* service.assert(assertion({ id: PermissionV2.ID.create("per_next"), resources: ["src/next.ts"] }))
       yield* saved.remove(id)
       expect(yield* saved.list()).toEqual([])
+    }),
+  )
+})
+
+describe("PermissionV2 session rule ordering", () => {
+  itStubbed.effect("applies agent, then Session, then latest promoted prompt rules in order", () =>
+    Effect.gen(function* () {
+      sessionPermissions = [{ action: "bash", resource: "*", effect: "deny" }]
+      latestPrompt = Prompt.make({ text: "policy", tools: { read: true } })
+      const agents = yield* AgentV2.Service
+      yield* agents.transform((editor) =>
+        editor.update(AgentV2.ID.make("test"), (agent) => {
+          agent.permissions = [
+            { action: "bash", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "allow" },
+          ]
+        }),
+      )
+      const service = yield* PermissionV2.Service
+      // Session rule overrides the agent allow (last-match-wins) -> BlockedError:
+      const denied = yield* service
+        .assert(assertion({ action: "bash", resources: ["*"] }))
+        .pipe(Effect.exit)
+      expect(Exit.isFailure(denied)).toBe(true)
+      // Prompt override (read: true) allows "read" even though neither ruleset mentions it:
+      yield* service.assert(assertion({ action: "read", resources: ["*"] }))
+      // Agent-only rule still applies:
+      yield* service.assert(assertion({ action: "edit", resources: ["*"] }))
     }),
   )
 })

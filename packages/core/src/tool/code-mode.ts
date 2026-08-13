@@ -11,6 +11,7 @@ import { Location } from "../location"
 import { MCP } from "../mcp/runtime"
 import { McpCatalog } from "../mcp/catalog"
 import { PermissionV2 } from "../permission"
+import { SessionStore } from "../session/store"
 import { ToolProgress } from "./progress"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
@@ -234,6 +235,7 @@ const layer = Layer.effectDiscard(
     const progress = yield* ToolProgress.Service
     const events = yield* EventV2.Service
     const location = yield* Location.Service
+    const sessions = yield* SessionStore.Service
     let current = yield* mcp.tools()
 
     const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (
@@ -315,7 +317,12 @@ const layer = Layer.effectDiscard(
 
               const selected = yield* agents.resolve(context.agent)
               if (!selected) return yield* new Tool.Failure({ message: `Unknown agent: ${context.agent}` })
-              const catalog = entries(yield* mcp.tools(), selected.permissions)
+              const rules = [
+                ...selected.permissions,
+                ...(yield* sessions.permissions(context.sessionID)),
+                ...PermissionV2.fromToolOverrides((yield* sessions.latestPrompt(context.sessionID))?.tools),
+              ]
+              const catalog = entries(yield* mcp.tools(), rules)
               const calls: CallEntry[] = []
               const attachments: Attachment[] = []
               let childCalls = 0
@@ -442,5 +449,6 @@ export const node = makeLocationNode({
     ToolProgress.node,
     EventV2.node,
     Location.node,
+    SessionStore.node,
   ],
 })

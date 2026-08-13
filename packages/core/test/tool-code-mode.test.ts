@@ -9,6 +9,8 @@ import { Location } from "@opencode-ai/core/location"
 import { MCP } from "@opencode-ai/core/mcp"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { Prompt } from "@opencode-ai/core/session/prompt"
+import { SessionStore } from "@opencode-ai/core/session/store"
 import { CodeModeTool } from "@opencode-ai/core/tool/code-mode"
 import { ToolProgress } from "@opencode-ai/core/tool/progress"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
@@ -27,6 +29,9 @@ type Handler = (
 const handlers = new Map<string, Handler>()
 const assertions: PermissionV2.AssertInput[] = []
 const updates: ToolProgress.Update[] = []
+const calls = new Map<string, number>()
+let sessionPermissions: PermissionV2.Ruleset = []
+let latestPrompt: Prompt | undefined = undefined
 let currentAgent = AgentV2.Info.make({
   id: AgentV2.ID.make("build"),
   request: { headers: {}, body: {} },
@@ -54,6 +59,7 @@ function entry(def: MCPToolDefinition): MCP.McpTool {
     def,
     client: {
       callTool: (request: { name: string; arguments?: Record<string, unknown> }, _schema: unknown, options: { signal?: AbortSignal }) => {
+        calls.set(request.name, (calls.get(request.name) ?? 0) + 1)
         const handler = handlers.get(request.name)
         return handler
           ? handler(request.arguments ?? {}, options.signal)
@@ -171,6 +177,18 @@ const events = Layer.effect(
   }),
 )
 
+const sessions = Layer.succeed(
+  SessionStore.Service,
+  SessionStore.Service.of({
+    get: () => Effect.die("unused"),
+    permissions: () => Effect.sync(() => [...sessionPermissions]),
+    context: () => Effect.die("unused"),
+    runnerContext: () => Effect.die("unused"),
+    latestPrompt: () => Effect.succeed(latestPrompt),
+    message: () => Effect.die("unused"),
+  }),
+)
+
 const outputStore = Layer.mock(ToolOutputStore.Service, {
   limits: () => Effect.succeed({ maxLines: Number.MAX_SAFE_INTEGER, maxBytes: Number.MAX_SAFE_INTEGER }),
   bound: (input) => Effect.succeed({ output: input.output, outputPaths: [] }),
@@ -187,6 +205,7 @@ const layer = AppNodeBuilder.build(
     [EventV2.node, events],
     [Location.node, tempLocationLayer],
     [ToolOutputStore.node, outputStore],
+    [SessionStore.node, sessions],
   ],
 )
 const it = testEffect(layer)
@@ -194,7 +213,10 @@ const it = testEffect(layer)
 function reset() {
   assertions.length = 0
   updates.length = 0
+  calls.clear()
   mcpTools = baseTools()
+  sessionPermissions = []
+  latestPrompt = undefined
   currentAgent = AgentV2.Info.make({ ...currentAgent, permissions: [] })
   handlers.set("echo", (input) =>
     Promise.resolve({ content: [{ type: "text", text: String(input.text ?? "") }] }),
@@ -340,6 +362,43 @@ describe("CodeModeTool", () => {
         value: expect.stringContaining("Unknown tool"),
       })
       expect(assertions.map((item) => item.action)).toEqual(["execute"])
+    }),
+  )
+
+  it.effect("execution catalog is filtered by agent, then Session, then prompt rules", () =>
+    Effect.gen(function* () {
+      reset()
+      sessionPermissions = [{ action: "demo_server_echo", resource: "*", effect: "deny" }]
+      latestPrompt = Prompt.make({ text: "policy", tools: { demo_server_structured: false } })
+      currentAgent = AgentV2.Info.make({
+        ...currentAgent,
+        permissions: [{ action: "demo_server_*", resource: "*", effect: "allow" }],
+      })
+      handlers.clear()
+      handlers.set("echo", async (input) => ({ content: [{ type: "text", text: `echo:${input.text}` }] }))
+      handlers.set("fail", async () => ({ content: [{ type: "text", text: "fail-ran" }] }))
+      const registry = yield* ToolRegistry.Service
+
+      // Session rule denies echo -> script call fails, handler never invoked:
+      const echo = yield* execute(registry, 'return await tools.demo_server.echo({ text: "hi" });')
+      expect(echo.result).toMatchObject({
+        type: "error",
+        value: expect.stringContaining("Unknown tool"),
+      })
+      expect(calls.get("echo")).toBeUndefined()
+
+      // Prompt override denies structured -> same behavior:
+      const structured = yield* execute(registry, "return await tools.demo_server.structured({});")
+      expect(structured.result).toMatchObject({
+        type: "error",
+        value: expect.stringContaining("Unknown tool"),
+      })
+      expect(calls.get("structured")).toBeUndefined()
+
+      // Agent-only allowance (fail) still succeeds and its handler is invoked:
+      const fail = yield* execute(registry, "return await tools.demo_server.fail({});")
+      expect(fail.result).toEqual({ type: "text", value: "fail-ran" })
+      expect(calls.get("fail")).toBe(1)
     }),
   )
 

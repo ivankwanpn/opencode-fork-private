@@ -156,7 +156,11 @@ const layer = Layer.effect(
       const agent = yield* agents.resolve(agentID ?? session.agent)
       if (!agent) return missingAgentPermissions
       const prompt = yield* sessions.latestPrompt(sessionID)
-      return [...agent.permissions, ...fromToolOverrides(prompt?.tools)]
+      return [
+        ...agent.permissions,
+        ...(yield* sessions.permissions(sessionID)),
+        ...fromToolOverrides(prompt?.tools),
+      ]
     })
 
     function denied(input: AssertInput, rules: Permission.Ruleset) {

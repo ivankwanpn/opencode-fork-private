@@ -135,18 +135,18 @@ describe("markdown stream", () => {
   test("reuses the live tail block when the raw text is a prefix of the next raw", () => {
     expect(
       canReusePendingBlock(
-        { mode: "live", raw: "hello", src: "hello" },
+        { mode: "live", raw: "hello" },
         { mode: "live", raw: "hello wor", src: "hello wor" },
       ),
     ).toBe(true)
     expect(
       canReusePendingBlock(
-        { mode: "live", raw: "hello", src: "hello" },
+        { mode: "live", raw: "hello" },
         { mode: "live", raw: "he", src: "he" },
       ),
     ).toBe(false)
     expect(
-      canReusePendingBlock({ mode: "full", raw: "a", src: "a" }, { mode: "full", raw: "a", src: "a" }),
+      canReusePendingBlock({ mode: "full", raw: "a" }, { mode: "full", raw: "a", src: "a" }),
     ).toBe(true)
   })
 

@@ -508,8 +508,7 @@ export function createServerSession(
     if (!load) return
     // A part event keeps an existing parent when the fetched page omits it without overriding fetched metadata.
     const messages = data.message[sessionID]
-    if (messages && Binary.search(messages, messageID, (message) => message.id).found)
-      load.retainedMessages.add(messageID)
+    if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
     const parts = load.touchedParts.get(messageID)
     if (parts) {
       parts.add(partID)
@@ -532,16 +531,14 @@ export function createServerSession(
       load.touchedParts.set(messageID, new Set(parts))
       load.carriedDeltaParts.set(messageID, new Set(parts))
       const messages = data.message[sessionID]
-      if (messages && Binary.search(messages, messageID, (message) => message.id).found)
-        load.retainedMessages.add(messageID)
+      if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
     }
     for (const [messageID, parts] of load.removedParts) {
       const touched = load.touchedParts.get(messageID) ?? new Set<string>()
       parts.forEach((partID) => touched.add(partID))
       load.touchedParts.set(messageID, touched)
       const messages = data.message[sessionID]
-      if (messages && Binary.search(messages, messageID, (message) => message.id).found)
-        load.retainedMessages.add(messageID)
+      if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
     }
     for (const [messageID, parts] of load.optimisticParts) {
       load.removedMessages.delete(messageID)
@@ -1416,8 +1413,8 @@ export function createServerSession(
           produce((draft) => {
             const messages = draft.message[props.sessionID]
             if (messages) {
-              const result = Binary.search(messages, props.messageID, (message) => message.id)
-              if (result.found) messages.splice(result.index, 1)
+              const index = messages.findIndex((message) => message.id === props.messageID)
+              if (index >= 0) messages.splice(index, 1)
             }
             deleteMessageParts(draft, props.messageID)
           }),
@@ -1429,7 +1426,7 @@ export function createServerSession(
         if (SKIP_PARTS.has(part.type)) return
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
-        const missing = !messages || !Binary.search(messages, part.messageID, (message) => message.id).found
+        const missing = !messages?.some((message) => message.id === part.messageID)
         // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
         if (
           missing &&

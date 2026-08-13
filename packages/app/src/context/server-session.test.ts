@@ -380,6 +380,41 @@ describe("server session", () => {
     expect(ids).toEqual(["msg_z_hydrated", "msg_a_existing"])
   })
 
+  test("removes a conflicting-id message from the time-ordered projection", () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    // msg_a_late is later in creation time but earlier in id order, so a
+    // binary search by id on the time-ordered projection would miss it.
+    ctx.store.set("message", "child", [
+      userMessage("msg_z_early", { time: { created: 1 } }),
+      userMessage("msg_a_late", { time: { created: 10 } }),
+    ])
+    ctx.store.apply({
+      type: "message.removed",
+      properties: { sessionID: "child", messageID: "msg_a_late" },
+    })
+    expect(ctx.store.data.message.child?.map((message) => message.id)).toEqual(["msg_z_early"])
+  })
+
+  test("accepts a part update for a conflicting-id message already in the projection", () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    ctx.store.set("message", "child", [
+      userMessage("msg_z_early", { time: { created: 1 } }),
+      userMessage("msg_a_late", { time: { created: 10 } }),
+    ])
+    ctx.store.apply({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "child",
+        part: textPart("msg_a_late", { id: "part_a_late", text: "late" }),
+      },
+    })
+    expect(ctx.store.data.part.msg_a_late).toEqual([
+      expect.objectContaining({ id: "part_a_late", messageID: "msg_a_late", text: "late" }),
+    ])
+  })
+
   test("projects V2 session events into current and legacy message state", () => {
     const ctx = setup({ child: session("child") })
     ctx.store.remember(session("child"))

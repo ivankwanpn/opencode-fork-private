@@ -430,25 +430,6 @@ const layer = Layer.effect(
       })
     })
 
-    const publishCompatibilityUpdate = Effect.fn("V2Session.publishCompatibilityUpdate")(function* (
-      sessionID: SessionSchema.ID,
-    ) {
-      const row = yield* db
-        .select()
-        .from(SessionTable)
-        .where(eq(SessionTable.id, sessionID))
-        .get()
-        .pipe(Effect.orDie)
-      if (!row) return yield* new NotFoundError({ sessionID })
-      const timestamp = yield* DateTime.now
-      yield* events.publish(
-        SessionEvent.Updated,
-        { timestamp, sessionID, info: rowToSnapshot(row) },
-        { location: fromRow(row).location },
-      )
-      return fromRow(row)
-    })
-
     const mutateSession = Effect.fn("V2Session.mutateSession")(function* (
       sessionID: SessionSchema.ID,
       next: (snapshot: SessionEvent.SessionSnapshot, timestamp: DateTime.Utc) => SessionEvent.SessionSnapshot,
@@ -475,7 +456,8 @@ const layer = Layer.effect(
           .where(eq(SessionTable.id, sessionID))
           .get()
           .pipe(Effect.orDie)
-        return fromRow(fresh!)
+        if (!fresh) return yield* new NotFoundError({ sessionID })
+        return fromRow(fresh)
       })
       const retry = (remaining: number): Effect.Effect<SessionSchema.Info, NotFoundError> =>
         attempt.pipe(
@@ -484,6 +466,15 @@ const layer = Layer.effect(
           ),
         )
       return yield* retry(32)
+    })
+
+    const publishCompatibilityUpdate = Effect.fn("V2Session.publishCompatibilityUpdate")(function* (
+      sessionID: SessionSchema.ID,
+    ) {
+      // Identity next: the compat echo must NOT bump time.updated (revert projections already
+      // set it); the expectedSeq guard in mutateSession keeps this full-snapshot echo from
+      // clobbering a canonical mutation's projection when interleaved.
+      return yield* mutateSession(sessionID, (snapshot) => snapshot)
     })
 
     const commitStagedRevert = Effect.fn("V2Session.commitStagedRevert")(function* (

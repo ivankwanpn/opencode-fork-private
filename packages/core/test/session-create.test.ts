@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import path from "path"
-import { Context, Effect, Exit, Layer, Stream } from "effect"
+import { Context, DateTime, Effect, Exit, Layer, LayerMap, Stream } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { and, asc, eq } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
@@ -10,6 +10,8 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { EventTable } from "@opencode-ai/core/event/sql"
 import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import type { LocationServices } from "@opencode-ai/core/location-services"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { ProjectV2 } from "@opencode-ai/core/project"
@@ -23,8 +25,10 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionEvent } from "@opencode-ai/core/session/event"
+import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionStore } from "@opencode-ai/core/session/store"
+import { Snapshot } from "@opencode-ai/core/snapshot"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { testEffect } from "./lib/effect"
 import { pluginLocationMap } from "./lib/location-service-map"
@@ -60,36 +64,114 @@ const id = SessionV2.ID.create()
 // provideService after construction would not reach it. The Database requirement
 // is closed inside via the graph's own Database.node layer value so the flaky
 // events service shares one memoized database instance with the test body.
+// Each graph gets its own injection counter so the tests' count assertions stay
+// isolated from one another.
+const makeFlakyEventsLayer = (injection: { count: number }) =>
+  Layer.effect(
+    EventV2.Service,
+    Effect.gen(function* () {
+      const context = yield* Layer.build(EventV2.layerWith())
+      const real = yield* Effect.sync(() => Context.get(context, EventV2.Service))
+      return EventV2.Service.of({
+        ...real,
+        publish: ((definition, data, options) =>
+          Effect.gen(function* () {
+            if (injection.count < 2 && options?.expectedSeq !== undefined) {
+              injection.count += 1
+              return yield* Effect.die(
+                new EventV2.ConflictError({
+                  aggregateID: String((data as Record<string, unknown>).sessionID),
+                  expectedSeq: options.expectedSeq,
+                  actualSeq: options.expectedSeq + 1,
+                }),
+              )
+            }
+            return yield* real.publish(definition, data, options)
+          })) as typeof real.publish,
+      })
+    }),
+  ).pipe(Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>))
+
 const conflictInjection = { count: 0 }
-const flakyEventsLayer = Layer.effect(
-  EventV2.Service,
-  Effect.gen(function* () {
-    const context = yield* Layer.build(EventV2.layerWith())
-    const real = yield* Effect.sync(() => Context.get(context, EventV2.Service))
-    return EventV2.Service.of({
-      ...real,
-      publish: ((definition, data, options) =>
-        Effect.gen(function* () {
-          if (conflictInjection.count < 2 && options?.expectedSeq !== undefined) {
-            conflictInjection.count += 1
-            return yield* Effect.die(
-              new EventV2.ConflictError({
-                aggregateID: String((data as Record<string, unknown>).sessionID),
-                expectedSeq: options.expectedSeq,
-                actualSeq: options.expectedSeq + 1,
-              }),
-            )
-          }
-          return yield* real.publish(definition, data, options)
-        })) as typeof real.publish,
-    })
-  }),
-).pipe(Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>))
+const flakyEventsLayer = makeFlakyEventsLayer(conflictInjection)
 const retryIt = testEffect(
   AppNodeBuilder.build(
     LayerNode.group([Database.node, SessionV2.node]),
     [
       [EventV2.node, flakyEventsLayer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ],
+  ),
+)
+
+// Independent flaky instance for the compatibility-echo test (own counter), plus a
+// light location service map with a stub Snapshot so the revert path can run
+// without filesystem machinery.
+const compatInjection = { count: 0 }
+const compatFlakyEventsLayer = makeFlakyEventsLayer(compatInjection)
+const stubSnapshotServices = Layer.succeed(
+  Snapshot.Service,
+  Snapshot.Service.of({
+    capture: () => Effect.succeed(undefined),
+    files: () => Effect.succeed([]),
+    diff: () => Effect.succeed([]),
+    preview: () => Effect.succeed([]),
+    restore: () => Effect.void,
+    checkout: () => Effect.void,
+  }),
+)
+const compatPluginMap = Layer.effect(
+  LocationServiceMap.Service,
+  LayerMap.make(
+    () => stubSnapshotServices as unknown as Layer.Layer<LocationServices>,
+    { idleTimeToLive: "1 minute" },
+  ),
+)
+const compatRetryIt = testEffect(
+  AppNodeBuilder.build(
+    LayerNode.group([Database.node, EventV2.node, SessionV2.node]),
+    [
+      [EventV2.node, compatFlakyEventsLayer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+      [LocationServiceMap.node, compatPluginMap],
+    ],
+  ),
+)
+
+// Deterministic remove race: the publish wrapper deletes the session row right
+// after a successful expectedSeq-guarded publish returns, simulating a concurrent
+// remove's Deleted projection landing between mutateSession's publish and its
+// fresh re-read.
+const removeInjection = { removed: false }
+const removeAfterPublishLayer = Layer.effect(
+  EventV2.Service,
+  Effect.gen(function* () {
+    const context = yield* Layer.build(EventV2.layerWith())
+    const real = yield* Effect.sync(() => Context.get(context, EventV2.Service))
+    const { db } = yield* Database.Service
+    return EventV2.Service.of({
+      ...real,
+      publish: ((definition, data, options) =>
+        Effect.gen(function* () {
+          const payload = yield* real.publish(definition, data, options)
+          if (!removeInjection.removed && options?.expectedSeq !== undefined) {
+            removeInjection.removed = true
+            yield* db
+              .delete(SessionTable)
+              .where(eq(SessionTable.id, SessionV2.ID.make(String((data as Record<string, unknown>).sessionID))))
+              .run()
+              .pipe(Effect.orDie)
+          }
+          return payload
+        })) as typeof real.publish,
+    })
+  }),
+).pipe(Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>))
+const removeIt = testEffect(
+  AppNodeBuilder.build(
+    LayerNode.group([Database.node, SessionV2.node]),
+    [
+      [EventV2.node, removeAfterPublishLayer],
       [SessionExecution.node, SessionExecution.noopLayer],
     ],
   ),
@@ -606,6 +688,47 @@ describe("SessionV2.create", () => {
         .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
         .all()
       expect(eventRows.length).toBe(1) // only the successful attempt wrote an event
+    }),
+  )
+
+  compatRetryIt.effect("compatibility echo retries on conflict without clobbering the projection", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const created = yield* sessions.create({ location, title: "compat" })
+      // Stage a revert so revert.clear's post-clear path reaches publishCompatibilityUpdate.
+      yield* events.publish(SessionEvent.RevertEvent.Staged, {
+        sessionID: created.id,
+        timestamp: yield* DateTime.now,
+        revert: { messageID: SessionMessage.ID.make("msg_compat_revert"), files: [] },
+      })
+      yield* sessions.revert.clear(created.id)
+      expect(compatInjection.count).toBe(2) // the compat echo hit the conflict guard twice, then converged
+      const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, created.id)).get()
+      expect(row?.title).toBe("compat") // identity echo preserved the projection
+      const eventRows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
+        .all()
+      expect(eventRows.length).toBe(1) // exactly the converged compat echo wrote an Updated event
+    }),
+  )
+
+  removeIt.effect("update returns NotFoundError when the session is removed between publish and re-read", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const created = yield* sessions.create({ location, title: "removed" })
+      expect(
+        yield* sessions
+          .update({ sessionID: created.id, title: "raced" })
+          .pipe(
+            Effect.flip,
+            Effect.map((error) => error._tag),
+          ),
+      ).toBe("Session.NotFoundError")
+      expect(removeInjection.removed).toBe(true) // the delete really landed between publish and re-read
     }),
   )
 })

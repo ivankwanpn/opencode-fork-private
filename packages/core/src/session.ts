@@ -42,6 +42,7 @@ import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 import { SessionV1 } from "./v1/session"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
+import type { PermissionV2 } from "./permission"
 import { isDeepStrictEqual } from "node:util"
 
 export const RevertState = Revert.State
@@ -191,7 +192,14 @@ export interface Interface {
     sessionID: SessionSchema.ID
     title?: string
     archived?: DateTime.Utc | null
+    metadata?: NonNullable<SessionSchema.Info["metadata"]> | null
+    share?: NonNullable<SessionSchema.Info["share"]> | null
   }) => Effect.Effect<SessionSchema.Info, NotFoundError>
+  readonly permissions: (sessionID: SessionSchema.ID) => Effect.Effect<PermissionV2.Ruleset, NotFoundError>
+  readonly setPermissions: (input: {
+    sessionID: SessionSchema.ID
+    permissions: PermissionV2.Ruleset
+  }) => Effect.Effect<void, NotFoundError>
   readonly remove: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
   readonly messages: (input: {
     sessionID: SessionSchema.ID
@@ -441,6 +449,43 @@ const layer = Layer.effect(
       return fromRow(row)
     })
 
+    const mutateSession = Effect.fn("V2Session.mutateSession")(function* (
+      sessionID: SessionSchema.ID,
+      next: (snapshot: SessionEvent.SessionSnapshot, timestamp: DateTime.Utc) => SessionEvent.SessionSnapshot,
+    ) {
+      const attempt = Effect.gen(function* () {
+        const row = yield* db
+          .select()
+          .from(SessionTable)
+          .where(eq(SessionTable.id, sessionID))
+          .get()
+          .pipe(Effect.orDie)
+        if (!row) return yield* new NotFoundError({ sessionID })
+        const expectedSeq = yield* EventV2.latestSequence(db, sessionID)
+        const timestamp = yield* DateTime.now
+        const info = next(rowToSnapshot(row), timestamp)
+        yield* events.publish(
+          SessionEvent.Updated,
+          { timestamp, sessionID, info },
+          { location: fromRow(row).location, expectedSeq },
+        )
+        const fresh = yield* db
+          .select()
+          .from(SessionTable)
+          .where(eq(SessionTable.id, sessionID))
+          .get()
+          .pipe(Effect.orDie)
+        return fromRow(fresh!)
+      })
+      const retry = (remaining: number): Effect.Effect<SessionSchema.Info, NotFoundError> =>
+        attempt.pipe(
+          Effect.catchDefect((defect) =>
+            defect instanceof EventV2.ConflictError && remaining > 0 ? retry(remaining - 1) : Effect.die(defect),
+          ),
+        )
+      return yield* retry(32)
+    })
+
     const commitStagedRevert = Effect.fn("V2Session.commitStagedRevert")(function* (
       session: SessionSchema.Info,
     ) {
@@ -494,36 +539,39 @@ const layer = Layer.effect(
         return rows.map(fromRow)
       }),
       update: Effect.fn("V2Session.update")(function* (input) {
-        const row = yield* db
-          .select()
-          .from(SessionTable)
-          .where(eq(SessionTable.id, input.sessionID))
-          .get()
-          .pipe(Effect.orDie)
-        if (!row) return yield* new NotFoundError({ sessionID: input.sessionID })
-        const now = Date.now()
-        const snapshot = rowToSnapshot(row)
-        const next = SessionEvent.SessionSnapshot.make({
-          ...snapshot,
-          title: input.title ?? snapshot.title,
-          time: {
-            ...snapshot.time,
-            updated: DateTime.makeUnsafe(now),
-            archived:
-              input.archived === undefined
-                ? snapshot.time.archived
-                : input.archived === null
-                  ? undefined
-                  : DateTime.makeUnsafe(input.archived),
-          },
-        })
-        const timestamp = yield* DateTime.now
-        yield* events.publish(
-          SessionEvent.Updated,
-          { timestamp, sessionID: input.sessionID, info: next },
-          { location: fromRow(row).location },
+        return yield* mutateSession(input.sessionID, (snapshot, timestamp) =>
+          SessionEvent.SessionSnapshot.make({
+            ...snapshot,
+            title: input.title ?? snapshot.title,
+            metadata:
+              input.metadata === undefined ? snapshot.metadata : input.metadata === null ? undefined : input.metadata,
+            share: input.share === undefined ? snapshot.share : input.share === null ? undefined : input.share,
+            time: {
+              ...snapshot.time,
+              updated: timestamp,
+              archived:
+                input.archived === undefined
+                  ? snapshot.time.archived
+                  : input.archived === null
+                    ? undefined
+                    : input.archived,
+            },
+          }),
         )
-        return yield* result.get(input.sessionID)
+      }),
+      permissions: Effect.fn("V2Session.permissions")(function* (sessionID) {
+        const stored = yield* store.get(sessionID)
+        if (!stored) return yield* new NotFoundError({ sessionID })
+        return yield* store.permissions(sessionID)
+      }),
+      setPermissions: Effect.fn("V2Session.setPermissions")(function* (input) {
+        yield* mutateSession(input.sessionID, (snapshot, timestamp) =>
+          SessionEvent.SessionSnapshot.make({
+            ...snapshot,
+            permission: [...input.permissions],
+            time: { ...snapshot.time, updated: timestamp },
+          }),
+        )
       }),
       remove: Effect.fn("V2Session.remove")(function* (sessionID) {
         const row = yield* db

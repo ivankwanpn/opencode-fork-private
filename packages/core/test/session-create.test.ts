@@ -1,8 +1,8 @@
 import { describe, expect } from "bun:test"
 import path from "path"
-import { Effect, Layer, Stream } from "effect"
+import { Context, Effect, Exit, Layer, Stream } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
-import { asc, eq } from "drizzle-orm"
+import { and, asc, eq } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -11,6 +11,7 @@ import { EventTable } from "@opencode-ai/core/event/sql"
 import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -50,6 +51,49 @@ const it = testEffect(
 )
 const location = Location.Ref.make({ directory: AbsolutePath.make("/project") })
 const id = SessionV2.ID.create()
+
+// Deterministic conflict injection: a graph whose EventV2.Service.publish fails the
+// first two expectedSeq-guarded calls with ConflictError defects, then delegates.
+// Wrapping happens at graph construction (Layer.effect + Layer.build — Layer.map
+// does not exist and Layer.updateService leaves the tag required in effect
+// 4.0.0-beta.83) so SessionV2's captured `events` reference sees the wrapper —
+// provideService after construction would not reach it. The Database requirement
+// is closed inside via the graph's own Database.node layer value so the flaky
+// events service shares one memoized database instance with the test body.
+const conflictInjection = { count: 0 }
+const flakyEventsLayer = Layer.effect(
+  EventV2.Service,
+  Effect.gen(function* () {
+    const context = yield* Layer.build(EventV2.layerWith())
+    const real = yield* Effect.sync(() => Context.get(context, EventV2.Service))
+    return EventV2.Service.of({
+      ...real,
+      publish: ((definition, data, options) =>
+        Effect.gen(function* () {
+          if (conflictInjection.count < 2 && options?.expectedSeq !== undefined) {
+            conflictInjection.count += 1
+            return yield* Effect.die(
+              new EventV2.ConflictError({
+                aggregateID: String((data as Record<string, unknown>).sessionID),
+                expectedSeq: options.expectedSeq,
+                actualSeq: options.expectedSeq + 1,
+              }),
+            )
+          }
+          return yield* real.publish(definition, data, options)
+        })) as typeof real.publish,
+    })
+  }),
+).pipe(Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>))
+const retryIt = testEffect(
+  AppNodeBuilder.build(
+    LayerNode.group([Database.node, SessionV2.node]),
+    [
+      [EventV2.node, flakyEventsLayer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ],
+  ),
+)
 
 describe("SessionV2.create", () => {
   it.effect("creates a fresh projected session when the ID is omitted", () =>
@@ -476,6 +520,92 @@ describe("SessionV2.create", () => {
             Effect.map((error) => error._tag),
           ),
       ).toBe("Session.NotFoundError")
+    }),
+  )
+
+  it.effect("update atomically replaces and clears metadata and share with one V2 Updated event per call", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const { db } = yield* Database.Service
+      const created = yield* sessions.create({ location, title: "mut", metadata: { a: 1, keep: true } })
+      expect(created.metadata).toEqual({ a: 1, keep: true })
+      const updated = yield* sessions.update({ sessionID: created.id, metadata: { a: 1, keep: true, b: 2 } })
+      expect(updated.metadata).toEqual({ a: 1, keep: true, b: 2 }) // full replacement
+      const cleared = yield* sessions.update({ sessionID: created.id, metadata: null })
+      expect(cleared.metadata).toBeUndefined()
+      const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, created.id)).get()
+      expect(row?.metadata).toBeNull() // SQL NULL, not {}
+      const eventRows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
+        .all()
+      expect(eventRows.length).toBe(2) // exactly one Updated per successful mutation
+      const legacyRows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.updated.1")))
+        .all()
+      expect(legacyRows.length).toBe(0) // no legacy session.updated.1
+    }),
+  )
+
+  it.effect("permissions read and fully replace V2 rules without exposing them in Info", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const { db } = yield* Database.Service
+      const created = yield* sessions.create({ location, title: "perm" })
+      const rules: PermissionV2.Ruleset = [
+        { action: "bash", resource: "*", effect: "allow" },
+        { action: "bash", resource: "src/**", effect: "deny" },
+        { action: "bash", resource: "*", effect: "allow" }, // duplicate on purpose
+      ]
+      yield* sessions.setPermissions({ sessionID: created.id, permissions: rules })
+      const stored = yield* sessions.permissions(created.id)
+      expect(stored).toEqual(rules) // order and duplicates preserved
+      const info = yield* sessions.get(created.id)
+      expect("permission" in info).toBe(false) // not part of public Info
+      yield* sessions.setPermissions({ sessionID: created.id, permissions: [] })
+      expect(yield* sessions.permissions(created.id)).toEqual([]) // explicit clear
+      const row = yield* db
+        .select({ permission: SessionTable.permission })
+        .from(SessionTable)
+        .where(eq(SessionTable.id, created.id))
+        .get()
+      expect(row?.permission).toEqual([])
+    }),
+  )
+
+  it.effect("update and permission operations reject a missing Session with NotFoundError", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const missing = SessionV2.ID.make("ses_missing_ops")
+      for (const program of [
+        sessions.update({ sessionID: missing, title: "x" }),
+        sessions.permissions(missing),
+        sessions.setPermissions({ sessionID: missing, permissions: [] }),
+      ]) {
+        const exit = yield* program.pipe(Effect.exit)
+        // use the file's existing typed-error assertion pattern for NotFoundError
+        expect(Exit.isFailure(exit)).toBe(true)
+      }
+    }),
+  )
+
+  retryIt.effect("update retries deterministically when a concurrent mutation wins the sequence race", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const { db } = yield* Database.Service
+      const created = yield* sessions.create({ title: "race", location })
+      const updated = yield* sessions.update({ sessionID: created.id, title: "raced" })
+      expect(updated.title).toBe("raced")
+      expect(conflictInjection.count).toBe(2)
+      const eventRows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
+        .all()
+      expect(eventRows.length).toBe(1) // only the successful attempt wrote an event
     }),
   )
 })

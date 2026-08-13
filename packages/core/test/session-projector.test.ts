@@ -1189,4 +1189,63 @@ describe("SessionProjector", () => {
       ])
     }),
   )
+
+  it.effect("replays Updated snapshots with cleared metadata/share as SQL NULL", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      const id = SessionV2.ID.make("ses_replay_clear")
+      const base = {
+        id,
+        projectID: Project.ID.global,
+        slug: "test",
+        version: "test",
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        time: { created, updated: DateTime.makeUnsafe(1) },
+        title: "test",
+        location: { directory: AbsolutePath.make("/project") },
+      }
+      const createdInfo = SessionEvent.SessionSnapshot.make({
+        ...base,
+        metadata: { keep: "x" },
+        share: { url: "https://s.example/1" },
+      })
+      const updatedInfo = SessionEvent.SessionSnapshot.make({
+        ...base,
+        metadata: undefined,
+        share: undefined,
+        time: { ...base.time, updated: DateTime.makeUnsafe(2) },
+      })
+      yield* events.replay({
+        id: EventV2.ID.make("evt_replay_created"),
+        type: "session.next.created.1",
+        seq: 0,
+        aggregateID: id,
+        data: Schema.encodeUnknownSync(SessionEvent.Created.data)({
+          timestamp: created,
+          sessionID: id,
+          info: createdInfo,
+        }),
+      })
+      yield* events.replay({
+        id: EventV2.ID.make("evt_replay_updated"),
+        type: "session.next.updated.1",
+        seq: 1,
+        aggregateID: id,
+        data: Schema.encodeUnknownSync(SessionEvent.Updated.data)({
+          timestamp: DateTime.makeUnsafe(1),
+          sessionID: id,
+          info: updatedInfo,
+        }),
+      })
+      const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, id)).get()
+      expect(row?.metadata).toBeNull()
+      expect(row?.share_url).toBeNull()
+    }),
+  )
 })

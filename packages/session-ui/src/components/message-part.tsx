@@ -1743,9 +1743,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
     <Show when={text()}>
       <div data-component="text-part" data-timeline-part-id={part().id}>
         <div data-slot="text-part-body">
-          <Show when={streaming()} fallback={<Markdown text={text()} cacheKey={part().id} streaming={false} />}>
-            <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
-          </Show>
+          <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
         </div>
         <Show when={showCopy()}>
           <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>
@@ -1771,6 +1769,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
 
 PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
   const data = useData()
+  const i18n = useI18n()
   const part = () => props.part as ReasoningPart
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof (props.message as AssistantMessage).time.completed !== "number",
@@ -1780,9 +1779,10 @@ PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
   return (
     <Show when={text()}>
       <div data-component="reasoning-part" data-timeline-part-id={part().id}>
-        <Show when={streaming()} fallback={<Markdown text={text()} cacheKey={part().id} streaming={false} />}>
-          <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
-        </Show>
+        <div data-slot="reasoning-part-heading">
+          <span class="text-12-regular">{i18n.t("ui.message.reasoningHeading")}</span>
+        </div>
+        <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
       </div>
     </Show>
   )

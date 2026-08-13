@@ -165,6 +165,7 @@ export const dict = {
   "ui.message.copied": "تم النسخ!",
   "ui.message.interrupted": "تمت المقاطعة",
   "ui.message.queued": "في الانتظار",
+  "ui.message.reasoningHeading": "Thought",
   "ui.message.attachment.alt": "مرفق",
 
   "ui.patch.action.deleted": "محذوف",

@@ -180,6 +180,7 @@ export const dict: Record<string, string> = {
   "ui.message.duration.minutesSeconds": "{{minutes}}хв {{seconds}}с",
   "ui.message.interrupted": "Перервано",
   "ui.message.queued": "У черзі",
+  "ui.message.reasoningHeading": "Thought",
   "ui.message.attachment.alt": "вкладення",
 
   "ui.patch.action.deleted": "Видалено",

@@ -289,6 +289,15 @@
   width: 100%;
   color: var(--v2-text-text-muted);
   line-height: var(--line-height-normal);
+  border-left: 2px solid var(--v2-grey-600);
+  padding-left: 12px;
+
+  [data-slot="reasoning-part-heading"] {
+    color: var(--v2-text-text-muted);
+    font-variant: small-caps;
+    letter-spacing: var(--letter-spacing-normal);
+    margin-bottom: 4px;
+  }
 
   [data-component="markdown"] {
     margin-top: 16px;

@@ -164,6 +164,7 @@ export const dict = {
   "ui.message.copied": "Kopieret!",
   "ui.message.interrupted": "Afbrudt",
   "ui.message.queued": "I kø",
+  "ui.message.reasoningHeading": "Thought",
   "ui.message.attachment.alt": "vedhæftning",
 
   "ui.patch.action.deleted": "Slettet",

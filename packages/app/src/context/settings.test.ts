@@ -138,4 +138,24 @@ describe("layout transition", () => {
     expect(settings.general.followup()).toBe("queue")
     dispose?.()
   })
+
+  test("reasoning summaries default to enabled", async () => {
+    let settings: ReturnType<typeof useSettings> | undefined
+    let dispose: VoidFunction | undefined
+    createRoot((disposeRoot) => {
+      dispose = disposeRoot
+      SettingsProvider({
+        get children() {
+          settings = useSettings()
+          return undefined
+        },
+      })
+    })
+
+    if (!settings) throw new Error("settings provider did not initialize")
+    await settings.ready.promise
+
+    expect(settings.general.showReasoningSummaries()).toBe(true)
+    dispose?.()
+  })
 })

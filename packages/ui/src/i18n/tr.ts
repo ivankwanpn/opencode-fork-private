@@ -171,6 +171,7 @@ export const dict = {
   "ui.message.copied": "Kopyalandı",
   "ui.message.interrupted": "Kesildi",
   "ui.message.queued": "Sırada",
+  "ui.message.reasoningHeading": "Thought",
   "ui.message.attachment.alt": "ek",
 
   "ui.patch.action.deleted": "Silindi",

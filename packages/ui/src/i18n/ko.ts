@@ -141,6 +141,7 @@ export const dict = {
   "ui.message.copied": "복사됨!",
   "ui.message.interrupted": "중단됨",
   "ui.message.queued": "대기 중",
+  "ui.message.reasoningHeading": "Thought",
   "ui.message.attachment.alt": "첨부 파일",
 
   "ui.patch.action.deleted": "삭제됨",

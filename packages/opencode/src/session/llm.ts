@@ -1,10 +1,13 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { llmClient } from "@opencode-ai/core/effect/app-node-platform"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Provider } from "@/provider/provider"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { SessionStore } from "@opencode-ai/core/session/store"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool } from "ai"
 import type { LLMEvent } from "@opencode-ai/llm"
@@ -17,14 +20,11 @@ import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { Permission } from "@/permission"
-import { EventV2Bridge } from "@/event-v2-bridge"
-import { EventV2 } from "@opencode-ai/core/event"
 import { Wildcard } from "@/util/wildcard"
 import { SessionID } from "@/session/schema"
 import { Auth } from "@/auth"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
@@ -59,6 +59,59 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/LL
 
 export const use = serviceUse(Service)
 
+export const requestWorkflowApproval = Effect.fn("LLM.requestWorkflowApproval")(function* (input: {
+  sessionID: string
+  approvalTools: ReadonlyArray<{ name: string; args: string }>
+}) {
+  const sessions = yield* SessionStore.Service
+  const locations = yield* LocationServiceMap.Service
+  const session = yield* sessions.get(SessionID.make(input.sessionID))
+  if (!session) return { approved: false as const }
+  const decode = Schema.decodeUnknownOption(Schema.UnknownFromJsonString)
+  const uniquePatterns = [
+    ...new Set(
+      input.approvalTools.map((tool) => {
+        const parsed = decode(tool.args)
+        if (Option.isNone(parsed)) return tool.name
+        const value = parsed.value
+        if (typeof value !== "object" || value === null) return tool.name
+        const record = value as Record<string, unknown>
+        const title =
+          typeof record.title === "string" && record.title
+            ? record.title
+            : typeof record.name === "string" && record.name
+              ? record.name
+              : ""
+        return title ? `${tool.name}: ${title}` : tool.name
+      }),
+    ),
+  ]
+  return yield* Effect.gen(function* () {
+    const permission = yield* PermissionV2.Service
+    yield* permission.assert({
+      sessionID: SessionID.make(input.sessionID),
+      action: "workflow_tool_approval",
+      resources: uniquePatterns,
+      save: uniquePatterns,
+      metadata: { tools: input.approvalTools },
+      // source 省略：唯一合法 Source 為 {type:"tool", messageID, callID}，多工具 workflow 無法真實提供。
+    })
+    return { approved: true as const }
+  }).pipe(
+    Effect.provide(locations.get(session.location)),
+    Effect.catchTag("PermissionV2.BlockedError", () => Effect.succeed({ approved: false as const })),
+    Effect.catchTag("PermissionV2.CorrectedError", (error) =>
+      Effect.logDebug("workflow tool approval corrected", { feedback: error.feedback }).pipe(
+        Effect.as({ approved: false as const }),
+      ),
+    ),
+    Effect.catchTag("Session.NotFoundError", () => Effect.succeed({ approved: false as const })),
+    Effect.catchDefect((defect) =>
+      defect instanceof PermissionV2.DeclinedError ? Effect.succeed({ approved: false as const }) : Effect.die(defect),
+    ),
+  )
+})
+
 const live: Layer.Layer<
   Service,
   never,
@@ -66,8 +119,6 @@ const live: Layer.Layer<
   | Config.Service
   | Provider.Service
   | Plugin.Service
-  | Permission.Service
-  | EventV2Bridge.Service
   | LLMClientService
   | RuntimeFlags.Service
 > = Layer.effect(
@@ -77,8 +128,6 @@ const live: Layer.Layer<
     const config = yield* Config.Service
     const provider = yield* Provider.Service
     const plugin = yield* Plugin.Service
-    const perm = yield* Permission.Service
-    const events = yield* EventV2Bridge.Service
     const llmClient = yield* LLMClient.Service
     const flags = yield* RuntimeFlags.Service
 
@@ -160,48 +209,13 @@ const live: Layer.Layer<
           if (uniqueNames.every((name) => approvedToolsForSession.has(name))) {
             return { approved: true }
           }
-
-          const id = PermissionV1.ID.ascending()
-          let unsub: EventV2.Unsubscribe | undefined
-          try {
-            unsub = await bridge.promise(
-              events.listen((event) => {
-                if (event.type !== Permission.Event.Replied.type) return Effect.void
-                const data = event.data as EventV2.Data<typeof Permission.Event.Replied>
-                if (data.requestID !== id) return Effect.void
-                void data.reply
-                return Effect.void
-              }),
-            )
-            const toolPatterns = approvalTools.map((t: { name: string; args: string }) => {
-              try {
-                const parsed = JSON.parse(t.args) as Record<string, unknown>
-                const title = (parsed?.title ?? parsed?.name ?? "") as string
-                return title ? `${t.name}: ${title}` : t.name
-              } catch {
-                return t.name
-              }
-            })
-            const uniquePatterns = [...new Set(toolPatterns)] as string[]
-            await bridge.promise(
-              perm.ask({
-                id,
-                sessionID: SessionID.make(input.sessionID),
-                permission: "workflow_tool_approval",
-                patterns: uniquePatterns,
-                metadata: { tools: approvalTools },
-                always: uniquePatterns,
-                ruleset: [],
-              }),
-            )
-            for (const name of uniqueNames) approvedToolsForSession.add(name)
-            workflowModel.sessionPreapprovedTools = [...(workflowModel.sessionPreapprovedTools ?? []), ...uniqueNames]
-            return { approved: true }
-          } catch {
-            return { approved: false }
-          } finally {
-            if (unsub) await bridge.promise(unsub)
-          }
+          const result = await bridge.promise(
+            requestWorkflowApproval({ sessionID: input.sessionID, approvalTools }),
+          )
+          if (!result.approved) return { approved: false }
+          for (const name of uniqueNames) approvedToolsForSession.add(name)
+          workflowModel.sessionPreapprovedTools = [...(workflowModel.sessionPreapprovedTools ?? []), ...uniqueNames]
+          return { approved: true }
         })
       }
 
@@ -394,8 +408,6 @@ export const node = LayerNode.make({
     Config.node,
     Provider.node,
     Plugin.node,
-    Permission.node,
-    EventV2Bridge.node,
     llmClient,
     RuntimeFlags.node,
   ],

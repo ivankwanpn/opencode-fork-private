@@ -26,6 +26,7 @@ import { sessionNotFoundError } from "@/utils/server-errors"
 import { rootSession } from "@/utils/session-route"
 import { normalizeSessionInfo } from "@/utils/session"
 import { compareMessages, normalizeSessionMessages } from "@/utils/session-message"
+import { projectSessionInfo, type SessionLifecycleEvent, type SessionStatusEvent } from "@/utils/session-snapshot"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
 import { extractArray } from "@/utils/response-helpers"
@@ -238,7 +239,7 @@ type ProjectedSessionClient = {
   }
 }
 
-type V2InputEvent = OpenCodeEvent | LegacyV2Event | V2Event
+type V2InputEvent = OpenCodeEvent | LegacyV2Event | V2Event | SessionLifecycleEvent | SessionStatusEvent
 
 type PendingV2Hydration = {
   events: V2InputEvent[]
@@ -1259,6 +1260,41 @@ export function createServerSession(
           next: event.data.next,
         }),
       )
+    if (event.type === "session.next.created" || event.type === "session.next.updated") {
+      const info = projectSessionInfo(event.data.info)
+      remember(info)
+      if (info.time.archived) {
+        infoSeen.delete(info.id)
+        setData(
+          "info",
+          produce((draft) => void delete draft[info.id]),
+        )
+        evict([info.id])
+      }
+      return
+    }
+    if (event.type === "session.next.deleted") {
+      const info = projectSessionInfo(event.data.info)
+      infoSeen.delete(info.id)
+      setData(
+        "info",
+        produce((draft) => void delete draft[info.id]),
+      )
+      evict([info.id])
+      return
+    }
+    if (event.type === "session.next.status") {
+      const status = event.data.status
+      if (status.type === "busy") setData("session_status", sessionID, reconcile({ type: "busy" }))
+      if (status.type === "idle") setData("session_status", sessionID, reconcile({ type: "idle" }))
+      if (status.type === "retry")
+        setData(
+          "session_status",
+          sessionID,
+          reconcile({ type: "retry", attempt: status.attempt, message: status.message, next: status.next }),
+        )
+      // 不 return——讓尾塊的 settled/refresh 條件處理 idle。
+    }
     if (event.type === "session.next.revert.staged" && info)
       remember({
         ...info,
@@ -1288,6 +1324,7 @@ export function createServerSession(
     const settled =
       hasCurrentApi &&
       ((event.type === "session.status" && event.data.status.type === "idle") ||
+        (event.type === "session.next.status" && event.data.status.type === "idle") ||
         eventType === "session.idle" ||
         eventType === "session.execution.succeeded" ||
         eventType === "session.execution.failed" ||
@@ -1295,6 +1332,7 @@ export function createServerSession(
     if (settled) reconcileV2Settlement(sessionID)
     if (
       eventType === "session.idle" ||
+      (event.type === "session.next.status" && event.data.status.type === "idle") ||
       eventType === "session.next.context.updated" ||
       eventType === "session.context.updated" ||
       eventType === "session.next.compaction.ended" ||

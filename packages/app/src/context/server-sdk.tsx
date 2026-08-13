@@ -1,5 +1,6 @@
 import type { V2Event as LegacyV2Event } from "@opencode-ai/client/promise"
 import type { Event, V2Event } from "@opencode-ai/sdk/v2/client"
+import type { SessionLifecycleEvent, SessionStatusEvent } from "@/utils/session-snapshot"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
@@ -31,7 +32,7 @@ const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
 
 const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
-type CurrentServerEvent = LegacyV2Event | V2Event
+type CurrentServerEvent = LegacyV2Event | V2Event | SessionLifecycleEvent | SessionStatusEvent
 export type ServerEvent = Event & { current?: CurrentServerEvent }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 type CurrentDelta = Extract<

@@ -53,6 +53,7 @@ import type {
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
 import { extractArray } from "@/utils/response-helpers"
+import { toHomeSessionEvent } from "@/utils/session-snapshot"
 import {
   notifySessionTabsReconcile,
   notifySessionTabsRemoved,
@@ -645,6 +646,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
       homeSessions.apply(event)
     }
+    const homeSessionEvent = toHomeSessionEvent(event)
+    if (homeSessionEvent) homeSessions.apply(homeSessionEvent)
     homeSessions.refresh(event.type)
 
     if (directory === "global") {

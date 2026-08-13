@@ -4,6 +4,7 @@ import type { MessageApi, OpenCodeEvent, SessionApi, SessionMessageInfo } from "
 import type { Message, OpencodeClient, Part, Session, Todo, V2Event } from "@opencode-ai/sdk/v2/client"
 import type { ServerApi } from "@/utils/server"
 import { createV2OnlyApi, type CompatibleApi } from "@/utils/server-compat"
+import type { SessionSnapshotInfo } from "@/utils/session-snapshot"
 import { createServerSession } from "./server-session"
 
 const session = (id: string, parentID?: string): Session => ({
@@ -209,6 +210,20 @@ function setup(sessions: Record<string, Session>) {
   } as unknown as OpencodeClient
   return { get, messages, store: createServerSession(client) }
 }
+
+const snapshot = (over: Partial<SessionSnapshotInfo> = {}) =>
+  ({
+    id: "child",
+    projectID: "project",
+    slug: "slug",
+    version: "1",
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 2 },
+    title: "Title",
+    location: { directory: "/repo" },
+    ...over,
+  }) satisfies SessionSnapshotInfo
 
 describe("server session", () => {
   test("preserves canonical mixed content order on initial V2 history load", async () => {
@@ -2570,5 +2585,96 @@ describe("server session", () => {
         ],
       }),
     ])
+  })
+
+  test("projects session.next.created into the session store", () => {
+    const ctx = setup({})
+    ctx.store.applyV2({
+      id: "evt_created",
+      type: "session.next.created",
+      data: { timestamp: 1, sessionID: "child", info: snapshot() },
+    } as unknown as V2Event)
+    expect(ctx.store.data.info.child?.title).toBe("Title")
+    expect(ctx.store.data.info.child?.directory).toBe("/repo")
+    expect(ctx.store.data.info.child?.slug).toBe("slug")
+  })
+
+  test("projects session.next.updated and evicts archived sessions", () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    ctx.store.applyV2({
+      id: "evt_updated",
+      type: "session.next.updated",
+      data: { timestamp: 2, sessionID: "child", info: snapshot({ title: "New Title" }) },
+    } as unknown as V2Event)
+    expect(ctx.store.data.info.child?.title).toBe("New Title")
+
+    ctx.store.applyV2({
+      id: "evt_archived",
+      type: "session.next.updated",
+      data: { timestamp: 3, sessionID: "child", info: snapshot({ time: { created: 1, updated: 3, archived: 3 } }) },
+    } as unknown as V2Event)
+    expect(ctx.store.data.info.child).toBeUndefined()
+  })
+
+  test("removes deleted sessions from the store", () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    ctx.store.applyV2({
+      id: "evt_deleted",
+      type: "session.next.deleted",
+      data: { timestamp: 2, sessionID: "child", info: snapshot() },
+    } as unknown as V2Event)
+    expect(ctx.store.data.info.child).toBeUndefined()
+  })
+
+  test("maps session.next.status busy and retry shapes", () => {
+    const ctx = setup({})
+    ctx.store.remember(session("root"))
+    ctx.store.applyV2({
+      id: "evt_busy",
+      type: "session.next.status",
+      data: { timestamp: 1, sessionID: "root", status: { type: "busy" } },
+    } as unknown as V2Event)
+    expect(ctx.store.data.session_status.root).toEqual({ type: "busy" })
+
+    ctx.store.applyV2({
+      id: "evt_retry",
+      type: "session.next.status",
+      data: { timestamp: 2, sessionID: "root", status: { type: "retry", attempt: 2, message: "quota", next: 3 } },
+    } as unknown as V2Event)
+    expect(ctx.store.data.session_status.root).toEqual({ type: "retry", attempt: 2, message: "quota", next: 3 })
+  })
+
+  test("refreshes context only when session.next.status goes idle", async () => {
+    const requests: string[] = []
+    const client = {} as unknown as OpencodeClient
+    const sessionApi = {
+      context: async (input: { sessionID: string }) => {
+        requests.push(input.sessionID)
+        return []
+      },
+    } as unknown as SessionApi
+    const store = createServerSession(client, sessionApi, {} as MessageApi, {
+      retry: retryImmediately,
+    })
+    const current = { id: "evt_status", metadata: {}, location: { directory: "/repo" } }
+    const applyStatus = (status: object) =>
+      store.applyV2({ ...current, type: "session.next.status", data: { timestamp: 1, sessionID: "child", status } } as unknown as V2Event)
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    store.remember(session("child"))
+    applyStatus({ type: "busy" })
+    await flush()
+    expect(requests).toEqual([])
+
+    applyStatus({ type: "retry", attempt: 2, message: "quota", next: 3 })
+    await flush()
+    expect(requests).toEqual([])
+
+    applyStatus({ type: "idle" })
+    await flush()
+    expect(requests).toEqual(["child"])
+    expect(store.data.session_status.child).toEqual({ type: "idle" })
   })
 })

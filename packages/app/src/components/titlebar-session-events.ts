@@ -33,7 +33,12 @@ export function sessionTabsRemovedFromServerEvent(input: {
     const info = record(data?.info)
     const time = record(info?.time)
     const type = current.type as string
-    const archived = type === "session.deleted" || type === "session.archived" || (type === "session.updated" && time?.archived !== undefined)
+    const archived =
+      type === "session.deleted" ||
+      type === "session.next.deleted" ||
+      type === "session.archived" ||
+      (type === "session.updated" && time?.archived !== undefined) ||
+      (type === "session.next.updated" && time?.archived !== undefined)
     if (archived && typeof data?.sessionID === "string") {
       return { server: input.server, directory: input.directory, sessionIDs: [data.sessionID] }
     }

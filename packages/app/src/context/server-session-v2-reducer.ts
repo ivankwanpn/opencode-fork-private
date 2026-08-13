@@ -6,6 +6,7 @@ import type {
   V2Event as LegacyV2Event,
 } from "@opencode-ai/client/promise"
 import type { V2Event } from "@opencode-ai/sdk/v2/client"
+import type { SessionLifecycleEvent, SessionStatusEvent } from "@/utils/session-snapshot"
 
 type Assistant = Extract<SessionMessageInfo, { type: "assistant" }>
 type Compaction = Extract<SessionMessageInfo, { type: "compaction" }>
@@ -34,7 +35,7 @@ export function createV2SessionReducer() {
 
   const reduce = (
     source: readonly SessionMessageInfo[],
-    event: OpenCodeEvent | LegacyV2Event | V2Event,
+    event: OpenCodeEvent | LegacyV2Event | V2Event | SessionLifecycleEvent | SessionStatusEvent,
   ): V2SessionReduction | undefined => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
     const sessionID = event.data.sessionID

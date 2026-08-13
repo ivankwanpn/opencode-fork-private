@@ -94,3 +94,42 @@ describe("titlebar session events", () => {
     expect(readSessionTabsReconcileDetail(new Event(SESSION_TABS_RECONCILE_EVENT))).toBeUndefined()
   })
 })
+
+const server = "https://server" as ServerConnection.Key
+
+const currentEvent = (type: string, data: Record<string, unknown>): ServerEvent =>
+  ({
+    current: {
+      type,
+      data: { sessionID: "ses_x", ...data },
+    },
+  }) as ServerEvent
+
+describe("titlebar session events (V2 lifecycle)", () => {
+  test("closes tabs for session.next.deleted", () => {
+    const result = sessionTabsRemovedFromServerEvent({
+      server,
+      directory: "/repo",
+      event: currentEvent("session.next.deleted", {}),
+    })
+    expect(result?.sessionIDs).toEqual(["ses_x"])
+  })
+
+  test("closes tabs for archived session.next.updated snapshots", () => {
+    const result = sessionTabsRemovedFromServerEvent({
+      server,
+      directory: "/repo",
+      event: currentEvent("session.next.updated", { info: { time: { archived: 3 } } }),
+    })
+    expect(result?.sessionIDs).toEqual(["ses_x"])
+  })
+
+  test("keeps tabs for non-archived session.next.updated snapshots", () => {
+    const result = sessionTabsRemovedFromServerEvent({
+      server,
+      directory: "/repo",
+      event: currentEvent("session.next.updated", { info: { time: {} } }),
+    })
+    expect(result).toBeUndefined()
+  })
+})

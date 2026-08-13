@@ -827,6 +827,38 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("advertises no tools or MCP instructions when the session agent is missing", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      // A non-existent agent id: AgentV2.select resolves { id, info: undefined }, so the
+      // catalog side must fail closed to the deny-all missingAgentPermissions.
+      yield* db
+        .update(SessionTable)
+        .set({ agent: AgentV2.ID.make("missing_runner_agent") })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie)
+      mcpServerInstructions = [
+        {
+          name: "tools-server",
+          instructions: "Always cite\nUse context",
+          tools: ["echo"],
+        },
+      ]
+      const session = yield* SessionV2.Service
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Do it" }), resume: false })
+      requests.length = 0
+      response = fragmentFixture("text", "text-final", ["Done"]).completeEvents
+      yield* session.resume(sessionID)
+
+      // A missing agent is deny-all on the catalog side too: no executable tools are
+      // materialized and tools-bearing MCP servers are hidden from the model.
+      expect(requests[0]?.tools).toHaveLength(0)
+      expect(requests[0]?.system.map((part) => part.text).join("\n")).not.toContain("<mcp_instructions>")
+    }),
+  )
+
   it.effect("dynamically loads a searched deferred tool into the next provider turn", () =>
     Effect.gen(function* () {
       yield* setup

@@ -77,6 +77,9 @@ function currentMessageApi(...pages: SessionMessageInfo[][]) {
   } as unknown as MessageApi
 }
 
+const userInfo = (id: string, created: number) =>
+  ({ id, type: "user", text: id, time: { created } }) satisfies Extract<SessionMessageInfo, { type: "user" }>
+
 function currentHistory(content: Extract<SessionMessageInfo, { type: "assistant" }>["content"]) {
   return [
     {
@@ -175,6 +178,17 @@ const retryImmediately: typeof retry = async (task, options = {}) => {
   }
 }
 
+// Deterministic wait-until-condition helper. bun 1.3.14 has no expect.poll for
+// this package, so hydration barriers yield microtasks instead of sleeping.
+async function pollUntil<T>(read: () => T, ready: (value: T) => boolean, ticks = 1_000): Promise<T> {
+  for (let index = 0; index < ticks; index++) {
+    const value = read()
+    if (ready(value)) return value
+    await Promise.resolve()
+  }
+  throw new Error(`pollUntil: condition not met after ${ticks} microtask ticks`)
+}
+
 function setup(sessions: Record<string, Session>) {
   const get: unknown[] = []
   const messages: unknown[] = []
@@ -265,6 +279,105 @@ describe("server session", () => {
 
     await store.sync("child", { force: true })
     expect(store.data.part.msg_2_assistant?.map((part) => part.type)).toEqual(["text", "tool"])
+  })
+
+  test("orders an out-of-order initial V2 page by creation time", async () => {
+    // Current API pages are descending. These IDs deliberately conflict with
+    // creation order so the old ID comparator is guaranteed to fail RED.
+    const api = currentMessageApi([userInfo("msg_a_late", 10), userInfo("msg_z_early", 1)])
+    const store = createServerSession(
+      {} as OpencodeClient,
+      { get: async () => session("child") } as unknown as SessionApi,
+      api,
+      { retry: retryImmediately },
+    )
+    await store.sync("child")
+    // session_message is the raw current-API source; message is the sorted SDK projection.
+    expect(store.data.message.child?.map((message) => message.id)).toEqual(["msg_z_early", "msg_a_late"])
+  })
+
+  test("merges an older optimistic message before newer server messages", async () => {
+    const api = currentMessageApi([userInfo("msg_a_server", 10)])
+    const store = createServerSession(
+      {} as OpencodeClient,
+      { get: async () => session("child") } as unknown as SessionApi,
+      api,
+      { retry: retryImmediately },
+    )
+    store.optimistic.add({
+      sessionID: "child",
+      message: {
+        id: "msg_z_optimistic",
+        sessionID: "child",
+        role: "user",
+        time: { created: 1 },
+        agent: "build",
+        model: { providerID: "provider", modelID: "model" },
+      },
+      parts: [],
+    })
+    await store.sync("child")
+    expect(store.data.message.child?.map((message) => message.id)).toEqual(["msg_z_optimistic", "msg_a_server"])
+  })
+
+  test("inserts live updated messages by creation time", () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    ctx.store.set("message", "child", [
+      {
+        id: "msg_a_server",
+        sessionID: "child",
+        role: "user",
+        time: { created: 10 },
+        agent: "build",
+        model: { providerID: "provider", modelID: "model" },
+      },
+    ])
+    ctx.store.apply({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_z_older",
+          sessionID: "child",
+          role: "user",
+          time: { created: 1 },
+          agent: "build",
+          model: { providerID: "provider", modelID: "model" },
+        },
+      },
+    })
+    expect(ctx.store.data.message.child?.map((message) => message.id)).toEqual(["msg_z_older", "msg_a_server"])
+  })
+
+  test("sorts hydrated messages by creation time", async () => {
+    const sessionApi = {
+      get: async () => session("child"),
+      message: async () => userInfo("msg_z_hydrated", 1),
+    } as unknown as SessionApi
+    const store = createServerSession(
+      {} as OpencodeClient,
+      sessionApi,
+      currentMessageApi([userInfo("msg_a_existing", 10)]),
+      { retry: retryImmediately },
+    )
+    await store.sync("child")
+    store.applyV2({
+      id: "evt_imported",
+      created: 1,
+      type: "session.next.message.imported",
+      metadata: {},
+      location: { directory: "/repo" },
+      data: {
+        timestamp: 1,
+        sessionID: "child",
+        message: { id: "msg_z_hydrated", type: "user", text: "hydrated", time: { created: 1 } },
+      },
+    } as unknown as V2Event)
+    const ids = await pollUntil(
+      () => store.data.session_message.child?.map((message) => message.id),
+      (value) => value !== undefined && value.includes("msg_z_hydrated"),
+    )
+    expect(ids).toEqual(["msg_z_hydrated", "msg_a_existing"])
   })
 
   test("projects V2 session events into current and legacy message state", () => {
@@ -2005,7 +2118,8 @@ describe("server session", () => {
 
     await store.sync("child", { force: true })
 
-    expect(store.data.message.child).toEqual([boundary, older])
+    // The preserved older message precedes the fetched boundary in creation time.
+    expect(store.data.message.child).toEqual([older, boundary])
   })
 
   test("preserves a part update for a message being loaded from history", async () => {

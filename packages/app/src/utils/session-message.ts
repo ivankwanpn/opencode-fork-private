@@ -418,3 +418,20 @@ function toolPart(sessionID: string, messageID: string, tool: SessionMessageAssi
     metadata: { providerState: tool.providerState, providerResultState: tool.providerResultState },
   }
 }
+
+export type MessageOrderable = { id: string; time: { created: number } }
+
+export function compareMessages(a: MessageOrderable, b: MessageOrderable) {
+  const created = a.time.created - b.time.created
+  if (created !== 0) return created
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+export function sliceAtBoundary(
+  messages: SessionMessageInfo[],
+  boundary: string | undefined,
+): SessionMessageInfo[] {
+  if (!boundary) return messages
+  const index = messages.findIndex((message) => message.id === boundary)
+  return index < 0 ? messages : messages.slice(0, index)
+}

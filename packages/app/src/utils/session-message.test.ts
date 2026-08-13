@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
+import { compareMessages, sliceAtBoundary } from "./session-message"
 import { normalizeSessionMessages } from "./session-message"
 
 describe("normalizeSessionMessages", () => {
@@ -446,4 +447,21 @@ describe("normalizeSessionMessages", () => {
       },
     })
   })
+})
+
+const msg = (id: string, created: number) =>
+  ({ id, type: "system", text: "", time: { created } }) satisfies SessionMessageInfo
+
+test("compareMessages orders numerically by time.created then by id", () => {
+  expect(compareMessages(msg("a", 10), msg("b", 2))).toBeGreaterThan(0)
+  expect(compareMessages(msg("a", 2), msg("b", 10))).toBeLessThan(0)
+  expect(compareMessages(msg("a", 1), msg("b", 1))).toBeLessThan(0)
+  expect(compareMessages(msg("b", 1), msg("a", 1))).toBeGreaterThan(0)
+})
+
+test("sliceAtBoundary slices by array position and preserves identity without a boundary", () => {
+  const messages: SessionMessageInfo[] = [msg("z_shell", 1), msg("a", 2), msg("b", 3)]
+  expect(sliceAtBoundary(messages, undefined)).toBe(messages)
+  expect(sliceAtBoundary(messages, "missing")).toBe(messages)
+  expect(sliceAtBoundary(messages, "b")).toEqual([msg("z_shell", 1), msg("a", 2)])
 })

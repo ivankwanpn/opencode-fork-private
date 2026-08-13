@@ -25,7 +25,7 @@ import { message as cleanMessage } from "@/utils/diffs"
 import { sessionNotFoundError } from "@/utils/server-errors"
 import { rootSession } from "@/utils/session-route"
 import { normalizeSessionInfo } from "@/utils/session"
-import { normalizeSessionMessages } from "@/utils/session-message"
+import { compareMessages, normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
 import { extractArray } from "@/utils/response-helpers"
@@ -73,7 +73,7 @@ type MessagePage = {
 function legacyMessageSource(items: { info: Message; parts: Part[] }[]): SessionMessageInfo[] {
   return items
     .slice()
-    .sort((a, b) => cmp(a.info.id, b.info.id))
+    .sort((a, b) => compareMessages(a.info, b.info))
     .map((item) => {
       if (item.info.role === "user") {
         return {
@@ -120,15 +120,20 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   const part = new Map(page.part.map((item) => [item.id, item.part]))
   const observed: { messageID: string; parts: Part[] }[] = []
   for (const item of items) {
-    const result = Binary.search(session, item.message.id, (message) => message.id)
-    if (!result.found) session.splice(result.index, 0, item.message)
+    const foundIndex = session.findIndex((message) => message.id === item.message.id)
+    const found = foundIndex >= 0
+    if (!found) {
+      const insertIndex = session.findIndex((message) => compareMessages(item.message, message) < 0)
+      if (insertIndex < 0) session.push(item.message)
+      else session.splice(insertIndex, 0, item.message)
+    }
     const current = part.get(item.message.id)
-    const confirmed = result.found ? item.parts.filter((part) => current?.some((value) => value.id === part.id)) : []
-    if (result.found) observed.push({ messageID: item.message.id, parts: confirmed })
+    const confirmed = found ? item.parts.filter((part) => current?.some((value) => value.id === part.id)) : []
+    if (found) observed.push({ messageID: item.message.id, parts: confirmed })
     part.set(
       item.message.id,
       mergeInOrder(
-        result.found ? (current ?? []) : mergeInOrder(item.confirmedParts ?? [], current ?? []),
+        found ? (current ?? []) : mergeInOrder(item.confirmedParts ?? [], current ?? []),
         item.parts.filter((part) => !confirmed.includes(part)),
       ),
     )
@@ -136,7 +141,9 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   return {
     ...page,
     session,
-    part: [...part.entries()].sort((a, b) => cmp(a[0], b[0])).map(([id, parts]) => ({ id, part: parts })),
+    part: [...part.entries()]
+      .sort((a, b) => cmp(a[0], b[0]))
+      .map(([id, parts]) => ({ id, part: parts })),
     observed,
   }
 }
@@ -172,6 +179,7 @@ function reconcileFetched<T extends { id: string }>(
     removed?: ReadonlySet<string>
     preserveUnfetched?: boolean | ((item: T) => boolean)
     preserveOrder?: boolean
+    compare?: (a: T, b: T) => number
   } = {},
 ) {
   const result = new Map(fetched.map((item) => [item.id, item]))
@@ -195,6 +203,7 @@ function reconcileFetched<T extends { id: string }>(
   }
   for (const id of options.removed ?? emptyIDs) result.delete(id)
   const values = [...result.values()]
+  if (options.compare) return values.sort(options.compare)
   return options.preserveOrder ? values : values.sort((a, b) => cmp(a.id, b.id))
 }
 
@@ -654,7 +663,7 @@ export function createServerSession(
       const source = pages.flatMap((page) => page.data).toReversed()
       const normalized = normalizeSessionMessages(sessionID, source)
       return {
-        session: normalized.messages.sort((a, b) => cmp(a.id, b.id)),
+        session: normalized.messages.sort(compareMessages),
         part: [...normalized.parts.entries()].map(([id, part]) => ({ id, part })).sort((a, b) => cmp(a.id, b.id)),
         source,
         sourceMode: before ? ("older" as const) : ("latest" as const),
@@ -670,7 +679,7 @@ export function createServerSession(
     })
     const items = (response.data ?? []).filter((item) => !!item?.info?.id)
     return {
-      session: items.map((item) => cleanMessage(item.info)).sort((a, b) => cmp(a.id, b.id)),
+      session: items.map((item) => cleanMessage(item.info)).sort(compareMessages),
       part: items.map((item) => ({
         id: item.info.id,
         part: item.parts.filter((part) => !!part?.id),
@@ -797,7 +806,7 @@ export function createServerSession(
             const normalized = normalizeSessionMessages(sessionID, source)
             return {
               ...page,
-              session: normalized.messages.sort((a, b) => cmp(a.id, b.id)),
+              session: normalized.messages.sort(compareMessages),
               part: [...normalized.parts.entries()].map(([id, part]) => ({ id, part })).sort((a, b) => cmp(a.id, b.id)),
             }
           })()
@@ -814,6 +823,8 @@ export function createServerSession(
       retained: load?.retainedMessages,
       removed: load?.removedMessages,
       preserveUnfetched,
+      // Position preserved items by creation time instead of re-sorting by id.
+      compare: compareMessages,
     })
     batch(() => {
       if (source) setData("session_message", sessionID, reconcile(source))
@@ -905,7 +916,7 @@ export function createServerSession(
               session: merge(
                 page.session,
                 parents.map((parent) => parent.message),
-              ),
+              ).sort(compareMessages),
               part: merge(
                 page.part,
                 parents.map((parent) => ({ id: parent.message.id, part: parent.parts })),
@@ -1087,7 +1098,7 @@ export function createServerSession(
         if (!message) return
         if (generations.get(sessionID) !== active) return
         const current = data.session_message[sessionID] ?? []
-        const messages = [...current.filter((item) => item.id !== message.id), message].sort((a, b) => cmp(a.id, b.id))
+        const messages = [...current.filter((item) => item.id !== message.id), message].sort(compareMessages)
         projectV2({ sessionID, messages, touched: [message.id] })
         const pending = pendingV2Hydrations.get(sessionID)
         pendingV2Hydrations.delete(sessionID)
@@ -1369,14 +1380,17 @@ export function createServerSession(
           setData("message", info.sessionID, [info])
           return
         }
-        const result = Binary.search(messages, info.id, (message) => message.id)
-        if (result.found) setData("message", info.sessionID, result.index, reconcile(info))
-        if (!result.found)
-          setData("message", info.sessionID, (value = []) => {
-            const next = value.slice()
-            next.splice(result.index, 0, info)
-            return next
-          })
+        const foundIndex = messages.findIndex((message) => message.id === info.id)
+        if (foundIndex >= 0) {
+          setData("message", info.sessionID, foundIndex, reconcile(info))
+          return
+        }
+        const insertIndex = messages.findIndex((message) => compareMessages(info, message) < 0)
+        setData("message", info.sessionID, (value = []) => {
+          const next = value.slice()
+          next.splice(insertIndex < 0 ? next.length : insertIndex, 0, info)
+          return next
+        })
         return
       }
       case "message.removed": {
@@ -1663,7 +1677,13 @@ export function createServerSession(
         if (items) items.set(input.message.id, { ...input, parts, confirmedParts: [] })
         if (!items)
           optimistic.set(input.sessionID, new Map([[input.message.id, { ...input, parts, confirmedParts: [] }]]))
-        setData("message", input.sessionID, (messages = []) => merge(messages, [input.message]))
+        setData("message", input.sessionID, (messages = []) => {
+          if (messages.some((message) => message.id === input.message.id)) return messages
+          const insertIndex = messages.findIndex((message) => compareMessages(input.message, message) < 0)
+          const next = messages.slice()
+          next.splice(insertIndex < 0 ? next.length : insertIndex, 0, input.message)
+          return next
+        })
         setData(
           "part_text_accum_delta",
           produce((draft) => {

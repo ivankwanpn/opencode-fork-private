@@ -167,4 +167,64 @@ describe("current session timeline rows", () => {
       "thinking:msg_2",
     ])
   })
+
+  test("inserts a projected user before newer turns despite a lexically larger id", () => {
+    const source = [
+      { id: "msg_a_newer", type: "user", text: "newer turn", time: { created: 10 } },
+    ] satisfies SessionMessageInfo[]
+    const normalized = normalizeSessionMessages("ses_1", source)
+    const projected = {
+      id: "msg_z_older",
+      sessionID: "ses_1",
+      role: "user" as const,
+      time: { created: 5 },
+      agent: "build",
+      model: { modelID: "model", providerID: "provider" },
+    }
+    const result = Timeline.constructSessionMessageRows(
+      source,
+      (messageID) => normalized.messages.find((message) => message.id === messageID),
+      (messageID) => normalized.parts.get(messageID) ?? [],
+      true,
+      "idle",
+      true,
+      [...normalized.messages.filter((message) => message.role === "user"), projected],
+    )
+
+    expect(result.rows.map(TimelineRow.key)).toEqual([
+      "user-message:msg_z_older",
+      "turn-gap:msg_a_newer",
+      "user-message:msg_a_newer",
+    ])
+  })
+
+  test("inserts a projected user earlier than the latest turn instead of dropping it", () => {
+    const source = [
+      { id: "msg_z_latest", type: "user", text: "latest turn", time: { created: 10 } },
+    ] satisfies SessionMessageInfo[]
+    const normalized = normalizeSessionMessages("ses_1", source)
+    const projected = {
+      id: "msg_a_older",
+      sessionID: "ses_1",
+      role: "user" as const,
+      time: { created: 5 },
+      agent: "build",
+      model: { modelID: "model", providerID: "provider" },
+    }
+    const result = Timeline.constructSessionMessageRows(
+      source,
+      (messageID) => normalized.messages.find((message) => message.id === messageID),
+      (messageID) => normalized.parts.get(messageID) ?? [],
+      true,
+      "idle",
+      true,
+      [...normalized.messages.filter((message) => message.role === "user"), projected],
+    )
+
+    expect(result.rows.map(TimelineRow.key)).toEqual([
+      "user-message:msg_a_older",
+      "turn-gap:msg_z_latest",
+      "user-message:msg_z_latest",
+    ])
+  })
 })

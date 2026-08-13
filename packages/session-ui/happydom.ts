@@ -1,4 +1,4 @@
-import { transform } from "@babel/core"
+import { transform, type TransformOptions } from "@babel/core"
 // @ts-expect-error - babel-preset-solid ships no type declarations
 import presetSolid from "babel-preset-solid"
 // @ts-expect-error - @babel/preset-typescript ships no type declarations
@@ -32,11 +32,15 @@ const pollExpect = (
       if (Date.now() >= deadline) break
       await new Promise((resolve) => setTimeout(resolve, interval))
     }
-    throw new Error(
-      `expect.poll timed out after ${timeout}ms. Last value: ${JSON.stringify(last, (_, value) =>
-        typeof value === "function" ? "[Function]" : value,
-      )}`,
-    )
+    let lastDescription = String(last)
+    try {
+      lastDescription =
+        JSON.stringify(last, (_, value) => (typeof value === "function" ? "[Function]" : value)) ?? "undefined"
+    } catch {
+      // DOM nodes and cyclic structures cannot be serialized; String(last) above
+      // already captured a usable fallback.
+    }
+    throw new Error(`expect.poll timed out after ${timeout}ms. Last value: ${lastDescription}`)
   }
   const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
   return {
@@ -50,7 +54,8 @@ const pollExpect = (
   }
 }
 
-;(expect as unknown as { poll?: unknown }).poll = pollExpect
+// @ts-expect-error - bun:test's expect type has no poll in this version
+expect.poll = pollExpect
 
 // bun test cannot resolve Vite-style `?worker&url` imports. message-part.tsx
 // (via ./markdown → ./markdown-worker) imports such a URL at module scope, so
@@ -76,7 +81,7 @@ Bun.plugin({
   name: "session-ui-solid-jsx",
   setup(build) {
     build.onLoad({ filter: /\.tsx$/ }, async (args) => {
-      const result = await transformAsync(await Bun.file(args.path).text(), {
+      const contents = await transformAsync(await Bun.file(args.path).text(), {
         filename: args.path,
         presets: [
           [presetTypescript, { isTSX: true, allExtensions: true }],
@@ -85,16 +90,16 @@ Bun.plugin({
         babelrc: false,
         configFile: false,
       })
-      return { contents: result.code, loader: "js" }
+      return { contents, loader: "js" }
     })
   },
 })
 
-function transformAsync(source: string, options: object) {
-  return new Promise<{ code: string }>((resolve, reject) => {
-    transform(source, options as never, (error, result) => {
+function transformAsync(source: string, options: TransformOptions) {
+  return new Promise<string>((resolve, reject) => {
+    transform(source, options, (error, result) => {
       if (error) reject(error)
-      else resolve(result as { code: string })
+      else resolve(result?.code ?? "")
     })
   })
 }

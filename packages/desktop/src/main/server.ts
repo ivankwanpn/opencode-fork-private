@@ -24,7 +24,12 @@ export type SidecarListener = {
 }
 
 const SIDECAR_SERVICE_NAME = "opencode server"
-const SIDECAR_START_STALL_TIMEOUT = 60_000
+// One-time database migrations can run for several minutes on large
+// installations (e.g. dropping legacy transcript tables frees pages
+// synchronously under node:sqlite). Killing the sidecar mid-migration
+// rolls the transaction back, so a short timeout here re-runs the full
+// migration on every launch and the app can never start.
+const SIDECAR_START_STALL_TIMEOUT = 15 * 60_000
 const SIDECAR_STOP_TIMEOUT = 6_000
 
 type SpawnLocalServerOptions = {
@@ -107,7 +112,12 @@ export async function spawnLocalServer(
     const refreshTimeout = () => {
       clearTimeout(timeout)
       timeout = setTimeout(() => {
-        fail(new Error(`Sidecar did not become ready within ${SIDECAR_START_STALL_TIMEOUT}ms: ${sidecar}`))
+        fail(
+          new Error(
+            `Sidecar did not become ready within ${SIDECAR_START_STALL_TIMEOUT}ms: ${sidecar}` +
+              " (a one-time database migration may be running; please wait and try again)",
+          ),
+        )
       }, SIDECAR_START_STALL_TIMEOUT)
     }
 

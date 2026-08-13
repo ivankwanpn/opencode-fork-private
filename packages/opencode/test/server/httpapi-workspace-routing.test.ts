@@ -278,6 +278,22 @@ const canonicalSession = (input: {
     },
   })
 
+const unusedSessionMembers = {
+  transcript: {
+    importMessage: () => Effect.die("not implemented"),
+    removeMessage: () => Effect.die("not implemented"),
+    updateUserText: () => Effect.die("not implemented"),
+    removeUserText: () => Effect.die("not implemented"),
+    updateContent: () => Effect.die("not implemented"),
+    removeContent: () => Effect.die("not implemented"),
+  },
+  revert: {
+    stage: () => Effect.die("not implemented"),
+    clear: () => Effect.die("not implemented"),
+    commit: () => Effect.die("not implemented"),
+  },
+}
+
 const serveProbeWithSessions = (sessions: Layer.Layer<SessionV2.Service>) =>
   HttpApiBuilder.layer(ProbeApi).pipe(
     Layer.provide(probeHandlers),
@@ -287,7 +303,7 @@ const serveProbeWithSessions = (sessions: Layer.Layer<SessionV2.Service>) =>
     Layer.build,
   )
 
-const serveProbe = serveProbeWithSessions(Layer.mock(SessionV2.Service)({}))
+const serveProbe = serveProbeWithSessions(Layer.mock(SessionV2.Service)(unusedSessionMembers))
 
 describe("HttpApi workspace routing middleware", () => {
   it.live("proxies remote workspace HTTP requests through the selected workspace target", () =>
@@ -408,7 +424,7 @@ describe("HttpApi workspace routing middleware", () => {
         Layer.provide(probeHandlers),
         Layer.provide(workspaceRoutingTestLayer),
         Layer.provide(Layer.succeed(Workspace.Service, workspace)),
-        Layer.provide(Layer.mock(SessionV2.Service)({})),
+        Layer.provide(Layer.mock(SessionV2.Service)(unusedSessionMembers)),
         HttpRouter.serve,
         Layer.build,
       )
@@ -591,6 +607,7 @@ describe("HttpApi workspace routing middleware", () => {
       const queryDirectory = path.join(dir, "query-directory")
       yield* serveProbeWithSessions(
         Layer.mock(SessionV2.Service)({
+          ...unusedSessionMembers,
           get: () => Effect.succeed(canonicalSession({ id: sessionID, projectID: project.project.id, directory: sessionDirectory })),
         }),
       )
@@ -624,6 +641,7 @@ describe("HttpApi workspace routing middleware", () => {
       const sessionID = SessionV2.ID.make("ses_canonical_workspace")
       yield* serveProbeWithSessions(
         Layer.mock(SessionV2.Service)({
+          ...unusedSessionMembers,
           get: () =>
             Effect.succeed(
               canonicalSession({
@@ -650,6 +668,7 @@ describe("HttpApi workspace routing middleware", () => {
       const directory = path.join(dir, "request-directory")
       yield* serveProbeWithSessions(
         Layer.mock(SessionV2.Service)({
+          ...unusedSessionMembers,
           get: (sessionID) => Effect.fail(new SessionV2.NotFoundError({ sessionID })),
         }),
       )
@@ -666,6 +685,7 @@ describe("HttpApi workspace routing middleware", () => {
       const sessionID = SessionV2.ID.make("ses_canonical_defect")
       yield* serveProbeWithSessions(
         Layer.mock(SessionV2.Service)({
+          ...unusedSessionMembers,
           get: () => Effect.die("session lookup defect"),
         }),
       )

@@ -124,10 +124,26 @@ const probeHandlers = HttpApiBuilder.group(ProbeApi, "probe", (handlers) =>
     ),
 )
 
+const fakeSession = Layer.mock(SessionV2.Service)({
+  transcript: {
+    importMessage: () => Effect.die("not implemented"),
+    removeMessage: () => Effect.die("not implemented"),
+    updateUserText: () => Effect.die("not implemented"),
+    removeUserText: () => Effect.die("not implemented"),
+    updateContent: () => Effect.die("not implemented"),
+    removeContent: () => Effect.die("not implemented"),
+  },
+  revert: {
+    stage: () => Effect.die("not implemented"),
+    clear: () => Effect.die("not implemented"),
+    commit: () => Effect.die("not implemented"),
+  },
+})
+
 const probeRoutes = HttpApiBuilder.layer(ProbeApi).pipe(
   Layer.provide(probeHandlers),
   Layer.provide(instanceContextTestLayer),
-  Layer.provide(Layer.mock(SessionV2.Service)({})),
+  Layer.provide(fakeSession),
 )
 
 const serveProbe = () => probeRoutes.pipe(HttpRouter.serve, Layer.build)

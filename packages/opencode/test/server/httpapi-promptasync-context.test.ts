@@ -104,6 +104,22 @@ const ProbeApi = HttpApi.make("handler-context-probe").add(
     .middleware(WorkspaceRoutingMiddleware),
 )
 
+const fakeSession = Layer.mock(SessionV2.Service)({
+  transcript: {
+    importMessage: () => Effect.die("not implemented"),
+    removeMessage: () => Effect.die("not implemented"),
+    updateUserText: () => Effect.die("not implemented"),
+    removeUserText: () => Effect.die("not implemented"),
+    updateContent: () => Effect.die("not implemented"),
+    removeContent: () => Effect.die("not implemented"),
+  },
+  revert: {
+    stage: () => Effect.die("not implemented"),
+    clear: () => Effect.die("not implemented"),
+    commit: () => Effect.die("not implemented"),
+  },
+})
+
 const serveProbes = (input: {
   fork?: Effect.Effect<boolean, never, Scope.Scope>
   streamWithout?: Effect.Effect<HttpServerResponse.HttpServerResponse>
@@ -122,7 +138,7 @@ const serveProbes = (input: {
       ),
     ),
     Layer.provide(instanceContextTestLayer),
-    Layer.provide(Layer.mock(SessionV2.Service)({})),
+    Layer.provide(fakeSession),
     HttpRouter.serve,
     Layer.build,
   )

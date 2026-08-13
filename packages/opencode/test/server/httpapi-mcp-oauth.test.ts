@@ -14,7 +14,21 @@ import {
 import { testEffect } from "../lib/effect"
 
 const TestHttpApi = HttpApi.make("opencode-instance").addHttpApi(McpApi)
-const fakeSession = Layer.mock(SessionV2.Service)({})
+const fakeSession = Layer.mock(SessionV2.Service)({
+  transcript: {
+    importMessage: () => Effect.die("not implemented"),
+    removeMessage: () => Effect.die("not implemented"),
+    updateUserText: () => Effect.die("not implemented"),
+    removeUserText: () => Effect.die("not implemented"),
+    updateContent: () => Effect.die("not implemented"),
+    removeContent: () => Effect.die("not implemented"),
+  },
+  revert: {
+    stage: () => Effect.die("not implemented"),
+    clear: () => Effect.die("not implemented"),
+    commit: () => Effect.die("not implemented"),
+  },
+})
 const testMcpHandlers = HttpApiBuilder.group(TestHttpApi, "mcp", (handlers) =>
   Effect.succeed(
     handlers

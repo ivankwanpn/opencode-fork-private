@@ -47,6 +47,12 @@ export class InvalidDurableEventError extends Schema.TaggedErrorClass<InvalidDur
   },
 ) {}
 
+export class ConflictError extends Schema.TaggedErrorClass<ConflictError>()("EventV2.Conflict", {
+  aggregateID: Schema.String,
+  expectedSeq: Schema.Number,
+  actualSeq: Schema.Number,
+}) {}
+
 const decodeSerializedEvent = (event: SerializedEvent): Payload => {
   const definition = Durable.get(event.type)
   if (!definition?.durable) {
@@ -119,6 +125,8 @@ export interface PublishOptions {
   readonly id?: ID
   readonly metadata?: Record<string, unknown>
   readonly location?: Location.Ref
+  /** Optimistic guard: publish fails with ConflictError (defect) when the aggregate's current seq differs. */
+  readonly expectedSeq?: number
   /** Local operational projection committed atomically with a new durable event. Not replayed or serialized. */
   readonly commit?: (seq: number) => Effect.Effect<void>
 }
@@ -206,10 +214,11 @@ export const layerWith = (options?: LayerOptions) =>
         definition: Definition,
         event: Payload,
         input?: {
-          readonly seq: number
-          readonly aggregateID: string
+          readonly seq?: number
+          readonly aggregateID?: string
           readonly ownerID?: string
           readonly strictOwner?: boolean
+          readonly expectedSeq?: number
         },
         commit?: (seq: number) => Effect.Effect<void>,
       ) {
@@ -225,7 +234,7 @@ export const layerWith = (options?: LayerOptions) =>
                 }),
               )
             } else {
-              if (input && input.aggregateID !== aggregateID) {
+              if (input?.aggregateID !== undefined && input.aggregateID !== aggregateID) {
                 yield* Effect.die(
                   new InvalidDurableEventError({
                     type: event.type,
@@ -247,6 +256,15 @@ export const layerWith = (options?: LayerOptions) =>
                             .get()
                             .pipe(Effect.orDie)
                           const latest = row?.seq ?? -1
+                          if (input?.expectedSeq !== undefined && input.expectedSeq !== latest) {
+                            yield* Effect.die(
+                              new ConflictError({
+                                aggregateID,
+                                expectedSeq: input.expectedSeq,
+                                actualSeq: latest,
+                              }),
+                            )
+                          }
                           const encoded = Schema.encodeUnknownSync(definition.data)(event.data) as Record<
                             string,
                             unknown
@@ -259,11 +277,12 @@ export const layerWith = (options?: LayerOptions) =>
                               }),
                             )
                           }
-                          if (input && input.seq <= latest) {
+                          if (input?.seq !== undefined && input.seq <= latest) {
+                            const replaySeq = input.seq
                             const stored = yield* db
                               .select()
                               .from(EventTable)
-                              .where(and(eq(EventTable.aggregate_id, aggregateID), eq(EventTable.seq, input.seq)))
+                              .where(and(eq(EventTable.aggregate_id, aggregateID), eq(EventTable.seq, replaySeq)))
                               .get()
                               .pipe(Effect.orDie)
                             if (
@@ -366,7 +385,12 @@ export const layerWith = (options?: LayerOptions) =>
         })
       }
 
-      function publishEvent<D extends Definition>(definition: D, event: Payload<D>, commit?: PublishOptions["commit"]) {
+      function publishEvent<D extends Definition>(
+        definition: D,
+        event: Payload<D>,
+        commit?: PublishOptions["commit"],
+        expectedSeq?: number,
+      ) {
         return Effect.gen(function* () {
           if (!definition?.durable && commit)
             return yield* Effect.die(
@@ -376,7 +400,12 @@ export const layerWith = (options?: LayerOptions) =>
               }),
             )
           if (definition?.durable) {
-            const committed = yield* commitDurableEvent(definition, event as Payload, undefined, commit)
+            const committed = yield* commitDurableEvent(
+              definition,
+              event as Payload,
+              expectedSeq === undefined ? undefined : { expectedSeq },
+              commit,
+            )
             if (committed) {
               event = {
                 ...event,
@@ -434,6 +463,7 @@ export const layerWith = (options?: LayerOptions) =>
               data,
             } as Payload<D>,
             options?.commit,
+            options?.expectedSeq,
           )
         })
       }

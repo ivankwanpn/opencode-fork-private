@@ -3,10 +3,27 @@ import { createRoot, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import { Part } from "./message-part"
 import type { MessagePartProps } from "./message-part"
+import { readPartText } from "./message-part-text"
 import { DataProvider } from "../context"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
 import { I18nProvider, type UiI18n } from "@opencode-ai/ui/context/i18n"
 import type { AssistantMessage, Message, ReasoningPart, TextPart } from "@opencode-ai/sdk/v2"
+
+// bun 1.3.14 types ship no expect.poll; the package preload (happydom.ts)
+// polyfills it at runtime with this exact matcher surface.
+declare module "bun:test" {
+  interface Expect {
+    poll<T>(producer: () => T, options?: { timeout?: number; interval?: number }): {
+      toBe(expected: unknown): Promise<void>
+      toEqual(expected: unknown): Promise<void>
+      toBeTruthy(): Promise<void>
+      toBeFalsy(): Promise<void>
+      toBeNull(): Promise<void>
+      toBeUndefined(): Promise<void>
+      toContain(expected: unknown): Promise<void>
+    }
+  }
+}
 
 const i18n: UiI18n = { locale: () => "en", t: (key) => key }
 
@@ -118,5 +135,31 @@ describe("message-part remount regression", () => {
     })
 
     await expect.poll(() => document.querySelector('[data-slot="reasoning-part-heading"]')).toBeTruthy()
+  })
+})
+
+describe("readPartText", () => {
+  test("returns empty string when accum is undefined and part text is undefined", () => {
+    expect(readPartText(undefined, { id: "part_1" })).toBe("")
+  })
+
+  test("returns trimmed part text when accum is undefined", () => {
+    expect(readPartText(undefined, { id: "part_1", text: "  hello  " })).toBe("hello")
+  })
+
+  test("prefers accum value over part text when accum has a hit", () => {
+    expect(readPartText({ part_1: "  from accum  " }, { id: "part_1", text: "from part" })).toBe("from accum")
+  })
+
+  test("falls back to part text when accum misses", () => {
+    expect(readPartText({ other_part: "ignored" }, { id: "part_1", text: "  from part  " })).toBe("from part")
+  })
+
+  test("returns empty string for whitespace-only text", () => {
+    expect(readPartText(undefined, { id: "part_1", text: "   \n\t  " })).toBe("")
+  })
+
+  test("trims leading and trailing whitespace", () => {
+    expect(readPartText(undefined, { id: "part_1", text: "\n  body  \n" })).toBe("body")
   })
 })

@@ -1351,7 +1351,10 @@ export function createServerSession(
         !data.info[eventID] &&
         event.type !== "session.created" &&
         event.type !== "session.updated" &&
-        event.type !== "session.deleted"
+        event.type !== "session.deleted" &&
+        event.type !== "session.next.created" &&
+        event.type !== "session.next.updated" &&
+        event.type !== "session.next.deleted"
       )
         void resolve(eventID).catch(() => {})
     }

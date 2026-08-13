@@ -2617,6 +2617,23 @@ describe("server session", () => {
     expect(ctx.store.data.info.child).toBeUndefined()
   })
 
+  test("does not let the legacy apply resolve re-add evicted V2 lifecycle sessions", async () => {
+    const ctx = setup({ child: session("child") })
+    ctx.store.remember(session("child"))
+    ctx.store.applyV2({
+      id: "evt_archived",
+      type: "session.next.updated",
+      data: { timestamp: 3, sessionID: "child", info: snapshot({ time: { created: 1, updated: 3, archived: 3 } }) },
+    } as unknown as V2Event)
+    expect(ctx.store.data.info.child).toBeUndefined()
+
+    // The adapted V2 event also flows through the legacy apply() path, whose
+    // resolve() would re-fetch and remember the evicted session from the server.
+    ctx.store.apply({ type: "session.next.updated", properties: { sessionID: "child", info: session("child") } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(ctx.store.data.info.child).toBeUndefined()
+  })
+
   test("removes deleted sessions from the store", () => {
     const ctx = setup({ child: session("child") })
     ctx.store.remember(session("child"))

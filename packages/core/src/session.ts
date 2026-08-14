@@ -535,12 +535,17 @@ const layer = Layer.effect(
           .pipe(Effect.orDie)
         for (const child of childRows) yield* result.remove(child.id)
         const timestamp = yield* DateTime.now
+        // Purge BEFORE publishing so the Deleted marker survives as the
+        // aggregate's tombstone: durable subscribers are woken during publish
+        // and re-read the table — with the old order a slow subscriber could
+        // re-read an empty aggregate and miss the deletion (remote share
+        // revocation depends on this event being durably observable).
+        yield* events.remove(sessionID)
         yield* events.publish(
           SessionEvent.Deleted,
           { timestamp, sessionID, info: rowToSnapshot(row) },
           { location: fromRow(row).location },
         )
-        yield* events.remove(sessionID)
       }),
       list: Effect.fn("V2Session.list")(function* (input = {}) {
         const direction = input.anchor?.direction ?? "next"

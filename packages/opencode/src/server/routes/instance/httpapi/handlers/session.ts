@@ -373,16 +373,34 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return yield* create({ payload })
     })
 
+    const collectDescendants = Effect.fnUntraced(function* (
+      sessionID: SessionV2.ID,
+    ): Effect.fn.Return<SessionV2.ID[], never, never> {
+      const kids = yield* canonical.children(sessionID).pipe(Effect.orDie)
+      const nested = yield* Effect.forEach(kids, (kid) => collectDescendants(kid.id), {
+        concurrency: "unbounded",
+      })
+      return [...kids.map((kid) => kid.id), ...nested.flat()]
+    })
+
     const remove = Effect.fn("SessionHttpApi.remove")(function* (ctx: { params: { sessionID: SessionID } }) {
+      yield* requireSession(ctx.params.sessionID)
+      const sessionID = SessionV2.ID.make(ctx.params.sessionID)
       const hasInstance = yield* InstanceState.context.pipe(
         Effect.as(true),
         Effect.catchCause(() => Effect.succeed(false)),
       )
       if (hasInstance) {
         const background = yield* BackgroundJob.Service
-        yield* cancelBackgroundJobs(background, ctx.params.sessionID)
+        // V1 canceled jobs per session during its recursion; the V2 core
+        // recursion does not know BackgroundJob, so cancel the whole subtree
+        // up front (root + descendants) before the core removes it.
+        const descendants = yield* collectDescendants(sessionID)
+        for (const id of [sessionID, ...descendants]) {
+          yield* cancelBackgroundJobs(background, SessionID.make(id))
+        }
       }
-      yield* canonical.remove(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      yield* canonical.remove(sessionID).pipe(SessionError.mapSessionNotFound)
       return true
     })
 

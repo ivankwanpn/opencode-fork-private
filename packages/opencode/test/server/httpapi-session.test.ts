@@ -30,6 +30,7 @@ import { Session } from "@/session/session"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
+import { BackgroundJob as InstanceBackgroundJob } from "../../src/background/job"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import {
@@ -69,7 +70,7 @@ const appLayer = AppNodeBuilder.build(
     Workspace.node,
     Database.node,
     Ripgrep.node,
-    BackgroundJob.node,
+    InstanceBackgroundJob.node,
     TaskSubmission.node,
     TaskCancellation.node,
     SessionExecutionLocal.node,
@@ -2677,6 +2678,49 @@ describe("session HttpApi", () => {
         const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
         expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
         expect(messages.length).toBe(1)
+      }),
+  )
+
+  it.instance(
+    "remove cancels background jobs owned by descendant sessions",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "parent" }),
+        })
+        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "child", parentID: parent.id }),
+        })
+
+        const background = yield* BackgroundJob.Service
+        // BackgroundJob.start registers a job with status "running" (core
+        // packages/core/src/background-job.ts start); run: Effect.never keeps
+        // it running so cancelBackgroundJobs' status filter matches it.
+        const childJobID = `job_${child.id}`
+        yield* background.start({
+          id: childJobID,
+          type: "task",
+          metadata: { sessionId: child.id },
+          run: Effect.never,
+        })
+
+        yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
+          method: "DELETE",
+          headers,
+        })
+
+        const jobs = yield* background.list()
+        // The registry retains canceled entries (core cancel flips status to
+        // "cancelled" and keeps the map entry — no removal path exists in
+        // packages/core/src/background-job.ts), so assert the child's job is
+        // no longer running, which is exactly what cancelBackgroundJobs acts on.
+        expect(jobs.some((job) => job.id === childJobID && job.status === "running")).toBe(false)
       }),
   )
 

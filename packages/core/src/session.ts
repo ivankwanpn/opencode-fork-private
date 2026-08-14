@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gte, gt, isNull, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gte, gt, isNull, like, lt, or, sql, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { AgentV2 } from "./agent"
 import { WorkspaceV2 } from "./workspace"
@@ -85,7 +85,10 @@ const ListProjectInput = Schema.Struct({
 
 const ListAllInput = Schema.Struct(ListInputBase)
 
-export const ListInput = Schema.Union([ListDirectoryInput, ListProjectInput, ListAllInput])
+// The project variant must precede the directory variant: a query carrying
+// {project, directory, subpath} would otherwise decode as ListDirectoryInput
+// and silently drop the project scoping and subpath filter.
+export const ListInput = Schema.Union([ListProjectInput, ListDirectoryInput, ListAllInput])
 export type ListInput = typeof ListInput.Type
 
 type CreateInput = SessionCommand.CreateInput
@@ -562,7 +565,11 @@ const layer = Layer.effect(
         if ("project" in input && input.subpath !== undefined) {
           // V1 parity: an empty path disables both the path and directory filters.
           if (input.subpath !== "") {
-            const pathConditions = [eq(SessionTable.path, input.subpath), like(SessionTable.path, `${input.subpath}/%`)]
+            const escapeLike = (value: string) => value.replace(/[\\%_]/g, (char) => `\\${char}`)
+            const pathConditions = [
+              eq(SessionTable.path, input.subpath),
+              sql`${SessionTable.path} LIKE ${`${escapeLike(input.subpath)}/%`} ESCAPE '\\'`,
+            ]
             conditions.push(
               input.directory !== undefined
                 ? or(...pathConditions, and(or(isNull(SessionTable.path), eq(SessionTable.path, "")), eq(SessionTable.directory, input.directory))!)!

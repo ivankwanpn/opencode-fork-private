@@ -63,7 +63,10 @@ export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.In
       created: DateTime.makeUnsafe(row.time_created),
       updated: DateTime.makeUnsafe(row.time_updated),
       compacting: row.time_compacting === null ? undefined : DateTime.makeUnsafe(row.time_compacting),
-      archived: row.time_archived ? DateTime.makeUnsafe(row.time_archived) : undefined,
+      archived:
+        row.time_archived === null || row.time_archived === undefined
+          ? undefined
+          : DateTime.makeUnsafe(row.time_archived),
     },
     share: row.share_url ? { url: row.share_url } : undefined,
   })

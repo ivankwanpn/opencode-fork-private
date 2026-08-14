@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { eq, sql } from "drizzle-orm"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -118,6 +118,34 @@ describe("SessionV2 list query semantics", () => {
         directory: AbsolutePath.make("/project"),
       })
       expect(listed.map((item) => item.id).sort()).toEqual([withPath.id, pathlessSame.id].sort())
+    }),
+  )
+
+  it.effect("decodes the project variant with directory and subpath intact", () =>
+    Effect.gen(function* () {
+      const decoded = Schema.decodeUnknownSync(SessionV2.ListInput)({
+        project: ProjectV2.ID.global,
+        directory: AbsolutePath.make("/project"),
+        subpath: RelativePath.make("packages/opencode"),
+      })
+      expect("project" in decoded).toBe(true)
+      if (!("project" in decoded)) return
+      expect(decoded.directory).toBe(AbsolutePath.make("/project"))
+      expect(decoded.subpath).toBe(RelativePath.make("packages/opencode"))
+    }),
+  )
+
+  it.effect("does not treat LIKE wildcards in subpaths as patterns", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      const session = yield* SessionV2.Service
+      const underscore = yield* session.create({ location })
+      const lookalike = yield* session.create({ location })
+      yield* db.update(SessionTable).set({ path: "foo_bar/src" }).where(eq(SessionTable.id, underscore.id)).run().pipe(Effect.orDie)
+      yield* db.update(SessionTable).set({ path: "fooXbar/src" }).where(eq(SessionTable.id, lookalike.id)).run().pipe(Effect.orDie)
+
+      const listed = yield* session.list({ project: ProjectV2.ID.global, subpath: RelativePath.make("foo_bar") })
+      expect(listed.map((item) => item.id)).toEqual([underscore.id])
     }),
   )
 })

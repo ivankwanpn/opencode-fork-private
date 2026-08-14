@@ -8,6 +8,7 @@ import {
 } from "@opencode-ai/app/desktop-menu"
 
 import { runDesktopMenuAction } from "./desktop-menu-actions"
+import { isZoomAction } from "./menu-zoom"
 import { createMainWindow, openExternalURL } from "./windows"
 
 type Deps = {
@@ -33,6 +34,19 @@ export function createMenu(deps: Deps) {
 
 function nativeItem(entry: DesktopMenuEntry, deps: Deps): MenuItemConstructorOptions {
   if (entry.type === "separator") return { type: "separator" }
+  if (entry.action && isZoomAction(entry.action)) {
+    const action = entry.action
+    const zoomItem: MenuItemConstructorOptions = {
+      label: entry.label,
+      accelerator: entry.accelerator?.macos,
+    }
+    zoomItem.click = () =>
+      runDesktopMenuAction(BrowserWindow.getFocusedWindow(), action, {
+        relaunch: deps.relaunch,
+        createWindow: createMainWindow,
+      })
+    return zoomItem
+  }
   if (entry.role) return { role: nativeRole(entry.role) }
 
   const item: MenuItemConstructorOptions = {

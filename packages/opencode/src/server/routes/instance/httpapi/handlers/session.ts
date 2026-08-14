@@ -2,7 +2,7 @@ import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
-import { AbsolutePath } from "@opencode-ai/core/schema"
+import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -163,16 +163,27 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
-      const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
-      return yield* session.list({
-        directory: ctx.query.scope === "project" ? undefined : directory,
-        scope: ctx.query.scope,
-        path: ctx.query.path,
-        roots: ctx.query.roots,
-        start: ctx.query.start,
-        search: ctx.query.search,
-        limit: ctx.query.limit,
-      })
+      const query = ctx.query
+      const ctxState = yield* InstanceState.context
+      const directory = query.directory ? yield* InstanceState.directory : undefined
+      const scoped = query.scope === "project"
+      const hasSubpath = query.path !== undefined && query.path !== ""
+      // V1 parity: scope=project suppresses the directory filter; path="" disables
+      // both filters; a truthy path selects exact-or-prefix (plus the core impl's
+      // pathless-directory fallback when directory is also given).
+      const includeDirectory = (query.path === undefined || hasSubpath) && !scoped && directory !== undefined
+      const input: Extract<SessionV2.ListInput, { project: unknown }> = {
+        project: ctxState.project.id,
+        orderBy: "updated",
+        ...(!hasSubpath ? {} : { subpath: RelativePath.make(query.path) }),
+        ...(!includeDirectory ? {} : { directory: AbsolutePath.make(directory) }),
+        ...(query.roots === undefined ? {} : { parentID: query.roots ? null : undefined }),
+        ...(query.start === undefined ? {} : { start: query.start }),
+        ...(query.search === undefined ? {} : { search: query.search }),
+        ...(query.limit === undefined ? {} : { limit: query.limit }),
+      }
+      const items = yield* canonical.list(input)
+      return items.map(legacySessionFromV2)
     })
 
     const status = Effect.fn("SessionHttpApi.status")(function* () {

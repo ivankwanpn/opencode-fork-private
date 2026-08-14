@@ -16,7 +16,7 @@ import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { SessionShare } from "@/share/session"
 import { ShareNext } from "@/share/share-next"
 import { LegacySessionExecution } from "@/session/legacy-session-execution"
-import { Session, cancelBackgroundJobs } from "@/session/session"
+import { Session, cancelBackgroundJobs, childTitlePrefix } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
@@ -315,7 +315,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         ...(payload?.title === undefined
           ? payload?.parentID === undefined
             ? {}
-            : { title: `Child session - ${new Date().toISOString()}` }
+            : { title: `${childTitlePrefix}${new Date().toISOString()}` }
           : { title: payload.title }),
         ...(payload?.agent === undefined ? {} : { agent: AgentV2.ID.make(payload.agent) }),
         ...(payload?.model === undefined

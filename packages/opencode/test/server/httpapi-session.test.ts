@@ -2620,14 +2620,14 @@ describe("session HttpApi", () => {
         })
         expect(removed).toBe(true)
 
-        // Task 1's purge-before-publish reorder (caf3fb6) makes the Deleted
-        // event the aggregate's only remaining row at seq 0: the purge removes
-        // the history rows AND the sequence row, so the publish recomputes seq 0.
-        // The durable stream cannot deliver it — its cursor is strictly
-        // greater-than (`gt(seq, after)`, packages/core/src/event.ts), so any
-        // subscriber whose read has already seen seq 0 skips the tombstone —
-        // observe the tombstone directly instead (the pattern of
-        // packages/core/test/session-remove.test.ts).
+        // The tombstone is observed through a direct EventTable query, not
+        // the durable stream: the stream's cursor is strictly greater-than
+        // (`gt(seq, after)`, packages/core/src/event.ts), so whether a
+        // subscriber sees the Deleted event depends on where its cursor sits.
+        // After the keepSequence fix (f448189) the tombstone lands at the
+        // aggregate's next deliverable sequence — query EventTable directly
+        // to pin the invariant: exactly one tombstone row of the versioned
+        // type session.next.deleted.1.
         const { db } = yield* Database.Service
         const rows = yield* db
           .select()

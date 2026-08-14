@@ -386,7 +386,7 @@ describe("legacy event projection", () => {
     })
   })
 
-  test("retains the raw canonical event before compatibility projections", () => {
+  test("emits only the legacy projection and never the raw canonical envelope", () => {
     const project = legacyEventProjection()
     project(
       canonicalEvent("session.next.prompted", {
@@ -402,11 +402,20 @@ describe("legacy event projection", () => {
     })
     const payloads = legacyEventPayloads(project, source)
 
-    expect(payloads.map((event) => event.type)).toEqual([
-      "session.next.step.started",
-      "message.updated",
-      "message.part.updated",
-    ])
+    expect(payloads.map((event) => event.type)).toEqual(["message.updated", "message.part.updated"])
+    expect(payloads.some((event) => event.type === "session.next.step.started")).toBe(false)
+  })
+
+  test("falls back to one raw canonical envelope when the projection is empty", () => {
+    const project = legacyEventProjection()
+    const source = canonicalEvent("session.next.message.imported", {
+      sessionID: "ses_test",
+      messageID: "legacy-message",
+      partID: "legacy-part",
+    })
+    const payloads = legacyEventPayloads(project, source)
+
+    expect(payloads).toHaveLength(1)
     expect(payloads[0]).toEqual({
       id: source.id,
       type: source.type,
@@ -496,6 +505,93 @@ describe("legacy event projection", () => {
       {
         type: "message.part.removed",
         properties: { messageID: "msg_assistant", partID: "prt_assistant" },
+      },
+    ])
+  })
+
+  test("preserves imported legacy ids exactly across transcript mutations", () => {
+    const project = legacyEventProjection()
+
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.message.removed", {
+          sessionID: "ses_test",
+          messageID: "legacy-message",
+          timestamp: 9,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.removed",
+        properties: { sessionID: "ses_test", messageID: "legacy-message" },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.user-text.updated", {
+          sessionID: "ses_test",
+          messageID: "legacy-message",
+          partID: "legacy-part",
+          text: "updated",
+          timestamp: 10,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "legacy-part", sessionID: "ses_test", messageID: "legacy-message", type: "text", text: "updated" },
+        },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.user-text.removed", {
+          sessionID: "ses_test",
+          messageID: "legacy-message",
+          partID: "legacy-part",
+          timestamp: 11,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.removed",
+        properties: { sessionID: "ses_test", messageID: "legacy-message", partID: "legacy-part" },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.content.updated", {
+          sessionID: "ses_test",
+          assistantMessageID: "legacy-message",
+          contentIndex: 0,
+          partID: "legacy-part",
+          content: { type: "text", id: "text", text: "updated" },
+          timestamp: 12,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "legacy-part", sessionID: "ses_test", messageID: "legacy-message", type: "text", text: "updated" },
+        },
+      },
+    ])
+    expect(
+      project(
+        canonicalEvent("session.next.transcript.content.removed", {
+          sessionID: "ses_test",
+          assistantMessageID: "legacy-message",
+          contentIndex: 0,
+          partID: "legacy-part",
+          timestamp: 13,
+        }),
+      ),
+    ).toMatchObject([
+      {
+        type: "message.part.removed",
+        properties: { sessionID: "ses_test", messageID: "legacy-message", partID: "legacy-part" },
       },
     ])
   })

@@ -840,7 +840,7 @@ describe("ACP client EventV2 boundary", () => {
     const events = projected(await collectEvents(recording.client.events.subscribe()))
 
     expect(events.some((event) => event.type === "session.next.step.started")).toBe(false)
-    expect(events.filter((event) => event.type === "permission.v2.asked")).toHaveLength(1)
+    expect(events.some((event) => event.type === "permission.v2.asked")).toBe(false)
     expect(events.filter((event) => event.type === "permission.asked")).toHaveLength(1)
   })
 

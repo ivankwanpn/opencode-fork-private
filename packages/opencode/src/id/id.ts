@@ -23,6 +23,11 @@ export function ascending(prefix: keyof typeof prefixes, given?: string) {
   return generateID(prefix, "ascending", given)
 }
 
+/** Ascend only when the given ID already carries the expected prefix; otherwise return it unchanged. */
+export function ascendingOr(prefix: keyof typeof prefixes, given: string) {
+  return given.startsWith(prefixes[prefix]) ? ascending(prefix, given) : given
+}
+
 export function descending(prefix: keyof typeof prefixes, given?: string) {
   return generateID(prefix, "descending", given)
 }

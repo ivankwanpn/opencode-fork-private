@@ -7,7 +7,8 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { Project } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
-import { MessageID, PartID, SessionID } from "@/session/schema"
+import { Identifier } from "@/id/id"
+import { PartID, SessionID } from "@/session/schema"
 import { Context, DateTime, Effect, Layer } from "effect"
 
 export class Service extends Context.Service<Service, EventV2.Interface>()("@opencode/EventV2Bridge") {}
@@ -83,7 +84,7 @@ export function legacyEventProjection() {
   const parents = new Map<string, string>()
   const assistants = new Map<string, AssistantState>()
   const key = (sessionID: string, assistantMessageID: string) => `${sessionID}:${assistantMessageID}`
-  const messageID = (value: string) => MessageID.ascending(value)
+  const messageID = (value: string) => Identifier.ascendingOr("message", value)
   const partID = (state: AssistantState, type: string, index: number) =>
     PartID.ascending(`prt_${state.messageID}_${type}_${index}`)
   const event = (type: string, properties: Record<string, unknown>): LegacyEvent => ({
@@ -254,7 +255,7 @@ export function legacyEventProjection() {
       return [
         event("message.removed", {
           sessionID: SessionID.make(sessionID),
-          messageID: MessageID.ascending(String(data.messageID)),
+          messageID: Identifier.ascendingOr("message", String(data.messageID)),
         }),
       ]
     }
@@ -262,8 +263,8 @@ export function legacyEventProjection() {
       return [
         event("message.part.removed", {
           sessionID: SessionID.make(sessionID),
-          messageID: MessageID.ascending(String(data.messageID)),
-          partID: PartID.ascending(String(data.partID)),
+          messageID: Identifier.ascendingOr("message", String(data.messageID)),
+          partID: Identifier.ascendingOr("part", String(data.partID)),
         }),
       ]
     }
@@ -272,9 +273,9 @@ export function legacyEventProjection() {
         event("message.part.updated", {
           sessionID: SessionID.make(sessionID),
           part: {
-            id: PartID.ascending(String(data.partID)),
+            id: Identifier.ascendingOr("part", String(data.partID)),
             sessionID: SessionID.make(sessionID),
-            messageID: MessageID.ascending(String(data.messageID)),
+            messageID: Identifier.ascendingOr("message", String(data.messageID)),
             type: "text",
             text: String(data.text),
           },
@@ -286,8 +287,8 @@ export function legacyEventProjection() {
       return [
         event("message.part.removed", {
           sessionID: SessionID.make(sessionID),
-          messageID: MessageID.ascending(String(data.assistantMessageID)),
-          partID: PartID.ascending(String(data.partID)),
+          messageID: Identifier.ascendingOr("message", String(data.assistantMessageID)),
+          partID: Identifier.ascendingOr("part", String(data.partID)),
         }),
       ]
     }
@@ -298,9 +299,9 @@ export function legacyEventProjection() {
         event("message.part.updated", {
           sessionID: SessionID.make(sessionID),
           part: {
-            id: PartID.ascending(String(data.partID)),
+            id: Identifier.ascendingOr("part", String(data.partID)),
             sessionID: SessionID.make(sessionID),
-            messageID: MessageID.ascending(String(data.assistantMessageID)),
+            messageID: Identifier.ascendingOr("message", String(data.assistantMessageID)),
             type: content.type,
             text: String(content.text),
             ...(content.type === "reasoning"
@@ -578,14 +579,16 @@ export function legacyEventPayloads(
   projectLegacy: ReturnType<typeof legacyEventProjection>,
   source: EventV2.Payload,
 ): ReadonlyArray<LegacyEvent> {
-  return [
-    {
-      id: source.id,
-      type: source.type,
-      properties: source.data as Record<string, unknown>,
-    },
-    ...projectLegacy(source),
-  ]
+  const projected = projectLegacy(source)
+  return projected.length === 0
+    ? [
+        {
+          id: source.id,
+          type: source.type,
+          properties: source.data as Record<string, unknown>,
+        },
+      ]
+    : projected
 }
 
 const layer = Layer.effect(

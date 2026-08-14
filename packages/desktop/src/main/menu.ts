@@ -8,7 +8,7 @@ import {
 } from "@opencode-ai/app/desktop-menu"
 
 import { runDesktopMenuAction } from "./desktop-menu-actions"
-import { openExternalURL } from "./windows"
+import { createMainWindow, openExternalURL } from "./windows"
 
 type Deps = {
   trigger: (id: string) => void
@@ -49,6 +49,7 @@ function nativeItem(entry: DesktopMenuEntry, deps: Deps): MenuItemConstructorOpt
     item.click = () =>
       runDesktopMenuAction(BrowserWindow.getFocusedWindow(), action, {
         relaunch: deps.relaunch,
+        createWindow: createMainWindow,
       })
   }
   if (entry.href) {

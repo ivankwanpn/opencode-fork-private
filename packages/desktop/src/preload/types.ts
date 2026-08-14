@@ -34,6 +34,7 @@ export type FatalRendererError = {
   platform: string
   os?: string
 }
+export type ZoomCommand = "reset" | "in" | "out"
 
 export type ElectronAPI = {
   killSidecar: () => Promise<void>
@@ -93,6 +94,7 @@ export type ElectronAPI = {
   setPinchZoomEnabled: (enabled: boolean) => Promise<void>
   onPinchZoomEnabledChanged: (cb: (enabled: boolean) => void) => () => void
   onZoomFactorChanged: (cb: (factor: number) => void) => () => void
+  onZoomCommand: (cb: (command: ZoomCommand) => void) => () => void
   setTitlebar: (theme: TitlebarTheme) => Promise<void>
   runDesktopMenuAction: (action: DesktopMenuAction) => Promise<void>
   setBackgroundColor: (color: string) => Promise<void>

@@ -11,6 +11,7 @@ import { setForceFocus } from "./debug"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
 import { getStore, removeStoreFileIfEmpty } from "./store"
 import {
+  createMainWindow,
   getPinchZoomEnabled,
   getWindowID,
   openExternalURL,
@@ -248,6 +249,7 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("run-desktop-menu-action", (event: IpcMainInvokeEvent, action: DesktopMenuAction) => {
     runDesktopMenuAction(BrowserWindow.fromWebContents(event.sender), action, {
       relaunch: deps.relaunch,
+      createWindow: createMainWindow,
     })
   })
 }

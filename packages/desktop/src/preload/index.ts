@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
-import type { ElectronAPI, WslServersEvent } from "./types"
+import type { ElectronAPI, WslServersEvent, ZoomCommand } from "./types"
 
 const api: ElectronAPI = {
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
@@ -87,6 +87,11 @@ const api: ElectronAPI = {
     const handler = (_: unknown, factor: number) => cb(factor)
     ipcRenderer.on("zoom-factor-changed", handler)
     return () => ipcRenderer.removeListener("zoom-factor-changed", handler)
+  },
+  onZoomCommand: (cb) => {
+    const handler = (_: unknown, command: ZoomCommand) => cb(command)
+    ipcRenderer.on("zoom-command", handler)
+    return () => ipcRenderer.removeListener("zoom-command", handler)
   },
   setTitlebar: (theme) => ipcRenderer.invoke("set-titlebar", theme),
   runDesktopMenuAction: (action) => ipcRenderer.invoke("run-desktop-menu-action", action),

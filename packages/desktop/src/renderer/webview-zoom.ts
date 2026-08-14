@@ -50,6 +50,18 @@ window.api.onZoomFactorChanged((factor) => {
   setWebviewZoom(requestedZoom)
 })
 
+window.api.onZoomCommand((command) => {
+  if (command === "reset") {
+    resetZoom()
+    return
+  }
+  if (command === "in") {
+    zoomIn()
+    return
+  }
+  zoomOut()
+})
+
 void window.api.getPinchZoomEnabled().then((enabled) => {
   pinchZoomEnabled = enabled
 })

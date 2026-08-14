@@ -400,8 +400,7 @@ export function legacyTranscriptFromNative(input: {
       continue
     }
     if (message.type === "assistant") {
-      if (!parentID) continue
-      result.push(assistant({ message, session: input.session, parentID }))
+      result.push(assistant({ message, session: input.session, parentID: parentID ?? message.id }))
       agent = message.agent
       model = message.model
       continue

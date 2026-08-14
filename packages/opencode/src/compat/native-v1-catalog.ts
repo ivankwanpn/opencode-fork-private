@@ -20,7 +20,11 @@ export function legacyAgentFromNative(info: AgentV2Info): Agent {
     color: info.color,
     topP: typeof topP === "number" ? topP : undefined,
     temperature: typeof temperature === "number" ? temperature : undefined,
-    permission: [],
+    permission: info.permissions.map((rule) => ({
+      permission: rule.action,
+      pattern: rule.resource,
+      action: rule.effect,
+    })),
     model: info.model ? { modelID: info.model.id, providerID: info.model.providerID } : undefined,
     variant: info.model?.variant,
     prompt: info.system,

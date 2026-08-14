@@ -75,6 +75,16 @@ function nativeAssistant(
   }
 }
 
+function nativeAgent(id: string, permissions: readonly { action: string; resource: string; effect: string }[]) {
+  return {
+    id,
+    request: { headers: {}, body: {} },
+    mode: "primary",
+    hidden: false,
+    permissions,
+  }
+}
+
 function importedUser(nativeID: string, legacyID: string, text: string, created: number) {
   return {
     id: nativeID,
@@ -350,6 +360,59 @@ describe("ACP client transcript projection", () => {
     expect(pages.map((request) => request.url.searchParams.get("cursor"))).toEqual([null, "page-2"])
     expect(pages.map((request) => request.url.searchParams.get("order"))).toEqual(["asc", null])
     expect(pages.map((request) => request.url.searchParams.get("limit"))).toEqual(["100", "100"])
+  })
+
+  test("an orphan native assistant with no preceding user stays and self-parents to its own message ID", async () => {
+    const recording = makeFacade((request) => {
+      if (request.url.pathname === "/api/session/ses_orphan") {
+        return json({ data: nativeSession("ses_orphan") })
+      }
+      if (request.url.pathname === "/api/session/ses_orphan/message") {
+        return json({
+          data: [nativeAssistant("msg_orphan_assistant", "orphan reply", 40, 50)],
+          cursor: {},
+        })
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`)
+    })
+
+    const messages = await recording.client.session.messages({ sessionID: "ses_orphan" })
+
+    expect(messages.map((message) => message.info.id)).toEqual(["msg_orphan_assistant"])
+    expect(messages[0]?.info).toMatchObject({
+      role: "assistant",
+      parentID: "msg_orphan_assistant",
+      variant: "careful",
+    })
+  })
+
+  test("assistant following assistant stays parented to the preceding user, not the first assistant", async () => {
+    const recording = makeFacade((request) => {
+      if (request.url.pathname === "/api/session/ses_pairs") {
+        return json({ data: nativeSession("ses_pairs") })
+      }
+      if (request.url.pathname === "/api/session/ses_pairs/message") {
+        return json({
+          data: [
+            nativeUser("msg_pair_user", "prompt", 10),
+            nativeAssistant("msg_pair_first", "first", 20, 21),
+            nativeAssistant("msg_pair_second", "second", 30, 31),
+          ],
+          cursor: {},
+        })
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`)
+    })
+
+    const messages = await recording.client.session.messages({ sessionID: "ses_pairs" })
+
+    expect(messages.map((message) => message.info.id)).toEqual([
+      "msg_pair_user",
+      "msg_pair_first",
+      "msg_pair_second",
+    ])
+    expect(messages[1]?.info).toMatchObject({ parentID: "msg_pair_user" })
+    expect(messages[2]?.info).toMatchObject({ parentID: "msg_pair_user" })
   })
 
   test("individual lookup uses the native message route before projecting the full transcript", async () => {
@@ -1254,6 +1317,45 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
       template: "alpha skill",
     })
     expect(catalog.configuredModel).toBe("provider/configured")
+  })
+
+  test("agent catalog maps V2 permission rules to the V1 permission fields", async () => {
+    const location = {
+      directory,
+      project: { id: "project", directory },
+    }
+    const recording = makeFacade((request) => {
+      if (request.url.pathname === "/api/agent") {
+        return json({
+          location,
+          data: [
+            nativeAgent("helper", [
+              { action: "bash", resource: "*", effect: "allow" },
+              { action: "read", resource: "file:*", effect: "ask" },
+              { action: "write", resource: "file:*", effect: "deny" },
+            ]),
+          ],
+        })
+      }
+      if (request.url.pathname === "/api/provider/catalog") {
+        return json({ location, data: { providers: [], models: [], connected: [], default: {} } })
+      }
+      if (request.url.pathname === "/api/command") return json({ location, data: [] })
+      if (request.url.pathname === "/api/skill") return json({ location, data: [] })
+      if (request.url.pathname === "/api/config") return json({ location, data: {} })
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`)
+    })
+
+    const catalog = await recording.client.catalog.load(directory)
+
+    expect(catalog.agents).toHaveLength(1)
+    expect(catalog.agents[0]).toMatchObject({ name: "helper" })
+    const permission = (catalog.agents[0] as unknown as { readonly permission: readonly unknown[] }).permission
+    expect(permission).toEqual([
+      { permission: "bash", pattern: "*", action: "allow" },
+      { permission: "read", pattern: "file:*", action: "ask" },
+      { permission: "write", pattern: "file:*", action: "deny" },
+    ])
   })
 
   test("MCP add is the sole non-/api request and preserves its dynamic configuration", async () => {

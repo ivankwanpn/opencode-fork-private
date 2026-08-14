@@ -142,7 +142,7 @@ git -c core.hooksPath=.git/hooks commit -m "fix(app): align dark background fall
 
 **Interfaces:**
 - Consumes: `packages/desktop/src/main/ipc.ts` imports `runDesktopMenuAction` (existing signature `(win, action, handlers?)`); `packages/desktop/src/main/menu.ts:50` passes `BrowserWindow.getFocusedWindow()`; `packages/desktop/src/renderer/index.tsx:119-133` already intercepts zoom actions locally and never forwards them to main.
-- Produces: `DesktopMenuWindow` structural interface (main-process menus satisfy it with `BrowserWindow` — no call-site changes), `ZoomCommand = "reset" | "in" | "out"` exported from `preload/types.ts`, channel `"zoom-command"` main→renderer, `window.api.onZoomCommand(cb)` returning an unsubscribe function.
+- Produces: `DesktopMenuWindow` structural interface (main-process menus satisfy it with `BrowserWindow`), `ZoomCommand = "reset" | "in" | "out"` exported from `preload/types.ts`, channel `"zoom-command"` main→renderer, `window.api.onZoomCommand(cb)` returning an unsubscribe function, and an injected `createWindow` handler on `DesktopMenuActionHandlers` (call sites `menu.ts` and `ipc.ts` pass `createMainWindow` — bun tests cannot link electron's static exports, so this module must not import `./windows` at all).
 
 Today the menu zoom cases (`view.resetZoom` / `view.zoomIn` / `view.zoomOut`) write `webContents.setZoomFactor` directly in main and never broadcast `zoom-factor-changed`, so the renderer's zoom state (`requestedZoom` / `webviewZoom` in `webview-zoom.ts`) goes stale. That is the flagged bypass: the zoom policy makes the renderer the only zoom writer (it applies changes through the `set-zoom-factor` IPC path; main only blocks Electron defaults and resets drift). The renderer already intercepts these three actions in `renderer/index.tsx:119-133`, so only the native macOS menu path (`menu.ts:50`) reaches this writer — but both paths must agree, and the fix removes the writer entirely.
 
@@ -210,7 +210,7 @@ describe("desktop menu actions", () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run (from `packages/desktop`): `bun test ./src/main/desktop-menu-actions.test.ts`
-Expected: the file does not exist yet / does not compile — RED (bun reports the missing module or the type error for `DesktopMenuWindow`). If bun instead loads the current module and crashes in `setZoom` calling `webContents.setZoomFactor` (undefined on the mock), that is also the expected RED: it proves the bypass. Either failure shape is correct.
+Expected: RED — the current module statically imports `./windows`, which transitively imports electron, and bun's test mode fails at module link time (`SyntaxError: Export named 'crashReporter' not found in module '.../electron/index.js'` — electron's npm entry only exports the binary path string). The rewrite below removes that import entirely, which is what lets the test load.
 
 - [ ] **Step 3: Add the ZoomCommand type and preload API**
 
@@ -268,12 +268,11 @@ Replace the entire `packages/desktop/src/main/desktop-menu-actions.ts` with:
 ```ts
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { ZoomCommand } from "../preload/types"
-import { createMainWindow } from "./windows"
 
 // Structural window surface so menu actions stay testable without importing
 // electron (mirrors the MinimalWebContents pattern in external-url.ts).
 // Electron's BrowserWindow satisfies this interface, so call sites in
-// ipc.ts and menu.ts need no changes.
+// ipc.ts and menu.ts need no type changes.
 export interface DesktopMenuWindow {
   close(): void
   minimize(): void
@@ -296,8 +295,13 @@ export interface DesktopMenuWindow {
   isFullScreen(): boolean
 }
 
+// createWindow is injected (like relaunch) so this module never imports
+// electron or ./windows — bun tests cannot link electron's static exports
+// (electron's npm entry only exports the binary path string), and any
+// transitive import of ./windows pulls electron in at module link time.
 export type DesktopMenuActionHandlers = Partial<{
   relaunch: () => void
+  createWindow: () => void
 }>
 
 // The renderer owns zoom state (see zoom-policy.ts); menu zoom forwards the
@@ -317,7 +321,7 @@ export function runDesktopMenuAction(
       handlers.relaunch?.()
       return
     case "window.new":
-      createMainWindow()
+      handlers.createWindow?.()
       return
     case "window.close":
       win?.close()
@@ -377,6 +381,51 @@ export function runDesktopMenuAction(
 
 Notes: the old `setZoom` helper (direct `setZoomFactor` + clamp + `updateTitlebar`) is deleted; clamping and step size are already the renderer's (`clamp` 0.2–10 and 0.2 step in `webview-zoom.ts`), so menu zoom behavior is unchanged in the steady state. If the renderer is hung, menu zoom becomes a no-op instead of a stale write — accepted per the renderer-owns policy.
 
+- [ ] **Step 5b: Wire createWindow at the two call sites**
+
+In `packages/desktop/src/main/menu.ts`, add `createMainWindow` to the existing `./windows` import (line 11 currently imports `openExternalURL`):
+
+```ts
+import { createMainWindow, openExternalURL } from "./windows"
+```
+
+and change the handler argument (lines 49-52) to:
+
+```ts
+    item.click = () =>
+      runDesktopMenuAction(BrowserWindow.getFocusedWindow(), action, {
+        relaunch: deps.relaunch,
+        createWindow: createMainWindow,
+      })
+```
+
+In `packages/desktop/src/main/ipc.ts`, add `createMainWindow` to the existing `./windows` import (lines 12-19):
+
+```ts
+import {
+  createMainWindow,
+  getPinchZoomEnabled,
+  getWindowID,
+  openExternalURL,
+  setPinchZoomEnabled,
+  setTitlebar,
+  updateTitlebar,
+} from "./windows"
+```
+
+and change the handler argument (lines 248-252) to:
+
+```ts
+  ipcMain.handle("run-desktop-menu-action", (event: IpcMainInvokeEvent, action: DesktopMenuAction) => {
+    runDesktopMenuAction(BrowserWindow.fromWebContents(event.sender), action, {
+      relaunch: deps.relaunch,
+      createWindow: createMainWindow,
+    })
+  })
+```
+
+(If `createMainWindow` is already imported in `ipc.ts`, only add the handler entry.)
+
 - [ ] **Step 6: Run the new test to verify it passes**
 
 Run (from `packages/desktop`): `bun test ./src/main/desktop-menu-actions.test.ts`
@@ -386,12 +435,12 @@ Expected: 3/3 PASS.
 
 Run (from `packages/desktop`): `bun test`
 Run (from `packages/desktop`): `bun typecheck`
-Expected: full suite green (zoom-policy and all main tests included); typecheck (`tsgo -b`) covers main, preload, and renderer — it proves `BrowserWindow` satisfies `DesktopMenuWindow` at the call sites in `ipc.ts` and `menu.ts` without edits there.
+Expected: full suite green (zoom-policy and all main tests included); typecheck (`tsgo -b`) covers main, preload, and renderer — it proves `BrowserWindow` satisfies `DesktopMenuWindow` at the call sites in `ipc.ts` and `menu.ts`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add packages/desktop/src/main/desktop-menu-actions.ts packages/desktop/src/main/desktop-menu-actions.test.ts packages/desktop/src/preload/types.ts packages/desktop/src/preload/index.ts packages/desktop/src/renderer/webview-zoom.ts
+git add packages/desktop/src/main/desktop-menu-actions.ts packages/desktop/src/main/desktop-menu-actions.test.ts packages/desktop/src/preload/types.ts packages/desktop/src/preload/index.ts packages/desktop/src/renderer/webview-zoom.ts packages/desktop/src/main/menu.ts packages/desktop/src/main/ipc.ts
 git -c core.hooksPath=.git/hooks commit -m "fix(desktop): route menu zoom through the renderer-owned path"
 ```
 

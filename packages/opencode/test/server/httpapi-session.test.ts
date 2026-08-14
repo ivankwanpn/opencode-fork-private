@@ -6,7 +6,6 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { Cause, Config, Effect, Exit, Layer } from "effect"
-import * as Stream from "effect/Stream"
 import { HttpClient, HttpClientRequest, HttpClientResponse, HttpRouter, HttpServer } from "effect/unstable/http"
 import { layerWebSocketConstructorGlobal } from "effect/unstable/socket/Socket"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -31,6 +30,8 @@ import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from ".
 import { Database } from "@opencode-ai/core/database/database"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { BackgroundJob as InstanceBackgroundJob } from "../../src/background/job"
+import { EventV2 } from "@opencode-ai/core/event"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import {
@@ -2601,7 +2602,6 @@ describe("session HttpApi", () => {
       Effect.gen(function* () {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const canonical = yield* SessionV2.Service
         const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
           method: "POST",
           headers,
@@ -2613,38 +2613,29 @@ describe("session HttpApi", () => {
           body: JSON.stringify({ title: "child", parentID: parent.id }),
         })
 
-        // Determinism basis for `after: 0`: a fresh aggregate's event sequence
-        // starts at 0 (the created event sits at seq 0), so `after: 0` excludes
-        // that historical created event, and the wake-then-reread delivers the
-        // just-published deleted event synchronously before the purge.
-        // The Deleted event is published to the in-process durable stream before
-        // V2Session.remove purges the aggregate's event rows, so a subscriber
-        // registered before the DELETE deterministically receives it.
-        const [deleted, removed] = yield* Effect.all(
-          [
-            canonical
-              .events({ sessionID: SessionV2.ID.make(parent.id), after: 0 })
-              .pipe(
-                Stream.takeUntil((event) => event.type === "session.next.deleted"),
-                Stream.runCollect,
-                Effect.timeout("5 seconds"),
-                Effect.catchCause(() => Effect.succeed([])),
-              ),
-            Effect.gen(function* () {
-              yield* Effect.sleep("100 millis")
-              const removed = yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
-                method: "DELETE",
-                headers,
-              })
-              yield* Effect.sleep("500 millis")
-              return removed
-            }),
-          ],
-          { concurrency: "unbounded" },
-        )
+        const removed = yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
+          method: "DELETE",
+          headers,
+        })
         expect(removed).toBe(true)
-        expect(deleted.map((event) => event.type)).toEqual(["session.next.deleted"])
-        expect(deleted[0]?.durable?.version).toBe(1)
+
+        // Task 1's purge-before-publish reorder (caf3fb6) makes the Deleted
+        // event the aggregate's only remaining row at seq 0: the purge removes
+        // the history rows AND the sequence row, so the publish recomputes seq 0.
+        // The durable stream cannot deliver it — its cursor is strictly
+        // greater-than (`gt(seq, after)`, packages/core/src/event.ts), so any
+        // subscriber whose read has already seen seq 0 skips the tombstone —
+        // observe the tombstone directly instead (the pattern of
+        // packages/core/test/session-remove.test.ts).
+        const { db } = yield* Database.Service
+        const rows = yield* db
+          .select()
+          .from(EventTable)
+          .where(eq(EventTable.aggregate_id, parent.id))
+          .all()
+          .pipe(Effect.orDie)
+        expect(rows).toHaveLength(1)
+        expect(rows[0]!.type).toBe(EventV2.versionedType(SessionEvent.Deleted.type, 1))
 
         const parentGone = yield* request(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers })
         expect(parentGone.status).toBe(404)

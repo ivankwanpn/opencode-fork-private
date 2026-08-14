@@ -15,6 +15,7 @@ import { PINCH_ZOOM_ENABLED_KEY, WINDOW_IDS_KEY } from "./store-keys"
 import { createUnresponsiveSampler } from "./unresponsive"
 import { createWindowRegistry } from "./window-registry"
 import { safeWindowURL } from "./window-state"
+import { decideZoomAction } from "./zoom-policy"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -61,8 +62,6 @@ const registry = createWindowRegistry<BrowserWindow>({
   },
 })
 const titlebarHeight = 40
-const maxZoomLevel = 10
-const minZoomLevel = 0.2
 
 export function setRelaunchHandler(handler: () => void) {
   relaunchHandler = handler
@@ -482,20 +481,16 @@ function isRendererUrl(value?: string, html = false) {
 function wireZoom(win: BrowserWindow) {
   pinchZoomEnabled.set(win, getPinchZoomEnabled())
   win.webContents.setZoomFactor(1)
-  win.webContents.on("zoom-changed", (event, zoomDirection) => {
+  win.webContents.on("zoom-changed", (event) => {
     event.preventDefault()
-    if (pinchZoomEnabled.get(win)) {
-      win.webContents.setZoomFactor(clampZoom(win.webContents.getZoomFactor() + (zoomDirection === "in" ? 0.2 : -0.2)))
-      updateZoom(win)
-      return
-    }
-    if (win.webContents.getZoomFactor() !== 1) win.webContents.setZoomFactor(1)
+    // While pinch zoom is enabled the renderer's wheel listener owns the
+    // change through the set-zoom-factor IPC path, so the main process only
+    // blocks Electron's default zoom handling. While disabled at factor 1
+    // there is nothing to correct. Only a drifted factor is reset here.
+    if (decideZoomAction(pinchZoomEnabled.get(win) ?? false, win.webContents.getZoomFactor()) !== "reset") return
+    win.webContents.setZoomFactor(1)
     updateZoom(win)
   })
-}
-
-function clampZoom(value: number) {
-  return Math.min(Math.max(value, minZoomLevel), maxZoomLevel)
 }
 
 function updateZoom(win: BrowserWindow) {

@@ -166,7 +166,7 @@ const LIGHT_VARS = `
     --oc-shadow: 0 16px 48px -6px rgba(0,0,0,.10), 0 6px 12px -2px rgba(0,0,0,.05), 0 1px 2px rgba(0,0,0,.06);`
 
 const DARK_VARS = `
-    --oc-bg: #101010;
+    --oc-bg: #121212;
     --oc-card: #161616;
     --oc-text-strong: rgba(255,255,255,.936);
     --oc-text-base: rgba(255,255,255,.618);

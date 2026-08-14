@@ -26,4 +26,14 @@ describe("OauthCallbackPage", () => {
     expect(html).toContain(`xAI\\u003c/script>\\u003cscript>alert(\\\"provider\\\")\\u003c/script>`)
     expect(html).toContain(`/token\\u003c/script>\\u003cscript>alert(\\\"path\\\")\\u003c/script>`)
   })
+
+  test("light page background matches the resolved OC-2 background", () => {
+    const html = OauthCallbackPage.success({ provider: "MCP" })
+    expect(html).toContain("--oc-bg: #f8f8f8")
+  })
+
+  test("dark page background matches the resolved OC-2 background", () => {
+    const html = OauthCallbackPage.success({ provider: "MCP" })
+    expect(html).toContain("--oc-bg: #121212")
+  })
 })

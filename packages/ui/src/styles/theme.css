@@ -362,7 +362,7 @@
     --text-mix-blend-mode: plus-lighter;
 
     /* OC-2 fallback variables (dark) */
-    --background-base: #101010;
+    --background-base: #121212;
     --background-weak: #1e1e1e;
     --background-strong: #121212;
     --background-stronger: #151515;

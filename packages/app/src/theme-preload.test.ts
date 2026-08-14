@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test } from "bun:test"
 
 const src = await Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text()
 
+const css = await Bun.file(new URL("../../ui/src/styles/theme.css", import.meta.url)).text()
+
 const run = () => Function(src)()
 
 beforeEach(() => {
@@ -66,5 +68,17 @@ describe("first-frame background", () => {
     expect(document.documentElement.dataset.colorScheme).toBe("dark")
     expect(document.documentElement.style.backgroundColor).toBe("#121212")
     expect(document.querySelector("meta[name='theme-color']")?.getAttribute("content")).toBe("#121212")
+  })
+})
+
+describe("theme css fallbacks", () => {
+  test("light background-base fallback matches the resolved OC-2 background", () => {
+    expect(css.match(/--background-base:\s*([^;]+);/)?.[1]).toBe("#f8f8f8")
+  })
+
+  test("dark background-base fallback matches the resolved OC-2 background", () => {
+    expect(
+      css.match(/\/\* OC-2 fallback variables \(dark\) \*\/[\s\S]*?--background-base:\s*([^;]+);/)?.[1],
+    ).toBe("#121212")
   })
 })

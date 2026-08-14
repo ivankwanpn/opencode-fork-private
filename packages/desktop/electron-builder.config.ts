@@ -45,12 +45,16 @@ const config: Configuration = {
   extraMetadata: {
     desktopName: `${appId}.desktop`,
   },
-  files: ["out/**/*", "resources/**/*"],
+  files: ["out/**/*", "resources/**/*", "!resources/icons/**"],
   extraResources: [
     {
       from: "native/",
       to: "native/",
       filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
+    },
+    {
+      from: "resources/icons",
+      to: "icons",
     },
   ],
   mac: {

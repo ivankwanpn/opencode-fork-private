@@ -22,6 +22,17 @@ test("does not emit updater metadata", async () => {
   expect(config.win?.verifyUpdateCodeSignature).toBeUndefined()
 })
 
+test("ships window icons outside the app archive", async () => {
+  const module = await import("./electron-builder.config.ts?icons")
+  const config = module.default as Configuration
+
+  expect(config.files).toContain("!resources/icons/**")
+  expect(config.extraResources).toContainEqual({
+    from: "resources/icons",
+    to: "icons",
+  })
+})
+
 test("keeps a hidden prod launcher for old Linux pins", async () => {
   const module = await import("./electron-builder.config.ts?compat")
   const config = module.default as Configuration

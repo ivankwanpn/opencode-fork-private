@@ -540,7 +540,11 @@ const layer = Layer.effect(
         // and re-read the table — with the old order a slow subscriber could
         // re-read an empty aggregate and miss the deletion (remote share
         // revocation depends on this event being durably observable).
-        yield* events.remove(sessionID)
+        // The sequence row is retained (keepSequence) so the tombstone takes
+        // the aggregate's NEXT seq: durable subscribers whose cursors already
+        // saw the pre-delete history re-read strictly-greater seqs, so a
+        // re-landed seq-0 tombstone would be missed.
+        yield* events.remove(sessionID, { keepSequence: true })
         yield* events.publish(
           SessionEvent.Deleted,
           { timestamp, sessionID, info: rowToSnapshot(row) },

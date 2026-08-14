@@ -151,7 +151,7 @@ export interface Interface {
     events: SerializedEvent[],
     options?: { readonly publish?: boolean; readonly ownerID?: string; readonly strictOwner?: boolean },
   ) => Effect.Effect<string | undefined>
-  readonly remove: (aggregateID: string) => Effect.Effect<void>
+  readonly remove: (aggregateID: string, options?: { readonly keepSequence?: boolean }) => Effect.Effect<void>
   readonly claim: (aggregateID: string, ownerID: string) => Effect.Effect<void>
 }
 
@@ -550,10 +550,18 @@ export const layerWith = (options?: LayerOptions) =>
         })
       }
 
-      function remove(aggregateID: string) {
+      function remove(aggregateID: string, options?: { readonly keepSequence?: boolean }) {
         return db
           .transaction(() =>
             Effect.gen(function* () {
+              // keepSequence retains the sequence row so a follow-up publish
+              // lands at the aggregate's next seq — durable subscribers whose
+              // cursors already saw the pre-delete history re-read strictly
+              // greater seqs and would miss a re-landed seq-0 event.
+              if (options?.keepSequence === true) {
+                yield* db.delete(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).run()
+                return
+              }
               yield* db.delete(EventSequenceTable).where(eq(EventSequenceTable.aggregate_id, aggregateID)).run()
               yield* db.delete(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).run()
             }),

@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { and, eq } from "drizzle-orm"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer, Stream } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -56,6 +56,35 @@ describe("SessionV2 remove", () => {
 
       const sessionRows = yield* db.select().from(SessionTable).where(eq(SessionTable.id, created.id)).all().pipe(Effect.orDie)
       expect(sessionRows).toHaveLength(0)
+    }),
+  )
+
+  it.live("delivers the deleted tombstone to durable subscribers", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const created = yield* session.create({ location })
+
+      // Subscribes at after: 0, mimicking a subscriber that already saw the
+      // aggregate's pre-delete history: the durable stream re-reads strictly
+      // greater seqs, so the tombstone must land at the next seq to be seen.
+      const fiber = yield* session
+        .events({ sessionID: created.id, after: 0 })
+        .pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.timeout("2 seconds"),
+          Effect.catchTag("TimeoutError", () =>
+            Effect.die(new Error(`deleted tombstone not delivered to the durable stream (aggregate ${created.id})`)),
+          ),
+          Effect.forkScoped,
+        )
+      yield* Effect.sleep(50)
+      yield* session.remove(created.id)
+
+      const collected = Array.from(yield* Fiber.join(fiber))
+      expect(collected).toHaveLength(1)
+      expect(collected[0]!.type).toBe("session.next.deleted")
+      expect(collected[0]!.durable?.version).toBe(1)
     }),
   )
 })

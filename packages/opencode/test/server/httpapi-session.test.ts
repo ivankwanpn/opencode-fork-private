@@ -2810,4 +2810,24 @@ describe("session HttpApi", () => {
       }),
   )
 
+  it.instance(
+    "create titles child sessions with the V1 child prefix",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "parent" }),
+        })
+        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ parentID: parent.id }),
+        })
+        expect(child.title.startsWith("Child session - ")).toBe(true)
+      }),
+  )
+
 })

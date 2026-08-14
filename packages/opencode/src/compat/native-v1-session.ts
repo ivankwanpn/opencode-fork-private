@@ -75,7 +75,7 @@ export function legacySessionFromV2(info: SessionSchema.Info): LegacySession.Inf
         : {
             id: ModelV2.ID.make(info.model.id),
             providerID: ProviderV2.ID.make(info.model.providerID),
-            variant: info.model.variant,
+            variant: info.model.variant === "default" ? undefined : info.model.variant,
             protocol: info.model.protocol,
           },
     version: "2",

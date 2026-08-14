@@ -312,7 +312,11 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const workspaceID = yield* InstanceState.workspaceID
       const created = yield* canonical.create({
         ...(payload?.parentID === undefined ? {} : { parentID: SessionV2.ID.make(payload.parentID) }),
-        ...(payload?.title === undefined ? {} : { title: payload.title }),
+        ...(payload?.title === undefined
+          ? payload?.parentID === undefined
+            ? {}
+            : { title: `Child session - ${new Date().toISOString()}` }
+          : { title: payload.title }),
         ...(payload?.agent === undefined ? {} : { agent: AgentV2.ID.make(payload.agent) }),
         ...(payload?.model === undefined
           ? {}

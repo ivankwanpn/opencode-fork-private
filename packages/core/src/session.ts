@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, isNull, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gte, gt, isNull, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { AgentV2 } from "./agent"
 import { WorkspaceV2 } from "./workspace"
@@ -65,6 +65,8 @@ const ListInputBase = {
   search: Schema.String.pipe(Schema.optional),
   limit: PositiveInt.pipe(Schema.optional),
   order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
+  orderBy: Schema.Literals(["created", "updated"]).pipe(Schema.optional),
+  start: Schema.Finite.pipe(Schema.optional),
   parentID: Schema.NullOr(SessionSchema.ID).pipe(Schema.optional),
   anchor: ListAnchor.pipe(Schema.optional),
 }
@@ -78,6 +80,7 @@ const ListProjectInput = Schema.Struct({
   ...ListInputBase,
   project: ProjectV2.ID,
   subpath: RelativePath.pipe(Schema.optional),
+  directory: AbsolutePath.pipe(Schema.optional),
 })
 
 const ListAllInput = Schema.Struct(ListInputBase)
@@ -543,15 +546,28 @@ const layer = Layer.effect(
         const direction = input.anchor?.direction ?? "next"
         const requestedOrder = input.order ?? "desc"
         const order = direction === "previous" ? (requestedOrder === "asc" ? "desc" : "asc") : requestedOrder
-        const sortColumn = SessionTable.time_created
+        const sortColumn = input.orderBy === "updated" ? SessionTable.time_updated : SessionTable.time_created
         const conditions: SQL[] = []
-        if ("directory" in input) conditions.push(eq(SessionTable.directory, input.directory))
-        if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
         if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
+        if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
+        if ("project" in input && input.subpath !== undefined) {
+          // V1 parity: an empty path disables both the path and directory filters.
+          if (input.subpath !== "") {
+            const pathConditions = [eq(SessionTable.path, input.subpath), like(SessionTable.path, `${input.subpath}/%`)]
+            conditions.push(
+              input.directory !== undefined
+                ? or(...pathConditions, and(or(isNull(SessionTable.path), eq(SessionTable.path, "")), eq(SessionTable.directory, input.directory))!)!
+                : or(...pathConditions)!,
+            )
+          }
+        } else if ("directory" in input && input.directory !== undefined) {
+          conditions.push(eq(SessionTable.directory, input.directory))
+        }
         if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
         if (input.parentID === null) conditions.push(isNull(SessionTable.parent_id))
         if (input.parentID !== undefined && input.parentID !== null)
           conditions.push(eq(SessionTable.parent_id, input.parentID))
+        if (input.start !== undefined) conditions.push(gte(SessionTable.time_updated, input.start))
         if (input.anchor) {
           conditions.push(
             order === "asc"

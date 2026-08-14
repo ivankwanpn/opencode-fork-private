@@ -6,6 +6,10 @@ import { resolveChannel } from "../script/src/channel.ts"
 
 const theme = fileURLToPath(new URL("./public/oc-theme-preload.js", import.meta.url))
 
+// Matches both Vite entry forms: /oc-theme-preload.js (packages/app) and
+// ./oc-theme-preload.js (packages/desktop renderer).
+const themePreloadTag = /<script id="oc-theme-preload-script" src="\.?\/oc-theme-preload\.js"><\/script>/
+
 const channel = resolveChannel()
 
 
@@ -40,7 +44,7 @@ export default [
     name: "opencode-desktop:theme-preload",
     transformIndexHtml(html) {
       return html.replace(
-        '<script id="oc-theme-preload-script" src="/oc-theme-preload.js"></script>',
+        themePreloadTag,
         `<script id="oc-theme-preload-script">${readFileSync(theme, "utf8")}</script>`,
       )
     },

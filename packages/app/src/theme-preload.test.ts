@@ -44,3 +44,27 @@ describe("theme preload", () => {
     expect(document.getElementById("oc-theme-preload")?.textContent).toContain("--background-base:#fff;")
   })
 })
+
+describe("first-frame background", () => {
+  test("light mode paints the resolved OC-2 background", () => {
+    document.head.innerHTML = '<meta name="theme-color" content="#fafafa" />'
+    localStorage.setItem("opencode-color-scheme", "light")
+
+    run()
+
+    expect(document.documentElement.dataset.colorScheme).toBe("light")
+    expect(document.documentElement.style.backgroundColor).toBe("#f8f8f8")
+    expect(document.querySelector("meta[name='theme-color']")?.getAttribute("content")).toBe("#f8f8f8")
+  })
+
+  test("dark mode paints the resolved OC-2 background", () => {
+    document.head.innerHTML = '<meta name="theme-color" content="#fafafa" />'
+    localStorage.setItem("opencode-color-scheme", "dark")
+
+    run()
+
+    expect(document.documentElement.dataset.colorScheme).toBe("dark")
+    expect(document.documentElement.style.backgroundColor).toBe("#121212")
+    expect(document.querySelector("meta[name='theme-color']")?.getAttribute("content")).toBe("#121212")
+  })
+})

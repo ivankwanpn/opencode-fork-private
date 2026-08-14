@@ -10,13 +10,13 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { toV2Rules } from "@opencode-ai/core/session/info"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
+import { BackgroundJob } from "@/background/job"
 import { Config } from "@/config/config"
 import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { SessionShare } from "@/share/session"
 import { ShareNext } from "@/share/share-next"
 import { LegacySessionExecution } from "@/session/legacy-session-execution"
-import { LegacySessionRead } from "@/session/legacy-session-read"
-import { Session } from "@/session/session"
+import { Session, cancelBackgroundJobs } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
@@ -138,8 +138,6 @@ const toCanonicalPrompt = (input: typeof PromptPayload.Type): PromptInput.Prompt
 
 export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", (handlers) =>
   Effect.gen(function* () {
-    const session = yield* Session.Service
-    const sessionRead = yield* LegacySessionRead.Service
     const sessionExecution = yield* LegacySessionExecution.Service
     const shareSvc = yield* SessionShare.Service
     const revertSvc = yield* SessionV2.Service
@@ -376,7 +374,15 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const remove = Effect.fn("SessionHttpApi.remove")(function* (ctx: { params: { sessionID: SessionID } }) {
-      yield* SessionError.mapStorageNotFound(session.remove(ctx.params.sessionID))
+      const hasInstance = yield* InstanceState.context.pipe(
+        Effect.as(true),
+        Effect.catchCause(() => Effect.succeed(false)),
+      )
+      if (hasInstance) {
+        const background = yield* BackgroundJob.Service
+        yield* cancelBackgroundJobs(background, ctx.params.sessionID)
+      }
+      yield* canonical.remove(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
       return true
     })
 
@@ -413,12 +419,19 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload?: typeof ForkPayload.Type
     }) {
-      return yield* SessionError.mapStorageNotFound(
-        session.fork({
-          sessionID: ctx.params.sessionID,
-          messageID: ctx.payload?.messageID,
-        }),
+      const sessionID = SessionV2.ID.make(ctx.params.sessionID)
+      const history = yield* canonical.messages({ sessionID, order: "asc" }).pipe(
+        Effect.catchTag("Session.MessageDecodeError", Effect.die),
+        SessionError.mapSessionNotFound,
       )
+      const cutoff = ctx.payload?.messageID
+      const forked = yield* canonical
+        .fork({
+          sessionID,
+          messages: cutoff === undefined ? history : history.filter((message) => String(message.id) < String(cutoff)),
+        })
+        .pipe(SessionError.mapSessionNotFound)
+      return yield* requireSession(SessionID.make(forked.id))
     })
 
     const forkRaw = Effect.fn("SessionHttpApi.forkRaw")(function* (ctx: {

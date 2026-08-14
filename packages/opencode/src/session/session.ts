@@ -785,7 +785,7 @@ const layer: Layer.Layer<
   }),
 )
 
-const cancelBackgroundJobs = Effect.fn("Session.cancelBackgroundJobs")(function* (
+export const cancelBackgroundJobs = Effect.fn("Session.cancelBackgroundJobs")(function* (
   background: BackgroundJob.Interface,
   sessionID: SessionID,
 ) {

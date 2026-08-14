@@ -6,6 +6,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { Cause, Config, Effect, Exit, Layer } from "effect"
+import * as Stream from "effect/Stream"
 import { HttpClient, HttpClientRequest, HttpClientResponse, HttpRouter, HttpServer } from "effect/unstable/http"
 import { layerWebSocketConstructorGlobal } from "effect/unstable/socket/Socket"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -2590,6 +2591,88 @@ describe("session HttpApi", () => {
         expect(v2Rows.length).toBe(1)
         expect(v1Rows.length).toBe(0)
         expect(created.title).toBe("created")
+      }),
+  )
+
+  it.instance(
+    "remove persists through canonical V2 events and cleans up children",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const canonical = yield* SessionV2.Service
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "parent" }),
+        })
+        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "child", parentID: parent.id }),
+        })
+
+        // The Deleted event is published to the in-process durable stream before
+        // V2Session.remove purges the aggregate's event rows, so a subscriber
+        // registered before the DELETE deterministically receives it.
+        const [deleted, removed] = yield* Effect.all(
+          [
+            canonical
+              .events({ sessionID: SessionV2.ID.make(parent.id), after: 0 })
+              .pipe(
+                Stream.takeUntil((event) => event.type === "session.next.deleted"),
+                Stream.runCollect,
+                Effect.timeout("5 seconds"),
+                Effect.catchCause(() => Effect.succeed([])),
+              ),
+            Effect.gen(function* () {
+              yield* Effect.sleep("100 millis")
+              const removed = yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
+                method: "DELETE",
+                headers,
+              })
+              yield* Effect.sleep("500 millis")
+              return removed
+            }),
+          ],
+          { concurrency: "unbounded" },
+        )
+        expect(removed).toBe(true)
+        expect(deleted.map((event) => event.type)).toEqual(["session.next.deleted"])
+        expect(deleted[0]?.durable?.version).toBe(1)
+
+        const parentGone = yield* request(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers })
+        expect(parentGone.status).toBe(404)
+        const childGone = yield* request(pathFor(SessionPaths.get, { sessionID: child.id }), { headers })
+        expect(childGone.status).toBe(404)
+      }),
+  )
+
+  it.instance(
+    "fork cuts the canonical transcript at the given message",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "fork source" }),
+        })
+        const first = yield* insertCanonicalUserMessage(parent.id, "hello", 1)
+        const second = yield* insertCanonicalUserMessage(parent.id, "world", 2)
+
+        const forked = yield* requestJson<Session.Info>(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ messageID: second.id }),
+        })
+        expect(forked.id).not.toBe(parent.id)
+
+        const canonical = yield* SessionV2.Service
+        const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
+        expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
+        expect(messages.length).toBe(1)
       }),
   )
 

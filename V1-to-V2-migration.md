@@ -331,6 +331,14 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > 扩展随 consumer 需求进行），再移除对应 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
+>
+> ✅ **本輪 httpapi session CRUD 遷移（999.0.17）**：
+> - 實驗性 httpapi 的 list/get/children/create/remove/update/fork 與 requireSession 全部改走 `SessionV2.Service`；handler 不再 resolve V1 `Session.Service`，`LegacySessionRead` 的 httpapi 引用已移除。
+> - 響應保留 V1 `Session.Info` wire 形狀，經 compat 層新增的純投影 `legacySessionFromV2`（`compat/native-v1-session.ts`，無任何 storage 讀取）；`summary`/`permission` 不在 V2 公共 Info 中，響應不再攜帶（與 production server 面一致），契約測試已同步。
+> - `SessionV2.list` 擴充 `orderBy: "updated"`、`start`（time_updated >=）、`subpath` 前綴過濾與 pathless-directory fallback，完整覆蓋原 V1 list 的 directory/scope/path/roots/start/search/limit 語義。
+> - create 走 `SessionV2.create`，auto-share 門檻（`flags.autoShare || conf.share === "auto"`，子 session 跳過）內聯至 handler；`SessionShare.create`（V1 wrapper）已移除，share/unshare 端點保留待後續批次。
+> - update 走 `SessionV2.update` + `permissions`/`setPermissions`（permission 合併語義不變）；remove 走 `SessionV2.remove`（遞迴子 session）+ 保留 background-job 取消；fork 直接讀取 canonical V2 messages 並以 `SessionV2.fork` 複製（無 V2→V1→V2 往返）。
+> - 剩餘 `Session.Service` consumer（stats/share sync/experimental list/CLI/TUI/sync/legacy execution/GitHub/task/code-mode 等）留待後續批次。
 
 ### 批次 9：全量 V2-only regression gate
 

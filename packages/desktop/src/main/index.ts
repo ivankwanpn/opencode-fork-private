@@ -5,9 +5,9 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
-import { app, session } from "electron"
+import { app, dialog, session } from "electron"
 
-import { Deferred, Effect, Fiber } from "effect"
+import { Deferred, Effect } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
@@ -15,7 +15,7 @@ import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { applyGlobalProxy } from "./global-proxy"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
-import { forwardInitializationFailure } from "./initialization"
+import { formatStartupFailure, forwardInitializationFailure, restoreAndAwaitStartup } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
@@ -406,20 +406,26 @@ const main = Effect.gen(function* () {
     logger.log("loading task finished")
   }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)
 
-  yield* Fiber.await(loadingTask)
-
-  const windows = restoreMainWindows()
-  if (windows.length) {
-    createMenu({
-      trigger: (id) => {
-        const win = getLastFocusedWindow()
-        if (win) sendMenuCommand(win, id)
-      },
-      relaunch: () => {
-        relaunch()
-      },
-    })
-  }
+  yield* restoreAndAwaitStartup(loadingTask, {
+    restore: () => {
+      const windows = restoreMainWindows()
+      if (windows.length) {
+        createMenu({
+          trigger: (id) => {
+            const win = getLastFocusedWindow()
+            if (win) sendMenuCommand(win, id)
+          },
+          relaunch: () => {
+            relaunch()
+          },
+        })
+      }
+    },
+    onFailure: (error) => {
+      dialog.showErrorBox("OpenCode failed to start", formatStartupFailure(error))
+      app.quit()
+    },
+  })
 })
 
 Effect.runFork(main)

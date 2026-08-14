@@ -46,6 +46,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
 import { and, eq } from "drizzle-orm"
+import { EventTable } from "@opencode-ai/core/event/sql"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
@@ -2487,6 +2488,43 @@ describe("session HttpApi", () => {
         expect(Object.hasOwn(fetched, "summary")).toBe(false)
       }),
     { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "update persists through canonical V2 events only",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const { db } = yield* Database.Service
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "before" }),
+        })
+
+        yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ title: "after", metadata: { a: 1 } }),
+        })
+
+        const v2Rows = yield* db
+          .select()
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
+          .all()
+          .pipe(Effect.orDie)
+        const v1Rows = yield* db
+          .select()
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.updated.1")))
+          .all()
+          .pipe(Effect.orDie)
+
+        expect(v2Rows.length).toBe(1)
+        expect(v1Rows.length).toBe(0)
+      }),
   )
 
 })

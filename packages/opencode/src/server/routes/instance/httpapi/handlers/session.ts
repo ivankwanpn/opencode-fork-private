@@ -8,9 +8,9 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { toV2Rules } from "@opencode-ai/core/session/info"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { legacySessionFromV2 } from "@/compat/native-v1-session"
-import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
 import { LegacySessionExecution } from "@/session/legacy-session-execution"
 import { LegacySessionRead } from "@/session/legacy-session-read"
@@ -336,21 +336,27 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload: typeof UpdatePayload.Type
     }) {
-      const current = yield* requireSession(ctx.params.sessionID)
-      if (ctx.payload.title !== undefined) {
-        yield* session.setTitle({ sessionID: ctx.params.sessionID, title: ctx.payload.title })
+      const sessionID = SessionV2.ID.make(ctx.params.sessionID)
+      yield* requireSession(ctx.params.sessionID)
+      const payload = ctx.payload
+      if (payload.title !== undefined || payload.metadata !== undefined || payload.time?.archived !== undefined) {
+        yield* canonical
+          .update({
+            sessionID,
+            ...(payload.title === undefined ? {} : { title: payload.title }),
+            ...(payload.metadata === undefined ? {} : { metadata: payload.metadata }),
+            ...(payload.time?.archived === undefined ? {} : { archived: DateTime.makeUnsafe(payload.time.archived) }),
+          })
+          .pipe(SessionError.mapSessionNotFound)
       }
-      if (ctx.payload.metadata !== undefined) {
-        yield* session.setMetadata({ sessionID: ctx.params.sessionID, metadata: ctx.payload.metadata })
-      }
-      if (ctx.payload.permission !== undefined) {
-        yield* session.setPermission({
-          sessionID: ctx.params.sessionID,
-          permission: Permission.merge(current.permission ?? [], ctx.payload.permission),
-        })
-      }
-      if (ctx.payload.time?.archived !== undefined) {
-        yield* session.setArchived({ sessionID: ctx.params.sessionID, time: ctx.payload.time.archived })
+      if (payload.permission !== undefined) {
+        const current = yield* canonical.permissions(sessionID).pipe(SessionError.mapSessionNotFound)
+        // V1 merged the current rules with the payload via Permission.merge,
+        // which is flat concatenation; the V2 column shape concatenates the
+        // same way (last-match-wins at evaluation time).
+        yield* canonical
+          .setPermissions({ sessionID, permissions: [...current, ...toV2Rules(payload.permission)] })
+          .pipe(SessionError.mapSessionNotFound)
       }
       return yield* requireSession(ctx.params.sessionID)
     })

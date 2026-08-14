@@ -2612,6 +2612,10 @@ describe("session HttpApi", () => {
           body: JSON.stringify({ title: "child", parentID: parent.id }),
         })
 
+        // Determinism basis for `after: 0`: a fresh aggregate's event sequence
+        // starts at 0 (the created event sits at seq 0), so `after: 0` excludes
+        // that historical created event, and the wake-then-reread delivers the
+        // just-published deleted event synchronously before the purge.
         // The Deleted event is published to the in-process durable stream before
         // V2Session.remove purges the aggregate's event rows, so a subscriber
         // registered before the DELETE deterministically receives it.

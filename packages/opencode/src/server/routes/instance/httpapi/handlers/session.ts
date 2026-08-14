@@ -182,7 +182,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         ...(query.roots === undefined ? {} : { parentID: query.roots ? null : undefined }),
         ...(query.start === undefined ? {} : { start: query.start }),
         ...(query.search === undefined ? {} : { search: query.search }),
-        ...(query.limit === undefined ? {} : { limit: query.limit }),
+        ...(query.limit === undefined ? { limit: 100 } : { limit: query.limit }),
       }
       const items = yield* canonical.list(input)
       return items.map(legacySessionFromV2)

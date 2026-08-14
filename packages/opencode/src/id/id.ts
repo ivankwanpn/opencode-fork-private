@@ -23,7 +23,12 @@ export function ascending(prefix: keyof typeof prefixes, given?: string) {
   return generateID(prefix, "ascending", given)
 }
 
-/** Ascend only when the given ID already carries the expected prefix; otherwise return it unchanged. */
+/**
+ * Ascend only when the given ID already carries the expected prefix; otherwise return it unchanged.
+ * Currently a pass-through identity function: generateID returns any prefixed ID verbatim, so the
+ * bridge call sites never rewrite canonical IDs today. If generateID later re-stamps IDs, these
+ * call sites would silently rewrite canonical IDs, so this pass-through is load-bearing.
+ */
 export function ascendingOr(prefix: keyof typeof prefixes, given: string) {
   return given.startsWith(prefixes[prefix]) ? ascending(prefix, given) : given
 }

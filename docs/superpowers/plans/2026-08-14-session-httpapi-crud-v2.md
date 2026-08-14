@@ -223,7 +223,13 @@ In `packages/core/src/session.ts` replace the condition-building portion of the 
             const pathConditions = [eq(SessionTable.path, input.subpath), like(SessionTable.path, `${input.subpath}/%`)]
             conditions.push(
               input.directory !== undefined
-                ? or(...pathConditions, and(isNull(SessionTable.path), eq(SessionTable.directory, input.directory))!)!
+                ? or(
+                    ...pathConditions,
+                    // Pathless rows are "" in the V2 world (prepareLocation writes the
+                    // empty subpath for workspace-less locations) and NULL in legacy V1
+                    // rows — the fallback must match both.
+                    and(or(isNull(SessionTable.path), eq(SessionTable.path, "")), eq(SessionTable.directory, input.directory))!,
+                  )!
                 : or(...pathConditions)!,
             )
           }

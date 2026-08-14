@@ -10,7 +10,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { Provider } from "@/provider/provider"
 
 import { Session } from "@/session/session"
-import type { SessionID } from "@/session/schema"
+import { SessionID } from "@/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { eq } from "drizzle-orm"
 import { Config } from "@/config/config"
@@ -18,7 +18,7 @@ import { SessionShareTable } from "@opencode-ai/core/share/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { EventV2 } from "@opencode-ai/core/event"
-import { SessionEvent } from "@opencode-ai/schema/session-event"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 
 const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
 
@@ -254,6 +254,10 @@ const layer = Layer.effect(
           sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
         )
         yield* watch(Session.Event.Deleted, (data) => remove(data.sessionID))
+        // V2 removes publish session.next.deleted (the V1 producers are being
+        // migrated away); watch it directly so remote shares are revoked before
+        // the local session_share row cascades away with the session.
+        yield* watch(SessionEvent.Deleted, (data) => remove(SessionID.make(data.sessionID)))
 
         return cache
       }),

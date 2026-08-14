@@ -2,6 +2,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { afterEach, describe, expect } from "bun:test"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { Cause, Config, Effect, Exit, Layer } from "effect"
@@ -63,6 +64,7 @@ const appLayer = AppNodeBuilder.build(
     InstanceStore.node,
     Project.node,
     Session.node,
+    SessionV2.node,
     Workspace.node,
     Database.node,
     Ripgrep.node,
@@ -2524,6 +2526,38 @@ describe("session HttpApi", () => {
 
         expect(v2Rows.length).toBe(1)
         expect(v1Rows.length).toBe(0)
+      }),
+  )
+
+  it.instance(
+    "update merges V1 permission payloads into the canonical V2 column",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "perm" }),
+        })
+
+        yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ permission: [{ permission: "bash", pattern: "*", action: "allow" }] }),
+        })
+        yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ permission: [{ permission: "bash", pattern: "src/**", action: "deny" }] }),
+        })
+
+        const canonical = yield* SessionV2.Service
+        const stored = yield* canonical.permissions(SessionV2.ID.make(created.id))
+        expect(stored).toEqual([
+          { action: "bash", resource: "*", effect: "allow" },
+          { action: "bash", resource: "src/**", effect: "deny" },
+        ])
       }),
   )
 

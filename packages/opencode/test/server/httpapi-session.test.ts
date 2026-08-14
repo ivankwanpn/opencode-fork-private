@@ -28,6 +28,7 @@ import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/se
 import { Session } from "@/session/session"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
+import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { BackgroundJob as InstanceBackgroundJob } from "../../src/background/job"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -2712,6 +2713,100 @@ describe("session HttpApi", () => {
         // packages/core/src/background-job.ts), so assert the child's job is
         // no longer running, which is exactly what cancelBackgroundJobs acts on.
         expect(jobs.some((job) => job.id === childJobID && job.status === "running")).toBe(false)
+      }),
+  )
+
+  it.instance(
+    "create stores the payload workspaceID over the routed one",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const { db } = yield* Database.Service
+
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "ws", workspaceID: "wrk_payload" }),
+        })
+        expect(created.id).toBeTruthy()
+
+        const row = yield* db
+          .select({ workspace_id: SessionTable.workspace_id })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, created.id))
+          .get()
+          .pipe(Effect.orDie)
+        expect(row?.workspace_id).toBe(WorkspaceV2.ID.make("wrk_payload"))
+      }),
+  )
+
+  it.instance(
+    "fork cuts the transcript at the cutoff's transcript index",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "fork source" }),
+        })
+        // insertCanonicalUserMessage forces ascending IDs (SessionMessage.ID.create
+        // encodes the creation timestamp), which would make the lexicographic
+        // cutoff filter agree with transcript order — so seed SessionMessageTable
+        // rows directly with explicit ids whose lexical order is the reverse of
+        // the transcript order (mirrors the insert helper's row shape).
+        const { db } = yield* Database.Service
+        const seed = (id: string, text: string, seq: number, time: number) =>
+          db
+            .insert(SessionMessageTable)
+            .values({
+              id: SessionMessage.ID.make(id),
+              session_id: parent.id,
+              type: "user",
+              seq,
+              time_created: time,
+              data: {
+                text,
+                time: { created: time },
+              } as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+            })
+            .run()
+            .pipe(Effect.orDie)
+        yield* seed("msg_zzz", "hello", 1, 1)
+        yield* seed("msg_aaa", "world", 2, 2)
+
+        const forked = yield* requestJson<Session.Info>(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ messageID: "msg_aaa" }),
+        })
+
+        const canonical = yield* SessionV2.Service
+        const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
+        expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
+      }),
+  )
+
+  it.instance(
+    "fork rejects a cutoff that is not in the transcript",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "fork source" }),
+        })
+
+        const response = yield* request(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ messageID: "msg_nonexistent" }),
+        })
+        expect(response.status).toBe(400)
       }),
   )
 

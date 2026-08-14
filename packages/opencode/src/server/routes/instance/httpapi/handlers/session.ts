@@ -328,7 +328,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         ...(payload?.permission === undefined ? {} : { permissions: toV2Rules(payload.permission) }),
         location: Location.Ref.make({
           directory: AbsolutePath.make(ctxState.directory),
-          ...(workspaceID === undefined ? {} : { workspaceID }),
+          ...((payload?.workspaceID ?? workspaceID) === undefined
+            ? {}
+            : { workspaceID: payload?.workspaceID ?? workspaceID }),
         }),
       })
 
@@ -443,12 +445,16 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         SessionError.mapSessionNotFound,
       )
       const cutoff = ctx.payload?.messageID
-      const forked = yield* canonical
-        .fork({
-          sessionID,
-          messages: cutoff === undefined ? history : history.filter((message) => String(message.id) < String(cutoff)),
-        })
-        .pipe(SessionError.mapSessionNotFound)
+      let messages = history
+      if (cutoff !== undefined) {
+        // Cut at the cutoff's TRANSCRIPT index (ruling 3): the old lexicographic
+        // filter could copy an arbitrary subset when imported IDs sort outside
+        // transcript order. An unknown cutoff is a client error.
+        const index = history.findIndex((message) => String(message.id) === String(cutoff))
+        if (index < 0) return yield* new HttpApiError.BadRequest({})
+        messages = history.slice(0, index)
+      }
+      const forked = yield* canonical.fork({ sessionID, messages }).pipe(SessionError.mapSessionNotFound)
       return yield* requireSession(SessionID.make(forked.id))
     })
 

@@ -9,6 +9,7 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
+import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
 import { LegacySessionExecution } from "@/session/legacy-session-execution"
@@ -139,6 +140,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const sessionExecution = yield* LegacySessionExecution.Service
     const shareSvc = yield* SessionShare.Service
     const revertSvc = yield* SessionV2.Service
+    const canonical = yield* SessionV2.Service
     const runState = yield* SessionRunState.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
@@ -178,7 +180,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const requireSession = Effect.fn("SessionHttpApi.requireSession")(function* (sessionID: SessionID) {
-      return yield* SessionError.mapStorageNotFound(session.get(sessionID))
+      const info = yield* canonical.get(SessionV2.ID.make(sessionID)).pipe(SessionError.mapSessionNotFound)
+      return legacySessionFromV2(info)
     })
 
     const get = Effect.fn("SessionHttpApi.get")(function* (ctx: { params: { sessionID: SessionID } }) {
@@ -187,7 +190,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const children = Effect.fn("SessionHttpApi.children")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
-      return yield* session.children(ctx.params.sessionID)
+      const kids = yield* canonical.children(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      return kids.map(legacySessionFromV2)
     })
 
     const todo = Effect.fn("SessionHttpApi.todo")(function* (ctx: { params: { sessionID: SessionID } }) {

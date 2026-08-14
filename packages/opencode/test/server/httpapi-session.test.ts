@@ -1943,7 +1943,7 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
-    "serves sessions with migrated summary diffs missing file details",
+    "serves sessions without the V1-only summary field",
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
@@ -1955,7 +1955,9 @@ describe("session HttpApi", () => {
         })
 
         expect(response.status).toBe(200)
-        expect((yield* json<Session.Info>(response)).summary?.diffs).toEqual([{ additions: 1, deletions: 0 }])
+        // Ruling 1: summary is V1-only row data; the V2 projection omits it,
+        // matching the production server surface.
+        expect((yield* json<Session.Info>(response)).summary).toBeUndefined()
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -2457,6 +2459,32 @@ describe("session HttpApi", () => {
             .pipe(Effect.orDie),
         )
         expect(row?.data).toMatchObject({ content: [{ type: "text", id: "text_keep", text: "keep" }] })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "get serves the V2 projection of the session",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "projected", metadata: { source: "sdk" } }),
+        })
+        expect(created.id).toBeTruthy()
+
+        const fetched = yield* requestJson<Session.Info>(pathFor(SessionPaths.get, { sessionID: created.id }), {
+          headers,
+        })
+
+        expect(fetched).toMatchObject({ id: created.id, title: "projected", metadata: { source: "sdk" } })
+        expect(fetched.version).toBe("2")
+        expect(fetched.slug).toBe(created.id)
+        expect(Object.hasOwn(fetched, "permission")).toBe(false)
+        expect(Object.hasOwn(fetched, "summary")).toBe(false)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

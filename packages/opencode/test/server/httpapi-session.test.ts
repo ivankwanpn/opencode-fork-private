@@ -2561,4 +2561,36 @@ describe("session HttpApi", () => {
       }),
   )
 
+  it.instance(
+    "create persists through canonical V2 events only",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const { db } = yield* Database.Service
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "created" }),
+        })
+
+        const v2Rows = yield* db
+          .select()
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.created.1")))
+          .all()
+          .pipe(Effect.orDie)
+        const v1Rows = yield* db
+          .select()
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.created.1")))
+          .all()
+          .pipe(Effect.orDie)
+
+        expect(v2Rows.length).toBe(1)
+        expect(v1Rows.length).toBe(0)
+        expect(created.title).toBe("created")
+      }),
+  )
+
 })

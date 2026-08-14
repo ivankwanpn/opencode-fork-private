@@ -10,8 +10,10 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { toV2Rules } from "@opencode-ai/core/session/info"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
+import { Config } from "@/config/config"
 import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { SessionShare } from "@/share/session"
+import { ShareNext } from "@/share/share-next"
 import { LegacySessionExecution } from "@/session/legacy-session-execution"
 import { LegacySessionRead } from "@/session/legacy-session-read"
 import { Session } from "@/session/session"
@@ -21,9 +23,10 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
-import { DateTime, Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { InstanceState } from "@/effect/instance-state"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiError, HttpApiSchema } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
@@ -141,6 +144,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const shareSvc = yield* SessionShare.Service
     const revertSvc = yield* SessionV2.Service
     const canonical = yield* SessionV2.Service
+    const scope = yield* Scope.Scope
     const runState = yield* SessionRunState.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
@@ -305,7 +309,51 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: Session.CreateInput }) {
-      return yield* shareSvc.create(ctx.payload)
+      const payload = ctx.payload
+      const ctxState = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      const created = yield* canonical.create({
+        ...(payload?.parentID === undefined ? {} : { parentID: SessionV2.ID.make(payload.parentID) }),
+        ...(payload?.title === undefined ? {} : { title: payload.title }),
+        ...(payload?.agent === undefined ? {} : { agent: AgentV2.ID.make(payload.agent) }),
+        ...(payload?.model === undefined
+          ? {}
+          : {
+              model: {
+                id: ModelV2.ID.make(payload.model.id),
+                providerID: ProviderV2.ID.make(payload.model.providerID),
+                ...(payload.model.variant === undefined ? {} : { variant: ModelV2.VariantID.make(payload.model.variant) }),
+                ...(payload.model.protocol === undefined ? {} : { protocol: payload.model.protocol }),
+              },
+            }),
+        ...(payload?.metadata === undefined ? {} : { metadata: payload.metadata }),
+        ...(payload?.permission === undefined ? {} : { permissions: toV2Rules(payload.permission) }),
+        location: Location.Ref.make({
+          directory: AbsolutePath.make(ctxState.directory),
+          ...(workspaceID === undefined ? {} : { workspaceID }),
+        }),
+      })
+
+      if (created.parentID === undefined) {
+        const flags = yield* RuntimeFlags.Service
+        const cfg = yield* Config.Service
+        const conf = yield* cfg.get()
+        if (flags.autoShare || conf.share === "auto") {
+          // Same fire-and-forget auto-share as the removed SessionShare.create:
+          // disabled-config and share failures are logged and swallowed.
+          yield* Effect.gen(function* () {
+            const shareConf = yield* cfg.get()
+            if (shareConf.share === "disabled") return
+            const shareNext = yield* ShareNext.Service
+            const result = yield* shareNext.create(SessionID.make(created.id))
+            yield* canonical.update({ sessionID: created.id, share: { url: result.url } })
+          }).pipe(Effect.ignore, Effect.forkIn(scope))
+        }
+      }
+
+      return yield* requireSession(SessionID.make(created.id)).pipe(
+        Effect.mapError(() => new HttpApiError.BadRequest({})),
+      )
     })
 
     const createRaw = Effect.fn("SessionHttpApi.createRaw")(function* (ctx: {

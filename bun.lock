@@ -161,7 +161,7 @@
     },
     "packages/console/app": {
       "name": "@opencode-ai/console-app",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@cloudflare/vite-plugin": "1.15.2",
         "@ibm/plex": "6.4.1",
@@ -197,7 +197,7 @@
     },
     "packages/console/core": {
       "name": "@opencode-ai/console-core",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@aws-sdk/client-sts": "3.782.0",
         "@jsx-email/render": "1.1.1",
@@ -224,7 +224,7 @@
     },
     "packages/console/function": {
       "name": "@opencode-ai/console-function",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@ai-sdk/anthropic": "3.0.82",
         "@ai-sdk/openai": "3.0.48",
@@ -246,7 +246,7 @@
     },
     "packages/console/mail": {
       "name": "@opencode-ai/console-mail",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@jsx-email/all": "2.2.3",
         "@jsx-email/cli": "1.4.3",
@@ -270,7 +270,7 @@
     },
     "packages/console/support": {
       "name": "@opencode-ai/console-support",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@cloudflare/vite-plugin": "1.15.2",
         "@opencode-ai/console-core": "workspace:*",
@@ -775,7 +775,7 @@
     },
     "packages/sdk/js": {
       "name": "@opencode-ai/sdk",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "cross-spawn": "catalog:",
       },
@@ -869,7 +869,7 @@
     },
     "packages/stats/app": {
       "name": "@opencode-ai/stats-app",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@ibm/plex": "6.4.1",
         "@kobalte/core": "catalog:",
@@ -903,7 +903,7 @@
     },
     "packages/stats/core": {
       "name": "@opencode-ai/stats-core",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@aws-sdk/client-athena": "3.933.0",
         "@planetscale/database": "1.19.0",
@@ -922,7 +922,7 @@
     },
     "packages/stats/server": {
       "name": "@opencode-ai/stats-server",
-      "version": "999.0.16",
+      "version": "999.0.17",
       "dependencies": {
         "@aws-sdk/client-firehose": "3.933.0",
         "@effect/platform-node": "catalog:",

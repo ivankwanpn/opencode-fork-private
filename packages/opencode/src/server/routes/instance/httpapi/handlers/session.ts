@@ -392,6 +392,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const remove = Effect.fn("SessionHttpApi.remove")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
       const sessionID = SessionV2.ID.make(ctx.params.sessionID)
+      const descendants = yield* collectDescendants(sessionID)
       const hasInstance = yield* InstanceState.context.pipe(
         Effect.as(true),
         Effect.catchCause(() => Effect.succeed(false)),
@@ -401,10 +402,20 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         // V1 canceled jobs per session during its recursion; the V2 core
         // recursion does not know BackgroundJob, so cancel the whole subtree
         // up front (root + descendants) before the core removes it.
-        const descendants = yield* collectDescendants(sessionID)
         for (const id of [sessionID, ...descendants]) {
           yield* cancelBackgroundJobs(background, SessionID.make(id))
         }
+      }
+      // Revoke remote shares per session while the share rows still exist:
+      // the V2 event watch fires only after the in-tx cascade, so it depends
+      // on the in-memory cache; the pre-remove call has no cache dependency
+      // and is idempotent with the listener (fast no-op without a share).
+      // Failures are tolerated (Effect.ignore, the file's auto-share pattern):
+      // the endpoint cannot express a share error and the watch remains the
+      // safety net.
+      const shareNext = yield* ShareNext.Service
+      for (const id of [sessionID, ...descendants]) {
+        yield* shareNext.remove(SessionID.make(id)).pipe(Effect.ignore)
       }
       yield* canonical.remove(sessionID).pipe(SessionError.mapSessionNotFound)
       return true

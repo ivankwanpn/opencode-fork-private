@@ -342,7 +342,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 >
 > **本輪 P1/P2 修正（999.0.17）**：
 > - remove 現在先 purge 再發布 `session.next.deleted`，Deleted 事件作為 aggregate tombstone 留存，durable 訂閱的 wake-then-reread 交付變成確定性。
-> - ShareNext 直接 watch V2 `session.next.deleted`，V2 刪除會同步撤銷遠端分享（修復本地 `session_share` cascade 後遠端 URL 無法撤銷的洩漏）。
+> - remove handler 在 core 移除前逐 session（root + 後代）直接撤銷遠端分享（`ShareNext.remove` 無 cache 依賴、與 listener 冪等）；V2 `session.next.deleted` event watch 僅作為其他 remove producer 的安全網（listener 於 cascade commit 後才觸發，依賴 in-memory cache；instance 重啟後無法重建 share 記錄，屬既有 V1 行為）。
 > - remove handler 在 core 遞迴前逐 session 取消整棵子樹的 background jobs（V1 每 session 取消語義還原）。
 > - create 尊重 payload 的 `workspaceID`（`payload.workspaceID ?? routedWorkspace`）；未指定 title 的子 session 使用 V1 的 `Child session - ` 前綴。
 > - fork 改以 cutoff 的 transcript index 切割（`findIndex` + `slice`），未知 cutoff 回 400；原字典序過濾在 imported IDs 下會複製錯誤子集。

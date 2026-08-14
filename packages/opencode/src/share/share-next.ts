@@ -254,9 +254,12 @@ const layer = Layer.effect(
           sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
         )
         yield* watch(Session.Event.Deleted, (data) => remove(data.sessionID))
-        // V2 removes publish session.next.deleted (the V1 producers are being
-        // migrated away); watch it directly so remote shares are revoked before
-        // the local session_share row cascades away with the session.
+        // The V2 listener fires after the in-tx cascade commits, so this watch
+        // is the event-driven safety net for V2 remove producers outside the
+        // httpapi delete handler (which revokes directly pre-remove, while the
+        // share rows still exist). When the instance restarted between share
+        // and delete the in-memory cache is cold and this path cannot
+        // reconstruct the share record (pre-existing V1 parity).
         yield* watch(SessionEvent.Deleted, (data) => remove(SessionID.make(data.sessionID)))
 
         return cache

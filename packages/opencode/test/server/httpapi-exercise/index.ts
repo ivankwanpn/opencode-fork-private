@@ -658,12 +658,12 @@ const scenarios: Scenario[] = [
         check(auth.test === undefined, "auth remove should delete provider from isolated auth file")
       }),
     ),
-  http.protected.get("/api/health", "v2.health.get").json(200, (body) => {
+  http.public.get("/api/health", "v2.health.get").json(200, (body) => {
     object(body)
     check(body.healthy === true, "v2 server should report healthy")
     check(Number.isInteger(body.pid), "v2 server should report its process ID")
   }),
-  http.protected.get("/api/capability", "v2.capability.get").json(200, (body) => {
+  http.public.get("/api/capability", "v2.capability.get").json(200, (body) => {
     object(body)
     check(body.backgroundSubagents === true, "V2 background subagents should be enabled by default")
   }),
@@ -1186,6 +1186,22 @@ const scenarios: Scenario[] = [
     }))
     .status(503, undefined, "status"),
   http.protected
+    .delete("/api/provider/custom/{providerID}", "v2.provider.custom.disconnect")
+    .mutating()
+    .at((ctx) => ({
+      path: route("/api/provider/custom/{providerID}", { providerID: "httpapi-custom-missing" }),
+      headers: ctx.headers(),
+    }))
+    .json(200, locationData(boolean)),
+  http.protected
+    .delete("/api/provider/{providerID}", "v2.provider.disconnect")
+    .mutating()
+    .at((ctx) => ({
+      path: route("/api/provider/{providerID}", { providerID: "httpapi-provider-missing" }),
+      headers: ctx.headers(),
+    }))
+    .json(200, locationData(boolean)),
+  http.protected
     .delete("/api/session/{sessionID}", "v2.session.remove")
     .at((ctx) => ({
       path: route("/api/session/{sessionID}", { sessionID: "ses_httpapi_missing" }),
@@ -1235,6 +1251,13 @@ const scenarios: Scenario[] = [
   http.protected.get("/api/mcp", "v2.mcp.status").json(200, locationData(object)),
   http.protected.get("/api/mcp/resource", "v2.mcp.resources").json(200, locationData(object)),
   http.protected.get("/api/path", "v2.path.get").json(200, object),
+  http.protected.get("/api/plugins/runtime", "v2.plugins.runtime").json(
+    200,
+    locationData((value) => {
+      object(value)
+      array(value.plugins)
+    }),
+  ),
   http.protected.get("/api/plugins", "v2.plugins.list").json(200, (body) => {
     object(body)
     array(body.marketplaces)
@@ -1365,6 +1388,13 @@ const scenarios: Scenario[] = [
       headers: ctx.headers(),
     }))
     .status(404, undefined, "status"),
+  http.protected
+    .post("/api/mcp/{name}/authenticate", "v2.mcp.authenticate")
+    .at((ctx) => ({
+      path: route("/api/mcp/{name}/authenticate", { name: "httpapi_missing" }),
+      headers: ctx.headers(),
+    }))
+    .json(404, object, "status"),
   http.protected
     .post("/api/plugins/disable", "v2.plugins.disable")
     .at((ctx) => ({
@@ -1497,6 +1527,13 @@ const scenarios: Scenario[] = [
       body: { baseURL: "not-a-url", headers: [] },
     }))
     .status(400, undefined, "status"),
+  http.protected
+    .post("/api/provider/{providerID}/models/discover", "v2.provider.models.discover")
+    .at((ctx) => ({
+      path: route("/api/provider/{providerID}/models/discover", { providerID: "httpapi-provider-missing" }),
+      headers: ctx.headers(),
+    }))
+    .json(404, object, "status"),
   http.protected
     .post("/api/session/{sessionID}/background", "v2.session.background")
     .seeded((ctx) => ctx.session({ title: "Background owner" }))

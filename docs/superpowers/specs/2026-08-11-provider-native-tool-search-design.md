@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：`888.0.18` 基線審計完成，等待設計確認後撰寫 implementation plan
+> 狀態：設計已確認；`888.0.18` 依分批 implementation plan 實作中
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`

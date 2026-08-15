@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
 import { FileSystem, Integration, Permission, Project, Reference, Session, Workspace } from "../src"
 import { EventManifest } from "../src/event-manifest"
 import { IdeEvent } from "../src/ide-event"
@@ -9,7 +10,7 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(105)
+    expect(EventManifest.ServerDefinitions.length).toBe(106)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
@@ -26,7 +27,7 @@ describe("public event manifest", () => {
       SessionV1.Event.Error,
     ])
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
-    expect(EventManifest.Durable.size).toBe(53)
+    expect(EventManifest.Durable.size).toBe(54)
   })
 
   test("uses canonical definitions for current public events", () => {
@@ -72,5 +73,65 @@ describe("public event manifest", () => {
     )
     expect(EventManifest.Durable.has("session.next.step.ended.1")).toBe(false)
     expect(EventManifest.Durable.get("session.next.step.ended.2")).toBe(SessionEvent.Step.Ended)
+  })
+
+  test("publishes a minimal durable tool discovery contract", () => {
+    const definition = EventManifest.Latest.get("session.next.tool-discovery.completed")
+    expect(definition).toBeDefined()
+    if (!definition) return
+    expect(EventManifest.Durable.get("session.next.tool-discovery.completed.1")?.type).toBe(
+      "session.next.tool-discovery.completed",
+    )
+
+    const encoded = {
+      id: "evt_discovery",
+      type: "session.next.tool-discovery.completed",
+      data: {
+        timestamp: 1,
+        sessionID: "ses_discovery",
+        assistantMessageID: "msg_discovery",
+        callID: "call_search",
+        query: "calendar events",
+        limit: 8,
+        catalogRevision: "revision",
+        matches: [
+          {
+            key: "tool_key",
+            callableName: "calendar_create",
+            definitionHash: "hash",
+            source: { type: "plugin", id: "calendar" },
+            inputSchema: { type: "object" },
+            outputSchema: { type: "object" },
+          },
+        ],
+        pendingSources: [{ type: "mcp", id: "remote" }],
+      },
+    }
+    expect(
+      Schema.encodeUnknownSync(SessionEvent.ToolDiscovery.Completed)(
+        Schema.decodeUnknownSync(SessionEvent.ToolDiscovery.Completed)(encoded),
+      ),
+    ).toEqual({
+      id: "evt_discovery",
+      type: "session.next.tool-discovery.completed",
+      data: {
+        timestamp: 1,
+        sessionID: "ses_discovery",
+        assistantMessageID: "msg_discovery",
+        callID: "call_search",
+        query: "calendar events",
+        limit: 8,
+        catalogRevision: "revision",
+        matches: [
+          {
+            key: "tool_key",
+            callableName: "calendar_create",
+            definitionHash: "hash",
+            source: { type: "plugin", id: "calendar" },
+          },
+        ],
+        pendingSources: [{ type: "mcp", id: "remote" }],
+      },
+    })
   })
 })

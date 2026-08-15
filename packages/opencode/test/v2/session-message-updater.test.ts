@@ -286,3 +286,25 @@ test("failed compaction events do not project a compaction message", () => {
 
   expect(state.messages).toEqual([])
 })
+
+test("tool discovery completion does not mutate the transcript", () => {
+  const state: SessionMessageUpdater.MemoryState = { messages: [] }
+  const event = {
+    id: EventV2.ID.create(),
+    type: "session.next.tool-discovery.completed",
+    data: {
+      sessionID: SessionID.make("session"),
+      assistantMessageID: SessionMessage.ID.create(),
+      timestamp: DateTime.makeUnsafe(1),
+      callID: "call_search",
+      query: "calendar events",
+      limit: 8,
+      catalogRevision: "revision",
+      matches: [],
+      pendingSources: [],
+    },
+  } as unknown as SessionEvent.Event
+
+  expect(() => Effect.runSync(SessionMessageUpdater.update(SessionMessageUpdater.memory(state), event))).not.toThrow()
+  expect(state.messages).toEqual([])
+})

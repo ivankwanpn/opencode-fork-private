@@ -9,7 +9,7 @@ import { Agent } from "./agent"
 import { Model } from "./model"
 import { Permission } from "./permission"
 import { Project } from "./project"
-import { DateTimeUtcFromMillis, NonNegativeInt, RelativePath } from "./schema"
+import { DateTimeUtcFromMillis, NonNegativeInt, PositiveInt, RelativePath } from "./schema"
 import { FileAttachment, Prompt } from "./prompt"
 import { SessionID } from "./session-id"
 import { SessionInput } from "./session-input"
@@ -600,6 +600,42 @@ export namespace Tool {
   export type Failed = typeof Failed.Type
 }
 
+export namespace ToolDiscovery {
+  export const Key = Schema.String.pipe(Schema.brand("ToolCatalog.Key"))
+  export type Key = typeof Key.Type
+
+  export const Source = Schema.Struct({
+    type: Schema.Literals(["builtin", "plugin", "mcp", "app"]),
+    id: Schema.String,
+    displayName: Schema.String.pipe(optional),
+  })
+  export type Source = typeof Source.Type
+
+  export const Match = Schema.Struct({
+    key: Key,
+    callableName: Schema.String,
+    definitionHash: Schema.String,
+    source: Source,
+  })
+  export type Match = typeof Match.Type
+
+  export const Completed = Event.define({
+    type: "session.next.tool-discovery.completed",
+    ...options,
+    schema: {
+      ...Base,
+      assistantMessageID: SessionMessage.ID,
+      callID: Schema.String,
+      query: Schema.String,
+      limit: PositiveInt,
+      catalogRevision: Schema.String,
+      matches: Schema.Array(Match),
+      pendingSources: Schema.Array(Source),
+    },
+  })
+  export type Completed = typeof Completed.Type
+}
+
 export namespace ProviderAttempt {
   const AttemptBase = {
     ...Base,
@@ -747,7 +783,7 @@ export namespace RevertEvent {
   })
 }
 
-export const DurableDefinitions = Event.inventory(
+const DurableLifecycleDefinitions = Event.inventory(
   Created,
   Updated,
   Deleted,
@@ -767,6 +803,9 @@ export const DurableDefinitions = Event.inventory(
   Turn.Started,
   Turn.Ended,
   ContextUpdated,
+)
+
+const DurableTranscriptDefinitions = Event.inventory(
   Synthetic,
   Shell.Started,
   Shell.Ended,
@@ -781,6 +820,10 @@ export const DurableDefinitions = Event.inventory(
   Tool.Progress,
   Tool.Success,
   Tool.Failed,
+  ToolDiscovery.Completed,
+)
+
+const DurableExecutionDefinitions = Event.inventory(
   Reasoning.Started,
   Reasoning.Ended,
   ProviderAttempt.Started,
@@ -796,7 +839,13 @@ export const DurableDefinitions = Event.inventory(
   RevertEvent.Committed,
 )
 
-export const Definitions = Event.inventory(
+export const DurableDefinitions = Event.inventory(
+  ...DurableLifecycleDefinitions,
+  ...DurableTranscriptDefinitions,
+  ...DurableExecutionDefinitions,
+)
+
+const LifecycleDefinitions = Event.inventory(
   Created,
   Updated,
   Deleted,
@@ -816,6 +865,9 @@ export const Definitions = Event.inventory(
   Turn.Started,
   Turn.Ended,
   ContextUpdated,
+)
+
+const TranscriptDefinitions = Event.inventory(
   Synthetic,
   Shell.Started,
   Shell.Delta,
@@ -829,6 +881,9 @@ export const Definitions = Event.inventory(
   Reasoning.Started,
   Reasoning.Delta,
   Reasoning.Ended,
+)
+
+const ExecutionDefinitions = Event.inventory(
   Tool.Input.Started,
   Tool.Input.Delta,
   Tool.Input.Ended,
@@ -836,6 +891,7 @@ export const Definitions = Event.inventory(
   Tool.Progress,
   Tool.Success,
   Tool.Failed,
+  ToolDiscovery.Completed,
   ProviderAttempt.Started,
   ProviderAttempt.ResponseStarted,
   ProviderAttempt.Ended,
@@ -850,11 +906,27 @@ export const Definitions = Event.inventory(
   RevertEvent.Committed,
 )
 
-export const Durable = Schema.Union(DurableDefinitions, { mode: "oneOf" })
+export const Definitions = Event.inventory(...LifecycleDefinitions, ...TranscriptDefinitions, ...ExecutionDefinitions)
+
+export const Durable = Schema.Union(
+  [
+    Schema.Union(DurableLifecycleDefinitions, { mode: "oneOf" }),
+    Schema.Union(DurableTranscriptDefinitions, { mode: "oneOf" }),
+    Schema.Union(DurableExecutionDefinitions, { mode: "oneOf" }),
+  ],
+  { mode: "oneOf" },
+)
   .pipe(Schema.toTaggedUnion("type"))
   .annotate({ identifier: "SessionDurableEvent" })
 export type DurableEvent = typeof Durable.Type
 
-export const All = Schema.Union(Definitions, { mode: "oneOf" }).pipe(Schema.toTaggedUnion("type"))
+export const All = Schema.Union(
+  [
+    Schema.Union(LifecycleDefinitions, { mode: "oneOf" }),
+    Schema.Union(TranscriptDefinitions, { mode: "oneOf" }),
+    Schema.Union(ExecutionDefinitions, { mode: "oneOf" }),
+  ],
+  { mode: "oneOf" },
+).pipe(Schema.toTaggedUnion("type"))
 export type Event = typeof All.Type
 export type Type = Event["type"]

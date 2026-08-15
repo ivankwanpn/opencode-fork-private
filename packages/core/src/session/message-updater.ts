@@ -379,6 +379,7 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
           }
         })
       },
+      "session.next.tool-discovery.completed": () => Effect.void,
       "session.next.reasoning.started": (event) => {
         return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
           draft.content.push(

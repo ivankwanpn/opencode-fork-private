@@ -23,6 +23,7 @@ import { TaskSubmission } from "../session/task-submission"
 import { ToolProgress } from "./progress"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
+import { ToolSearch } from "./tool-search"
 import { Tools } from "./tools"
 
 export const name = "task"
@@ -33,10 +34,13 @@ export type GrantInput = { readonly tool: string; readonly resource?: string }
 
 // Turn task `permission` grants into V2 allow rules, dropping blocklisted
 // tools (P2 double-check: the blocklist already keeps them unregistered).
-const grantRules = (grants: readonly GrantInput[] | undefined, blocked: ReadonlySet<string>): PermissionV2.Ruleset =>
-  (grants ?? [])
+const grantRules = (grants: readonly GrantInput[] | undefined, blocked: ReadonlySet<string>): PermissionV2.Ruleset => {
+  const rules = (grants ?? [])
     .filter((grant) => !McpCatalog.isBlockedTool(grant.tool, blocked))
     .map((grant): PermissionV2.Rule => ({ action: grant.tool, resource: grant.resource ?? "*", effect: "allow" }))
+  if (rules.length === 0 || rules.some((rule) => rule.action === ToolSearch.name)) return rules
+  return [...rules, { action: ToolSearch.name, resource: "*", effect: "allow" }]
+}
 
 const BACKGROUND_DESCRIPTION = [
   "Tasks run asynchronously by default and return a handle immediately.",

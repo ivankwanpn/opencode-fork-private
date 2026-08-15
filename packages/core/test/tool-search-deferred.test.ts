@@ -311,6 +311,44 @@ describe("materialize tool_search", () => {
       expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
     }),
   )
+
+  it.effect("limits child discovery to the explicitly granted deferred tool", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ hello: hello(), secret: hello() })
+      const permissions: PermissionV2.Ruleset = [
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "hello", resource: "*", effect: "allow" },
+        { action: "tool_search", resource: "*", effect: "allow" },
+      ]
+      let selected = new Map<ToolCatalog.Key, string>()
+      const materialized = yield* service.materialize(permissions, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+        executeSearch: (_input, _context, _snapshot, search) =>
+          search.pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                selected = new Map(result.matches.map((match) => [match.key, match.definitionHash]))
+              }),
+            ),
+          ),
+      })
+
+      expect(materialized.catalog.tools.map((tool) => tool.callableName)).toEqual(["hello"])
+      expect(materialized.definitions.map((tool) => tool.name)).toContain("tool_search")
+      const search = yield* materialized.settle(call("tool_search", { query: "select:hello" }))
+      expect(search.result.type).toBe("text")
+      expect(String(search.result.value)).not.toContain("secret")
+
+      const selectedTools = yield* service.materialize(permissions, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+      })
+      expect(selectedTools.definitions.map((tool) => tool.name)).toContain("hello")
+      expect(selectedTools.definitions.map((tool) => tool.name)).not.toContain("secret")
+    }),
+  )
 })
 
 const todoPermission = Layer.succeed(

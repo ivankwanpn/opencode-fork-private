@@ -45,6 +45,7 @@ const woken: SessionSchema.ID[] = []
 const taskSubmissions = new Map<string, TaskSubmission.Info>()
 const taskInputIDs = new Map<SessionSchema.ID, SessionMessage.ID>()
 const taskInputHistory = new Map<SessionSchema.ID, SessionMessage.ID[]>()
+const childPermissions = new Map<SessionSchema.ID, PermissionV2.Ruleset>()
 const deliveredTaskSubmissions = new Set<string>()
 let depth = 1
 let childSequence = 0
@@ -157,6 +158,7 @@ const reset = () => {
   taskSubmissions.clear()
   taskInputIDs.clear()
   taskInputHistory.clear()
+  childPermissions.clear()
   deliveredTaskSubmissions.clear()
   depth = 1
   childSequence = 0
@@ -279,6 +281,7 @@ const commandLayer = Layer.succeed(
           title: input.title,
         })
         sessions.set(id, created)
+        childPermissions.set(id, input.permissions ?? [])
         return created
       }),
     restore: () => Effect.die("unused"),
@@ -956,6 +959,27 @@ describe("TaskTool", () => {
           },
         },
       })
+    }),
+  )
+
+  foreground.effect("grants discovery with an explicit child tool capability", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* ToolRegistry.Service
+
+      yield* settleTool(
+        registry,
+        call({
+          ...input,
+          permission: [{ tool: "calendar_create", resource: "team-calendar" }],
+          background: false,
+        }),
+      )
+
+      expect(childPermissions.get(SessionSchema.ID.make("ses_task_child_1"))).toEqual([
+        { action: "calendar_create", resource: "team-calendar", effect: "allow" },
+        { action: "tool_search", resource: "*", effect: "allow" },
+      ])
     }),
   )
 

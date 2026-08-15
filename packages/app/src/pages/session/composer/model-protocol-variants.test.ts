@@ -18,6 +18,8 @@ describe("modelVariantsForProtocol", () => {
       "low",
       "medium",
       "high",
+      "xhigh",
+      "max",
     ])
     expect(modelVariantsForProtocol(legacyVariants, "anthropic-messages")).toEqual([
       "none",

@@ -132,7 +132,7 @@ describe("SessionRunnerModel", () => {
     }),
   )
 
-  it.effect("forwards xhigh and max only through the OpenAI Responses protocol", () =>
+  it.effect("forwards xhigh and max through the OpenAI Responses protocol", () =>
     Effect.gen(function* () {
       const base = model(
         { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "https://custom.example" },
@@ -371,6 +371,44 @@ describe("SessionRunnerModel", () => {
         store: false,
         reasoning_effort: "high",
       })
+    }),
+  )
+
+  it.effect("passes max reasoning effort through the OpenAI-compatible Chat route", () =>
+    Effect.gen(function* () {
+      const base = model(
+        { type: "aisdk", package: "@ai-sdk/openai-compatible", url: "https://compatible.example/v1" },
+        ["none", "low", "medium", "high"].map((id) => ({
+          id: ModelV2.VariantID.make(id),
+          headers: {},
+          body: {},
+        })),
+      )
+      const catalog = ModelV2.Info.make({
+        ...base,
+        capabilities: { ...base.capabilities, reasoning: true },
+        protocols: ["openai-responses", "openai-compatible", "anthropic-messages"],
+      })
+      const session = SessionV2.Info.make({
+        id: SessionV2.ID.make("ses_compatible_max_variant"),
+        projectID: ProjectV2.ID.global,
+        title: "test",
+        model: {
+          id: catalog.id,
+          providerID: catalog.providerID,
+          variant: ModelV2.VariantID.make("max"),
+          protocol: "openai-compatible",
+        },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
+        location: { directory: AbsolutePath.make("/project") },
+      })
+
+      const resolved = yield* SessionRunnerModel.resolve(session, catalog)
+      const prepared = yield* LLMClient.prepare(LLM.request({ model: resolved, prompt: "Hello" }))
+
+      expect(prepared.body).toMatchObject({ reasoning_effort: "max" })
     }),
   )
 

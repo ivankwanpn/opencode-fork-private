@@ -90,6 +90,18 @@ describe("OpenAI-compatible Chat route", () => {
     }),
   )
 
+  it.effect("passes max reasoning effort through to compatible endpoints", () =>
+    Effect.gen(function* () {
+      const prepared = yield* LLMClient.prepare(
+        LLM.updateRequest(request, {
+          providerOptions: { openai: { reasoningEffort: "max" } },
+        }),
+      )
+
+      expect(prepared.body).toMatchObject({ reasoning_effort: "max" })
+    }),
+  )
+
   it.effect("provides model helpers for compatible provider families", () =>
     Effect.gen(function* () {
       expect(

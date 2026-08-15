@@ -11,7 +11,7 @@ export type Protocol = typeof Protocol.Type
 export const allReasoningEfforts = ["none", "low", "medium", "high", "xhigh", "max"] as const
 export const reasoningEfforts = {
   "openai-responses": allReasoningEfforts,
-  "openai-compatible": ["none", "low", "medium", "high"],
+  "openai-compatible": allReasoningEfforts,
   "anthropic-messages": ["none", "low", "medium", "high", "max"],
 } as const satisfies Record<Protocol, readonly (typeof allReasoningEfforts)[number][]>
 

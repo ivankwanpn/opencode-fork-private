@@ -300,6 +300,21 @@ describe("ProviderTransform.options - setCacheKey", () => {
     })
     expect(result.prompt_cache_key).toBeUndefined()
   })
+
+  test("should apply the OpenCode Go DeepSeek V4 Flash top-p default", () => {
+    const model = {
+      ...mockModel,
+      id: "opencode-go/deepseek-v4-flash",
+      providerID: "opencode-go",
+      api: {
+        id: "deepseek-v4-flash",
+        url: "https://opencode.ai/zen/v1",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    }
+
+    expect(ProviderTransform.topP(model)).toBe(0.95)
+  })
 })
 
 describe("ProviderTransform.options - zai/zhipuai thinking", () => {
@@ -788,6 +803,21 @@ describe("ProviderTransform.providerOptions", () => {
 
     expect(ProviderTransform.providerOptions(model, { cachePoint: { type: "default" } })).toEqual({
       bedrock: { cachePoint: { type: "default" } },
+    })
+  })
+
+  test("uses the Merge Gateway provider options key", () => {
+    const model = createModel({
+      providerID: "merge-gateway",
+      api: {
+        id: "openai/gpt-5",
+        url: "https://gateway.example.com/v1",
+        npm: "merge-gateway-ai-sdk-provider",
+      },
+    })
+
+    expect(ProviderTransform.providerOptions(model, { reasoningEffort: "high" })).toEqual({
+      mergeGateway: { reasoningEffort: "high" },
     })
   })
 

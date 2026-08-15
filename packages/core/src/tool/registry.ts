@@ -18,16 +18,18 @@ import { ApplicationTools } from "./application-tools"
 import {
   definition,
   exposure,
+  catalog,
   catalogPermissions,
+  RegistrationError,
   settle,
   validateName,
   type AnyTool,
   type ExecutionError,
   type Failure,
-  type RegistrationError,
 } from "./tool"
 import { Tools } from "./tools"
 import { makeLocationNode } from "../effect/app-node"
+import { ToolCatalog } from "./catalog"
 
 export type ExecuteInput = {
   readonly sessionID: SessionSchema.ID
@@ -46,11 +48,16 @@ export interface Interface {
   ) => Effect.Effect<Materialization>
   /** Internal registration capability exposed publicly only through Tools.Service. */
   readonly register: (tools: Readonly<Record<string, AnyTool>>) => Effect.Effect<void, RegistrationError, Scope.Scope>
+  /** Internal source-aware registration capability exposed publicly only through Tools.Service. */
+  readonly contribute: (input: Tools.Contribution) => Effect.Effect<void, RegistrationError, Scope.Scope>
+  /** Read-only active source status for trusted runtime readiness projections. */
+  readonly sources: () => Effect.Effect<ReadonlyArray<ToolCatalog.SourceStatus>>
 }
 
 export interface Materialization {
   readonly definitions: ReadonlyArray<ToolDefinition>
   readonly deferred: ReadonlyArray<ToolDefinition>
+  readonly catalog: ToolCatalog.Snapshot
   /** Snapshot of the deferred tools searched so far (empty unless selected was provided). */
   readonly selected: ReadonlySet<string>
   readonly settle: (input: ExecuteInput) => Effect.Effect<Settlement, SettlementError>
@@ -88,10 +95,7 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/v2
 
 const BUILTIN_TASK_AGENT_TYPES = ["general", "explore", "research", "worker"] as const
 
-export function webSearchEnabled(
-  providerID: ProviderV2.ID,
-  flags = { exa: false, parallel: false },
-) {
+export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false, parallel: false }) {
   return (
     providerID === ProviderV2.ID.opencode ||
     flags.exa ||
@@ -108,8 +112,18 @@ const registryLayer = Layer.effect(
     const resources = yield* ToolOutputStore.Service
     const plugins = yield* PluginRuntime.Service
     const agents = yield* AgentV2.Service
-    type Registration = { readonly identity: object; readonly tool: AnyTool }
+    type Registration = {
+      readonly identity: object
+      readonly tool: AnyTool
+      readonly catalog: ToolCatalog.Metadata
+    }
+    type SourceRegistration = {
+      readonly token: object
+      readonly status: ToolCatalog.SourceStatus
+      readonly permissions: ReadonlyArray<string>
+    }
     const local = new Map<string, Array<{ readonly token: object; readonly registration: Registration }>>()
+    const sourceRegistrations = new Map<string, Array<SourceRegistration>>()
 
     const settleWith = Effect.fn("ToolRegistry.settle")(function* (
       input: ExecuteInput,
@@ -191,28 +205,90 @@ const registryLayer = Layer.effect(
         : { result: value, output: bounded.output }
     })
 
+    const contribute = Effect.fn("ToolRegistry.contribute")(function* (input: Tools.Contribution) {
+      const entries = Object.entries(input.tools)
+      yield* Effect.forEach(entries, ([name]) => validateName(name), { discard: true })
+      const registrations = yield* Effect.forEach(entries, ([name, tool]) => {
+        const declared = catalog(tool)
+        if (declared && ToolCatalog.sourceKey(declared.source) !== ToolCatalog.sourceKey(input.source)) {
+          return Effect.fail(
+            new RegistrationError({
+              name,
+              message: `Tool source does not match contribution ${input.source.type}:${input.source.id}: ${name}`,
+            }),
+          )
+        }
+        return Effect.succeed([
+          name,
+          {
+            identity: {},
+            tool,
+            catalog: {
+              ...declared,
+              source: input.source,
+              sourceLocalID: declared?.sourceLocalID ?? name,
+            },
+          },
+        ] as const)
+      })
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const token = {}
+          for (const [name, registration] of registrations)
+            local.set(name, [...(local.get(name) ?? []), { token, registration }])
+          const key = ToolCatalog.sourceKey(input.source)
+          sourceRegistrations.set(key, [
+            ...(sourceRegistrations.get(key) ?? []),
+            {
+              token,
+              status: {
+                source: input.source,
+                state: input.state,
+                ...(input.message === undefined ? {} : { message: input.message }),
+              },
+              permissions: input.permissions ?? [],
+            },
+          ])
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              for (const [name] of registrations) {
+                const registrations = local.get(name)?.filter((registration) => registration.token !== token) ?? []
+                if (registrations.length > 0) local.set(name, registrations)
+                else local.delete(name)
+              }
+              const sources = sourceRegistrations.get(key)?.filter((registration) => registration.token !== token) ?? []
+              if (sources.length > 0) sourceRegistrations.set(key, sources)
+              else sourceRegistrations.delete(key)
+            }),
+          )
+        }),
+      )
+    })
+    const register = Effect.fn("ToolRegistry.register")(function* (tools: Readonly<Record<string, AnyTool>>) {
+      if (Object.keys(tools).length === 0) return
+      yield* contribute({
+        source: { type: "builtin", id: "opencode", displayName: "OpenCode" },
+        state: "ready",
+        tools,
+      })
+    })
+    const sources = Effect.fn("ToolRegistry.sources")(function* () {
+      const result = new Map<string, ToolCatalog.SourceStatus>()
+      for (const entry of applications.entries().values())
+        result.set(ToolCatalog.sourceKey(entry.catalog.source), { source: entry.catalog.source, state: "ready" })
+      for (const [key, entries] of sourceRegistrations) {
+        const current = entries.at(-1)
+        if (current) result.set(key, current.status)
+      }
+      return Array.from(result.values()).toSorted((left, right) =>
+        ToolCatalog.sourceKey(left.source).localeCompare(ToolCatalog.sourceKey(right.source)),
+      )
+    })
+
     return Service.of({
-      register: Effect.fn("ToolRegistry.register")(function* (tools) {
-        const entries = Object.entries(tools)
-        if (entries.length === 0) return
-        yield* Effect.forEach(entries, ([name]) => validateName(name), { discard: true })
-        yield* Effect.uninterruptible(
-          Effect.gen(function* () {
-            const token = {}
-            for (const [name, tool] of entries)
-              local.set(name, [...(local.get(name) ?? []), { token, registration: { identity: {}, tool } }])
-            yield* Effect.addFinalizer(() =>
-              Effect.sync(() => {
-                for (const [name] of entries) {
-                  const registrations = local.get(name)?.filter((registration) => registration.token !== token) ?? []
-                  if (registrations.length > 0) local.set(name, registrations)
-                  else local.delete(name)
-                }
-              }),
-            )
-          }),
-        )
-      }),
+      register,
+      contribute,
+      sources,
       materialize: Effect.fn("ToolRegistry.materialize")(function* (permissions = [], overrides = {}, context) {
         const registrations = new Map(applications.entries())
         for (const [name, entries] of local) {
@@ -223,6 +299,8 @@ const registryLayer = Layer.effect(
         const deferredRegistrations = new Map<string, Registration>()
         const definitions: ToolDefinition[] = []
         const deferred: ToolDefinition[] = []
+        const catalogTools: ToolCatalog.SearchableTool[] = []
+        const visibleSources = new Set<string>()
         for (const [name, registration] of registrations) {
           if (overrides[name] === false) continue
           if (context && !visible(name, context)) continue
@@ -262,6 +340,27 @@ const registryLayer = Layer.effect(
                   description: transformed.description,
                   inputSchema: transformed.parameters as ToolDefinition["inputSchema"],
                 })
+          const metadata = registration.catalog
+          const searchable: ToolCatalog.SearchableTool = {
+            key: ToolCatalog.key(metadata.source, metadata.sourceLocalID),
+            source: metadata.source,
+            sourceLocalID: metadata.sourceLocalID,
+            callableName: name,
+            ...(metadata.namespace === undefined ? {} : { namespace: metadata.namespace }),
+            ...(metadata.displayName === undefined ? {} : { displayName: metadata.displayName }),
+            description: toolDefinition.description ?? "",
+            ...(metadata.searchHint === undefined ? {} : { searchHint: metadata.searchHint }),
+            inputSchema: toolDefinition.inputSchema,
+            ...(toolDefinition.outputSchema === undefined ? {} : { outputSchema: toolDefinition.outputSchema }),
+            exposure: toolExposure,
+            definitionHash: ToolCatalog.definitionHash({
+              definition: toolDefinition,
+              exposure: toolExposure,
+              metadata,
+            }),
+          }
+          catalogTools.push(searchable)
+          visibleSources.add(ToolCatalog.sourceKey(metadata.source))
           if (toolExposure === "deferred") {
             // A deferred tool that the model already searched (P5 dynamic
             // loading) is injected into the advertised definitions so the next
@@ -283,18 +382,47 @@ const registryLayer = Layer.effect(
         // Gate it like any other tool: a user override disabling it or a full-deny permission
         // rule keeps it out of definitions (settle then reports it as unknown).
         const toolSearchRegistration =
-          deferred.length > 0 &&
-          overrides[ToolSearch.name] !== false &&
-          !whollyDisabled([ToolSearch.name], permissions)
-            ? { identity: {}, tool: ToolSearch.makeToolSearchTool(deferred, context?.onSelect) }
+          deferred.length > 0 && overrides[ToolSearch.name] !== false && !whollyDisabled([ToolSearch.name], permissions)
+            ? {
+                identity: {},
+                tool: ToolSearch.makeToolSearchTool(deferred, context?.onSelect),
+                catalog: {
+                  source: { type: "builtin" as const, id: "opencode", displayName: "OpenCode" },
+                  sourceLocalID: ToolSearch.name,
+                },
+              }
             : undefined
         if (toolSearchRegistration) {
           const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
           if (toolSearchDefinition) definitions.push(toolSearchDefinition)
         }
+        const sourceStatus = new Map<
+          string,
+          { readonly status: ToolCatalog.SourceStatus; readonly permissions: ReadonlyArray<string> }
+        >()
+        for (const entry of applications.entries().values())
+          sourceStatus.set(ToolCatalog.sourceKey(entry.catalog.source), {
+            status: { source: entry.catalog.source, state: "ready" },
+            permissions: [],
+          })
+        for (const [key, entries] of sourceRegistrations) {
+          const current = entries.at(-1)
+          if (current) sourceStatus.set(key, current)
+        }
+        const catalog = ToolCatalog.snapshot({
+          tools: catalogTools,
+          sources: Array.from(sourceStatus)
+            .filter(
+              ([key, entry]) =>
+                visibleSources.has(key) ||
+                (entry.permissions.length > 0 && !whollyDisabled(entry.permissions, permissions)),
+            )
+            .map(([, entry]) => entry.status),
+        })
         return {
           definitions,
           deferred,
+          catalog,
           selected: context?.selected ?? new Set(),
           settle: (input) => {
             if (input.call.name === ToolSearch.name && toolSearchRegistration)
@@ -340,7 +468,9 @@ function replaceText(content: ReadonlyArray<ToolContent>, text: string): Readonl
 
 const layer = Layer.effect(
   Tools.Service,
-  Service.use((registry) => Effect.succeed(Tools.Service.of({ register: registry.register }))),
+  Service.use((registry) =>
+    Effect.succeed(Tools.Service.of({ register: registry.register, contribute: registry.contribute })),
+  ),
 ).pipe(Layer.provideMerge(registryLayer))
 
 function whollyDisabled(actions: ReadonlyArray<string>, rules: PermissionV2.Ruleset) {
@@ -361,8 +491,7 @@ export function visible(name: string, context: MaterializationContext) {
     !context.model.modelID.includes("gpt-4")
   if (name === "apply_patch") return usePatch
   if (name === "edit" || name === "write") return !usePatch
-  if (name === "question")
-    return ["app", "cli", "desktop"].includes(features.client) || features.question
+  if (name === "question") return ["app", "cli", "desktop"].includes(features.client) || features.question
   if (name === "execute") return features.codeMode
   if (name === "lsp") return features.lsp
   if (name === "plan_exit") return features.plan && features.client === "cli"
@@ -374,10 +503,7 @@ function materializationFeatures(): MaterializationFeatures {
     process.env[name] === undefined ? truthy("OPENCODE_EXPERIMENTAL") : truthy(name)
   return {
     client: process.env.OPENCODE_CLIENT ?? "cli",
-    enableExa:
-      truthy("OPENCODE_EXPERIMENTAL") ||
-      truthy("OPENCODE_ENABLE_EXA") ||
-      truthy("OPENCODE_EXPERIMENTAL_EXA"),
+    enableExa: truthy("OPENCODE_EXPERIMENTAL") || truthy("OPENCODE_ENABLE_EXA") || truthy("OPENCODE_EXPERIMENTAL_EXA"),
     enableParallel: truthy("OPENCODE_ENABLE_PARALLEL") || truthy("OPENCODE_EXPERIMENTAL_PARALLEL"),
     question: truthy("OPENCODE_ENABLE_QUESTION_TOOL"),
     codeMode: experimental("OPENCODE_EXPERIMENTAL_CODE_MODE"),

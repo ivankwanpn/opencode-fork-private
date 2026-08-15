@@ -143,6 +143,22 @@ describe("ApplicationTools", () => {
     }),
   )
 
+  it.effect("assigns process registrations to the explicit OpenCode SDK App source", () =>
+    Effect.gen(function* () {
+      const applications = yield* ApplicationTools.Service
+      const registry = yield* ToolRegistry.Service
+      yield* applications.register({ application_context: contextual([]) })
+
+      expect((yield* registry.materialize()).catalog.tools).toMatchObject([
+        {
+          callableName: "application_context",
+          sourceLocalID: "application_context",
+          source: { type: "app", id: "opencode-sdk", displayName: "OpenCode SDK" },
+        },
+      ])
+    }),
+  )
+
   it.effect("removes an application tool when its registration scope closes", () =>
     Effect.gen(function* () {
       const applications = yield* ApplicationTools.Service

@@ -15,6 +15,7 @@ import { McpCatalog } from "@opencode-ai/core/mcp/catalog"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { executeTool, settleTool, toolDefinitions } from "./lib/tool"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, SchemaGetter, SchemaIssue, Scope } from "effect"
 import { testEffect } from "./lib/effect"
@@ -252,6 +253,119 @@ describe("ToolRegistry", () => {
       expect((yield* toolDefinitions(service)).map((tool) => tool.name)).toEqual(["echo"])
       yield* Scope.close(scope, Exit.void)
       expect(yield* toolDefinitions(service)).toEqual([])
+    }),
+  )
+
+  it.effect("materializes scoped source contributions without leaking hidden or denied tools", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      const source = { type: "mcp" as const, id: "calendar", displayName: "Calendar" }
+      const scope = yield* Scope.make()
+      const visible = Tool.withCatalog(make(), {
+        source,
+        sourceLocalID: "create_event",
+        namespace: "calendar",
+        displayName: "Create event",
+      })
+      yield* service
+        .contribute({
+          source,
+          state: "ready",
+          tools: {
+            calendar_create: visible,
+            calendar_hidden: Tool.withExposure(make(), "hidden"),
+            calendar_private: Tool.withPermission(make(), "private"),
+          },
+        })
+        .pipe(Scope.provide(scope))
+
+      const materialized = yield* service.materialize([{ action: "private", resource: "*", effect: "deny" }])
+      expect(materialized.catalog.tools.map((tool) => tool.callableName)).toEqual(["calendar_create"])
+      expect(materialized.catalog.tools[0]).toMatchObject({
+        key: ToolCatalog.key(source, "create_event"),
+        source,
+        sourceLocalID: "create_event",
+        exposure: "direct",
+      })
+      expect(materialized.catalog.sources).toEqual([{ source, state: "ready" }])
+      expect(yield* service.sources()).toEqual([{ source, state: "ready" }])
+
+      yield* Scope.close(scope, Exit.void)
+      expect(yield* service.sources()).toEqual([])
+      expect((yield* materialized.settle(call("calendar_create"))).result).toEqual({
+        type: "error",
+        value: "Stale tool call: calendar_create",
+      })
+    }),
+  )
+
+  it.effect("lists an authorized pending source without inventing a tool and hides it from deny-all", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      const source = { type: "mcp" as const, id: "weather", displayName: "Weather" }
+      yield* service.contribute({
+        source,
+        state: "pending",
+        permissions: ["weather_*"],
+        tools: {},
+      })
+
+      expect((yield* service.materialize()).catalog).toMatchObject({
+        tools: [],
+        sources: [{ source, state: "pending" }],
+      })
+      expect((yield* service.materialize([{ action: "*", resource: "*", effect: "deny" }])).catalog.sources).toEqual([])
+    }),
+  )
+
+  it.effect("changes catalog identity only for the effective same-name source overlay", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      const first = { type: "plugin" as const, id: "first" }
+      const second = { type: "plugin" as const, id: "second" }
+      yield* service.contribute({ source: first, state: "ready", tools: { shared: make() } })
+      const original = (yield* service.materialize()).catalog.tools[0]!
+      const scope = yield* Scope.make()
+      yield* service
+        .contribute({ source: second, state: "ready", tools: { shared: make() } })
+        .pipe(Scope.provide(scope))
+      const overlay = (yield* service.materialize()).catalog.tools[0]!
+
+      expect(original.key).toBe(ToolCatalog.key(first, "shared"))
+      expect(overlay.key).toBe(ToolCatalog.key(second, "shared"))
+      expect(overlay.key).not.toBe(original.key)
+      yield* Scope.close(scope, Exit.void)
+      expect((yield* service.materialize()).catalog.tools[0]?.key).toBe(original.key)
+    }),
+  )
+
+  it.effect("hashes the final model definition after Plugin definition hooks", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      const runtime = yield* PluginRuntime.Service
+      yield* service.register({ hooked: make() })
+      const beforeMaterialization = yield* service.materialize()
+      const before = beforeMaterialization.catalog.tools[0]!
+      yield* runtime.hook<{
+        readonly definition: {
+          readonly update: (
+            transform: (value: { description: string; parameters: unknown }) => {
+              description: string
+              parameters: unknown
+            },
+          ) => void
+        }
+      }>(PluginRuntime.HookName.toolDefinition, (event) => {
+        event.definition.update((value) => ({ ...value, description: "Hooked description" }))
+      })
+      const afterMaterialization = yield* service.materialize()
+      const after = afterMaterialization.catalog.tools[0]!
+
+      expect(before.description).toBe("Echo text")
+      expect(after.description).toBe("Hooked description")
+      expect(after.definitionHash).not.toBe(before.definitionHash)
+      expect(after.key).toBe(before.key)
+      expect(afterMaterialization.catalog.revision).not.toBe(beforeMaterialization.catalog.revision)
     }),
   )
 

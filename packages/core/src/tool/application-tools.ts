@@ -2,6 +2,7 @@ export * as ApplicationTools from "./application-tools"
 
 import { Context, Effect, Layer, Scope } from "effect"
 import { State } from "../state"
+import { ToolCatalog } from "./catalog"
 import { Tool } from "./tool"
 import { makeGlobalNode } from "../effect/app-node"
 
@@ -16,6 +17,7 @@ type Draft = {
 export interface Entry {
   readonly identity: object
   readonly tool: Tool.AnyTool
+  readonly catalog: ToolCatalog.Metadata
 }
 
 export interface Interface {
@@ -44,7 +46,30 @@ const layer = Layer.effect(
         const entries = Object.entries(tools)
         if (entries.length === 0) return
         yield* Effect.forEach(entries, ([name]) => Tool.validateName(name), { discard: true })
-        const registrations = entries.map(([name, tool]) => [name, { identity: {}, tool }] as const)
+        const source = { type: "app" as const, id: "opencode-sdk", displayName: "OpenCode SDK" }
+        const registrations = yield* Effect.forEach(entries, ([name, tool]) => {
+          const declared = Tool.catalog(tool)
+          if (declared && ToolCatalog.sourceKey(declared.source) !== ToolCatalog.sourceKey(source)) {
+            return Effect.fail(
+              new Tool.RegistrationError({
+                name,
+                message: `Application tool source does not match ${source.type}:${source.id}: ${name}`,
+              }),
+            )
+          }
+          return Effect.succeed([
+            name,
+            {
+              identity: {},
+              tool,
+              catalog: {
+                ...declared,
+                source,
+                sourceLocalID: declared?.sourceLocalID ?? name,
+              },
+            },
+          ] as const)
+        })
         yield* state.transform((draft) => {
           for (const [name, entry] of registrations) draft.set(name, entry)
         })

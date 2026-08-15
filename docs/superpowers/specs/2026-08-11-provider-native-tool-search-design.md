@@ -31,6 +31,8 @@
 - `packages/llm/src/protocols/openai-responses.ts` 目前只認得 function tool／`function_call_output`；尚無原生 `tool_search`／`tool_search_output`。
 - `packages/llm/src/protocols/anthropic-messages.ts` 目前沒有 client tool `tool_reference` 或 deferred definition 的 `defer_loading`。
 - 現有 P5 regression 只證明同一個 drain 內下一個 provider turn 會注入工具，沒有證明 restart、replay、compaction 或 provider-native wire 行為。
+- `packages/app/src/components/settings-v2/plugins.tsx` 把初始 catalog 設成空陣列，非同步 `plugins.list()` 完成前便渲染 `No plugins available`；既有 `busy === "load"` 沒有參與 empty-state 判斷。
+- Plugin 頁面的 `installed`／`enabled` 是管理狀態，不是 runtime readiness；目前只有 MCP 有部分 runtime 顯示，而且 `mcp_ready === false` 時會隱藏狀態而不是顯示初始化中。
 
 因此本分支的方向是**擴充現有 V2 邊界**，而不是重建 Plugin/MCP/ToolRegistry。
 
@@ -56,7 +58,7 @@
 
 本設計不處理：
 
-- Marketplace 安裝 UI；
+- Marketplace 安裝流程或版面重做；但 Plugin catalog 的 loading/empty/error 真實狀態和 runtime readiness 顯示屬於本設計範圍；
 - Plugin 指令列表刷新；
 - MCP OAuth UI；
 - subagent 排程與背景任務生命週期；
@@ -160,6 +162,8 @@
 8. **Catalog 變化可檢測。** 搜索和執行之間發生工具替換時，不得把舊 schema 的參數送給新 implementation。
 9. **Location-scoped。** Tool catalog、MCP runtime、Plugin contributions 和搜索索引遵守 Location 邊界，不得退化為 process-global catalog。
 10. **Subagent fail closed。** 子代理只能搜索 capability grant 與自身 permission 交集中的工具。
+11. **管理狀態不冒充 runtime 狀態。** `installed`／`enabled` 不能顯示為「可用」；只有 Location runtime 的 capability snapshot 能判定 `ready`。
+12. **Loading 不冒充 empty。** Plugin catalog 和 runtime snapshot 尚未完成時必須顯示初始化中；只有成功完成且結果為空才可顯示空目錄。
 
 ## 6. Canonical Tool Catalog
 
@@ -201,7 +205,7 @@ type ToolCatalogSnapshot = {
   tools: readonly SearchableTool[]
   sources: readonly Array<{
     source: ToolSourceRef
-    state: "pending" | "ready" | "failed" | "disabled"
+    state: "pending" | "ready" | "degraded" | "failed" | "disabled"
     message?: string
   }>
 }
@@ -212,6 +216,8 @@ type ToolCatalogSnapshot = {
 Snapshot 必須在現有 materialization 的 visibility、agent、session permission、tool override 和 subagent grant 過濾後產生；不得先建立含 denied/hidden tools 的共享搜索索引再於結果階段過濾，避免名稱、document frequency 或 diagnostics 洩漏不可見工具。
 
 MCP/Plugin 使用與 tool registration 相同的 scoped contribution 生命週期發布 source state。MCP 尚未完成 `tools/list` 時可註冊 `pending` source；重連後以新 scope 原子替換為 `ready` snapshot。ToolRegistry 仍不反向依賴 MCP 或 Plugin。
+
+同一份 source identity 與 state vocabulary 也提供給 Plugin runtime readiness projection；ToolRegistry 不承擔 Skills、Commands 或 hooks 的管理，但 Plugin 頁面不得另外發明一套互相矛盾的「已連線／可用」判斷。
 
 ## 7. 搜索服務
 
@@ -404,6 +410,92 @@ Tool Search 必須把 enabled state 和 runtime health 分開：
 - source disabled／removed 後不得再 materialize 或執行；
 - source 恢復且 key/hash 相同時，是否重新 active 應由 implementation plan 明確決定，預設採較安全策略：要求重新搜索。
 
+### 11.1 Plugin catalog 與 runtime readiness
+
+Plugin 設定頁必須分開處理兩個非同步資料源：
+
+1. **Global management catalog**：Marketplace、已安裝、已啟用和宣告 capabilities；
+2. **Location-scoped runtime snapshot**：目前 workspace/location 中，各 capability 是否真正載入。
+
+Catalog request 使用明確的 client-side state machine：
+
+```ts
+type PluginCatalogLoadState =
+  | { state: "loading"; catalog?: PluginCatalog }
+  | { state: "ready"; catalog: PluginCatalog }
+  | { state: "failed"; message: string; catalog?: PluginCatalog }
+```
+
+規則：
+
+- 初次請求與手動 retry 顯示 loading，不使用空 catalog 佔位；
+- 只有 `ready` 且 catalog 真正為空時顯示 `No plugins available`；
+- `failed` 保留最後一次成功 catalog（若存在），標記資料可能過期，並提供 Retry；
+- mutation 期間可以保留目前清單並在被操作項目顯示 busy，不把整頁退回 loading；
+- component unmount 或 generation/server 切換後，過期請求不得覆蓋新 generation 的狀態。
+
+Runtime snapshot 使用新的 Location-scoped read contract，不把 runtime 探測塞進全域 `/api/plugins` catalog 請求：
+
+```ts
+type PluginRuntimeSnapshot = {
+  revision: string
+  plugins: readonly Array<{
+    pluginID: string
+    state: "disabled" | "initializing" | "ready" | "degraded" | "failed"
+    capabilities: readonly Array<{
+      type: "skills" | "commands" | "mcp" | "plugin" | "tools"
+      state: "disabled" | "pending" | "ready" | "failed"
+      message?: string
+    }>
+    updatedAt: number
+  }>
+}
+```
+
+Client 另以 fetch state 包裝最後成功 snapshot：
+
+```ts
+type PluginRuntimeLoadState =
+  | { state: "loading"; snapshot?: PluginRuntimeSnapshot }
+  | { state: "ready"; snapshot: PluginRuntimeSnapshot }
+  | { state: "failed"; message: string; snapshot?: PluginRuntimeSnapshot }
+```
+
+`failed` 且帶 snapshot 時，UI 顯示 snapshot 已過期；不得把它當作新的 ready 結果。
+
+Protocol 增加獨立的 Location-aware runtime status endpoint；全域 Plugin catalog 保持管理資料，不因某個 workspace 尚未初始化而變慢。若 public Protocol/HttpApi 因此變更，必須按 repository 規則從 `packages/client` 執行 `bun run generate`，不得直接改 generated client。
+
+Aggregate 規則：
+
+- 未安裝或未啟用是 `disabled`；
+- 任一宣告 capability 尚未完成初次探測是 `initializing`；
+- 所有宣告 capability 都可用是 `ready`；
+- 至少一項可用、至少一項失敗是 `degraded`；
+- 已啟用但沒有任何宣告 capability 可用，且不存在 pending，是 `failed`。
+
+Capability 狀態必須來自 authoritative runtime：
+
+- Skills 從目前 `SkillV2` catalog 驗證 Plugin 安裝時預期的 skill identities；
+- Commands 從目前 `CommandV2` catalog 驗證 Plugin 安裝時預期的 command identities；
+- MCP 使用 `MCP.status()` 與初始 `tools/list` readiness，不把 `enabled` 當作 connected；
+- Plugin hooks 使用 Plugin loader 的成功／失敗結果；
+- Plugin tools 使用 ToolRegistry 的 source contribution state。
+
+Plugin 安裝資料需要保存或可 deterministic 重建預期 capability identities，不能只憑 `capabilities: ["skills", "commands"]` 推斷「有任意 skill/command 就算成功」。所有 message 必須是去除 secrets 的安全摘要。
+
+UI 顯示：
+
+- 清單 loading：`正在載入 Plugins…`；
+- runtime pending：`已啟用 · 正在初始化`，並列出 pending capability；
+- ready：`已啟用 · 可用`；
+- degraded：`已啟用 · 部分可用`，列出 ready/failed capability；
+- failed：`已啟用 · 載入失敗`，提供 Retry/refresh；
+- disabled：沿用停用狀態，不顯示綠色 ready indicator。
+
+所有新增文案必須使用現有 i18n key，不在 component 內新增硬編碼英文或中文。
+
+同一個 source lifecycle 供 Tool Search 使用：Plugin tools/MCP pending 時 catalog source 為 `pending`；ready 後更新 revision；degraded 時只有已成功註冊且通過 visibility 的 tools 可搜索；disabled/failed source 不可搜索。這使 UI 顯示與 Agent 實際可發現能力一致。
+
 ## 12. Permissions 與 subagent
 
 ### 12.1 搜索前過濾
@@ -445,6 +537,10 @@ canonical catalog
 - compaction 發生在搜索後：active discovery 不丟失；
 - permission 在搜索後改為 deny：不得執行；
 - source reconnect 後同 callable name 指向不同 identity：不得錯誤復用舊 discovery。
+- Plugin catalog loading 時不得顯示空目錄；
+- Plugin runtime pending 時不得顯示 ready 或靜默隱藏狀態；
+- runtime status request 失敗時保留最後成功 snapshot 並標記 stale，不能回退成「已啟用即正常」；
+- generation/server/location 切換後忽略前一個 request 的遲到結果。
 
 所有錯誤對模型可以包含安全的 tool name、source display name 和操作指引，但不得包含 token、credential、原始 provider response body 或 MCP 啟動環境。
 
@@ -464,6 +560,8 @@ canonical catalog
 -未搜索直接調用；
 -搜索後到實際工具調用的 conversion rate；
 -節省的 tool schema token 估算。
+- Plugin catalog load latency／failure；
+- Plugin runtime snapshot latency、pending duration 與 degraded/failed capability count。
 
 完整 query 可能含使用者資料，除非明確允許，不應寫入遙測；durable Session event 因為屬於使用者自己的工作階段，可以保存 query，但 export／diagnostics 必須遵守現有隱私邊界。
 
@@ -521,6 +619,14 @@ Generic：
 
 ### 15.4 MCP／Plugin／subagent
 
+-Plugin catalog initial request pending 時顯示 loading，不顯示 `No plugins available`；
+-Plugin catalog 成功回傳空結果後才顯示 empty；
+-Plugin catalog failure 顯示 Retry，並保留/標記最後成功資料；
+-遲到的舊 generation catalog response 不覆蓋新 generation；
+-Plugin runtime initial snapshot 顯示 initializing；
+-Skills／Commands／MCP／Plugin hooks／Plugin tools readiness 分別來自 authoritative catalog/runtime；
+-部分 capability 失敗顯示 degraded，全部成功顯示 ready，全部失敗顯示 failed；
+-UI aggregate 狀態與 Tool Search source state 使用相同 identity/state 語義；
 -MCP pending 空搜索提示重試；
 -late tools/list 後搜索成功；
 -MCP reconnect 更新 revision；
@@ -543,9 +649,13 @@ Generic：
 - [x] 更新 Plugin/MCP 已共用 V2 ToolRegistry 的失效假設；
 - [ ] 本設計確認後撰寫逐檔 TDD implementation plan。
 
-### Phase 1：Canonical catalog 與搜索服務
+### Phase 1：Plugin readiness、Canonical catalog 與搜索服務
 
+-先以 App component regression 修正 Plugin catalog loading/empty/error，不等待 Tool Search 核心完成；
 -穩定 ToolKey、source identity、definitionHash 和 revision；
+-完成 scoped source lifecycle，使 MCP/Plugin tool contribution 可報告 pending／ready／degraded／failed／disabled；
+-新增 Location-scoped Plugin runtime endpoint，聚合 Skills、Commands、MCP、Plugin hooks 和 Plugin tools readiness；
+-Plugin 設定頁顯示 initializing／ready／degraded／failed／disabled，並保留 failed request 前最後一次成功 snapshot；
 -實作 exact select + BM25；
 -保持 provider-neutral；
 -先用純單元測試固定語義。
@@ -583,6 +693,7 @@ Generic：
 
 -pending sources；
 -catalog revision／reconnect；
+-驗證 Plugin readiness 和 Tool Search source lifecycle 在 reconnect／late load／source replacement 時保持一致；
 -capability grant intersection；
 -observability；
 -刪除過時 process-local P5 state 和誤導測試。
@@ -601,8 +712,10 @@ Generic：
 8. MCP pending 和 late connection 可恢復。
 9. Hidden、denied 和未授權 subagent tools 不會出現在搜索結果。
 10. Discovery 永不繞過 permission。
-11. Provider adapter tests、durable replay tests 和跨 package typecheck 全部通過。
-12. 不新增 Core → Server、Client → Core／Server 等反向 runtime dependency。
+11. Plugin catalog loading、empty 和 failed 不再混淆，遲到的舊 generation response 不污染目前頁面。
+12. Plugin 頁面顯示的 runtime 狀態與 Location 中 Skills、Commands、MCP、hooks 和 tools 的實際 readiness 一致。
+13. Provider adapter tests、durable replay tests、Plugin UI/runtime tests 和跨 package typecheck 全部通過。
+14. 不新增 Core → Server、Client → Core／Server 等反向 runtime dependency。
 
 ## 18. 未來 agent 開始工作的檢查表
 
@@ -614,7 +727,7 @@ Generic：
 6. 採 TDD：先建立 failing regression，再改 production code。
 7. Schema／Protocol／HttpApi 變更後按 repository 指示重新生成 client；不得直接修改 generated files。
 8. 測試和 `bun typecheck` 必須從各 package 目錄執行。
-9. 每一 phase 單獨 review，避免在同一 commit 混入 V1 清理、Plugin UI 或其他無關重構。
+9. 每一 phase 單獨 review，避免在同一 commit 混入 V1 清理、Marketplace 版面重做或其他無關重構；本設計要求的 Plugin loading/readiness 顯示除外。
 10. 完成前跑 full durable replay、provider wire、MCP reconnect、subagent isolation 和 package typecheck 驗證。
 
 ## 19. 最終建議

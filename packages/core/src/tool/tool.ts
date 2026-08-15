@@ -14,6 +14,7 @@ import type { PermissionV2 } from "../permission"
 import type { SessionCommand } from "../session/command"
 import type { SessionMessage } from "../session/message"
 import type { SessionSchema } from "../session/schema"
+import type { ToolCatalog } from "./catalog"
 
 export interface Context {
   readonly sessionID: SessionSchema.ID
@@ -89,6 +90,7 @@ export type ToolExposure = "direct" | "deferred" | "hidden"
 type Runtime = {
   readonly permissions?: ReadonlyArray<string>
   readonly exposure?: ToolExposure
+  readonly catalog?: ToolCatalog.Metadata
   readonly definition: (name: string, permissions: PermissionV2.Ruleset) => ToolDefinition | undefined
   readonly settle: (call: ToolCall, context: Context) => Effect.Effect<ToolOutput, ExecutionError>
 }
@@ -194,8 +196,21 @@ export const withExposure = <Input extends SchemaType<any>, Output extends Schem
   return decorated
 }
 
+export const withCatalog = <Input extends SchemaType<any>, Output extends SchemaType<any>>(
+  tool: Definition<Input, Output>,
+  metadata: ToolCatalog.Metadata,
+) => {
+  const decorated = Object.freeze({}) as Definition<Input, Output>
+  runtimes.set(decorated, {
+    ...runtimeOf(tool),
+    catalog: Object.freeze({ ...metadata, source: Object.freeze({ ...metadata.source }) }),
+  })
+  return decorated
+}
+
 export const catalogPermissions = (tool: AnyTool, name: string) => runtimeOf(tool).permissions ?? [name]
 export const exposure = (tool: AnyTool) => runtimeOf(tool).exposure ?? "direct"
+export const catalog = (tool: AnyTool) => runtimeOf(tool).catalog
 export const definition = (name: string, tool: AnyTool, permissions: PermissionV2.Ruleset = []) =>
   runtimeOf(tool).definition(name, permissions)
 export const settle = (tool: AnyTool, call: ToolCall, context: Context) => runtimeOf(tool).settle(call, context)

@@ -392,7 +392,8 @@ const layer = Layer.effect(
             // advertised definitions, and tool_search writes new selections here
             // for the next provider turn.
             selected: searchedTools.current,
-            onSelect: searchedTools.select,
+            executeSearch: (_input, _context, _snapshot, search) =>
+              search.pipe(Effect.tap((result) => Effect.sync(() => searchedTools.select(result.matches)))),
           })
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
       const mcpInstructions = SessionRunnerSystem.mcp(yield* mcp.instructions(), effectivePermissions)

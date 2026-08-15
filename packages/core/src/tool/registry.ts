@@ -76,8 +76,8 @@ export interface MaterializationContext {
   readonly features?: Partial<MaterializationFeatures>
   /** Exact key/hash pairs for deferred tools selected earlier in this drain. */
   readonly selected?: ReadonlyMap<ToolCatalog.Key, string>
-  /** Called when tool_search selects exact catalog entries for the next provider turn. */
-  readonly onSelect?: (selections: ReadonlyArray<ToolSearch.Selection>) => void
+  /** Executes tool_search at the Session-owned durable discovery boundary when provided. */
+  readonly executeSearch?: ToolSearch.ExecuteSearch
 }
 
 export interface MaterializationFeatures {
@@ -404,7 +404,7 @@ const registryLayer = Layer.effect(
           deferred.length > 0 && overrides[ToolSearch.name] !== false && !whollyDisabled([ToolSearch.name], permissions)
             ? {
                 identity: {},
-                tool: ToolSearch.makeToolSearchTool(catalog, toolSearchIndex, context?.onSelect),
+                tool: ToolSearch.makeToolSearchTool(catalog, toolSearchIndex, context?.executeSearch),
                 catalog: {
                   source: { type: "builtin" as const, id: "opencode", displayName: "OpenCode" },
                   sourceLocalID: ToolSearch.name,

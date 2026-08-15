@@ -100,18 +100,28 @@ describe("P5 searched-tool flow", () => {
       })
 
       let selected = new Map<ToolCatalog.Key, string>()
-      const onSelect: NonNullable<ToolRegistry.MaterializationContext["onSelect"]> = (selections) => {
-        const current = new Map(selected)
-        for (const selection of selections) current.set(selection.key, selection.definitionHash)
-        selected = current
-      }
+      const executeSearch: NonNullable<ToolRegistry.MaterializationContext["executeSearch"]> = (
+        _input,
+        _context,
+        _snapshot,
+        search,
+      ) =>
+        search.pipe(
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              const current = new Map(selected)
+              for (const match of result.matches) current.set(match.key, match.definitionHash)
+              selected = current
+            }),
+          ),
+        )
       const materialized = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
         selected,
-        onSelect,
+        executeSearch,
       })
 
-      // model searches "calendar" → onSelect records the hit
+      // model searches "calendar" → executeSearch records the hit
       const search = yield* materialized.settle({
         sessionID: "ses_t" as never,
         agent: "build" as never,
@@ -124,7 +134,7 @@ describe("P5 searched-tool flow", () => {
       const next = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
         selected,
-        onSelect,
+        executeSearch,
       })
       yield* next.settle({
         sessionID: "ses_t" as never,
@@ -151,9 +161,14 @@ describe("P5 searched-tool flow", () => {
       const original = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
         selected,
-        onSelect: (selections) => {
-          selected = new Map(selections.map((selection) => [selection.key, selection.definitionHash]))
-        },
+        executeSearch: (_input, _context, _snapshot, search) =>
+          search.pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                selected = new Map(result.matches.map((match) => [match.key, match.definitionHash]))
+              }),
+            ),
+          ),
       })
       yield* original.settle({
         sessionID: "ses_t" as never,

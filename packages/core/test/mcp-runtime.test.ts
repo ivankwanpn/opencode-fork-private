@@ -377,9 +377,14 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
     const searchable = yield* registry.materialize(undefined, undefined, {
       model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
       selected,
-      onSelect: (selections) => {
-        selected = new Map(selections.map((selection) => [selection.key, selection.definitionHash]))
-      },
+      executeSearch: (_input, _context, _snapshot, search) =>
+        search.pipe(
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              selected = new Map(result.matches.map((match) => [match.key, match.definitionHash]))
+            }),
+          ),
+        ),
     })
     yield* searchable.settle({
       sessionID,

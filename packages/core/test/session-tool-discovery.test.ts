@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import { asc, eq } from "drizzle-orm"
 import { DateTime, Effect, Exit } from "effect"
+import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -15,6 +16,9 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionToolDiscovery } from "@opencode-ai/core/session/tool-discovery"
 import { SessionTable, SessionToolDiscoveryCallTable, SessionToolDiscoveryTable } from "@opencode-ai/core/session/sql"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
+import { ToolSearch } from "@opencode-ai/core/tool/tool-search"
+import { ToolDefinition } from "@opencode-ai/llm"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node])))
@@ -22,6 +26,32 @@ const sessionID = SessionV2.ID.make("ses_tool_discovery_test")
 const assistantMessageID = SessionMessage.ID.make("msg_tool_discovery_test")
 const calendarKey = SessionEvent.ToolDiscovery.Key.make("tool_calendar")
 const chatKey = SessionEvent.ToolDiscovery.Key.make("tool_chat")
+const source = { type: "plugin" as const, id: "calendar", displayName: "Calendar" }
+
+const catalogTool = (description: string): ToolCatalog.SearchableTool => {
+  const definition = new ToolDefinition({
+    name: "calendar_create",
+    description,
+    inputSchema: { type: "object", properties: { title: { type: "string" } } },
+  })
+  const metadata = { source, sourceLocalID: "calendar_create", namespace: "calendar" }
+  return {
+    key: ToolCatalog.key(source, "calendar_create"),
+    ...metadata,
+    callableName: "calendar_create",
+    description,
+    inputSchema: definition.inputSchema,
+    exposure: "deferred",
+    definitionHash: ToolCatalog.definitionHash({ definition, exposure: "deferred", metadata }),
+  }
+}
+
+const context = {
+  sessionID,
+  agent: AgentV2.ID.make("build"),
+  assistantMessageID,
+  toolCallID: "call-durable-search",
+}
 
 const setup = Effect.gen(function* () {
   const db = (yield* Database.Service).db
@@ -236,6 +266,128 @@ describe("Session tool discovery projection", () => {
       yield* db.delete(SessionTable).where(eq(SessionTable.id, sessionID)).run()
       expect(yield* db.select().from(SessionToolDiscoveryCallTable).all()).toEqual([])
       expect(yield* db.select().from(SessionToolDiscoveryTable).all()).toEqual([])
+    }),
+  )
+})
+
+describe("durable tool search execution", () => {
+  it.effect("reuses an exact invocation without rerunning search or publishing twice", () =>
+    Effect.gen(function* () {
+      const db = yield* setup
+      const events = yield* EventV2.Service
+      const tool = catalogTool("Create calendar events")
+      const snapshot = ToolCatalog.snapshot({ tools: [tool], sources: [{ source, state: "ready" }] })
+      const index = ToolSearch.makeIndex()
+      let searches = 0
+      const search = Effect.sync(() => searches++).pipe(
+        Effect.andThen(index.search(snapshot, { query: " calendar events " })),
+      )
+      const first = yield* SessionToolDiscovery.execute({
+        db,
+        events,
+        context,
+        input: { query: " calendar events " },
+        snapshot,
+        search,
+      })
+      const retry = yield* SessionToolDiscovery.execute({
+        db,
+        events,
+        context,
+        input: { query: "calendar events", limit: 8 },
+        snapshot,
+        search: Effect.sync(() => searches++).pipe(Effect.andThen(index.search(snapshot, { query: "should not run" }))),
+      })
+
+      expect(retry).toEqual(first)
+      expect(searches).toBe(1)
+      expect(yield* db.select().from(SessionToolDiscoveryCallTable).all()).toHaveLength(1)
+      expect(
+        yield* db
+          .select()
+          .from(EventTable)
+          .where(eq(EventTable.type, EventV2.versionedType(SessionEvent.ToolDiscovery.Completed.type, 1)))
+          .all(),
+      ).toHaveLength(1)
+    }),
+  )
+
+  it.effect("conflicts on changed retry input and fails stale catalog identities closed", () =>
+    Effect.gen(function* () {
+      const db = yield* setup
+      const events = yield* EventV2.Service
+      const original = catalogTool("Create calendar events")
+      const snapshot = ToolCatalog.snapshot({ tools: [original], sources: [{ source, state: "ready" }] })
+      const index = ToolSearch.makeIndex()
+      yield* SessionToolDiscovery.execute({
+        db,
+        events,
+        context,
+        input: { query: "calendar" },
+        snapshot,
+        search: index.search(snapshot, { query: "calendar" }),
+      })
+
+      const conflict = yield* Effect.flip(
+        SessionToolDiscovery.execute({
+          db,
+          events,
+          context,
+          input: { query: "different", limit: 8 },
+          snapshot,
+          search: index.search(snapshot, { query: "different" }),
+        }),
+      )
+      expect(conflict.message).toContain("conflicts with its durable result")
+
+      const replacement = catalogTool("Replacement calendar implementation")
+      const replaced = ToolCatalog.snapshot({ tools: [replacement], sources: [{ source, state: "ready" }] })
+      const stale = yield* Effect.flip(
+        SessionToolDiscovery.execute({
+          db,
+          events,
+          context,
+          input: { query: "calendar", limit: 8 },
+          snapshot: replaced,
+          search: index.search(replaced, { query: "calendar" }),
+        }),
+      )
+      expect(stale.message).toContain("stale")
+      expect(stale.message).toContain("new tool_search call")
+    }),
+  )
+
+  it.effect("persists and reuses an empty result without unlocking tools", () =>
+    Effect.gen(function* () {
+      const db = yield* setup
+      const events = yield* EventV2.Service
+      const pending = { type: "mcp" as const, id: "remote", displayName: "Remote MCP" }
+      const snapshot = ToolCatalog.snapshot({
+        tools: [catalogTool("Create calendar events")],
+        sources: [{ source: pending, state: "pending" }],
+      })
+      const index = ToolSearch.makeIndex()
+      const emptyContext = { ...context, toolCallID: "call-empty-search" }
+      const first = yield* SessionToolDiscovery.execute({
+        db,
+        events,
+        context: emptyContext,
+        input: { query: "quantum accounting" },
+        snapshot,
+        search: index.search(snapshot, { query: "quantum accounting" }),
+      })
+      const retry = yield* SessionToolDiscovery.execute({
+        db,
+        events,
+        context: emptyContext,
+        input: { query: "quantum accounting", limit: 8 },
+        snapshot,
+        search: Effect.die("must not rerun"),
+      })
+
+      expect(first.matches).toEqual([])
+      expect(retry).toEqual(first)
+      expect(yield* SessionToolDiscovery.selections(db, sessionID)).toEqual(new Map())
     }),
   )
 })

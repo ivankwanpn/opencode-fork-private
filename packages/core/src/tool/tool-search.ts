@@ -68,6 +68,11 @@ export type Result = {
   readonly pendingSources: ReadonlyArray<ToolCatalog.SourceStatus>
 }
 
+export type NormalizedInput = {
+  readonly query: string
+  readonly limit: number
+}
+
 export class SearchError extends Schema.TaggedErrorClass<SearchError>()("ToolSearch.SearchError", {
   message: Schema.String,
 }) {}
@@ -92,6 +97,13 @@ export interface Index {
   ) => Effect.Effect<Result, SearchError>
   readonly builds: () => number
 }
+
+export type ExecuteSearch = (
+  input: { readonly query: string; readonly limit?: number },
+  context: Tool.Context,
+  snapshot: ToolCatalog.Snapshot,
+  search: Effect.Effect<Result, SearchError>,
+) => Effect.Effect<Result, SearchError | Tool.Failure>
 
 const STOPWORDS = new Set(["the", "a", "an", "of", "to", "and", "or", "for", "in", "on", "with", "is", "are"])
 
@@ -127,21 +139,17 @@ export function makeIndex(): Index {
   }
 
   const search: Index["search"] = Effect.fn("ToolSearch.search")(function* (snapshot, input) {
-    const query = input.query.trim()
-    if (!query) return yield* new SearchError({ message: "query must not be empty" })
-    const limit = input.limit ?? DEFAULT_LIMIT
-    if (!Number.isInteger(limit) || limit <= 0 || limit > MAX_LIMIT)
-      return yield* new SearchError({ message: `limit must be an integer between 1 and ${MAX_LIMIT}` })
+    const normalized = yield* normalize(input)
 
     const index = build(snapshot)
     const deferred = index.documents.map((document) => document.tool)
-    const matches = query.toLowerCase().startsWith("select:")
-      ? yield* select(query.slice(query.indexOf(":") + 1), deferred, limit)
-      : (exact(query, deferred) ?? rank(query, index, limit))
+    const matches = normalized.query.toLowerCase().startsWith("select:")
+      ? yield* select(normalized.query.slice(normalized.query.indexOf(":") + 1), deferred, normalized.limit)
+      : (exact(normalized.query, deferred) ?? rank(normalized.query, index, normalized.limit))
     return {
-      query,
+      query: normalized.query,
       catalogRevision: snapshot.revision,
-      matches: matches.map(toMatch),
+      matches: matches.map(loadable),
       pendingSources: matches.length > 0 ? [] : snapshot.sources.filter((status) => status.state === "pending"),
     }
   })
@@ -149,31 +157,32 @@ export function makeIndex(): Index {
   return { search, builds: () => count }
 }
 
-export const makeToolSearchTool = (
-  snapshot: ToolCatalog.Snapshot,
-  index: Index,
-  onSelect?: (selections: ReadonlyArray<Selection>) => void,
-) =>
+export const normalize = Effect.fn("ToolSearch.normalize")(function* (input: {
+  readonly query: string
+  readonly limit?: number
+}) {
+  const query = input.query.trim()
+  if (!query) return yield* new SearchError({ message: "query must not be empty" })
+  const limit = input.limit ?? DEFAULT_LIMIT
+  if (!Number.isInteger(limit) || limit <= 0 || limit > MAX_LIMIT)
+    return yield* new SearchError({ message: `limit must be an integer between 1 and ${MAX_LIMIT}` })
+  return { query, limit }
+})
+
+export const makeToolSearchTool = (snapshot: ToolCatalog.Snapshot, index: Index, executeSearch?: ExecuteSearch) =>
   Tool.make({
     description:
       "Search deferred tools with exact selection or natural language. Use select:<exact-name> for a known callable name. Matching structured tool definitions become available on the next provider call.",
     input: Input,
     output: Output,
-    execute: (input) =>
-      index.search(snapshot, input).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() =>
-            onSelect?.(
-              result.matches.map((match) => ({
-                key: match.key,
-                definitionHash: match.definitionHash,
-                callableName: match.callableName,
-              })),
-            ),
-          ),
+    execute: (input, context) => {
+      const search = index.search(snapshot, input)
+      return (executeSearch ? executeSearch(input, context, snapshot, search) : search).pipe(
+        Effect.mapError((error) =>
+          error instanceof Tool.Failure ? error : new Tool.Failure({ message: error.message }),
         ),
-        Effect.mapError((error) => new Tool.Failure({ message: error.message })),
-      ),
+      )
+    },
     toModelOutput: ({ output }) => [{ type: "text", text: JSON.stringify(output) }],
   })
 
@@ -223,7 +232,7 @@ function rank(query: string, index: Built, limit: number) {
     .map((entry) => entry.tool)
 }
 
-function toMatch(tool: ToolCatalog.SearchableTool): Match {
+export function loadable(tool: ToolCatalog.SearchableTool): Match {
   return {
     key: tool.key,
     definitionHash: tool.definitionHash,

@@ -207,9 +207,14 @@ describe("materialize tool_search", () => {
       const materialized = yield* service.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
         selected,
-        onSelect: (selections) => {
-          selected = new Map(selections.map((selection) => [selection.key, selection.definitionHash]))
-        },
+        executeSearch: (_input, _context, _snapshot, search) =>
+          search.pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                selected = new Map(result.matches.map((match) => [match.key, match.definitionHash]))
+              }),
+            ),
+          ),
       })
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
       // P5: a deferred tool is rejected until the model searches for it.

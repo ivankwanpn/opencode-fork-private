@@ -248,7 +248,10 @@ export const fromCatalogModel = (
           endpoint: oauth ? { baseURL: "https://chatgpt.com/backend-api/codex" } : undefined,
           headers: oauth && typeof accountID === "string" ? { "ChatGPT-Account-Id": accountID } : undefined,
         })
-        .model({ id: resolved.api.id }),
+        .model({
+          id: resolved.api.id,
+          compatibility: oauth ? { toolSearch: "openai-responses" } : undefined,
+        }),
     )
   }
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/anthropic") {

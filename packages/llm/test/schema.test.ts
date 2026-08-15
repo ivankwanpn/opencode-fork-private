@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat"
 import * as OpenAIResponses from "../src/protocols/openai-responses"
 import { LLM } from "../src"
-import { ContentPart, LLMEvent, LLMRequest, Model, ModelID, ProviderID, Usage } from "../src/schema"
+import { ContentPart, LLMEvent, LLMRequest, Model, ModelCompatibility, ModelID, ProviderID, Usage } from "../src/schema"
 import { ProviderShared } from "../src/protocols/shared"
 
 const model = new Model({
@@ -100,6 +100,12 @@ describe("llm schema", () => {
     const discovery = request.toolDiscoveries?.[0]
     expect(discovery).toBeDefined()
     expect(discovery?.tools[0]).toMatchObject({ kind: "function", deferLoading: true })
+  })
+
+  test("decodes the explicit native responses tool-search capability", () => {
+    const compatibility = Schema.decodeUnknownSync(ModelCompatibility)({ toolSearch: "openai-responses" })
+    expect(compatibility).toHaveProperty("toolSearch", "openai-responses")
+    expect(() => Schema.decodeUnknownSync(ModelCompatibility)({ toolSearch: "openai-chat" })).toThrow()
   })
 })
 

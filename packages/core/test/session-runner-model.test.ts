@@ -49,6 +49,7 @@ describe("SessionRunnerModel", () => {
       )
 
       expect(resolved).toMatchObject({ id: "api-test-model", provider: "test-provider" })
+      expect(resolved.compatibility?.toolSearch).toBeUndefined()
       expect(resolved.route).toMatchObject({
         id: "openai-responses",
         endpoint: { baseURL: "https://openai.example/v1" },
@@ -116,6 +117,7 @@ describe("SessionRunnerModel", () => {
 
       expect(resolved.route.id).toBe("openai-responses")
       expect(resolved.route.endpoint.baseURL).toBe("https://custom.example/v1")
+      expect(resolved.compatibility?.toolSearch).toBeUndefined()
       expect(resolved.route.defaults.providerOptions?.openai).toMatchObject({
         reasoningEffort: "high",
         reasoningSummary: "auto",
@@ -510,6 +512,7 @@ describe("SessionRunnerModel", () => {
 
       expect(headers.authorization).toBe("Bearer secret")
       expect(resolved.route.endpoint.baseURL).toBe("https://openai.example/v1")
+      expect(resolved.compatibility?.toolSearch).toBeUndefined()
     }),
   )
 
@@ -561,6 +564,7 @@ describe("SessionRunnerModel", () => {
       })
 
       expect(resolved.route.endpoint.baseURL).toBe("https://chatgpt.com/backend-api/codex")
+      expect(resolved.compatibility?.toolSearch).toBe("openai-responses")
       expect(headers.authorization).toBe("Bearer oauth-access")
       expect(headers["chatgpt-account-id"]).toBe("account_123")
       expect(headers["x-test"]).toBe("header")

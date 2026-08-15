@@ -168,6 +168,7 @@ export type ModelToolSchemaCompatibility = Schema.Schema.Type<typeof ModelToolSc
 
 export class ModelCompatibility extends Schema.Class<ModelCompatibility>("LLM.ModelCompatibility")({
   toolSchema: Schema.optional(ModelToolSchemaCompatibility),
+  toolSearch: Schema.optional(Schema.Literal("openai-responses")),
 }) {}
 
 export namespace ModelCompatibility {

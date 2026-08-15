@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：Plugin runtime readiness 第一批已實作並驗證；`888.0.18` 下一批為 canonical Tool Catalog
+> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog 與 provider-neutral search；durable discovery 與 provider-native adapters 尚未實作
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`
@@ -9,9 +9,9 @@
 
 ## 1. 文件目的
 
-目前 OpenCode 已有 P5 `tool_search` 的初步動態載入能力，但它仍是 provider-neutral proof of concept：搜索結果是普通文字、已發現工具只保存在 runner 記憶體裡，而且下一輪只能把工具重新注入普通 definitions。這不足以支撐程序重啟、compaction、provider 切換、MCP 目錄變化和原生 OpenAI／Anthropic 協議。
+目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，同一 drain 內以 ToolKey/definitionHash 累積選擇，generic 下一輪仍以普通 definitions 注入。但 discovery 仍只保存在 runner 記憶體裡，因此尚不足以支撐程序重啟、compaction、provider 切換與原生 OpenAI／Anthropic 協議。
 
-本文件定義下一階段 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0 基線審計；本文件獲確認後，應另行產生逐檔、逐測試的 implementation plan，再按 TDD 分 phase 實作。
+本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0 與 Phase 1；後續工作必須另以 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md` 規劃 durable discovery，再依序實作 generic 與 provider-native adapters。
 
 核心決策是：
 
@@ -36,7 +36,28 @@
 
 因此本分支的方向是**擴充現有 V2 邊界**，而不是重建 Plugin/MCP/ToolRegistry。
 
-## 1.2 方案比較與選擇
+## 1.2 `888.0.18` 已驗證範圍
+
+本分支已完成以下 provider-neutral 基礎，不代表整個 Tool Search 設計已完成：
+
+- Plugin catalog 的 loading、empty、error 與 stale-request 狀態不再混淆；runtime readiness 可區分 `initializing`、`ready`、`degraded`、`failed`、`disabled`。
+- `ToolRegistry` 仍是唯一可執行 registry 與 settlement boundary，並在 Location-scoped materialization 後產生 canonical catalog。
+- Tool identity 使用明確 source ownership、source-local ID 與 deterministic ToolKey；definition hash 覆蓋最終 post-hook model-visible definition。
+- 搜索支援驗證後的 exact `select:`、ToolKey/callable exact match、nested schema BM25、穩定排序與 revision cache，輸出 canonical structured loadable specs。
+- 同一 drain 內的選擇以 ToolKey/definitionHash 單調累積；schema 或來源替換會使舊選擇失效。
+- MCP 與 Plugin 工具以 scoped contribution 發布明確來源；Plugin 設定頁的 tools readiness 直接讀 ToolRegistry source state，不再固定為 `pending`。
+
+2026-08-15 的最終回歸證據為 Core `192 pass / 0 fail`、OpenCode `71 pass / 0 fail`，以及 Core、OpenCode、App、Server `bun typecheck` 全部通過。
+
+仍未完成且不得提前宣稱完成：
+
+- 跨新 drain、程序重啟、retry 與 compaction 的 durable discovery record/projection；
+- 由 durable state 恢復 generic definitions 的完整 fallback；
+- OpenAI Responses 原生 `tool_search`／`tool_search_output` adapter；
+- Anthropic Messages 原生 `tool_reference`／`defer_loading` adapter；
+- MCP reconnect/late-load 與 subagent grant intersection 的後續 hardening。
+
+## 1.3 方案比較與選擇
 
 考慮過三種落地方式：
 
@@ -65,9 +86,9 @@
 - 將所有 provider 強制統一成相同 wire format；
 - 向模型暴露被 `hidden` 或權限拒絕的工具名稱。
 
-## 3. 現有 P5 的問題
+## 3. Phase 1 前 P5 的問題與目前邊界
 
-未來實作前應重新核對下列路徑；截至本文件撰寫時，核心問題是：
+以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足與無 revision cache 已在 `888.0.18` 修正；process-local discovery、durable replay、compaction 與 provider-native wire 問題仍存在。
 
 - `packages/core/src/tool/tool-search.ts`
   - `Output` 是 `Schema.String`；
@@ -651,52 +672,52 @@ Generic：
 
 ### Phase 1：Plugin readiness、Canonical catalog 與搜索服務
 
--先以 App component regression 修正 Plugin catalog loading/empty/error，不等待 Tool Search 核心完成；
--穩定 ToolKey、source identity、definitionHash 和 revision；
--完成 scoped source lifecycle，使 MCP/Plugin tool contribution 可報告 pending／ready／degraded／failed／disabled；
--新增 Location-scoped Plugin runtime endpoint，聚合 Skills、Commands、MCP、Plugin hooks 和 Plugin tools readiness；
--Plugin 設定頁顯示 initializing／ready／degraded／failed／disabled，並保留 failed request 前最後一次成功 snapshot；
--實作 exact select + BM25；
--保持 provider-neutral；
--先用純單元測試固定語義。
+- [x] 先以 App component regression 修正 Plugin catalog loading/empty/error，不等待 Tool Search 核心完成；
+- [x] 穩定 ToolKey、source identity、definitionHash 和 revision；
+- [x] 完成 scoped source lifecycle，使 MCP/Plugin tool contribution 可報告 pending／ready／degraded／failed／disabled；
+- [x] 新增 Location-scoped Plugin runtime endpoint，聚合 Skills、Commands、MCP、Plugin hooks 和 Plugin tools readiness；
+- [x] Plugin 設定頁顯示 initializing／ready／degraded／failed／disabled，並保留 failed request 前最後一次成功 snapshot；
+- [x] 實作 exact select + BM25；
+- [x] 保持 provider-neutral；
+- [x] 以單元與跨套件 regression 固定語義。
 
 ### Phase 2：Durable discovery
 
--新增 Schema event；
--event manifest；
--publish／project／replay；
--把 process-local replacement Set 改為 durable union projection；
--完成 restart、compaction、retry regression。
+- [ ] 新增 Schema event；
+- [ ] event manifest；
+- [ ] publish／project／replay；
+- [ ] 把目前的 in-drain union 擴充為 durable union projection；
+- [ ] 完成 restart、compaction、retry regression。
 
 ### Phase 3：Generic fallback
 
--把現有 P5 改為 structured output；
--下一輪 definitions 由 durable active discovery materialize；
--加入 stale／未搜索直接調用提示；
--確保非原生 provider 行為先穩定。
+- [x] 把現有 P5 改為 canonical structured output；
+- [ ] 下一輪 definitions 由 durable active discovery materialize；
+- [x] 加入 stale／未搜索直接調用提示；
+- [ ] 以 restart/compaction regression 證明非原生 provider 行為穩定。
 
 ### Phase 4：OpenAI Responses native adapter
 
--原生 `tool_search`／`tool_search_output`；
--namespace/loadable spec；
--history normalization；
--禁止 follow-up ordinary definition injection。
+- [ ] 原生 `tool_search`／`tool_search_output`；
+- [ ] namespace/loadable spec；
+- [ ] history normalization；
+- [ ] 禁止 follow-up ordinary definition injection。
 
 ### Phase 5：Anthropic native adapter
 
--`tool_reference`；
--`defer_loading`；
--beta headers 和 capability gate；
--proxy/model fallback。
+- [ ] `tool_reference`；
+- [ ] `defer_loading`；
+- [ ] beta headers 和 capability gate；
+- [ ] proxy/model fallback。
 
 ### Phase 6：MCP／Plugin／subagent hardening
 
--pending sources；
--catalog revision／reconnect；
--驗證 Plugin readiness 和 Tool Search source lifecycle 在 reconnect／late load／source replacement 時保持一致；
--capability grant intersection；
--observability；
--刪除過時 process-local P5 state 和誤導測試。
+- [x] pending/ready/failed/disabled source publication 基礎；
+- [ ] catalog revision／reconnect 完整恢復；
+- [ ] 驗證 Plugin readiness 和 Tool Search source lifecycle 在 reconnect／late load／source replacement 時保持一致；
+- [ ] capability grant intersection；
+- [ ] observability；
+- [ ] durable projection 完成後刪除過時 process-local discovery state。
 
 ## 17. 驗收標準
 

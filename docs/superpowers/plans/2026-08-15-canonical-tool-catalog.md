@@ -66,7 +66,7 @@
 - Consumes: final `ToolDefinition`, the existing `direct | deferred | hidden` exposure vocabulary, and the opaque Tool runtime WeakMap.
 - Produces: `ToolCatalog.Key`, `ToolCatalog.SourceRef`, `ToolCatalog.SourceStatus`, `ToolCatalog.Metadata`, `ToolCatalog.SearchableTool`, `ToolCatalog.Snapshot`, `ToolCatalog.key(...)`, `ToolCatalog.definitionHash(...)`, `ToolCatalog.snapshot(...)`, `Tool.withCatalog(...)`, and `Tool.catalog(...)`.
 
-- [ ] **Step 1: Write failing identity and deterministic-hash tests**
+- [x] **Step 1: Write failing identity and deterministic-hash tests**
 
 Create `packages/core/test/tool-catalog.test.ts` with tests that assert:
 
@@ -95,7 +95,7 @@ expect(Tool.catalog(decorated)?.source).toEqual(plugin)
 expect(Tool.catalog(original)).toBeUndefined()
 ```
 
-- [ ] **Step 2: Run the new test and confirm the missing boundary**
+- [x] **Step 2: Run the new test and confirm the missing boundary**
 
 Run from `packages/core`:
 
@@ -105,7 +105,7 @@ bun test test/tool-catalog.test.ts
 
 Expected: FAIL because `tool/catalog.ts`, `Tool.withCatalog`, and `Tool.catalog` do not exist.
 
-- [ ] **Step 3: Implement catalog primitives with canonical hashing**
+- [x] **Step 3: Implement catalog primitives with canonical hashing**
 
 Create `catalog.ts` with these public shapes:
 
@@ -154,7 +154,7 @@ export type Snapshot = {
 
 Use `new Bun.CryptoHasher("sha256")` over a recursive canonical JSON encoder which sorts object keys, preserves array order, and rejects non-JSON values. Encode ToolKey from the canonical tuple `['tool', source.type, source.id, sourceLocalID]`. Sort tools by key and sources by canonical source key before computing revision and returning a frozen snapshot.
 
-- [ ] **Step 4: Attach metadata to the existing opaque Tool runtime**
+- [x] **Step 4: Attach metadata to the existing opaque Tool runtime**
 
 Extend the private `Runtime` in `tool.ts` with optional `catalog: ToolCatalog.Metadata`. Add:
 
@@ -176,7 +176,7 @@ export const catalog = (tool: AnyTool) => runtimeOf(tool).catalog
 
 Keep `withPermission`, `withPermissions`, and `withExposure` copying the whole runtime so decorator order cannot discard metadata.
 
-- [ ] **Step 5: Run tests and Core typecheck**
+- [x] **Step 5: Run tests and Core typecheck**
 
 Run from `packages/core`:
 
@@ -187,7 +187,7 @@ bun typecheck
 
 Expected: both commands exit 0.
 
-- [ ] **Step 6: Commit the canonical primitives**
+- [x] **Step 6: Commit the canonical primitives**
 
 ```powershell
 git add packages/core/src/tool/catalog.ts packages/core/src/tool/tool.ts packages/core/test/tool-catalog.test.ts
@@ -211,7 +211,7 @@ git commit -m "feat(core): add canonical tool catalog identity"
 - Consumes: Task 1 catalog metadata and hashing.
 - Produces: `Tools.Contribution`, `Tools.Interface.contribute(...)`, `ToolRegistry.Interface.sources()`, `ToolRegistry.Materialization.catalog`, and source-aware registrations which still settle through the existing closure.
 
-- [ ] **Step 1: Write failing scoped contribution and catalog-filter tests**
+- [x] **Step 1: Write failing scoped contribution and catalog-filter tests**
 
 Add tests which register these contributions in separate scopes:
 
@@ -241,7 +241,7 @@ Assert all of the following:
 - `sources()` reflects the active source stack without executing Plugin definition hooks;
 - application registrations use source `{ type: "app", id: "opencode-sdk" }`.
 
-- [ ] **Step 2: Run focused Core tests and confirm missing APIs**
+- [x] **Step 2: Run focused Core tests and confirm missing APIs**
 
 Run from `packages/core`:
 
@@ -251,7 +251,7 @@ bun test test/session-runner-tool-registry.test.ts test/application-tools.test.t
 
 Expected: FAIL because `contribute`, `sources`, and `Materialization.catalog` do not exist.
 
-- [ ] **Step 3: Add the narrow contribution contract**
+- [x] **Step 3: Add the narrow contribution contract**
 
 In `tools.ts` declare:
 
@@ -274,7 +274,7 @@ export interface Interface {
 
 `register` remains the builtin convenience API. It delegates to the same registry transaction with `{ type: "builtin", id: "opencode" }` and `state: "ready"`. `permissions` is an explicit source-listing visibility declaration for a source that currently has no visible tools; it never grants execution permission. When omitted, the source enters the filtered catalog only when at least one of its tools is actually visible. Never derive this field from hidden tools.
 
-- [ ] **Step 4: Store source and tool stacks in one registry**
+- [x] **Step 4: Store source and tool stacks in one registry**
 
 In `registry.ts`, keep the current per-name registration stacks and add a per-source contribution stack keyed by `ToolCatalog.sourceKey(source)`. A contribution transaction must:
 
@@ -286,7 +286,7 @@ In `registry.ts`, keep the current per-name registration stacks and add a per-so
 
 Do not store an executor in the catalog entry. Keep the existing `{ identity, tool }` registration and settlement capture.
 
-- [ ] **Step 5: Materialize the canonical snapshot after all filters and hooks**
+- [x] **Step 5: Materialize the canonical snapshot after all filters and hooks**
 
 For each effective registration that survives overrides, `visible(...)`, whole-tool permission filtering, missing definitions, and hidden exposure:
 
@@ -313,7 +313,7 @@ Keep the existing callable-name `selected` Set unchanged in this task. Task 4 re
 
 Source statuses in `catalog.sources` must be deduplicated by source key. Include a source when it has at least one visible catalog tool, or when it declares nonempty source-listing `permissions` that are not wholly denied by the effective rules. This makes pending/failed MCP sources discoverable to an authorized parent agent while a deny-all subagent fails closed. Omit source identities backed only by hidden or wholly denied tools. `sources()` returns raw active statuses for trusted runtime-readiness consumers and never changes execution authorization.
 
-- [ ] **Step 6: Mark Application tools explicitly**
+- [x] **Step 6: Mark Application tools explicitly**
 
 Add the App source to `ApplicationTools.Entry`. `register(...)` assigns:
 
@@ -326,7 +326,7 @@ Add the App source to `ApplicationTools.Entry`. `register(...)` assigns:
 
 ToolRegistry must preserve an explicitly decorated App tool's local ID/display metadata while requiring its source type/id to match the ApplicationTools source.
 
-- [ ] **Step 7: Run focused and existing registry tests**
+- [x] **Step 7: Run focused and existing registry tests**
 
 Run from `packages/core`:
 
@@ -337,7 +337,7 @@ bun typecheck
 
 Expected: all commands exit 0 and existing settlement regressions remain unchanged.
 
-- [ ] **Step 8: Commit source-aware catalog materialization**
+- [x] **Step 8: Commit source-aware catalog materialization**
 
 ```powershell
 git add packages/core/src/tool/tools.ts packages/core/src/tool/application-tools.ts packages/core/src/tool/registry.ts packages/core/test/session-runner-tool-registry.test.ts packages/core/test/application-tools.test.ts
@@ -360,7 +360,7 @@ git commit -m "feat(core): materialize scoped tool catalog"
 - Consumes: a filtered `ToolCatalog.Snapshot` from Task 2.
 - Produces: `ToolSearch.SearchError`, `ToolSearch.Selection`, `ToolSearch.Match`, `ToolSearch.Result`, `ToolSearch.makeIndex()`, and a structured `ToolSearch.makeToolSearchTool(snapshot, index, onSelect)`.
 
-- [ ] **Step 1: Replace P5 text-search expectations with failing canonical search tests**
+- [x] **Step 1: Replace P5 text-search expectations with failing canonical search tests**
 
 Cover these cases in the two existing search test files:
 
@@ -376,7 +376,7 @@ Cover these cases in the two existing search test files:
 - only deferred tools enter the search index;
 - structured matches include key, definition hash, callable name, namespace/source metadata, description, input schema, and `deferLoading: true`.
 
-- [ ] **Step 2: Run search tests and confirm the old P5 implementation fails**
+- [x] **Step 2: Run search tests and confirm the old P5 implementation fails**
 
 Run from `packages/core`:
 
@@ -386,7 +386,7 @@ bun test test/tool-search-deferred.test.ts test/tool-search-dynamic.test.ts
 
 Expected: FAIL because the current helper accepts invalid limits, uses term frequency rather than BM25, returns plain text, and has no catalog identity or cache.
 
-- [ ] **Step 3: Define validated structured search output**
+- [x] **Step 3: Define validated structured search output**
 
 Use these constants and result contract:
 
@@ -420,7 +420,7 @@ export type Result = {
 
 Make `SearchError` a typed `Schema.TaggedErrorClass` with a safe `message`. The Tool executor maps only `SearchError` to `Tool.Failure`; defects and interruption remain unmasked.
 
-- [ ] **Step 4: Build deterministic BM25 documents**
+- [x] **Step 4: Build deterministic BM25 documents**
 
 Tokenize lowercase Unicode letters/numbers and split snake/kebab/camel callable forms. Construct each deferred document from callable name, namespace, source/display names, description, search hint, and recursively extracted JSON Schema property names, descriptions, item schemas, variants, and enum strings.
 
@@ -433,19 +433,19 @@ score += idf * ((tf * (k1 + 1)) / (tf + k1 * (1 - b + b * docLength / averageDoc
 
 `makeIndex()` owns only the latest `{ revision, documents }` and an integer build counter. It rebuilds when revision changes and reports `builds()` for deterministic tests; no process-global unbounded cache is allowed.
 
-- [ ] **Step 5: Implement exact modes and stable search**
+- [x] **Step 5: Implement exact modes and stable search**
 
 Trim the query before validation. A case-insensitive `select:` prefix splits comma-separated selectors, trims each, rejects empty selectors, deduplicates by ToolKey, and requires every selector to match an exact ToolKey or callable name. A plain query equal to a key or callable name returns that exact tool. Otherwise run BM25, drop zero-score documents, sort by descending score then ToolKey, and apply the validated limit.
 
 Return pending sources only when matches are empty; include only pending sources already present in the filtered snapshot and sort them by canonical source key.
 
-- [ ] **Step 6: Make the generic tool return structured data**
+- [x] **Step 6: Make the generic tool return structured data**
 
 `makeToolSearchTool` receives the snapshot and the registry-owned index. Its output schema is a concrete Effect `Schema.Struct` matching `Result`; its `toModelOutput` emits one JSON text block from the encoded structured result. On success call `onSelect` with match selections, not callable names.
 
 The description must explain exact `select:<name>` and that returned tools become available on the next provider call. Do not mention OpenAI or Anthropic wire types here.
 
-- [ ] **Step 7: Run search tests and Core typecheck**
+- [x] **Step 7: Run search tests and Core typecheck**
 
 Run from `packages/core`:
 
@@ -456,7 +456,7 @@ bun typecheck
 
 Expected: both commands exit 0.
 
-- [ ] **Step 8: Commit canonical search**
+- [x] **Step 8: Commit canonical search**
 
 ```powershell
 git add packages/core/src/tool/tool-search.ts packages/core/src/tool/registry.ts packages/core/test/tool-search-deferred.test.ts packages/core/test/tool-search-dynamic.test.ts
@@ -480,13 +480,13 @@ git commit -m "feat(core): add deterministic tool catalog search"
 - Consumes: `ToolSearch.Selection` from Task 3.
 - Produces: `MaterializationContext.selected?: ReadonlyMap<ToolCatalog.Key, string>` and `onSelect?: (selections: ReadonlyArray<ToolSearch.Selection>) => void`.
 
-- [ ] **Step 1: Add failing accumulation and stale-hash regressions**
+- [x] **Step 1: Add failing accumulation and stale-hash regressions**
 
 Add a Core search test which searches `calendar`, then `chat`, and asserts the second materialization advertises both tools. Add another which changes the registered tool description/schema after selection and asserts the old key/hash selection neither advertises nor settles the replacement until it is searched again.
 
 Update the Session runner regression to issue two `tool_search` calls in consecutive provider turns and assert the third request contains the union. Keep the existing direct-call-before-search rejection.
 
-- [ ] **Step 2: Run focused tests and confirm Set/name behavior fails**
+- [x] **Step 2: Run focused tests and confirm Set/name behavior fails**
 
 Run from `packages/core`:
 
@@ -496,7 +496,7 @@ bun test test/tool-search-dynamic.test.ts test/session-runner.test.ts
 
 Expected: the union regression FAILS because `searchedTools.select` currently replaces the Set, and stale selection is keyed only by callable name.
 
-- [ ] **Step 3: Select exact catalog identity**
+- [x] **Step 3: Select exact catalog identity**
 
 Change selection state to `ReadonlyMap<ToolCatalog.Key, string>`. A deferred catalog entry is active only when:
 
@@ -506,13 +506,13 @@ context?.selected?.get(entry.key) === entry.definitionHash
 
 The materialization still maps model calls by callable name, but settlement uses the registration identity captured for the entry whose key/hash was selected. If the current hash differs, return the existing unsupported-search-first error and do not call the replacement executor.
 
-- [ ] **Step 4: Union selections in the runner**
+- [x] **Step 4: Union selections in the runner**
 
 Replace the per-turn Set with a Map. `select` copies the current map and inserts every `{ key, definitionHash }`, preserving earlier selections. A later search for the same key replaces only that key's hash. Do not persist this map outside the drain in this tranche.
 
 Update every test call site that constructs `selected: new Set([name])` to construct the key/hash map obtained from `materialized.catalog.tools` or a helper that performs one actual search. Do not fabricate a hash from a callable name.
 
-- [ ] **Step 5: Run focused runner, search, and MCP tests**
+- [x] **Step 5: Run focused runner, search, and MCP tests**
 
 Run from `packages/core`:
 
@@ -523,7 +523,7 @@ bun typecheck
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit identity-safe selection**
+- [x] **Step 6: Commit identity-safe selection**
 
 ```powershell
 git add packages/core/src/tool/registry.ts packages/core/src/session/runner/llm.ts packages/core/test/tool-search-deferred.test.ts packages/core/test/tool-search-dynamic.test.ts packages/core/test/session-runner.test.ts packages/core/test/mcp-runtime.test.ts
@@ -548,7 +548,7 @@ git commit -m "refactor(core): select deferred tools by identity"
 - Consumes: `Tools.Interface.contribute(...)` and `Tool.withCatalog(...)`.
 - Produces: explicit MCP server and Plugin source contributions that share their scoped registration lifetime with executable tools.
 
-- [ ] **Step 1: Write failing MCP ownership/lifecycle tests**
+- [x] **Step 1: Write failing MCP ownership/lifecycle tests**
 
 Extend `mcp-runtime.test.ts` to assert:
 
@@ -558,7 +558,7 @@ Extend `mcp-runtime.test.ts` to assert:
 - disconnect or failed connection removes tools and publishes disabled/failed state with a safe message;
 - aggregate `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource` stay builtin-owned rather than pretending to belong to one server.
 
-- [ ] **Step 2: Write failing Plugin ownership tests**
+- [x] **Step 2: Write failing Plugin ownership tests**
 
 Expose a Plugin entry accessor while retaining `list(): Hooks[]`:
 
@@ -574,7 +574,7 @@ export interface Interface {
 
 Add Plugin compatibility tests proving two plugin IDs with the same plugin-local tool name produce distinct ToolKeys and that closing/replacing the Plugin contribution removes or replaces only its own source.
 
-- [ ] **Step 3: Run focused tests and confirm ownership is missing**
+- [x] **Step 3: Run focused tests and confirm ownership is missing**
 
 Run from `packages/core`:
 
@@ -590,7 +590,7 @@ bun test test/tool/plugin-compat-v2.test.ts
 
 Expected: FAIL because MCP and Plugin tools currently call source-less `register(...)`, and Plugin `list()` drops loaded IDs.
 
-- [ ] **Step 4: Publish one MCP contribution per server**
+- [x] **Step 4: Publish one MCP contribution per server**
 
 In the MCP tools synchronization layer:
 
@@ -603,7 +603,7 @@ In the MCP tools synchronization layer:
 
 Map `connected → ready`, `disabled → disabled`, and `failed | needs_auth | needs_client_registration → failed`. Messages must use the existing sanitized status text only; never serialize server configuration.
 
-- [ ] **Step 5: Preserve Plugin IDs during discovery and registration**
+- [x] **Step 5: Preserve Plugin IDs during discovery and registration**
 
 Implement `Plugin.Service.entries()` from the already deduplicated active `LoadedHook[]`; keep `list()` as `entries().map(entry => entry.hooks)` for compatibility.
 
@@ -617,7 +617,7 @@ readonly namespace?: string
 
 Hook tools use the loaded Plugin ID. File tools use a non-path-leaking source ID `file-tools:<sha256-of-canonical-file-url>` and the filename as display name. `PluginToolCompatV2` groups contributions by source, decorates each tool, and calls `Tools.contribute({ state: "ready", ... })` once per source.
 
-- [ ] **Step 6: Run Core/OpenCode tests and typechecks**
+- [x] **Step 6: Run Core/OpenCode tests and typechecks**
 
 Run from `packages/core`:
 
@@ -635,7 +635,7 @@ bun typecheck
 
 Expected: all commands exit 0.
 
-- [ ] **Step 7: Commit explicit source ownership**
+- [x] **Step 7: Commit explicit source ownership**
 
 ```powershell
 git add packages/core/src/mcp/runtime.ts packages/core/test/mcp-runtime.test.ts packages/opencode/src/plugin/index.ts packages/opencode/src/tool/plugin-compat.ts packages/opencode/src/tool/plugin-compat-v2.ts packages/opencode/test/tool/plugin-compat-v2.test.ts
@@ -659,7 +659,7 @@ git commit -m "feat(plugin): publish tool source ownership"
 - Consumes: `ToolRegistry.Interface.sources()` and explicit Plugin/MCP source IDs.
 - Produces: a `tools` Plugin capability based on authoritative source state rather than the temporary unconditional `pending` fallback.
 
-- [ ] **Step 1: Add failing tools-capability reducer tests**
+- [x] **Step 1: Add failing tools-capability reducer tests**
 
 Add `toolSourceIDs: readonly string[]` to `RuntimeDescriptor` and `toolSources: readonly ToolCatalog.SourceStatus[]` to runtime observations. Test these exact mappings for an enabled descriptor with `capabilities: ["tools"]`:
 
@@ -670,7 +670,7 @@ Add `toolSourceIDs: readonly string[]` to `RuntimeDescriptor` and `toolSources: 
 - at least one ready plus at least one failed → capability `failed`, allowing the existing overall reducer to show degraded when another capability is ready;
 - disabled plugin → `disabled` without inspecting sources.
 
-- [ ] **Step 2: Run readiness tests and confirm the hardcoded pending fallback**
+- [x] **Step 2: Run readiness tests and confirm the hardcoded pending fallback**
 
 Run from `packages/opencode`:
 
@@ -680,19 +680,19 @@ bun test src/plugin/runtime-readiness.test.ts src/plugin/claude-marketplace.test
 
 Expected: FAIL because the `tools` branch currently always returns `pending` and descriptors do not carry source identities.
 
-- [ ] **Step 3: Derive expected source identities deterministically**
+- [x] **Step 3: Derive expected source identities deterministically**
 
 For managed Claude plugins, populate `toolSourceIDs` from the same runtime Plugin identity used by Plugin tool registration. Do not infer an owner by parsing callable names. Disabled descriptors retain expected IDs but no active artifacts, so the reducer can return disabled from management state first.
 
-- [ ] **Step 4: Read ToolRegistry source state in the Location runtime endpoint**
+- [x] **Step 4: Read ToolRegistry source state in the Location runtime endpoint**
 
 In `native-claude-marketplace.ts`, acquire `ToolRegistry.Service` alongside Skill, Command, MCP, and PluginV2 services and pass `yield* tools.sources()` into `runtimeSnapshot`. Do not call `materialize()` merely to read readiness and do not run Plugin definition hooks from the settings endpoint.
 
-- [ ] **Step 5: Implement source-state reduction**
+- [x] **Step 5: Implement source-state reduction**
 
 Match Plugin sources by exact `{ type: "plugin", id }`. Preserve the existing capability vocabulary: a mixed ready/failed Tool source set returns capability `failed` with a count-only safe summary; it must not list connection arguments or paths. Remove the unconditional final `pending` branch and make the switch exhaustive.
 
-- [ ] **Step 6: Run Plugin, capability, and typecheck verification**
+- [x] **Step 6: Run Plugin, capability, and typecheck verification**
 
 Run from `packages/opencode`:
 
@@ -703,7 +703,7 @@ bun typecheck
 
 Expected: all commands exit 0.
 
-- [ ] **Step 7: Commit authoritative tool readiness**
+- [x] **Step 7: Commit authoritative tool readiness**
 
 ```powershell
 git add packages/opencode/src/plugin/claude-marketplace.ts packages/opencode/src/plugin/runtime-readiness.ts packages/opencode/src/plugin/runtime-readiness.test.ts packages/opencode/src/plugin/native-claude-marketplace.ts packages/opencode/src/plugin/claude-marketplace.test.ts
@@ -724,7 +724,7 @@ git commit -m "feat(plugin): report tool source readiness"
 - Consumes: Tasks 1–6.
 - Produces: a verified canonical-catalog/search tranche and an explicit next plan boundary for durable discovery.
 
-- [ ] **Step 1: Run focused Core regression suites**
+- [x] **Step 1: Run focused Core regression suites**
 
 Run from `packages/core`:
 
@@ -734,7 +734,7 @@ bun test test/tool-catalog.test.ts test/tool-search-deferred.test.ts test/tool-s
 
 Expected: all focused Core tests pass with 0 failures.
 
-- [ ] **Step 2: Run focused OpenCode regression suites**
+- [x] **Step 2: Run focused OpenCode regression suites**
 
 Run from `packages/opencode`:
 
@@ -744,7 +744,7 @@ bun test src/plugin/runtime-readiness.test.ts src/plugin/claude-marketplace.test
 
 Expected: all focused OpenCode tests pass with 0 failures.
 
-- [ ] **Step 3: Run affected typechecks**
+- [x] **Step 3: Run affected typechecks**
 
 Run separately:
 
@@ -756,7 +756,7 @@ packages/app: bun typecheck
 
 Expected: all three commands exit 0. App is included because its Plugin runtime wire consumer must remain compatible even without public schema changes.
 
-- [ ] **Step 4: Verify the catalog invariants from fresh evidence**
+- [x] **Step 4: Verify the catalog invariants from fresh evidence**
 
 Confirm from tests and final diff:
 
@@ -769,7 +769,7 @@ Confirm from tests and final diff:
 - Plugin tools readiness is not hardcoded pending;
 - no provider-native wire type or durable Session event was added early.
 
-- [ ] **Step 5: Inspect worktree and protected paths**
+- [x] **Step 5: Inspect worktree and protected paths**
 
 Run from repository root:
 
@@ -781,7 +781,7 @@ git diff --stat fabe31b..HEAD
 
 Expected: only intended code/docs are changed or committed and `docs/superpowers/handoffs/` remains the sole unrelated untracked path.
 
-- [ ] **Step 6: Record the next independent plan**
+- [x] **Step 6: Record the next independent plan**
 
 Update the design status to state that Plugin readiness plus canonical catalog/search are verified, while restart/compaction durability and provider-native adapters are not complete. Name the next plan exactly:
 
@@ -791,11 +791,39 @@ docs/superpowers/plans/2026-08-15-durable-tool-discovery.md
 
 Check off completed steps in this plan and record fresh test counts.
 
-- [ ] **Step 7: Commit verification documentation**
+- [x] **Step 7: Commit verification documentation**
 
 ```powershell
 git add docs/superpowers/specs/2026-08-11-provider-native-tool-search-design.md docs/superpowers/plans/2026-08-15-canonical-tool-catalog.md
 git commit -m "docs: record canonical tool catalog verification"
+```
+
+## Verification Record — 2026-08-15
+
+Implemented commits:
+
+- `a6f7342 feat(core): add canonical tool catalog identity`
+- `f01cf6c feat(core): materialize scoped tool catalog`
+- `5974da1 feat(core): add deterministic tool catalog search`
+- `9cafb33 refactor(core): select deferred tools by identity`
+- `aec4a9b feat(plugin): publish tool source ownership`
+- `7feb297 feat(plugin): report tool source readiness`
+
+Fresh regression evidence:
+
+- Core focused suites: `192 pass / 0 fail` across 7 files, `642` assertions.
+- OpenCode focused suites: `71 pass / 0 fail` across 4 files, `202` assertions.
+- `packages/core`: `bun typecheck` passed.
+- `packages/opencode`: `bun typecheck` passed.
+- `packages/app`: `bun typecheck` passed.
+- `packages/server`: `bun typecheck` passed because the Plugin capability runtime dependency surface now explicitly includes `ToolRegistry.Service`.
+- `git diff --check` passed; Windows checkout emitted only expected LF-to-CRLF notices.
+- `docs/superpowers/handoffs/` remained untouched, untracked, and excluded from every commit.
+
+Verified scope ends at provider-neutral canonical catalog/search and in-drain selection. Restart/compaction durability and provider-native adapters remain separate work under:
+
+```text
+docs/superpowers/plans/2026-08-15-durable-tool-discovery.md
 ```
 
 ---

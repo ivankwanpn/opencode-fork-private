@@ -1,5 +1,4 @@
 export * as ToolRegistry from "./registry"
-export { searchDeferred } from "./tool-search"
 import { ToolSearch } from "./tool-search"
 
 import { ToolDefinition, ToolOutput, type ToolCall, type ToolContent, type ToolResultValue } from "@opencode-ai/llm"
@@ -112,6 +111,7 @@ const registryLayer = Layer.effect(
     const resources = yield* ToolOutputStore.Service
     const plugins = yield* PluginRuntime.Service
     const agents = yield* AgentV2.Service
+    const toolSearchIndex = ToolSearch.makeIndex()
     type Registration = {
       readonly identity: object
       readonly tool: AnyTool
@@ -377,25 +377,6 @@ const registryLayer = Layer.effect(
             definitions.push(toolDefinition)
           }
         }
-        // Expose tool_search so the model can discover deferred tools on demand. It is built
-        // per-materialization so its execute closure holds this materialization's deferred list.
-        // Gate it like any other tool: a user override disabling it or a full-deny permission
-        // rule keeps it out of definitions (settle then reports it as unknown).
-        const toolSearchRegistration =
-          deferred.length > 0 && overrides[ToolSearch.name] !== false && !whollyDisabled([ToolSearch.name], permissions)
-            ? {
-                identity: {},
-                tool: ToolSearch.makeToolSearchTool(deferred, context?.onSelect),
-                catalog: {
-                  source: { type: "builtin" as const, id: "opencode", displayName: "OpenCode" },
-                  sourceLocalID: ToolSearch.name,
-                },
-              }
-            : undefined
-        if (toolSearchRegistration) {
-          const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
-          if (toolSearchDefinition) definitions.push(toolSearchDefinition)
-        }
         const sourceStatus = new Map<
           string,
           { readonly status: ToolCatalog.SourceStatus; readonly permissions: ReadonlyArray<string> }
@@ -419,6 +400,26 @@ const registryLayer = Layer.effect(
             )
             .map(([, entry]) => entry.status),
         })
+        // Expose tool_search so the model can discover the deferred entries in this
+        // already-filtered canonical snapshot. The key/hash selection boundary lands
+        // in the next tranche; until then adapt structured selections to P5 names.
+        const toolSearchRegistration =
+          deferred.length > 0 && overrides[ToolSearch.name] !== false && !whollyDisabled([ToolSearch.name], permissions)
+            ? {
+                identity: {},
+                tool: ToolSearch.makeToolSearchTool(catalog, toolSearchIndex, (selections) =>
+                  context?.onSelect?.(new Set(selections.map((selection) => selection.callableName))),
+                ),
+                catalog: {
+                  source: { type: "builtin" as const, id: "opencode", displayName: "OpenCode" },
+                  sourceLocalID: ToolSearch.name,
+                },
+              }
+            : undefined
+        if (toolSearchRegistration) {
+          const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
+          if (toolSearchDefinition) definitions.push(toolSearchDefinition)
+        }
         return {
           definitions,
           deferred,

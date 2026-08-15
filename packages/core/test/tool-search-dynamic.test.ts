@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -12,9 +12,7 @@ import { testEffect } from "./lib/effect"
 const outputStore = Layer.mock(ToolOutputStore.Service, {
   bound: (input) => Effect.succeed({ output: input.output, outputPaths: [] }),
 })
-const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [
-  [ToolOutputStore.node, outputStore],
-])
+const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [[ToolOutputStore.node, outputStore]])
 const it = testEffect(registryLayer)
 
 const defTool = (name: string, description: string) =>
@@ -64,19 +62,24 @@ describe("P5 tool_search dynamic loading", () => {
     }),
   )
 
-  test("tool_search returns structured loadable specs with defer_loading", () => {
-    // tool_search is built per-materialization from the deferred list; exercise
-    // the formatting function directly for the structural contract.
-    const { toModelText } = require("@opencode-ai/core/tool/tool-search") as typeof import("@opencode-ai/core/tool/tool-search")
-    const def = {
-      name: "tool_a",
-      description: "Alpha tool",
-      inputSchema: { type: "object", properties: {} },
-    }
-    const text = toModelText([def as never])
-    expect(text).toContain("tool_a")
-    expect(text).toContain("Alpha tool")
-  })
+  it.effect("tool_search returns structured loadable specs with deferLoading", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      yield* registry.register({ tool_a: defTool("tool_a", "Alpha tool") })
+      const materialized = yield* registry.materialize()
+      const settlement = yield* materialized.settle({
+        sessionID: "ses_t" as never,
+        agent: "build" as never,
+        assistantMessageID: "msg_t" as never,
+        call: { type: "tool-call", id: "search-structured", name: "tool_search", input: { query: "tool_a" } },
+      })
+
+      expect(settlement.output?.structured).toMatchObject({
+        catalogRevision: materialized.catalog.revision,
+        matches: [{ callableName: "tool_a", description: "Alpha tool", deferLoading: true }],
+      })
+    }),
+  )
 })
 
 describe("P5 searched-tool flow", () => {

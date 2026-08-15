@@ -9,43 +9,167 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionTodo } from "@opencode-ai/core/session/todo"
 import { TodoWriteTool } from "@opencode-ai/core/tool/todowrite"
 import { Tool } from "@opencode-ai/core/tool/tool"
-import { searchDeferred, ToolRegistry } from "@opencode-ai/core/tool/registry"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
+import { ToolRegistry } from "@opencode-ai/core/tool/registry"
+import { ToolSearch } from "@opencode-ai/core/tool/tool-search"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolDefinition } from "@opencode-ai/llm"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "./lib/effect"
 
-const def = (name: string, description: string): ToolDefinition =>
-  new ToolDefinition({ name, description, inputSchema: {} })
+const source = { type: "plugin" as const, id: "search-fixture", displayName: "Search Fixture" }
 
-describe("searchDeferred", () => {
-  test("ranks description matches over non-matches", () => {
-    const tools = [
-      def("playwright_snapshot", "Take a screenshot of the current browser page"),
-      def("bash", "Execute a shell command"),
+const catalogTool = (input: {
+  readonly name: string
+  readonly description: string
+  readonly inputSchema?: Record<string, unknown>
+  readonly exposure?: ToolCatalog.Exposure
+}): ToolCatalog.SearchableTool => {
+  const definition = new ToolDefinition({
+    name: input.name,
+    description: input.description,
+    inputSchema: input.inputSchema ?? { type: "object", properties: {} },
+  })
+  const metadata = {
+    source,
+    sourceLocalID: input.name,
+    namespace: "fixture",
+    displayName: input.name.replaceAll("_", " "),
+  }
+  const exposure = input.exposure ?? "deferred"
+  return {
+    key: ToolCatalog.key(source, input.name),
+    ...metadata,
+    callableName: input.name,
+    description: input.description,
+    inputSchema: definition.inputSchema,
+    exposure,
+    definitionHash: ToolCatalog.definitionHash({ definition, exposure, metadata }),
+  }
+}
+
+const snapshot = (
+  tools: ReadonlyArray<ToolCatalog.SearchableTool>,
+  sources: ReadonlyArray<ToolCatalog.SourceStatus> = [{ source, state: "ready" }],
+) => ToolCatalog.snapshot({ tools, sources })
+
+describe("canonical tool catalog search", () => {
+  test("rejects empty queries and limits outside the integer range", () => {
+    const index = ToolSearch.makeIndex()
+    const catalog = snapshot([catalogTool({ name: "calendar_create", description: "Create calendar events" })])
+    const invalid = [
+      { query: " " },
+      { query: "calendar", limit: 0 },
+      { query: "calendar", limit: -1 },
+      { query: "calendar", limit: 1.5 },
+      { query: "calendar", limit: 21 },
     ]
-    const hits = searchDeferred("browser page screenshot", tools, 10)
-    expect(hits[0]?.name).toBe("playwright_snapshot")
+
+    for (const input of invalid) {
+      const error = Effect.runSync(Effect.flip(index.search(catalog, input)))
+      expect(error).toBeInstanceOf(ToolSearch.SearchError)
+    }
   })
 
-  test("respects limit", () => {
-    const tools = [
-      def("a", "alpha beta gamma"),
-      def("b", "alpha beta delta"),
-      def("c", "alpha epsilon zeta"),
-    ]
-    const hits = searchDeferred("alpha beta", tools, 2)
-    expect(hits.length).toBeLessThanOrEqual(2)
+  test("selects exact callable names and ToolKeys in requested order", () => {
+    const first = catalogTool({ name: "calendar_create", description: "Create calendar events" })
+    const second = catalogTool({ name: "chat_search", description: "Search chat history" })
+    const result = Effect.runSync(
+      ToolSearch.makeIndex().search(snapshot([first, second]), {
+        query: `select:${second.callableName},${first.key},${second.callableName}`,
+      }),
+    )
+
+    expect(result.matches.map((match) => match.key)).toEqual([second.key, first.key])
+    expect(result.matches[0]).toMatchObject({
+      callableName: "chat_search",
+      definitionHash: second.definitionHash,
+      source,
+      deferLoading: true,
+    })
+  })
+
+  test("prefers exact names, ranks nested schema terms with BM25, and excludes direct tools", () => {
+    const exact = catalogTool({ name: "chromatic", description: "A short exact tool" })
+    const nested = catalogTool({
+      name: "render_palette",
+      description: "Render a visual palette",
+      inputSchema: {
+        type: "object",
+        properties: {
+          options: {
+            description: "Reticulated rendering controls",
+            anyOf: [{ type: "object", properties: { hue: { type: "string", enum: ["violet", "amber"] } } }],
+          },
+        },
+      },
+    })
+    const direct = catalogTool({ name: "direct_violet", description: "Reticulated violet", exposure: "direct" })
+    const index = ToolSearch.makeIndex()
+    const catalog = snapshot([direct, nested, exact])
+
+    expect(Effect.runSync(index.search(catalog, { query: "chromatic" })).matches[0]?.key).toBe(exact.key)
+    expect(
+      Effect.runSync(index.search(catalog, { query: "reticulated violet" })).matches.map((match) => match.key),
+    ).toEqual([nested.key])
+  })
+
+  test("returns no fallback matches and reports only authorized pending catalog sources", () => {
+    const pending = { type: "mcp" as const, id: "weather", displayName: "Weather" }
+    const result = Effect.runSync(
+      ToolSearch.makeIndex().search(
+        snapshot(
+          [catalogTool({ name: "calendar_create", description: "Create calendar events" })],
+          [{ source: pending, state: "pending" }],
+        ),
+        { query: "quantum accounting" },
+      ),
+    )
+
+    expect(result.matches).toEqual([])
+    expect(result.pendingSources).toEqual([{ source: pending, state: "pending" }])
+  })
+
+  test("reuses the same revision index and rebuilds deterministically when revision changes", () => {
+    const tool = catalogTool({ name: "calendar_create", description: "Create calendar events" })
+    const index = ToolSearch.makeIndex()
+    const ready = snapshot([tool])
+    const failed = snapshot([tool], [{ source, state: "failed" }])
+
+    Effect.runSync(index.search(ready, { query: "calendar" }))
+    Effect.runSync(index.search(ready, { query: "events" }))
+    expect(index.builds()).toBe(1)
+    Effect.runSync(index.search(failed, { query: "calendar" }))
+    expect(index.builds()).toBe(2)
+  })
+
+  test("defaults to eight deterministic matches and refuses an oversized exact selection", () => {
+    const tools = Array.from({ length: 21 }, (_, index) =>
+      catalogTool({ name: `common_${String(index).padStart(2, "0")}`, description: "Common operation" }),
+    )
+    const index = ToolSearch.makeIndex()
+    const catalog = snapshot(tools)
+    const result = Effect.runSync(index.search(catalog, { query: "common operation" }))
+
+    expect(result.matches).toHaveLength(8)
+    expect(result.matches.map((match) => match.key)).toEqual([...result.matches.map((match) => match.key)].toSorted())
+    const error = Effect.runSync(
+      Effect.flip(
+        index.search(catalog, {
+          query: `select:${tools.map((tool) => tool.callableName).join(",")}`,
+          limit: 20,
+        }),
+      ),
+    )
+    expect(error.message).toContain("more than the requested limit")
   })
 })
 
 const outputStore = Layer.mock(ToolOutputStore.Service, {
   bound: (input) => Effect.succeed({ output: input.output, outputPaths: [] }),
 })
-const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [
-  [ToolOutputStore.node, outputStore],
-])
+const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [[ToolOutputStore.node, outputStore]])
 const it = testEffect(registryLayer)
 
 const hello = () =>
@@ -93,7 +217,8 @@ describe("materialize tool_search", () => {
       })
       const settlement = yield* next.settle(call("hello", { name: "bob" }))
       expect(settlement.result).toEqual({ type: "text", value: "hello bob" })
-    }))
+    }),
+  )
 
   it.effect("settles a tool_search call with matching-tool text", () =>
     Effect.gen(function* () {
@@ -105,7 +230,8 @@ describe("materialize tool_search", () => {
         type: "text",
         value: expect.stringContaining("Says hello"),
       })
-    }))
+    }),
+  )
 
   it.effect("does not advertise tool_search without deferred tools", () =>
     Effect.gen(function* () {
@@ -115,7 +241,8 @@ describe("materialize tool_search", () => {
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
       const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
       expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
-    }))
+    }),
+  )
 
   it.effect("hides tool_search when overridden off", () =>
     Effect.gen(function* () {
@@ -126,19 +253,19 @@ describe("materialize tool_search", () => {
       expect(materialized.deferred.map((tool) => tool.name)).toContain("hello")
       const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
       expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
-    }))
+    }),
+  )
 
   it.effect("hides tool_search when a permission deny rule matches", () =>
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service
       yield* service.register({ hello: hello() })
-      const materialized = yield* service.materialize([
-        { action: "tool_search", resource: "*", effect: "deny" },
-      ])
+      const materialized = yield* service.materialize([{ action: "tool_search", resource: "*", effect: "deny" }])
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(false)
       const settlement = yield* materialized.settle(call("tool_search", { query: "hello" }))
       expect(settlement.result).toEqual({ type: "error", value: "Unknown tool: tool_search" })
-    }))
+    }),
+  )
 })
 
 const todoPermission = Layer.succeed(
@@ -159,14 +286,11 @@ const sessionTodo = Layer.succeed(
     get: () => Effect.succeed([]),
   }),
 )
-const builtinLayer = AppNodeBuilder.build(
-  LayerNode.group([ToolRegistry.node, TodoWriteTool.node]),
-  [
-    [ToolOutputStore.node, outputStore],
-    [PermissionV2.node, todoPermission],
-    [SessionTodo.node, sessionTodo],
-  ],
-)
+const builtinLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node, TodoWriteTool.node]), [
+  [ToolOutputStore.node, outputStore],
+  [PermissionV2.node, todoPermission],
+  [SessionTodo.node, sessionTodo],
+])
 const itBuiltin = testEffect(builtinLayer)
 
 describe("shipped builtin e2e", () => {
@@ -183,5 +307,6 @@ describe("shipped builtin e2e", () => {
         }),
       )
       expect(settlement.result).toMatchObject({ type: "text" })
-    }))
+    }),
+  )
 })

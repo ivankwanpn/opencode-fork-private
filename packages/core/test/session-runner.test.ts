@@ -901,6 +901,14 @@ describe("SessionRunnerLLM", () => {
       expect(turnTools[0]).toContain("tool_search")
       // Second turn: the tool_search result unlocked the tool definition.
       expect(turnTools[1]).toContain("deferred_echo")
+      expect(requests[0]?.toolDiscoveries).toEqual([])
+      expect(requests[1]?.toolDiscoveries).toEqual([
+        expect.objectContaining({
+          callID: "call-search",
+          query: "echo text",
+          tools: [expect.objectContaining({ name: "deferred_echo", deferLoading: true })],
+        }),
+      ])
       // The deferred tool actually executed (its completed call is in context).
       const context = yield* session.context(sessionID)
       const executedEcho = context.some(
@@ -1003,6 +1011,12 @@ describe("SessionRunnerLLM", () => {
       yield* session.resume(sessionID)
 
       expect(requests[0]?.tools.map((tool) => tool.name)).toContain("deferred_echo")
+      expect(requests[0]?.toolDiscoveries).toEqual([
+        expect.objectContaining({
+          callID: "call-search-persisted",
+          tools: [expect.objectContaining({ name: "deferred_echo", deferLoading: true })],
+        }),
+      ])
     }),
   )
 
@@ -1057,6 +1071,12 @@ describe("SessionRunnerLLM", () => {
       yield* session.resume(sessionID)
 
       expect(requests[0]?.tools.map((tool) => tool.name)).toContain("deferred_echo")
+      expect(requests[0]?.toolDiscoveries).toEqual([
+        expect.objectContaining({
+          callID: "call-search-before-compaction",
+          tools: [expect.objectContaining({ name: "deferred_echo", deferLoading: true })],
+        }),
+      ])
     }),
   )
 
@@ -3817,7 +3837,7 @@ describe("SessionRunnerLLM", () => {
       const first = yield* session.resume(sessionID).pipe(Effect.forkChild)
       yield* Deferred.await(streamStarted)
       const second = yield* session.resume(otherSessionID).pipe(Effect.forkChild)
-      yield* Effect.yieldNow
+      yield* waitFor("second concurrent provider request", () => requests.length === 2)
 
       expect(requests).toHaveLength(2)
       expect(requests.map((request) => request.providerOptions?.openai?.promptCacheKey)).toEqual([

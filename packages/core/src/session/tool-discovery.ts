@@ -2,6 +2,7 @@ export * as SessionToolDiscovery from "./tool-discovery"
 
 import { and, asc, eq } from "drizzle-orm"
 import { DateTime, Effect } from "effect"
+import { ToolDefinition, ToolDiscovery } from "@opencode-ai/llm"
 import type { Database } from "../database/database"
 import type { EventV2 } from "../event"
 import type { ToolCatalog } from "../tool/catalog"
@@ -102,6 +103,43 @@ export const selections = Effect.fn("SessionToolDiscovery.selections")(function*
     .all()
     .pipe(Effect.orDie)
   return new Map<ToolCatalog.Key, string>(rows.map((row) => [row.key, row.definitionHash]))
+})
+
+export const records = Effect.fn("SessionToolDiscovery.records")(function* (
+  db: DB,
+  sessionID: SessionSchema.ID,
+  snapshot: ToolCatalog.Snapshot,
+) {
+  const rows = yield* db
+    .select()
+    .from(SessionToolDiscoveryCallTable)
+    .where(eq(SessionToolDiscoveryCallTable.session_id, sessionID))
+    .orderBy(asc(SessionToolDiscoveryCallTable.seq))
+    .all()
+    .pipe(Effect.orDie)
+  const current = new Map(snapshot.tools.map((tool) => [tool.key, tool]))
+  return rows.map((row) =>
+    ToolDiscovery.make({
+      callID: row.tool_call_id,
+      query: row.query,
+      limit: row.limit,
+      catalogRevision: row.catalog_revision,
+      tools: row.matches.flatMap((match) => {
+        const tool = current.get(match.key)
+        if (!tool || tool.definitionHash !== match.definitionHash || tool.exposure !== "deferred") return []
+        return [
+          ToolDefinition.make({
+            name: tool.callableName,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
+            deferLoading: true,
+            ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }),
+          }),
+        ]
+      }),
+    }),
+  )
 })
 
 export const execute = Effect.fn("SessionToolDiscovery.execute")(function* (input: {

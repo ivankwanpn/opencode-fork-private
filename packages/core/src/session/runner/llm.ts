@@ -535,6 +535,9 @@ const layer = Layer.effect(
         messages: pluginMessages.value,
       })
       const transformedContext = fromPluginMessages(pluginMessages.get(), projectedMessages.origins)
+      const toolDiscoveries = toolMaterialization
+        ? yield* SessionToolDiscovery.records(db, session.id, toolMaterialization.catalog)
+        : []
 
       const request = LLM.request({
         model,
@@ -556,6 +559,7 @@ const layer = Layer.effect(
           ...(toolMaterialization?.definitions.filter((tool) => tool.name !== STRUCTURED_OUTPUT_TOOL_NAME) ?? []),
           ...(structuredOutputTool ? [structuredOutputTool] : []),
         ],
+        toolDiscoveries,
         toolChoice: structuredOutputTool ? "required" : isLastStep ? "none" : undefined,
       })
       const autoContinue = (overflow: boolean) =>

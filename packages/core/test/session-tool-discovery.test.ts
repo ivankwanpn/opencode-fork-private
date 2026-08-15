@@ -311,6 +311,73 @@ describe("Session tool discovery projection", () => {
       expect(yield* db.select().from(SessionToolDiscoveryTable).all()).toEqual([])
     }),
   )
+
+  it.effect("rebuilds typed discovery records from the current exact catalog", () =>
+    Effect.gen(function* () {
+      const db = yield* setup
+      const events = yield* EventV2.Service
+      const current = catalogTool("Create calendar events")
+      yield* events.publish(
+        SessionEvent.ToolDiscovery.Completed,
+        completed({
+          callID: "call-current",
+          query: "calendar",
+          matches: [
+            {
+              key: current.key,
+              callableName: current.callableName,
+              definitionHash: current.definitionHash,
+              source: current.source,
+            },
+          ],
+        }),
+      )
+      yield* events.publish(
+        SessionEvent.ToolDiscovery.Completed,
+        completed({
+          callID: "call-stale",
+          query: "old calendar",
+          timestamp: 2,
+          matches: [
+            {
+              key: current.key,
+              callableName: current.callableName,
+              definitionHash: "stale-definition-hash",
+              source: current.source,
+            },
+          ],
+        }),
+      )
+      yield* events.publish(
+        SessionEvent.ToolDiscovery.Completed,
+        completed({ callID: "call-empty", query: "missing", timestamp: 3 }),
+      )
+
+      const records = yield* SessionToolDiscovery.records(
+        db,
+        sessionID,
+        ToolCatalog.snapshot({ tools: [current], sources: [{ source, state: "ready" }] }),
+      )
+      expect(records).toHaveLength(3)
+      expect(records[0]).toMatchObject({
+        callID: "call-current",
+        query: "calendar",
+        limit: 8,
+        catalogRevision: "revision-call-current",
+        tools: [
+          {
+            kind: "function",
+            name: "calendar_create",
+            description: "Create calendar events",
+            deferLoading: true,
+            namespace: "calendar",
+          },
+        ],
+      })
+      expect(records[1]).toMatchObject({ callID: "call-stale", tools: [] })
+      expect(records[2]).toMatchObject({ callID: "call-empty", tools: [] })
+    }),
+  )
 })
 
 describe("durable tool search execution", () => {

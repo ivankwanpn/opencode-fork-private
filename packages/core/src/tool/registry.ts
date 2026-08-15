@@ -366,7 +366,13 @@ const registryLayer = Layer.effect(
             // advertised. A same-key replacement must be searched again.
             if (context?.selected?.get(searchable.key) === searchable.definitionHash) {
               advertised.set(name, registration)
-              definitions.push(toolDefinition)
+              definitions.push(
+                new ToolDefinition({
+                  ...toolDefinition,
+                  deferLoading: true,
+                  ...(searchable.namespace === undefined ? {} : { namespace: searchable.namespace }),
+                }),
+              )
             } else {
               deferredRegistrations.set(name, registration)
               deferred.push(toolDefinition)
@@ -413,7 +419,7 @@ const registryLayer = Layer.effect(
             : undefined
         if (toolSearchRegistration) {
           const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
-          if (toolSearchDefinition) definitions.push(toolSearchDefinition)
+          if (toolSearchDefinition) definitions.push(new ToolDefinition({ ...toolSearchDefinition, kind: "tool-search" }))
         }
         return {
           definitions,

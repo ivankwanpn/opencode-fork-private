@@ -232,6 +232,38 @@ describe("materialize tool_search", () => {
     }),
   )
 
+  it.effect("marks discovery and selected deferred definitions without tagging direct tools", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({
+        direct: direct(),
+        hello: Tool.withCatalog(hello(), {
+          source: { type: "builtin", id: "opencode", displayName: "OpenCode" },
+          sourceLocalID: "hello",
+          namespace: "opencode",
+        }),
+      })
+      const first = yield* service.materialize()
+      const search = first.definitions.find((tool) => tool.name === ToolSearch.name)
+      const directDefinition = first.definitions.find((tool) => tool.name === "direct")
+      const deferred = first.catalog.tools.find((tool) => tool.callableName === "hello")
+
+      expect(search).toMatchObject({ kind: "tool-search" })
+      expect(directDefinition?.deferLoading).toBeUndefined()
+      expect(deferred).toBeDefined()
+
+      const selected = yield* service.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected: new Map(deferred ? [[deferred.key, deferred.definitionHash]] : []),
+      })
+      expect(selected.definitions.find((tool) => tool.name === "hello")).toMatchObject({
+        deferLoading: true,
+        namespace: "opencode",
+      })
+      expect(selected.definitions.find((tool) => tool.name === "direct")?.deferLoading).toBeUndefined()
+    }),
+  )
+
   it.effect("settles a tool_search call with matching-tool text", () =>
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service

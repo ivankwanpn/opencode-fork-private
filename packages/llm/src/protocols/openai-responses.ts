@@ -706,16 +706,13 @@ const fromRequest = Effect.fn("OpenAIResponses.fromRequest")(function* (request:
   const generation = request.generation
   const options = yield* lowerOptions(request)
   const toolSchemaCompatibility = request.model.compatibility?.toolSchema
-  const nativeToolSearch = request.model.compatibility?.toolSearch === ADAPTER
-  const semanticSearch = nativeToolSearch
-    ? request.tools.find((tool) => tool.kind === "tool-search")
-    : undefined
-  if (
-    request.toolChoice?.type === "tool" &&
-    request.toolChoice.name === semanticSearch?.name
-  )
-    return yield* invalid(
-      `OpenAI Responses native tool search cannot be selected by its semantic name ${request.toolChoice.name}`,
+  // Native tool_search is anonymous. Preserve an explicit semantic named choice
+  // by lowering this request through the ordinary function path instead.
+  const nativeToolSearch =
+    request.model.compatibility?.toolSearch === ADAPTER &&
+    !(
+      request.toolChoice?.type === "tool" &&
+      request.tools.some((tool) => tool.kind === "tool-search" && tool.name === request.toolChoice?.name)
     )
   const tools = request.tools.flatMap((tool): ReadonlyArray<OpenAIResponsesTool> => {
     const inputSchema = ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)

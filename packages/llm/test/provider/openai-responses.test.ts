@@ -435,20 +435,46 @@ describe("OpenAI Responses route", () => {
     }),
   )
 
-  it.effect("rejects selecting the anonymous native search tool by its semantic name", () =>
+  it.effect("falls back to ordinary functions when selecting search by its semantic name", () =>
     Effect.gen(function* () {
-      const error = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(
         LLM.request({
           model: nativeToolSearchModel,
-          tools: [discoveryTool],
+          messages: [
+            Message.user("Find calendar tools."),
+            Message.assistant([
+              ToolCallPart.make({ id: "search-named", name: "discover_tools", input: { query: "calendar" } }),
+            ]),
+            Message.tool({ id: "search-named", name: "discover_tools", result: { matches: ["calendar_create"] } }),
+          ],
+          tools: [discoveryTool, deferredCalendarTool],
+          toolDiscoveries: [
+            {
+              assistantMessageID: "assistant-named",
+              callID: "search-named",
+              query: "calendar",
+              limit: 8,
+              catalogRevision: "catalog-1",
+              tools: [deferredCalendarTool],
+            },
+          ],
           toolChoice: "discover_tools",
         }),
-      ).pipe(Effect.flip)
+      )
 
-      expect(error).toBeInstanceOf(LLMError)
-      expect(error.reason).toMatchObject({ _tag: "InvalidRequest" })
-      expect(error.message).toContain("native tool search")
-      expect(error.message).toContain("discover_tools")
+      expect(prepared.body.tools).toEqual([
+        expect.objectContaining({ type: "function", name: "discover_tools" }),
+        expect.objectContaining({ type: "function", name: "calendar_create" }),
+      ])
+      expect(prepared.body.tool_choice).toEqual({ type: "function", name: "discover_tools" })
+      expect(prepared.body.input).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "function_call", call_id: "search-named", name: "discover_tools" }),
+          expect.objectContaining({ type: "function_call_output", call_id: "search-named" }),
+        ]),
+      )
+      expect(prepared.body.input).not.toContainEqual(expect.objectContaining({ type: "tool_search_call" }))
+      expect(prepared.body.input).not.toContainEqual(expect.objectContaining({ type: "tool_search_output" }))
     }),
   )
 

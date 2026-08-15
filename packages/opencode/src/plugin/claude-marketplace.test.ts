@@ -98,6 +98,16 @@ describe("ClaudeMarketplaceManager", () => {
       command: ["demo-server", "--stdio"],
       environment: { DEMO: "1" },
     })
+    expect(await manager.runtimeDescriptors()).toEqual([
+      {
+        id: "demo@local-marketplace",
+        enabled: true,
+        capabilities: ["skills", "commands", "mcp"],
+        skillDirectory: path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo"),
+        commandNames: ["claude/local-marketplace__demo/demo"],
+        mcpServers: ["claude:local-marketplace:demo:demo"],
+      },
+    ])
 
     const disabled = await manager.disable("demo@local-marketplace")
     expect(disabled.plugins[0]?.enabled).toBe(false)
@@ -107,6 +117,15 @@ describe("ClaudeMarketplaceManager", () => {
     ).rejects.toThrow()
     const disabledCommands = await ConfigCommand.load(path.join(temporaryDirectory, "config"))
     expect(disabledCommands["claude/local-marketplace__demo/demo"]).toBeUndefined()
+    expect(await manager.runtimeDescriptors()).toEqual([
+      {
+        id: "demo@local-marketplace",
+        enabled: false,
+        capabilities: ["skills", "commands", "mcp"],
+        commandNames: [],
+        mcpServers: [],
+      },
+    ])
     await manager.uninstall("demo@local-marketplace")
     expect((await manager.list()).plugins[0]?.installed).toBe(false)
   })

@@ -3,6 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Marketplace, Plugin } from "@opencode-ai/protocol/groups/plugin"
 import { Global } from "@opencode-ai/core/global"
+import { Plugin as PluginSchema } from "@opencode-ai/schema/plugin"
 import { Process } from "@/util/process"
 
 type RecordValue = Record<string, unknown>
@@ -82,6 +83,16 @@ export type MarketplacePaths = {
   pluginDirectory: string
   generatedSkillDirectory: string
   generatedCommandDirectory: string
+}
+
+export type RuntimeDescriptor = {
+  readonly id: string
+  readonly enabled: boolean
+  readonly capabilities: readonly PluginSchema.RuntimeCapabilityName[]
+  readonly skillDirectory?: string
+  readonly commandNames: readonly string[]
+  readonly mcpServers: readonly string[]
+  readonly pluginRuntimeID?: string
 }
 
 const defaultPaths: MarketplacePaths = {
@@ -574,6 +585,62 @@ export class ClaudeMarketplaceManager {
   async enabledMcpServers() {
     const state = await this.loadState()
     return Object.fromEntries(Object.values(state.plugins).flatMap((plugin) => Object.entries(plugin.mcp)))
+  }
+
+  async runtimeDescriptors(): Promise<RuntimeDescriptor[]> {
+    const state = await this.loadState()
+    const catalog = await this.list()
+    const items = new Map(catalog.plugins.map((plugin) => [plugin.id, plugin]))
+    return Promise.all(
+      Object.values(state.plugins)
+        .filter((plugin) => plugin.installed)
+        .toSorted((left, right) => left.id.localeCompare(right.id))
+        .map(async (plugin) => {
+          const capabilities = (items.get(plugin.id)?.capabilities ?? ["plugin"]).filter(
+            (capability): capability is PluginSchema.RuntimeCapabilityName =>
+              PluginSchema.RuntimeCapabilityName.literals.includes(capability as PluginSchema.RuntimeCapabilityName),
+          )
+          if (!plugin.enabled) {
+            return {
+              id: plugin.id,
+              enabled: false,
+              capabilities,
+              commandNames: [],
+              mcpServers: [],
+            }
+          }
+
+          const skillDirectory =
+            plugin.artifacts?.skillDirectory && (await isDirectory(plugin.artifacts.skillDirectory))
+              ? plugin.artifacts.skillDirectory
+              : undefined
+          const commandNames = plugin.artifacts?.commandDirectory
+            ? await this.commandNames(plugin.artifacts.commandDirectory)
+            : []
+          return {
+            id: plugin.id,
+            enabled: true,
+            capabilities,
+            ...(skillDirectory ? { skillDirectory } : {}),
+            commandNames,
+            mcpServers: Object.keys(plugin.mcp).toSorted(),
+            ...(capabilities.includes("plugin")
+              ? { pluginRuntimeID: `claude-marketplace/${plugin.marketplace}/${plugin.name}` }
+              : {}),
+          }
+        }),
+    )
+  }
+
+  private async commandNames(directory: string) {
+    if (!(await isDirectory(directory))) return []
+    const root = path.dirname(this.paths.generatedCommandDirectory)
+    const files = await Array.fromAsync(
+      new Bun.Glob("**/*.md").scan({ cwd: directory, absolute: true, onlyFiles: true }),
+    )
+    return files
+      .map((file) => path.relative(root, file).replaceAll("\\", "/").replace(/\.md$/, ""))
+      .toSorted()
   }
 
   private async capabilities(root: string, entry: MarketplacePlugin) {

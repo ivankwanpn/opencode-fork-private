@@ -129,6 +129,8 @@ export interface PublishOptions {
   readonly expectedSeq?: number
   /** Local operational projection committed atomically with a new durable event. Not replayed or serialized. */
   readonly commit?: (seq: number) => Effect.Effect<void>
+  /** Replace the aggregate's prior durable rows atomically with this event while preserving its sequence. */
+  readonly replaceAggregate?: boolean
 }
 
 export interface Interface {
@@ -151,7 +153,7 @@ export interface Interface {
     events: SerializedEvent[],
     options?: { readonly publish?: boolean; readonly ownerID?: string; readonly strictOwner?: boolean },
   ) => Effect.Effect<string | undefined>
-  readonly remove: (aggregateID: string, options?: { readonly keepSequence?: boolean }) => Effect.Effect<void>
+  readonly remove: (aggregateID: string) => Effect.Effect<void>
   readonly claim: (aggregateID: string, ownerID: string) => Effect.Effect<void>
 }
 
@@ -219,6 +221,7 @@ export const layerWith = (options?: LayerOptions) =>
           readonly ownerID?: string
           readonly strictOwner?: boolean
           readonly expectedSeq?: number
+          readonly replaceAggregate?: boolean
         },
         commit?: (seq: number) => Effect.Effect<void>,
       ) {
@@ -341,6 +344,9 @@ export const layerWith = (options?: LayerOptions) =>
                                 message: `Event ${event.id} already exists at aggregate ${stored.aggregateID} sequence ${stored.seq}`,
                               }),
                             )
+                          if (input?.replaceAggregate === true) {
+                            yield* db.delete(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).run()
+                          }
                           const committed = {
                             ...event,
                             durable: { aggregateID, seq, version: durable.version },
@@ -399,6 +405,7 @@ export const layerWith = (options?: LayerOptions) =>
         event: Payload<D>,
         commit?: PublishOptions["commit"],
         expectedSeq?: number,
+        replaceAggregate?: boolean,
       ) {
         return Effect.gen(function* () {
           if (!definition?.durable && commit)
@@ -408,11 +415,20 @@ export const layerWith = (options?: LayerOptions) =>
                 message: "Local commit hooks require a durable event",
               }),
             )
+          if (!definition?.durable && replaceAggregate === true)
+            return yield* Effect.die(
+              new InvalidDurableEventError({
+                type: event.type,
+                message: "Aggregate replacement requires a durable event",
+              }),
+            )
           if (definition?.durable) {
             const committed = yield* commitDurableEvent(
               definition,
               event as Payload,
-              expectedSeq === undefined ? undefined : { expectedSeq },
+              expectedSeq === undefined && replaceAggregate !== true
+                ? undefined
+                : { expectedSeq, replaceAggregate },
               commit,
             )
             if (committed) {
@@ -473,6 +489,7 @@ export const layerWith = (options?: LayerOptions) =>
             } as Payload<D>,
             options?.commit,
             options?.expectedSeq,
+            options?.replaceAggregate,
           )
         })
       }
@@ -550,18 +567,10 @@ export const layerWith = (options?: LayerOptions) =>
         })
       }
 
-      function remove(aggregateID: string, options?: { readonly keepSequence?: boolean }) {
+      function remove(aggregateID: string) {
         return db
           .transaction(() =>
             Effect.gen(function* () {
-              // keepSequence retains the sequence row so a follow-up publish
-              // lands at the aggregate's next seq — durable subscribers whose
-              // cursors already saw the pre-delete history re-read strictly
-              // greater seqs and would miss a re-landed seq-0 event.
-              if (options?.keepSequence === true) {
-                yield* db.delete(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).run()
-                return
-              }
               yield* db.delete(EventSequenceTable).where(eq(EventSequenceTable.aggregate_id, aggregateID)).run()
               yield* db.delete(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).run()
             }),

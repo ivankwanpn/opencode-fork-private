@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect } from "bun:test"
-import { DateTime, Effect, Exit, Layer, Option } from "effect"
+import { DateTime, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
@@ -17,7 +17,8 @@ import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Session } from "@/session/session"
 import type { SessionID } from "../../src/session/schema"
 import { ShareNext } from "@/share/share-next"
-import { SessionShareTable } from "@opencode-ai/core/share/sql"
+import { SessionShareRemovalTable, SessionShareRevocationTable, SessionShareTable } from "@opencode-ai/core/share/sql"
+import { SessionTable } from "@opencode-ai/core/session/sql"
 import { Database } from "@opencode-ai/core/database/database"
 import { eq } from "drizzle-orm"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -59,11 +60,7 @@ function integrationLayer(client: HttpClient.HttpClient) {
       AccountRepo.node,
       Database.node,
     ]),
-    [
-      replacement,
-      [SessionExecution.node, SessionExecution.noopLayer],
-      locationServiceMapReplacement,
-    ],
+    [replacement, [SessionExecution.node, SessionExecution.noopLayer], locationServiceMapReplacement],
   )
 }
 
@@ -74,6 +71,28 @@ const share = (id: SessionID) =>
       .select()
       .from(SessionShareTable)
       .where(eq(SessionShareTable.session_id, id))
+      .get()
+      .pipe(Effect.orDie)
+  })
+
+const revocation = (id: SessionID) =>
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    return yield* db
+      .select()
+      .from(SessionShareRevocationTable)
+      .where(eq(SessionShareRevocationTable.session_id, id))
+      .get()
+      .pipe(Effect.orDie)
+  })
+
+const removal = (id: SessionID) =>
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    return yield* db
+      .select()
+      .from(SessionShareRemovalTable)
+      .where(eq(SessionShareRemovalTable.session_id, id))
       .get()
       .pipe(Effect.orDie)
   })
@@ -218,6 +237,165 @@ describe("ShareNext", () => {
             ["POST", "https://legacy-share.example.com/api/share"],
             ["DELETE", "https://legacy-share.example.com/api/share/shr_abc"],
           ])
+        }).pipe(Effect.provide(integrationLayer(client)))
+      },
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+    ),
+  )
+
+  it.live("keeps failed revocations durable and retries success and not-found responses", () =>
+    provideTmpdirInstance(
+      () => {
+        let deletes = 0
+        let creates = 0
+        const client = HttpClient.make((req) => {
+          if (req.method === "POST" && req.url.endsWith("/api/share")) {
+            creates += 1
+            return Effect.succeed(
+              json(req, {
+                id: `shr_${creates}`,
+                url: `https://legacy-share.example.com/share/${creates}`,
+                secret: `sec_${creates}`,
+              }),
+            )
+          }
+          if (req.method === "POST") return Effect.succeed(json(req, { ok: true }))
+          deletes += 1
+          const status = deletes === 1 ? 500 : deletes === 2 ? 200 : 404
+          return Effect.succeed(HttpClientResponse.fromWeb(req, new Response(null, { status })))
+        })
+        return Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const service = yield* ShareNext.Service
+          const { db } = yield* Database.Service
+          const first = yield* sessions.create({ title: "retry revocation" })
+
+          yield* service.create(first.id)
+          yield* service.stageRemovals([first.id])
+          yield* service.revokePending({ sessionIDs: [first.id] })
+          expect(yield* revocation(first.id)).toMatchObject({ id: "shr_1", secret: "sec_1" })
+          expect(deletes).toBe(0)
+
+          yield* db.delete(SessionTable).where(eq(SessionTable.id, first.id)).run().pipe(Effect.orDie)
+          yield* service.revokePending({ sessionIDs: [first.id] })
+
+          expect(yield* share(first.id)).toBeUndefined()
+          expect(yield* revocation(first.id)).toMatchObject({
+            session_id: first.id,
+            id: "shr_1",
+            secret: "sec_1",
+            attempt_count: 1,
+          })
+
+          yield* service.revokePending({ sessionIDs: [first.id] })
+          expect(yield* revocation(first.id)).toBeUndefined()
+          expect(yield* removal(first.id)).toBeUndefined()
+
+          const second = yield* sessions.create({ title: "not found revocation" })
+          yield* service.create(second.id)
+          yield* service.stageRemovals([second.id])
+          yield* db.delete(SessionTable).where(eq(SessionTable.id, second.id)).run().pipe(Effect.orDie)
+          yield* service.init()
+
+          expect(yield* share(second.id)).toBeUndefined()
+          expect(yield* revocation(second.id)).toBeUndefined()
+          expect(deletes).toBe(3)
+        }).pipe(Effect.provide(integrationLayer(client)))
+      },
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+    ),
+  )
+
+  it.live("retains a share created while Session removal is staged and revokes it after the race", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const posted = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const deletes: string[] = []
+          const client = HttpClient.make((req) => {
+            if (req.method === "POST" && req.url.endsWith("/api/share"))
+              return Deferred.succeed(posted, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(
+                  json(req, {
+                    id: "shr_race",
+                    url: "https://legacy-share.example.com/share/race",
+                    secret: "sec_race",
+                  }),
+                ),
+              )
+            if (req.method === "DELETE") {
+              deletes.push(req.url)
+              return Effect.succeed(HttpClientResponse.fromWeb(req, new Response(null, { status: 200 })))
+            }
+            return Effect.succeed(json(req, { ok: true }))
+          })
+
+          yield* Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const service = yield* ShareNext.Service
+            const { db } = yield* Database.Service
+            const session = yield* sessions.create({ title: "create removal race" })
+            const created = yield* service.create(session.id).pipe(Effect.exit, Effect.forkScoped)
+
+            yield* Deferred.await(posted)
+            yield* service.stageRemovals([session.id])
+            yield* db.delete(SessionTable).where(eq(SessionTable.id, session.id)).run().pipe(Effect.orDie)
+            yield* Deferred.succeed(release, undefined)
+
+            expect(Exit.isFailure(yield* Fiber.join(created))).toBe(true)
+            expect(yield* share(session.id)).toBeUndefined()
+            expect(yield* revocation(session.id)).toBeUndefined()
+            expect(yield* removal(session.id)).toBeUndefined()
+            expect(deletes).toEqual(["https://legacy-share.example.com/api/share/shr_race"])
+          }).pipe(Effect.provide(integrationLayer(client)))
+        }),
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+    ),
+  )
+
+  it.live("retries a failed revocation during the same process lifetime", () =>
+    provideTmpdirInstance(
+      () => {
+        let deletes = 0
+        const client = HttpClient.make((req) => {
+          if (req.method === "POST" && req.url.endsWith("/api/share"))
+            return Effect.succeed(
+              json(req, {
+                id: "shr_retry",
+                url: "https://legacy-share.example.com/share/retry",
+                secret: "sec_retry",
+              }),
+            )
+          if (req.method === "DELETE") {
+            deletes += 1
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(req, new Response(null, { status: deletes === 1 ? 500 : 200 })),
+            )
+          }
+          return Effect.succeed(json(req, { ok: true }))
+        })
+        return Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const service = yield* ShareNext.Service
+          const { db } = yield* Database.Service
+          const session = yield* sessions.create({ title: "bounded retry" })
+          yield* service.create(session.id)
+          yield* service.stageRemovals([session.id])
+          yield* db.delete(SessionTable).where(eq(SessionTable.id, session.id)).run().pipe(Effect.orDie)
+
+          yield* service.revokePending({ sessionIDs: [session.id] })
+          expect(yield* revocation(session.id)).toMatchObject({ attempt_count: 1 })
+          yield* pollWithTimeout(
+            Effect.gen(function* () {
+              if (deletes !== 2) return
+              return (yield* revocation(session.id)) === undefined ? true : undefined
+            }),
+            "timed out waiting for the in-process share revocation retry",
+            "5 seconds",
+          )
+          expect(yield* removal(session.id)).toBeUndefined()
         }).pipe(Effect.provide(integrationLayer(client)))
       },
       { config: { enterprise: { url: "https://legacy-share.example.com" } } },
@@ -377,9 +555,7 @@ describe("ShareNext", () => {
                 id: ModelV2.ID.make("test"),
                 variant: ModelV2.VariantID.make("default"),
               },
-              content: [
-                SessionMessage.AssistantText.make({ type: "text", id: "text_share", text: "shared" }),
-              ],
+              content: [SessionMessage.AssistantText.make({ type: "text", id: "text_share", text: "shared" })],
               time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
             }),
           })

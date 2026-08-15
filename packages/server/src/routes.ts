@@ -27,6 +27,7 @@ import { sessionLocationLayer } from "./middleware/session-location"
 import { SessionRead } from "./session-read"
 import { SessionShareCapability } from "./session-share"
 import { SessionDiffCapability } from "./session-diff"
+import { SessionRemovalCapability } from "./session-removal"
 import { VcsCapability } from "./vcs-capability"
 import { FormatterCapability } from "./formatter-capability"
 import { ConsoleCapability } from "./console-capability"
@@ -85,6 +86,7 @@ function makeRoutes<AuthError>(
     Layer.provide(SessionRead.layer),
     Layer.provide(SessionShareCapability.layer),
     Layer.provide(SessionDiffCapability.layer),
+    Layer.provide(SessionRemovalCapability.layer),
     Layer.provide(VcsCapability.layer),
     Layer.provide(FormatterCapability.layer),
     Layer.provide(ConsoleCapability.layer),

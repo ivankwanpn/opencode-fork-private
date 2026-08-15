@@ -213,6 +213,51 @@ describe("EventV2", () => {
     }),
   )
 
+  it.effect("rolls back aggregate replacement when the durable commit fails", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const aggregateID = EventV2.ID.create()
+      const first = yield* events.publish(SyncMessage, { id: aggregateID, text: "first" })
+      const second = yield* events.publish(SyncMessage, { id: aggregateID, text: "second" })
+
+      const exit = yield* events
+        .publish(
+          SyncMessage,
+          { id: aggregateID, text: "replacement" },
+          { replaceAggregate: true, commit: () => Effect.die("replacement failed") },
+        )
+        .pipe(Effect.exit)
+
+      expect(String(exit)).toContain("replacement failed")
+      const rows = yield* db.select().from(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).all()
+      expect(rows.map((row) => row.id)).toEqual([first.id, second.id])
+      expect(
+        yield* db.select().from(EventSequenceTable).where(eq(EventSequenceTable.aggregate_id, aggregateID)).get(),
+      ).toMatchObject({ seq: 1 })
+    }),
+  )
+
+  it.effect("replaces prior aggregate rows at the next durable sequence", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const aggregateID = EventV2.ID.create()
+      yield* events.publish(SyncMessage, { id: aggregateID, text: "first" })
+      yield* events.publish(SyncMessage, { id: aggregateID, text: "second" })
+
+      const replacement = yield* events.publish(
+        SyncMessage,
+        { id: aggregateID, text: "replacement" },
+        { replaceAggregate: true },
+      )
+
+      const rows = yield* db.select().from(EventTable).where(eq(EventTable.aggregate_id, aggregateID)).all()
+      expect(rows.map((row) => row.id)).toEqual([replacement.id])
+      expect(replacement.durable?.seq).toBe(2)
+    }),
+  )
+
   it.effect("rejects local commit hooks on live-only events", () =>
     Effect.gen(function* () {
       const events = yield* EventV2.Service

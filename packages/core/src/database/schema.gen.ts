@@ -288,6 +288,27 @@ export default {
         );
       `)
       yield* tx.run(`
+        CREATE TABLE \`session_share_removal\` (
+          \`session_id\` text PRIMARY KEY,
+          \`directory\` text NOT NULL,
+          \`time_created\` integer NOT NULL,
+          \`time_updated\` integer NOT NULL
+        );
+      `)
+      yield* tx.run(`
+        CREATE TABLE \`session_share_revocation\` (
+          \`session_id\` text NOT NULL,
+          \`directory\` text NOT NULL,
+          \`id\` text NOT NULL,
+          \`secret\` text NOT NULL,
+          \`url\` text NOT NULL,
+          \`attempt_count\` integer DEFAULT 0 NOT NULL,
+          \`time_created\` integer NOT NULL,
+          \`time_updated\` integer NOT NULL,
+          CONSTRAINT \`session_share_revocation_pk\` PRIMARY KEY(\`session_id\`, \`id\`)
+        );
+      `)
+      yield* tx.run(`
         CREATE TABLE \`session_share\` (
           \`session_id\` text PRIMARY KEY,
           \`id\` text NOT NULL,

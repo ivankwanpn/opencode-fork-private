@@ -2624,10 +2624,10 @@ describe("session HttpApi", () => {
         // the durable stream: the stream's cursor is strictly greater-than
         // (`gt(seq, after)`, packages/core/src/event.ts), so whether a
         // subscriber sees the Deleted event depends on where its cursor sits.
-        // After the keepSequence fix (f448189) the tombstone lands at the
-        // aggregate's next deliverable sequence — query EventTable directly
-        // to pin the invariant: exactly one tombstone row of the versioned
-        // type session.next.deleted.1.
+        // Aggregate replacement preserves the sequence and commits the
+        // projection deletion, history purge, and next-sequence tombstone in
+        // one transaction. Query EventTable directly to pin the invariant:
+        // exactly one tombstone row of type session.next.deleted.1.
         const { db } = yield* Database.Service
         const rows = yield* db
           .select()
@@ -2713,6 +2713,41 @@ describe("session HttpApi", () => {
         // packages/core/src/background-job.ts), so assert the child's job is
         // no longer running, which is exactly what cancelBackgroundJobs acts on.
         expect(jobs.some((job) => job.id === childJobID && job.status === "running")).toBe(false)
+      }),
+  )
+
+  it.instance(
+    "native V2 remove uses the shared descendant cleanup lifecycle",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "native parent" }),
+        })
+        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "native child", parentID: parent.id }),
+        })
+        const background = yield* BackgroundJob.Service
+        const childJobID = `job_native_${child.id}`
+        yield* background.start({
+          id: childJobID,
+          type: "task",
+          metadata: { sessionId: child.id },
+          run: Effect.never,
+        })
+
+        // The compatibility endpoint is /session/:id. The explicit /api
+        // prefix selects the Protocol V2 route and makes the 204 assertion a
+        // route-owner discriminator rather than a layer-order dependency.
+        const response = yield* request(`/api/session/${parent.id}`, { method: "DELETE", headers })
+
+        expect(response.status).toBe(204)
+        expect((yield* background.get(childJobID))?.status).toBe("cancelled")
       }),
   )
 

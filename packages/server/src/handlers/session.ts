@@ -24,6 +24,7 @@ import { SessionShareCapability } from "../session-share"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { SessionTodo } from "@opencode-ai/core/session/todo"
 import { SessionDiffCapability } from "../session-diff"
+import { SessionRemovalCapability } from "../session-removal"
 import { Session } from "@opencode-ai/schema/session"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
 
@@ -53,6 +54,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
     const share = yield* SessionShareCapability.Service
     const todo = yield* SessionTodo.Service
     const diff = yield* SessionDiffCapability.Service
+    const removal = yield* SessionRemovalCapability.Service
 
     return handlers
       .handle(
@@ -256,7 +258,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.remove",
         Effect.fn(function* (ctx) {
-          yield* session.remove(ctx.params.sessionID).pipe(
+          yield* removal.remove(ctx.params.sessionID).pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
               Effect.fail(
                 new SessionNotFoundError({

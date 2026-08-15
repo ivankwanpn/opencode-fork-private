@@ -116,6 +116,8 @@ import { schemaErrorLayer } from "./middleware/schema-error"
 import { SessionRead } from "@opencode-ai/server/session-read"
 import { NativeSessionShare } from "@/share/native-session-share"
 import { NativeSessionDiff } from "@/session/native-session-diff"
+import { NativeSessionRemoval } from "@/session/native-session-removal"
+import { SessionRemoval } from "@/session/removal"
 import { NativeVcs } from "@/project/native-vcs"
 import { NativeFormatter } from "@/format/native-formatter"
 import { NativeConsole } from "@/account/native-console"
@@ -192,6 +194,7 @@ const serverHandlers = handlers.pipe(
   Layer.provide(SessionRead.layer),
   Layer.provide(NativeSessionShare.layer),
   Layer.provide(NativeSessionDiff.layer),
+  Layer.provide(NativeSessionRemoval.layer),
   Layer.provide(NativeVcs.layer),
   Layer.provide(NativeFormatter.layer),
   Layer.provide(NativeConsole.layer),
@@ -281,6 +284,7 @@ const hostNodes = [
   Workspace.node,
   Worktree.node,
   ShareNext.node,
+  SessionRemoval.node,
   SessionShare.node,
   InstanceStore.node,
   httpClient,

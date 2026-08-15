@@ -55,6 +55,7 @@ describe("legacySessionFromV2", () => {
     expect(projected.model).toEqual({
       id: ModelV2.ID.make("claude-sonnet-5"),
       providerID: ProviderV2.ID.make("anthropic"),
+      variant: ModelV2.VariantID.make("default"),
     })
     expect(projected.share).toEqual({ url: "https://share.example/s" })
     expect(projected.time).toEqual({ created: 1000, updated: 2000 })
@@ -85,6 +86,24 @@ describe("legacySessionFromV2", () => {
     })
 
     expect(legacySessionFromV2(info).model?.variant).toBe("opus-pro")
+  })
+
+  test("preserves an omitted model variant", () => {
+    const info = SessionSchema.Info.make({
+      id: SessionSchema.ID.make("sess_v2id"),
+      projectID: ProjectV2.ID.make("prj_1"),
+      title: "hello",
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: DateTime.makeUnsafe(1000), updated: DateTime.makeUnsafe(1000) },
+      location: { directory: AbsolutePath.make("D:/work") },
+      model: {
+        id: ModelV2.ID.make("claude-sonnet-5"),
+        providerID: ProviderV2.ID.make("anthropic"),
+      },
+    })
+
+    expect(legacySessionFromV2(info).model?.variant).toBeUndefined()
   })
 
   test("projects undefined optional fields and dates as undefined", () => {

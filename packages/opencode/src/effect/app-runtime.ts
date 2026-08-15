@@ -58,6 +58,7 @@ import { Credential } from "@opencode-ai/core/credential"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
+import { SessionRemoval } from "@/session/removal"
 
 export const AppLayer = AppNodeBuilderV1.build(
   LayerNode.group([
@@ -111,6 +112,7 @@ export const AppLayer = AppNodeBuilderV1.build(
     Workspace.node,
     Worktree.node,
     ShareNext.node,
+    SessionRemoval.node,
     SessionShare.node,
   ]),
   [

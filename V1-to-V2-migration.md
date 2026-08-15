@@ -27,7 +27,7 @@ retained transcript storage。整个 V1 → V2 迁移尚未完成，不能以 tr
 | 区域 | 现状 | 判定 |
 |---|---|---|
 | Session 执行（prompt/command/shell/init） | `LegacySessionExecution`（V1 壳）内部全部委托 V2 `SessionV2`；V1 `SessionPrompt.loop` 已删除 | **V2 主路径，V1 壳待收** |
-| Session CRUD（list/get/create/fork/title/metadata） | V1 `Session.Service` 读同一张 `SessionTable`，httpapi CRUD 端点仍依赖 | **V1-only，待迁移** |
+| Session CRUD（list/get/create/fork/title/metadata） | experimental httpapi 与 native server 已走 `SessionV2`；stats/share/部分 middleware 與 legacy consumer 仍讀 V1 `Session.Service` | **V2 主路径，V1 consumer 待迁移** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
 | Tool registry | V1 `ToolRegistry`（opencode 包）死代码；V2 `ToolRegistry`（core）完整（direct/deferred/hidden + settlement） | **V2 已接管** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
@@ -341,13 +341,15 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - 剩餘 `Session.Service` consumer（stats/share sync/experimental list/CLI/TUI/sync/legacy execution/GitHub/task/code-mode 等）留待後續批次。
 >
 > **本輪 P1/P2 修正（999.0.17）**：
-> - remove 現在先 purge 再發布 `session.next.deleted`，Deleted 事件作為 aggregate tombstone 留存，durable 訂閱的 wake-then-reread 交付變成確定性。
-> - remove handler 在 core 移除前逐 session（root + 後代）直接撤銷遠端分享（`ShareNext.remove` 無 cache 依賴、與 listener 冪等）；V2 `session.next.deleted` event watch 僅作為其他 remove producer 的安全網（listener 於 cascade commit 後才觸發，依賴 in-memory cache；instance 重啟後無法重建 share 記錄，屬既有 V1 行為）。
-> - remove handler 在 core 遞迴前逐 session 取消整棵子樹的 background jobs（V1 每 session 取消語義還原）。
+> - `EventV2.publish({ replaceAggregate: true })` 將舊 aggregate history purge、Session Deleted projector、sequence 推進與 `session.next.deleted` tombstone 寫入放進同一 durable DB transaction；失敗會整體 rollback，不再可能 crash 於 purge 與 publish 之間而留下「live Session row + 空 history」。
+> - 新增無 Session foreign key 的 `session_share_revocation` durable outbox 與 `session_share_removal` intent marker（migrations `20260815012419_session_share_revocation`、`20260815025712_share_removal_intent`）。outbox 以 `(session_id, share_id)` 為複合鍵，可同時保存刪除交錯中產生的舊、新遠端憑證；即使 staging 時尚無 live share，intent marker 也會攔截稍後完成的 remote create 並把結果轉入 outbox。HTTP `2xx`/`404` 才刪除對應憑證，網路/服務端失敗保留 secret、增加 `attempt_count`，並在同一 instance scope 內以 1s/5s/15s 做去重、有限重試。
+> - share removal 採明確 fail-closed invariant：staging DB transaction 失敗時不得刪除本地 Session，因為沒有 durable revocation credential 就繼續會永久孤立遠端分享；staging 後 local remove 失敗時 intent/outbox 也保留，重試相同 Session remove 可接續完成。`revokePending` 不再用「Session 存在」作 check-then-delete，而是保留與 live share 相同的 staged row，只有 Session 消失或 row 已不是 live share 時才撤銷，消除了 concurrent delete 清掉合法 outbox 的窗口。
+> - `ShareNext.init()` 維持依 canonical directory 恢復，而不是用目前登入帳號做 process-global revocation：現有 durable row 尚未保存建立時的 endpoint/account/org identity，全域重試可能把 org share 送往錯誤控制面。當前刪除流程已有同 process bounded retry；若要安全移除 directory scope，必須先把 share 的控制面身份一併持久化。
+> - `SessionRemoval` 成為 legacy httpapi 與 native V2 server 的共用生命週期：遞迴收集後代、stage share revocation、取消整棵子樹 background jobs、呼叫 atomic `SessionV2.remove`、處理 pending revocation。`packages/server` 經 `SessionRemovalCapability` 解耦 host 實作；native adapter 優先由 durable Session location 載入正確 `InstanceStore` context，但 directory/project boot 失敗時會記錄 warning 並改走無 instance 依賴的 durable removal，process-local job 清理降級不再阻止 Session 刪除。
 > - create 尊重 payload 的 `workspaceID`（`payload.workspaceID ?? routedWorkspace`）；未指定 title 的子 session 使用 V1 的 `Child session - ` 前綴。
 > - fork 改以 cutoff 的 transcript index 切割（`findIndex` + `slice`），未知 cutoff 回 400；原字典序過濾在 imported IDs 下會複製錯誤子集。
 > - `SessionV2.ListInput` union 順序修正（project variant 優先，`{project,directory,subpath}` 不再被剝成 directory 查詢）；subpath LIKE 逃逸 `%`/`_`/`\`（`ESCAPE '\'`）；`fromRow` 的 `archived: 0` 改 nullish 讀取。
-> - 投影不再把 model variant 強制成 `"default"`；macOS 原生選單的 zoom 動作在 role 檢查前走 renderer-owned 路徑。
+> - model projection 保留 optional presence：資料庫省略 variant 時仍為 `undefined`，明確 `"default"` 與非 default 值均原樣投影至 V2/V1 wire；不再把 omitted 與 explicit default 合併。macOS 原生選單的 zoom 動作在 role 檢查前走 renderer-owned 路徑。
 
 ### 批次 9：全量 V2-only regression gate
 

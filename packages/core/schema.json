@@ -1,9 +1,9 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "3af04ebe-796f-4630-8c96-d75a227676d2",
+  "id": "81b3d7a4-5ec6-4d3c-95e8-49d0fda22d66",
   "prevIds": [
-    "c279cae1-dba0-4e4d-985a-e1a61874aad6"
+    "daaf4547-a5d1-49d3-bb73-8bf49f6c5140"
   ],
   "ddl": [
     {
@@ -88,6 +88,14 @@
     },
     {
       "name": "todo",
+      "entityType": "tables"
+    },
+    {
+      "name": "session_share_removal",
+      "entityType": "tables"
+    },
+    {
+      "name": "session_share_revocation",
       "entityType": "tables"
     },
     {
@@ -1892,6 +1900,126 @@
       "generated": null,
       "name": "session_id",
       "entityType": "columns",
+      "table": "session_share_removal"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "directory",
+      "entityType": "columns",
+      "table": "session_share_removal"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "session_share_removal"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_updated",
+      "entityType": "columns",
+      "table": "session_share_removal"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "directory",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "secret",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "url",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "attempt_count",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_updated",
+      "entityType": "columns",
+      "table": "session_share_revocation"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
       "table": "session_share"
     },
     {
@@ -2246,6 +2374,16 @@
     },
     {
       "columns": [
+        "session_id",
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "session_share_revocation_pk",
+      "entityType": "pks",
+      "table": "session_share_revocation"
+    },
+    {
+      "columns": [
         "id"
       ],
       "nameExplicit": false,
@@ -2404,6 +2542,15 @@
       "nameExplicit": false,
       "name": "task_submission_pk",
       "table": "task_submission",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "session_id"
+      ],
+      "nameExplicit": false,
+      "name": "session_share_removal_pk",
+      "table": "session_share_removal",
       "entityType": "pks"
     },
     {

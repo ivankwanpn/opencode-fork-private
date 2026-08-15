@@ -538,20 +538,17 @@ const layer = Layer.effect(
           .pipe(Effect.orDie)
         for (const child of childRows) yield* result.remove(child.id)
         const timestamp = yield* DateTime.now
-        // Purge BEFORE publishing so the Deleted marker survives as the
-        // aggregate's tombstone: durable subscribers are woken during publish
-        // and re-read the table — with the old order a slow subscriber could
-        // re-read an empty aggregate and miss the deletion (remote share
-        // revocation depends on this event being durably observable).
-        // The sequence row is retained (keepSequence) so the tombstone takes
-        // the aggregate's NEXT seq: durable subscribers whose cursors already
-        // saw the pre-delete history re-read strictly-greater seqs, so a
-        // re-landed seq-0 tombstone would be missed.
-        yield* events.remove(sessionID, { keepSequence: true })
         yield* events.publish(
           SessionEvent.Deleted,
           { timestamp, sessionID, info: rowToSnapshot(row) },
-          { location: fromRow(row).location },
+          {
+            location: fromRow(row).location,
+            // The projector, history purge, sequence advance, and tombstone
+            // insert must commit together. A separate purge can strand a live
+            // projection without replayable history if the process stops
+            // before the Deleted event is committed.
+            replaceAggregate: true,
+          },
         )
       }),
       list: Effect.fn("V2Session.list")(function* (input = {}) {

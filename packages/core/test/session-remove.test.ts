@@ -5,7 +5,7 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
-import { EventTable } from "@opencode-ai/core/event/sql"
+import { EventSequenceTable, EventTable } from "@opencode-ai/core/event/sql"
 import { Location } from "@opencode-ai/core/location"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -31,11 +31,7 @@ const pluginMap = pluginLocationMap()
 const it = testEffect(
   AppNodeBuilder.build(
     LayerNode.group([Database.node, EventV2.node, SessionProjector.node, SessionStore.node, SessionV2.node]),
-    [
-      [ProjectV2.node, projects],
-      [SessionExecution.node, SessionExecution.noopLayer],
-      pluginMap.replacement,
-    ],
+    [[ProjectV2.node, projects], [SessionExecution.node, SessionExecution.noopLayer], pluginMap.replacement],
   ),
 )
 const location = Location.Ref.make({ directory: AbsolutePath.make("/project") })
@@ -48,13 +44,23 @@ describe("SessionV2 remove", () => {
       const created = yield* session.create({ location })
       yield* session.remove(created.id)
 
-      const rows = yield* db.select().from(EventTable).where(eq(EventTable.aggregate_id, created.id)).all().pipe(Effect.orDie)
+      const rows = yield* db
+        .select()
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, created.id))
+        .all()
+        .pipe(Effect.orDie)
       expect(rows).toHaveLength(1)
       // The event table stores the versioned type (version suffix) — the same
       // form session-create.test.ts asserts for the created event.
       expect(rows[0]!.type).toBe(EventV2.versionedType(SessionEvent.Deleted.type, 1))
 
-      const sessionRows = yield* db.select().from(SessionTable).where(eq(SessionTable.id, created.id)).all().pipe(Effect.orDie)
+      const sessionRows = yield* db
+        .select()
+        .from(SessionTable)
+        .where(eq(SessionTable.id, created.id))
+        .all()
+        .pipe(Effect.orDie)
       expect(sessionRows).toHaveLength(0)
     }),
   )
@@ -67,17 +73,15 @@ describe("SessionV2 remove", () => {
       // Subscribes at after: 0, mimicking a subscriber that already saw the
       // aggregate's pre-delete history: the durable stream re-reads strictly
       // greater seqs, so the tombstone must land at the next seq to be seen.
-      const fiber = yield* session
-        .events({ sessionID: created.id, after: 0 })
-        .pipe(
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.timeout("2 seconds"),
-          Effect.catchTag("TimeoutError", () =>
-            Effect.die(new Error(`deleted tombstone not delivered to the durable stream (aggregate ${created.id})`)),
-          ),
-          Effect.forkScoped,
-        )
+      const fiber = yield* session.events({ sessionID: created.id, after: 0 }).pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout("2 seconds"),
+        Effect.catchTag("TimeoutError", () =>
+          Effect.die(new Error(`deleted tombstone not delivered to the durable stream (aggregate ${created.id})`)),
+        ),
+        Effect.forkScoped,
+      )
       yield* Effect.sleep(50)
       yield* session.remove(created.id)
 
@@ -85,6 +89,46 @@ describe("SessionV2 remove", () => {
       expect(collected).toHaveLength(1)
       expect(collected[0]!.type).toBe("session.next.deleted")
       expect(collected[0]!.durable?.version).toBe(1)
+    }),
+  )
+
+  it.effect("rolls back the Session projector, aggregate history, and sequence when deletion projection fails", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const session = yield* SessionV2.Service
+      const created = yield* session.create({ location })
+      const before = yield* db
+        .select()
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, created.id))
+        .all()
+        .pipe(Effect.orDie)
+      const sequence = yield* db
+        .select()
+        .from(EventSequenceTable)
+        .where(eq(EventSequenceTable.aggregate_id, created.id))
+        .get()
+        .pipe(Effect.orDie)
+      yield* events.project(SessionEvent.Deleted, () => Effect.die("deleted projector failed"))
+
+      const exit = yield* session.remove(created.id).pipe(Effect.exit)
+
+      expect(String(exit)).toContain("deleted projector failed")
+      expect(
+        yield* db.select().from(SessionTable).where(eq(SessionTable.id, created.id)).get().pipe(Effect.orDie),
+      ).toBeDefined()
+      expect(
+        yield* db.select().from(EventTable).where(eq(EventTable.aggregate_id, created.id)).all().pipe(Effect.orDie),
+      ).toEqual(before)
+      expect(
+        yield* db
+          .select()
+          .from(EventSequenceTable)
+          .where(eq(EventSequenceTable.aggregate_id, created.id))
+          .get()
+          .pipe(Effect.orDie),
+      ).toEqual(sequence)
     }),
   )
 })

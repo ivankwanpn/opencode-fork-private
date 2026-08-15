@@ -56,11 +56,13 @@
 ### Task 1: Canonical Identity, Source, and Hash Primitives
 
 **Files:**
+
 - Create: `packages/core/src/tool/catalog.ts`
 - Modify: `packages/core/src/tool/tool.ts`
 - Test: `packages/core/test/tool-catalog.test.ts`
 
 **Interfaces:**
+
 - Consumes: final `ToolDefinition`, the existing `direct | deferred | hidden` exposure vocabulary, and the opaque Tool runtime WeakMap.
 - Produces: `ToolCatalog.Key`, `ToolCatalog.SourceRef`, `ToolCatalog.SourceStatus`, `ToolCatalog.Metadata`, `ToolCatalog.SearchableTool`, `ToolCatalog.Snapshot`, `ToolCatalog.key(...)`, `ToolCatalog.definitionHash(...)`, `ToolCatalog.snapshot(...)`, `Tool.withCatalog(...)`, and `Tool.catalog(...)`.
 
@@ -162,7 +164,10 @@ export const withCatalog = <Input extends SchemaType<any>, Output extends Schema
   metadata: ToolCatalog.Metadata,
 ) => {
   const decorated = Object.freeze({}) as Definition<Input, Output>
-  runtimes.set(decorated, { ...runtimeOf(tool), catalog: Object.freeze({ ...metadata, source: Object.freeze({ ...metadata.source }) }) })
+  runtimes.set(decorated, {
+    ...runtimeOf(tool),
+    catalog: Object.freeze({ ...metadata, source: Object.freeze({ ...metadata.source }) }),
+  })
   return decorated
 }
 
@@ -194,6 +199,7 @@ git commit -m "feat(core): add canonical tool catalog identity"
 ### Task 2: Scoped Source Contributions and Filtered Catalog Materialization
 
 **Files:**
+
 - Modify: `packages/core/src/tool/tools.ts`
 - Modify: `packages/core/src/tool/application-tools.ts`
 - Modify: `packages/core/src/tool/registry.ts`
@@ -201,6 +207,7 @@ git commit -m "feat(core): add canonical tool catalog identity"
 - Modify: `packages/core/test/application-tools.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1 catalog metadata and hashing.
 - Produces: `Tools.Contribution`, `Tools.Interface.contribute(...)`, `ToolRegistry.Interface.sources()`, `ToolRegistry.Materialization.catalog`, and source-aware registrations which still settle through the existing closure.
 
@@ -209,17 +216,18 @@ git commit -m "feat(core): add canonical tool catalog identity"
 Add tests which register these contributions in separate scopes:
 
 ```ts
-yield* tools.contribute({
-  source: { type: "mcp", id: "calendar", displayName: "Calendar" },
-  state: "ready",
-  tools: {
-    calendar_create: Tool.withCatalog(deferred(), {
-      source: { type: "mcp", id: "calendar", displayName: "Calendar" },
-      sourceLocalID: "create",
-      namespace: "calendar",
-    }),
-  },
-})
+yield *
+  tools.contribute({
+    source: { type: "mcp", id: "calendar", displayName: "Calendar" },
+    state: "ready",
+    tools: {
+      calendar_create: Tool.withCatalog(deferred(), {
+        source: { type: "mcp", id: "calendar", displayName: "Calendar" },
+        sourceLocalID: "create",
+        namespace: "calendar",
+      }),
+    },
+  })
 ```
 
 Assert all of the following:
@@ -257,12 +265,14 @@ export type Contribution = {
 }
 
 export interface Interface {
-  readonly register: (tools: Readonly<Record<string, Tool.AnyTool>>) => Effect.Effect<void, Tool.RegistrationError, Scope.Scope>
+  readonly register: (
+    tools: Readonly<Record<string, Tool.AnyTool>>,
+  ) => Effect.Effect<void, Tool.RegistrationError, Scope.Scope>
   readonly contribute: (input: Contribution) => Effect.Effect<void, Tool.RegistrationError, Scope.Scope>
 }
 ```
 
-`register` remains the builtin convenience API. It delegates to the same registry transaction with `{ type: "builtin", id: "opencode" }` and `state: "ready"`. `permissions` is source-listing visibility for a source that currently has no tools; it never grants execution permission. When omitted, derive it from the registered tools' existing catalog permission actions.
+`register` remains the builtin convenience API. It delegates to the same registry transaction with `{ type: "builtin", id: "opencode" }` and `state: "ready"`. `permissions` is an explicit source-listing visibility declaration for a source that currently has no visible tools; it never grants execution permission. When omitted, the source enters the filtered catalog only when at least one of its tools is actually visible. Never derive this field from hidden tools.
 
 - [ ] **Step 4: Store source and tool stacks in one registry**
 
@@ -294,10 +304,12 @@ export interface Materialization {
   readonly definitions: ReadonlyArray<ToolDefinition>
   readonly deferred: ReadonlyArray<ToolDefinition>
   readonly catalog: ToolCatalog.Snapshot
-  readonly selected: ReadonlyMap<ToolCatalog.Key, string>
+  readonly selected: ReadonlySet<string>
   readonly settle: (input: ExecuteInput) => Effect.Effect<Settlement, SettlementError>
 }
 ```
+
+Keep the existing callable-name `selected` Set unchanged in this task. Task 4 replaces it with exact key/hash selection after structured search is available; separating these changes keeps this source/catalog tranche independently reviewable.
 
 Source statuses in `catalog.sources` must be deduplicated by source key. Include a source when it has at least one visible catalog tool, or when it declares nonempty source-listing `permissions` that are not wholly denied by the effective rules. This makes pending/failed MCP sources discoverable to an authorized parent agent while a deny-all subagent fails closed. Omit source identities backed only by hidden or wholly denied tools. `sources()` returns raw active statuses for trusted runtime-readiness consumers and never changes execution authorization.
 
@@ -337,12 +349,14 @@ git commit -m "feat(core): materialize scoped tool catalog"
 ### Task 3: Structured Exact Select and BM25 Search
 
 **Files:**
+
 - Replace: `packages/core/src/tool/tool-search.ts`
 - Modify: `packages/core/src/tool/registry.ts`
 - Modify: `packages/core/test/tool-search-deferred.test.ts`
 - Modify: `packages/core/test/tool-search-dynamic.test.ts`
 
 **Interfaces:**
+
 - Consumes: a filtered `ToolCatalog.Snapshot` from Task 2.
 - Produces: `ToolSearch.SearchError`, `ToolSearch.Selection`, `ToolSearch.Match`, `ToolSearch.Result`, `ToolSearch.makeIndex()`, and a structured `ToolSearch.makeToolSearchTool(snapshot, index, onSelect)`.
 
@@ -454,6 +468,7 @@ git commit -m "feat(core): add deterministic tool catalog search"
 ### Task 4: Key/Hash Selection and Monotonic In-Drain Union
 
 **Files:**
+
 - Modify: `packages/core/src/tool/registry.ts`
 - Modify: `packages/core/src/session/runner/llm.ts`
 - Modify: `packages/core/test/tool-search-dynamic.test.ts`
@@ -461,6 +476,7 @@ git commit -m "feat(core): add deterministic tool catalog search"
 - Modify: `packages/core/test/mcp-runtime.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ToolSearch.Selection` from Task 3.
 - Produces: `MaterializationContext.selected?: ReadonlyMap<ToolCatalog.Key, string>` and `onSelect?: (selections: ReadonlyArray<ToolSearch.Selection>) => void`.
 
@@ -519,6 +535,7 @@ git commit -m "refactor(core): select deferred tools by identity"
 ### Task 5: MCP and Plugin Source Ownership
 
 **Files:**
+
 - Modify: `packages/core/src/mcp/runtime.ts`
 - Modify: `packages/core/test/mcp-runtime.test.ts`
 - Modify: `packages/opencode/src/plugin/index.ts`
@@ -527,6 +544,7 @@ git commit -m "refactor(core): select deferred tools by identity"
 - Modify: `packages/opencode/test/tool/plugin-compat-v2.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Tools.Interface.contribute(...)` and `Tool.withCatalog(...)`.
 - Produces: explicit MCP server and Plugin source contributions that share their scoped registration lifetime with executable tools.
 
@@ -629,6 +647,7 @@ git commit -m "feat(plugin): publish tool source ownership"
 ### Task 6: Authoritative Plugin Tool Readiness
 
 **Files:**
+
 - Modify: `packages/opencode/src/plugin/claude-marketplace.ts`
 - Modify: `packages/opencode/src/plugin/runtime-readiness.ts`
 - Modify: `packages/opencode/src/plugin/runtime-readiness.test.ts`
@@ -636,6 +655,7 @@ git commit -m "feat(plugin): publish tool source ownership"
 - Modify: `packages/opencode/src/plugin/claude-marketplace.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ToolRegistry.Interface.sources()` and explicit Plugin/MCP source IDs.
 - Produces: a `tools` Plugin capability based on authoritative source state rather than the temporary unconditional `pending` fallback.
 
@@ -695,10 +715,12 @@ git commit -m "feat(plugin): report tool source readiness"
 ### Task 7: Cross-Package Regression Gate and Design Status
 
 **Files:**
+
 - Modify: `docs/superpowers/specs/2026-08-11-provider-native-tool-search-design.md`
 - Modify: `docs/superpowers/plans/2026-08-15-canonical-tool-catalog.md`
 
 **Interfaces:**
+
 - Consumes: Tasks 1–6.
 - Produces: a verified canonical-catalog/search tranche and an explicit next plan boundary for durable discovery.
 

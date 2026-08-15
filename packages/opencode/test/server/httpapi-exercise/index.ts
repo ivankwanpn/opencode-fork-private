@@ -1170,6 +1170,22 @@ const scenarios: Scenario[] = [
     }))
     .status(503, undefined, "status"),
   http.protected
+    .delete("/api/plugins/direct", "v2.plugins.direct.uninstall")
+    .at((ctx) => ({
+      path: "/api/plugins/direct",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "direct:httpapi-missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .delete("/api/plugins/mcp", "v2.plugins.mcp.remove")
+    .at((ctx) => ({
+      path: "/api/plugins/mcp",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "httpapi-missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
     .delete("/api/session/{sessionID}", "v2.session.remove")
     .at((ctx) => ({
       path: route("/api/session/{sessionID}", { sessionID: "ses_httpapi_missing" }),
@@ -1223,6 +1239,8 @@ const scenarios: Scenario[] = [
     object(body)
     array(body.marketplaces)
     array(body.plugins)
+    array(body.directPlugins)
+    array(body.mcpServers)
   }),
   http.protected.get("/api/project", "v2.project.list").json(200, array),
   http.protected.get("/api/project/current", "v2.project.current").json(200, object),
@@ -1393,6 +1411,62 @@ const scenarios: Scenario[] = [
       path: "/api/plugins/uninstall",
       headers: { ...ctx.headers(), "content-type": "application/json" },
       body: { id: "missing@missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/direct/inspect", "v2.plugins.direct.inspect")
+    .at((ctx) => ({
+      path: "/api/plugins/direct/inspect",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { source: "" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/direct", "v2.plugins.direct.install")
+    .at((ctx) => ({
+      path: "/api/plugins/direct",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { source: "", trusted: true, approvedCapabilities: [] },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/direct/enable", "v2.plugins.direct.enable")
+    .at((ctx) => ({
+      path: "/api/plugins/direct/enable",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "direct:httpapi-missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/direct/disable", "v2.plugins.direct.disable")
+    .at((ctx) => ({
+      path: "/api/plugins/direct/disable",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { id: "direct:httpapi-missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/mcp", "v2.plugins.mcp.install")
+    .at((ctx) => ({
+      path: "/api/plugins/mcp",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "httpapi-invalid", config: { type: "remote", url: "not-a-url" } },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/mcp/enable", "v2.plugins.mcp.enable")
+    .at((ctx) => ({
+      path: "/api/plugins/mcp/enable",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "httpapi-missing" },
+    }))
+    .status(503, undefined, "status"),
+  http.protected
+    .post("/api/plugins/mcp/disable", "v2.plugins.mcp.disable")
+    .at((ctx) => ({
+      path: "/api/plugins/mcp/disable",
+      headers: { ...ctx.headers(), "content-type": "application/json" },
+      body: { name: "httpapi-missing" },
     }))
     .status(503, undefined, "status"),
   http.protected

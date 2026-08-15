@@ -751,11 +751,17 @@
 }
 
 .settings-v2-plugins-tabs,
+.settings-v2-plugins-header-actions,
 .settings-v2-plugins-actions,
 .settings-v2-plugins-add {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.settings-v2-plugins-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .settings-v2-plugins-add {
@@ -843,10 +849,119 @@
   color: var(--v2-state-fg-warning);
 }
 
+[data-component="dialog-v2"].settings-v2-extension-dialog [data-slot="dialog-container"] {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: min(760px, calc(100vh - 32px));
+  border-radius: 8px;
+  align-items: stretch;
+}
+
+[data-component="dialog-v2"].settings-v2-extension-dialog [data-slot="dialog-content"] {
+  width: 100%;
+  min-height: 0;
+  align-items: stretch;
+}
+
+[data-component="dialog-v2"].settings-v2-extension-dialog [data-slot="dialog-header"] {
+  align-items: center;
+  padding: 24px 24px 16px;
+}
+
+[data-component="dialog-v2"].settings-v2-extension-dialog [data-slot="dialog-footer"] {
+  padding: 16px 24px 24px;
+}
+
+.settings-v2-extension-dialog-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 20px 24px 8px;
+}
+
+.settings-v2-extension-segments,
+.settings-v2-extension-source,
+.settings-v2-extension-manifest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-v2-extension-source [data-component="text-input-v2"] {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-v2-extension-form,
+.settings-v2-extension-inspection,
+.settings-v2-extension-capabilities {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-v2-extension-inspection {
+  padding-block: 14px;
+  border-block: 1px solid var(--v2-border-border-weak);
+}
+
+.settings-v2-extension-manifest {
+  flex-wrap: wrap;
+  color: var(--v2-text-text-base);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.settings-v2-extension-manifest span,
+.settings-v2-extension-muted {
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-extension-warning {
+  border-left: 2px solid var(--v2-state-border-warning);
+  padding-left: 10px;
+  color: var(--v2-state-fg-warning);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-v2-extension-textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--v2-border-border-base);
+  border-radius: 6px;
+  outline: none;
+  background: var(--v2-surface-surface-base);
+  padding: 9px 11px;
+  color: var(--v2-text-text-base);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0;
+}
+
+.settings-v2-extension-textarea:focus {
+  border-color: var(--v2-border-border-strong);
+}
+
+.settings-v2-extension-textarea::placeholder {
+  color: var(--v2-text-text-muted);
+}
+
 @media (max-width: 639px) {
   .settings-v2-plugins-add,
-  .settings-v2-plugins-actions {
+  .settings-v2-plugins-actions,
+  .settings-v2-extension-source {
     align-items: stretch;
     flex-wrap: wrap;
+  }
+
+  .settings-v2-extension-source [data-component="text-input-v2"] {
+    flex-basis: 100%;
   }
 }

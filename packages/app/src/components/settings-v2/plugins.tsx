@@ -3,6 +3,7 @@ import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import type { Plugin } from "@opencode-ai/schema/plugin"
 import { type Component, For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import { useLanguage } from "@/context/language"
@@ -11,6 +12,7 @@ import { useServerSync } from "@/context/server-sync"
 import type { ServerApi } from "@/utils/server"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
+import { DialogInstallExtension } from "./dialog-install-extension"
 import {
   beginPluginLoad,
   pluginLoadContextCurrent,
@@ -24,6 +26,8 @@ import "./settings-v2.css"
 type Catalog = Awaited<ReturnType<ServerApi["plugins"]["list"]>>
 type Runtime = Awaited<ReturnType<ServerApi["plugins"]["runtime"]>>
 type PluginItem = Catalog["plugins"][number]
+type DirectPluginItem = Catalog["directPlugins"][number]
+type McpItem = Catalog["mcpServers"][number]
 
 const DEFAULT_MARKETPLACE_SOURCE = "anthropics/claude-plugins-official"
 
@@ -36,6 +40,7 @@ function errorMessage(error: unknown) {
 }
 
 export const SettingsPluginsV2: Component = () => {
+  const dialog = useDialog()
   const sdk = useServerSDK()
   const serverSync = useServerSync()
   const directorySync = createMemo(() => {
@@ -92,9 +97,7 @@ export const SettingsPluginsV2: Component = () => {
     const context = { request, server: target, generation, directory }
     setRuntimeState((current) => beginPluginLoad(current, request))
     try {
-      const value = await target
-        .apiForGeneration()
-        .then((api) => api.plugins.runtime({ location: { directory } }))
+      const value = await target.apiForGeneration().then((api) => api.plugins.runtime({ location: { directory } }))
       if (
         !pluginLoadContextCurrent(context, {
           request: runtimeRequest,
@@ -160,6 +163,25 @@ export const SettingsPluginsV2: Component = () => {
       [item.name, item.marketplace, item.description, ...(item.tags ?? [])]
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(query)),
+    )
+  })
+
+  const filteredDirect = createMemo(() => {
+    const query = filter().trim().toLowerCase()
+    const plugins = catalog()?.directPlugins ?? []
+    if (!query) return plugins
+    return plugins.filter((item) =>
+      [item.name, item.source, item.description, item.api, ...item.requestedCapabilities.map((entry) => entry.name)]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(query)),
+    )
+  })
+
+  const filteredMcp = createMemo(() => {
+    const query = filter().trim().toLowerCase()
+    if (!query) return catalog()?.mcpServers ?? []
+    return (catalog()?.mcpServers ?? []).filter((item) =>
+      [item.name, item.type].some((value) => value.toLowerCase().includes(query)),
     )
   })
 
@@ -239,6 +261,57 @@ export const SettingsPluginsV2: Component = () => {
       true,
     )
 
+  const toggleDirect = (item: DirectPluginItem, enabled: boolean) =>
+    void run(
+      `${enabled ? "enable-direct" : "disable-direct"}:${item.id}`,
+      (target) =>
+        target
+          .apiForGeneration()
+          .then((api) =>
+            enabled ? api.plugins.enableDirect({ id: item.id }) : api.plugins.disableDirect({ id: item.id }),
+          ),
+      true,
+    )
+
+  const uninstallDirect = (item: DirectPluginItem) =>
+    void run(
+      `uninstall-direct:${item.id}`,
+      (target) => target.apiForGeneration().then((api) => api.plugins.uninstallDirect({ id: item.id })),
+      true,
+    )
+
+  const toggleMcp = (item: McpItem, enabled: boolean) =>
+    void run(
+      `${enabled ? "enable-mcp" : "disable-mcp"}:${item.name}`,
+      (target) =>
+        target
+          .apiForGeneration()
+          .then((api) =>
+            enabled ? api.plugins.enableMcp({ name: item.name }) : api.plugins.disableMcp({ name: item.name }),
+          ),
+      true,
+    )
+
+  const removeMcp = (item: McpItem) =>
+    void run(
+      `remove-mcp:${item.name}`,
+      (target) => target.apiForGeneration().then((api) => api.plugins.removeMcp({ name: item.name })),
+      true,
+    )
+
+  const installComplete = async (value: Catalog) => {
+    const target = sdk()
+    setCatalogState({ state: "ready", request: ++catalogRequest, value })
+    const directory = directorySync()
+    if (directory) await Promise.all([directory.mcp.refresh(), directory.commands.refresh()])
+    const current = serverSync().data.path.directory
+    if (current) await loadRuntime(target, current)
+  }
+
+  const openInstall = () => {
+    void dialog.show(() => <DialogInstallExtension onInstalled={installComplete} />)
+  }
+
   createEffect(() => {
     const target = sdk()
     target.protocolKind()
@@ -262,20 +335,25 @@ export const SettingsPluginsV2: Component = () => {
       <div class="settings-v2-tab-header settings-v2-tab-header--stacked settings-v2-plugins-header">
         <div class="settings-v2-tab-header-row">
           <h2 class="settings-v2-tab-title">Plugins</h2>
-          <div class="settings-v2-plugins-tabs">
-            <ButtonV2
-              size="small"
-              variant={view() === "plugins" ? "contrast" : "ghost-muted"}
-              onClick={() => setView("plugins")}
-            >
-              Plugins
-            </ButtonV2>
-            <ButtonV2
-              size="small"
-              variant={view() === "marketplaces" ? "contrast" : "ghost-muted"}
-              onClick={() => setView("marketplaces")}
-            >
-              Marketplaces
+          <div class="settings-v2-plugins-header-actions">
+            <div class="settings-v2-plugins-tabs">
+              <ButtonV2
+                size="small"
+                variant={view() === "plugins" ? "contrast" : "ghost-muted"}
+                onClick={() => setView("plugins")}
+              >
+                Plugins
+              </ButtonV2>
+              <ButtonV2
+                size="small"
+                variant={view() === "marketplaces" ? "contrast" : "ghost-muted"}
+                onClick={() => setView("marketplaces")}
+              >
+                Marketplaces
+              </ButtonV2>
+            </div>
+            <ButtonV2 size="small" variant="neutral" icon="plus" onClick={openInstall}>
+              Install
             </ButtonV2>
           </div>
         </div>
@@ -364,7 +442,9 @@ export const SettingsPluginsV2: Component = () => {
                       {(marketplace) => (
                         <SettingsRowV2
                           title={marketplace.name}
-                          description={marketplace.error ?? `${marketplace.pluginCount} plugins - ${marketplace.source}`}
+                          description={
+                            marketplace.error ?? `${marketplace.pluginCount} plugins - ${marketplace.source}`
+                          }
                         >
                           <div class="settings-v2-plugins-actions">
                             <IconButtonV2
@@ -438,6 +518,33 @@ export const SettingsPluginsV2: Component = () => {
                 </SettingsListV2>
               </div>
             </Show>
+            <Show when={filteredDirect().length > 0}>
+              <div class="settings-v2-section">
+                <h3 class="settings-v2-section-title">Direct plugins</h3>
+                <SettingsListV2>
+                  <For each={filteredDirect()}>
+                    {(item) => (
+                      <DirectPluginRow
+                        item={item}
+                        busy={busy()}
+                        onToggle={toggleDirect}
+                        onUninstall={uninstallDirect}
+                      />
+                    )}
+                  </For>
+                </SettingsListV2>
+              </div>
+            </Show>
+            <Show when={filteredMcp().length > 0}>
+              <div class="settings-v2-section">
+                <h3 class="settings-v2-section-title">Managed MCP servers</h3>
+                <SettingsListV2>
+                  <For each={filteredMcp()}>
+                    {(item) => <McpRow item={item} busy={busy()} onToggle={toggleMcp} onRemove={removeMcp} />}
+                  </For>
+                </SettingsListV2>
+              </div>
+            </Show>
             <Show when={available().length > 0}>
               <div class="settings-v2-section">
                 <h3 class="settings-v2-section-title">Available</h3>
@@ -463,7 +570,9 @@ export const SettingsPluginsV2: Component = () => {
                 </SettingsListV2>
               </div>
             </Show>
-            <Show when={!installed().length && !available().length}>
+            <Show
+              when={!installed().length && !available().length && !filteredDirect().length && !filteredMcp().length}
+            >
               <div class="settings-v2-plugins-status">
                 {filter().trim() && (catalog()?.plugins.length ?? 0) > 0
                   ? language.t("plugin.catalog.filteredEmpty")
@@ -561,3 +670,86 @@ const PluginRow: Component<{
     </SettingsRowV2>
   )
 }
+
+const DirectPluginRow: Component<{
+  item: DirectPluginItem
+  busy?: string
+  onToggle: (item: DirectPluginItem, enabled: boolean) => void
+  onUninstall: (item: DirectPluginItem) => void
+}> = (props) => (
+  <SettingsRowV2
+    title={props.item.name}
+    description={
+      <span class="settings-v2-plugin-description">
+        <span>{`${props.item.source}${props.item.version ? ` - ${props.item.version}` : ""}`}</span>
+        <span>{props.item.targets.join(" + ")}</span>
+        <Show when={props.item.requestedCapabilities.length > 0}>
+          <span>{props.item.requestedCapabilities.map((item) => `${item.name} (${item.tier})`).join(", ")}</span>
+        </Show>
+      </span>
+    }
+  >
+    <div class="settings-v2-plugins-actions">
+      <span class="settings-v2-plugin-state">
+        <span
+          class="settings-v2-plugin-status-dot"
+          classList={{ "settings-v2-plugin-status-dot--connected": props.item.enabled }}
+        />
+        {props.item.enabled ? "Enabled" : "Disabled"}
+      </span>
+      <Switch
+        checked={props.item.enabled}
+        disabled={Boolean(props.busy)}
+        hideLabel
+        onChange={(enabled) => props.onToggle(props.item, enabled)}
+      >
+        {props.item.name}
+      </Switch>
+      <ButtonV2
+        variant="ghost-muted"
+        size="small"
+        icon="close"
+        disabled={Boolean(props.busy)}
+        onClick={() => props.onUninstall(props.item)}
+      >
+        Uninstall
+      </ButtonV2>
+    </div>
+  </SettingsRowV2>
+)
+
+const McpRow: Component<{
+  item: McpItem
+  busy?: string
+  onToggle: (item: McpItem, enabled: boolean) => void
+  onRemove: (item: McpItem) => void
+}> = (props) => (
+  <SettingsRowV2 title={props.item.name} description={`${props.item.type} MCP server`}>
+    <div class="settings-v2-plugins-actions">
+      <span class="settings-v2-plugin-state">
+        <span
+          class="settings-v2-plugin-status-dot"
+          classList={{ "settings-v2-plugin-status-dot--connected": props.item.enabled }}
+        />
+        {props.item.enabled ? "Enabled" : "Disabled"}
+      </span>
+      <Switch
+        checked={props.item.enabled}
+        disabled={Boolean(props.busy)}
+        hideLabel
+        onChange={(enabled) => props.onToggle(props.item, enabled)}
+      >
+        {props.item.name}
+      </Switch>
+      <ButtonV2
+        variant="ghost-muted"
+        size="small"
+        icon="close"
+        disabled={Boolean(props.busy)}
+        onClick={() => props.onRemove(props.item)}
+      >
+        Remove
+      </ButtonV2>
+    </div>
+  </SettingsRowV2>
+)

@@ -214,6 +214,24 @@ import type {
   ServerPluginsEnableOutput,
   ServerPluginsDisableInput,
   ServerPluginsDisableOutput,
+  ServerPluginsInspectDirectInput,
+  ServerPluginsInspectDirectOutput,
+  ServerPluginsInstallDirectInput,
+  ServerPluginsInstallDirectOutput,
+  ServerPluginsUninstallDirectInput,
+  ServerPluginsUninstallDirectOutput,
+  ServerPluginsEnableDirectInput,
+  ServerPluginsEnableDirectOutput,
+  ServerPluginsDisableDirectInput,
+  ServerPluginsDisableDirectOutput,
+  ServerPluginsInstallMcpInput,
+  ServerPluginsInstallMcpOutput,
+  ServerPluginsRemoveMcpInput,
+  ServerPluginsRemoveMcpOutput,
+  ServerPluginsEnableMcpInput,
+  ServerPluginsEnableMcpOutput,
+  ServerPluginsDisableMcpInput,
+  ServerPluginsDisableMcpOutput,
   EventsSubscribeOutput,
   PtysShellsInput,
   PtysShellsOutput,
@@ -1778,6 +1796,118 @@ export function make(options: ClientOptions) {
             method: "POST",
             path: `/api/plugins/disable`,
             body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      inspectDirect: (input: ServerPluginsInspectDirectInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsInspectDirectOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/direct/inspect`,
+            body: { source: input["source"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      installDirect: (input: ServerPluginsInstallDirectInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsInstallDirectOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/direct`,
+            body: {
+              source: input["source"],
+              trusted: input["trusted"],
+              approvedCapabilities: input["approvedCapabilities"],
+            },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      uninstallDirect: (input: ServerPluginsUninstallDirectInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsUninstallDirectOutput>(
+          {
+            method: "DELETE",
+            path: `/api/plugins/direct`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      enableDirect: (input: ServerPluginsEnableDirectInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsEnableDirectOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/direct/enable`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      disableDirect: (input: ServerPluginsDisableDirectInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsDisableDirectOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/direct/disable`,
+            body: { id: input["id"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      installMcp: (input: ServerPluginsInstallMcpInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsInstallMcpOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/mcp`,
+            body: { name: input["name"], config: input["config"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      removeMcp: (input: ServerPluginsRemoveMcpInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsRemoveMcpOutput>(
+          {
+            method: "DELETE",
+            path: `/api/plugins/mcp`,
+            body: { name: input["name"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      enableMcp: (input: ServerPluginsEnableMcpInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsEnableMcpOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/mcp/enable`,
+            body: { name: input["name"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      disableMcp: (input: ServerPluginsDisableMcpInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsDisableMcpOutput>(
+          {
+            method: "POST",
+            path: `/api/plugins/mcp/disable`,
+            body: { name: input["name"] },
             successStatus: 200,
             declaredStatuses: [503, 401, 400],
             empty: false,

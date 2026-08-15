@@ -385,6 +385,9 @@ export type SessionsListOutput = {
             readonly archived?: number;
         };
         readonly title: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly share?: {
             readonly url: string;
         };
@@ -396,6 +399,8 @@ export type SessionsListOutput = {
         readonly revert?: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -499,6 +504,9 @@ export type SessionsCreateOutput = {
             readonly archived?: number;
         };
         readonly title: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly share?: {
             readonly url: string;
         };
@@ -510,6 +518,8 @@ export type SessionsCreateOutput = {
         readonly revert?: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -565,6 +575,9 @@ export type SessionsGetOutput = {
             readonly archived?: number;
         };
         readonly title: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly share?: {
             readonly url: string;
         };
@@ -576,6 +589,8 @@ export type SessionsGetOutput = {
         readonly revert?: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -622,6 +637,9 @@ export type SessionsChildrenOutput = {
             readonly archived?: number;
         };
         readonly title: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly share?: {
             readonly url: string;
         };
@@ -633,6 +651,8 @@ export type SessionsChildrenOutput = {
         readonly revert?: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -694,6 +714,9 @@ export type SessionsForkOutput = {
             readonly archived?: number;
         };
         readonly title: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly share?: {
             readonly url: string;
         };
@@ -705,6 +728,8 @@ export type SessionsForkOutput = {
         readonly revert?: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -759,6 +784,9 @@ export type SessionsUpdateOutput = {
             readonly archived?: number;
         };
         readonly title: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly share?: {
             readonly url: string;
         };
@@ -770,6 +798,8 @@ export type SessionsUpdateOutput = {
         readonly revert?: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -2296,6 +2326,8 @@ export type SessionsStageOutput = {
     readonly data: {
         readonly messageID: string;
         readonly partID?: string;
+        readonly contentIndex?: number;
+        readonly removedMessageIDs?: ReadonlyArray<string>;
         readonly snapshot?: string;
         readonly diff?: string;
         readonly files?: ReadonlyArray<{
@@ -2818,6 +2850,8 @@ export type SessionsHistoryOutput = {
                 readonly revert?: {
                     readonly messageID: string;
                     readonly partID?: string;
+                    readonly contentIndex?: number;
+                    readonly removedMessageIDs?: ReadonlyArray<string>;
                     readonly snapshot?: string;
                     readonly diff?: string;
                     readonly files?: ReadonlyArray<{
@@ -2897,6 +2931,8 @@ export type SessionsHistoryOutput = {
                 readonly revert?: {
                     readonly messageID: string;
                     readonly partID?: string;
+                    readonly contentIndex?: number;
+                    readonly removedMessageIDs?: ReadonlyArray<string>;
                     readonly snapshot?: string;
                     readonly diff?: string;
                     readonly files?: ReadonlyArray<{
@@ -2976,6 +3012,8 @@ export type SessionsHistoryOutput = {
                 readonly revert?: {
                     readonly messageID: string;
                     readonly partID?: string;
+                    readonly contentIndex?: number;
+                    readonly removedMessageIDs?: ReadonlyArray<string>;
                     readonly snapshot?: string;
                     readonly diff?: string;
                     readonly files?: ReadonlyArray<{
@@ -3551,6 +3589,339 @@ export type SessionsHistoryOutput = {
                     readonly created: number;
                 };
             };
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.transcript.message.removed";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly messageID: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.transcript.user-text.updated";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly messageID: string;
+            readonly partID: string;
+            readonly text: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.transcript.user-text.removed";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly messageID: string;
+            readonly partID: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.transcript.content.updated";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly assistantMessageID: string;
+            readonly contentIndex: number;
+            readonly partID: string;
+            readonly content: {
+                readonly type: "text";
+                readonly id: string;
+                readonly text: string;
+            } | {
+                readonly type: "reasoning";
+                readonly id: string;
+                readonly text: string;
+                readonly providerMetadata?: {
+                    readonly [x: string]: {
+                        readonly [x: string]: JsonValue;
+                    };
+                };
+                readonly time?: {
+                    readonly created: number;
+                    readonly completed?: number;
+                };
+            } | {
+                readonly type: "tool";
+                readonly id: string;
+                readonly name: string;
+                readonly provider?: {
+                    readonly executed: boolean;
+                    readonly metadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: JsonValue;
+                        };
+                    };
+                    readonly resultMetadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: JsonValue;
+                        };
+                    };
+                };
+                readonly state: {
+                    readonly status: "pending";
+                    readonly input: string;
+                } | {
+                    readonly status: "running";
+                    readonly input: {
+                        readonly [x: string]: JsonValue;
+                    };
+                    readonly structured: {
+                        readonly [x: string]: JsonValue;
+                    };
+                    readonly content: ReadonlyArray<{
+                        readonly type: "text";
+                        readonly text: string;
+                        readonly provenance?: {
+                            readonly type: "mcp";
+                            readonly clientName: string;
+                            readonly uri: string;
+                            readonly kind: "resource" | "resource_link";
+                            readonly mime?: string;
+                            readonly name?: string;
+                            readonly description?: string;
+                            readonly size?: number | "Infinity" | "-Infinity" | "NaN";
+                            readonly annotations?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                            readonly meta?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                        };
+                    } | {
+                        readonly type: "file";
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string;
+                        readonly provenance?: {
+                            readonly type: "mcp";
+                            readonly clientName: string;
+                            readonly uri: string;
+                            readonly kind: "resource" | "resource_link";
+                            readonly mime?: string;
+                            readonly name?: string;
+                            readonly description?: string;
+                            readonly size?: number | "Infinity" | "-Infinity" | "NaN";
+                            readonly annotations?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                            readonly meta?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                        };
+                    }>;
+                } | {
+                    readonly status: "completed";
+                    readonly input: {
+                        readonly [x: string]: JsonValue;
+                    };
+                    readonly attachments?: ReadonlyArray<{
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly source?: {
+                            readonly start: number;
+                            readonly end: number;
+                            readonly text: string;
+                        };
+                        readonly resource?: {
+                            readonly clientName: string;
+                            readonly uri: string;
+                        };
+                        readonly materialized?: ReadonlyArray<{
+                            readonly type: "text";
+                            readonly text: string;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string;
+                        } | {
+                            readonly type: "error";
+                            readonly message: string;
+                        }>;
+                    }>;
+                    readonly content: ReadonlyArray<{
+                        readonly type: "text";
+                        readonly text: string;
+                        readonly provenance?: {
+                            readonly type: "mcp";
+                            readonly clientName: string;
+                            readonly uri: string;
+                            readonly kind: "resource" | "resource_link";
+                            readonly mime?: string;
+                            readonly name?: string;
+                            readonly description?: string;
+                            readonly size?: number | "Infinity" | "-Infinity" | "NaN";
+                            readonly annotations?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                            readonly meta?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                        };
+                    } | {
+                        readonly type: "file";
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string;
+                        readonly provenance?: {
+                            readonly type: "mcp";
+                            readonly clientName: string;
+                            readonly uri: string;
+                            readonly kind: "resource" | "resource_link";
+                            readonly mime?: string;
+                            readonly name?: string;
+                            readonly description?: string;
+                            readonly size?: number | "Infinity" | "-Infinity" | "NaN";
+                            readonly annotations?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                            readonly meta?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                        };
+                    }>;
+                    readonly outputPaths?: ReadonlyArray<string>;
+                    readonly structured: {
+                        readonly [x: string]: JsonValue;
+                    };
+                    readonly result?: JsonValue;
+                } | {
+                    readonly status: "error";
+                    readonly input: {
+                        readonly [x: string]: JsonValue;
+                    };
+                    readonly content: ReadonlyArray<{
+                        readonly type: "text";
+                        readonly text: string;
+                        readonly provenance?: {
+                            readonly type: "mcp";
+                            readonly clientName: string;
+                            readonly uri: string;
+                            readonly kind: "resource" | "resource_link";
+                            readonly mime?: string;
+                            readonly name?: string;
+                            readonly description?: string;
+                            readonly size?: number | "Infinity" | "-Infinity" | "NaN";
+                            readonly annotations?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                            readonly meta?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                        };
+                    } | {
+                        readonly type: "file";
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string;
+                        readonly provenance?: {
+                            readonly type: "mcp";
+                            readonly clientName: string;
+                            readonly uri: string;
+                            readonly kind: "resource" | "resource_link";
+                            readonly mime?: string;
+                            readonly name?: string;
+                            readonly description?: string;
+                            readonly size?: number | "Infinity" | "-Infinity" | "NaN";
+                            readonly annotations?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                            readonly meta?: {
+                                readonly [x: string]: JsonValue;
+                            };
+                        };
+                    }>;
+                    readonly structured: {
+                        readonly [x: string]: JsonValue;
+                    };
+                    readonly error: {
+                        readonly type: "unknown";
+                        readonly message: string;
+                    };
+                    readonly result?: JsonValue;
+                };
+                readonly time: {
+                    readonly created: number;
+                    readonly ran?: number;
+                    readonly completed?: number;
+                    readonly pruned?: number;
+                };
+            };
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.transcript.content.removed";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly assistantMessageID: string;
+            readonly contentIndex: number;
+            readonly partID: string;
         };
     } | {
         readonly id: string;
@@ -4252,6 +4623,45 @@ export type SessionsHistoryOutput = {
         readonly metadata?: {
             readonly [x: string]: JsonValue;
         };
+        readonly type: "session.next.tool-discovery.completed";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly assistantMessageID: string;
+            readonly callID: string;
+            readonly query: string;
+            readonly limit: number;
+            readonly catalogRevision: string;
+            readonly matches: ReadonlyArray<{
+                readonly key: string;
+                readonly callableName: string;
+                readonly definitionHash: string;
+                readonly source: {
+                    readonly type: "builtin" | "plugin" | "mcp" | "app";
+                    readonly id: string;
+                    readonly displayName?: string;
+                };
+            }>;
+            readonly pendingSources: ReadonlyArray<{
+                readonly type: "builtin" | "plugin" | "mcp" | "app";
+                readonly id: string;
+                readonly displayName?: string;
+            }>;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly type: "session.next.reasoning.started";
         readonly durable?: {
             readonly aggregateID: string;
@@ -4515,6 +4925,8 @@ export type SessionsHistoryOutput = {
             readonly revert: {
                 readonly messageID: string;
                 readonly partID?: string;
+                readonly contentIndex?: number;
+                readonly removedMessageIDs?: ReadonlyArray<string>;
                 readonly snapshot?: string;
                 readonly diff?: string;
                 readonly files?: ReadonlyArray<{
@@ -4564,6 +4976,9 @@ export type SessionsHistoryOutput = {
             readonly timestamp: number;
             readonly sessionID: string;
             readonly messageID: string;
+            readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
         };
     }>;
     readonly hasMore: boolean;
@@ -4643,6 +5058,8 @@ export type SessionsEventsOutput = {
             readonly revert?: {
                 readonly messageID: string;
                 readonly partID?: string;
+                readonly contentIndex?: number;
+                readonly removedMessageIDs?: ReadonlyArray<string>;
                 readonly snapshot?: string;
                 readonly diff?: string;
                 readonly files?: ReadonlyArray<{
@@ -4722,6 +5139,8 @@ export type SessionsEventsOutput = {
             readonly revert?: {
                 readonly messageID: string;
                 readonly partID?: string;
+                readonly contentIndex?: number;
+                readonly removedMessageIDs?: ReadonlyArray<string>;
                 readonly snapshot?: string;
                 readonly diff?: string;
                 readonly files?: ReadonlyArray<{
@@ -4801,6 +5220,8 @@ export type SessionsEventsOutput = {
             readonly revert?: {
                 readonly messageID: string;
                 readonly partID?: string;
+                readonly contentIndex?: number;
+                readonly removedMessageIDs?: ReadonlyArray<string>;
                 readonly snapshot?: string;
                 readonly diff?: string;
                 readonly files?: ReadonlyArray<{
@@ -5376,6 +5797,339 @@ export type SessionsEventsOutput = {
                 readonly created: number;
             };
         };
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.transcript.message.removed";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly messageID: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.transcript.user-text.updated";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly messageID: string;
+        readonly partID: string;
+        readonly text: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.transcript.user-text.removed";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly messageID: string;
+        readonly partID: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.transcript.content.updated";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly assistantMessageID: string;
+        readonly contentIndex: number;
+        readonly partID: string;
+        readonly content: {
+            readonly type: "text";
+            readonly id: string;
+            readonly text: string;
+        } | {
+            readonly type: "reasoning";
+            readonly id: string;
+            readonly text: string;
+            readonly providerMetadata?: {
+                readonly [x: string]: {
+                    readonly [x: string]: unknown;
+                };
+            };
+            readonly time?: {
+                readonly created: number;
+                readonly completed?: number;
+            };
+        } | {
+            readonly type: "tool";
+            readonly id: string;
+            readonly name: string;
+            readonly provider?: {
+                readonly executed: boolean;
+                readonly metadata?: {
+                    readonly [x: string]: {
+                        readonly [x: string]: unknown;
+                    };
+                };
+                readonly resultMetadata?: {
+                    readonly [x: string]: {
+                        readonly [x: string]: unknown;
+                    };
+                };
+            };
+            readonly state: {
+                readonly status: "pending";
+                readonly input: string;
+            } | {
+                readonly status: "running";
+                readonly input: {
+                    readonly [x: string]: unknown;
+                };
+                readonly structured: {
+                    readonly [x: string]: unknown;
+                };
+                readonly content: ReadonlyArray<{
+                    readonly type: "text";
+                    readonly text: string;
+                    readonly provenance?: {
+                        readonly type: "mcp";
+                        readonly clientName: string;
+                        readonly uri: string;
+                        readonly kind: "resource" | "resource_link";
+                        readonly mime?: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly size?: number;
+                        readonly annotations?: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly meta?: {
+                            readonly [x: string]: unknown;
+                        };
+                    };
+                } | {
+                    readonly type: "file";
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                    readonly provenance?: {
+                        readonly type: "mcp";
+                        readonly clientName: string;
+                        readonly uri: string;
+                        readonly kind: "resource" | "resource_link";
+                        readonly mime?: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly size?: number;
+                        readonly annotations?: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly meta?: {
+                            readonly [x: string]: unknown;
+                        };
+                    };
+                }>;
+            } | {
+                readonly status: "completed";
+                readonly input: {
+                    readonly [x: string]: unknown;
+                };
+                readonly attachments?: ReadonlyArray<{
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                    readonly description?: string;
+                    readonly source?: {
+                        readonly start: number;
+                        readonly end: number;
+                        readonly text: string;
+                    };
+                    readonly resource?: {
+                        readonly clientName: string;
+                        readonly uri: string;
+                    };
+                    readonly materialized?: ReadonlyArray<{
+                        readonly type: "text";
+                        readonly text: string;
+                    } | {
+                        readonly type: "file";
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string;
+                    } | {
+                        readonly type: "error";
+                        readonly message: string;
+                    }>;
+                }>;
+                readonly content: ReadonlyArray<{
+                    readonly type: "text";
+                    readonly text: string;
+                    readonly provenance?: {
+                        readonly type: "mcp";
+                        readonly clientName: string;
+                        readonly uri: string;
+                        readonly kind: "resource" | "resource_link";
+                        readonly mime?: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly size?: number;
+                        readonly annotations?: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly meta?: {
+                            readonly [x: string]: unknown;
+                        };
+                    };
+                } | {
+                    readonly type: "file";
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                    readonly provenance?: {
+                        readonly type: "mcp";
+                        readonly clientName: string;
+                        readonly uri: string;
+                        readonly kind: "resource" | "resource_link";
+                        readonly mime?: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly size?: number;
+                        readonly annotations?: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly meta?: {
+                            readonly [x: string]: unknown;
+                        };
+                    };
+                }>;
+                readonly outputPaths?: ReadonlyArray<string>;
+                readonly structured: {
+                    readonly [x: string]: unknown;
+                };
+                readonly result?: unknown;
+            } | {
+                readonly status: "error";
+                readonly input: {
+                    readonly [x: string]: unknown;
+                };
+                readonly content: ReadonlyArray<{
+                    readonly type: "text";
+                    readonly text: string;
+                    readonly provenance?: {
+                        readonly type: "mcp";
+                        readonly clientName: string;
+                        readonly uri: string;
+                        readonly kind: "resource" | "resource_link";
+                        readonly mime?: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly size?: number;
+                        readonly annotations?: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly meta?: {
+                            readonly [x: string]: unknown;
+                        };
+                    };
+                } | {
+                    readonly type: "file";
+                    readonly uri: string;
+                    readonly mime: string;
+                    readonly name?: string;
+                    readonly provenance?: {
+                        readonly type: "mcp";
+                        readonly clientName: string;
+                        readonly uri: string;
+                        readonly kind: "resource" | "resource_link";
+                        readonly mime?: string;
+                        readonly name?: string;
+                        readonly description?: string;
+                        readonly size?: number;
+                        readonly annotations?: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly meta?: {
+                            readonly [x: string]: unknown;
+                        };
+                    };
+                }>;
+                readonly structured: {
+                    readonly [x: string]: unknown;
+                };
+                readonly error: {
+                    readonly type: "unknown";
+                    readonly message: string;
+                };
+                readonly result?: unknown;
+            };
+            readonly time: {
+                readonly created: number;
+                readonly ran?: number;
+                readonly completed?: number;
+                readonly pruned?: number;
+            };
+        };
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.transcript.content.removed";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly assistantMessageID: string;
+        readonly contentIndex: number;
+        readonly partID: string;
     };
 } | {
     readonly id: string;
@@ -6077,6 +6831,45 @@ export type SessionsEventsOutput = {
     readonly metadata?: {
         readonly [x: string]: unknown;
     };
+    readonly type: "session.next.tool-discovery.completed";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly assistantMessageID: string;
+        readonly callID: string;
+        readonly query: string;
+        readonly limit: number;
+        readonly catalogRevision: string;
+        readonly matches: ReadonlyArray<{
+            readonly key: string;
+            readonly callableName: string;
+            readonly definitionHash: string;
+            readonly source: {
+                readonly type: "builtin" | "plugin" | "mcp" | "app";
+                readonly id: string;
+                readonly displayName?: string;
+            };
+        }>;
+        readonly pendingSources: ReadonlyArray<{
+            readonly type: "builtin" | "plugin" | "mcp" | "app";
+            readonly id: string;
+            readonly displayName?: string;
+        }>;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
     readonly type: "session.next.reasoning.started";
     readonly durable?: {
         readonly aggregateID: string;
@@ -6340,6 +7133,8 @@ export type SessionsEventsOutput = {
         readonly revert: {
             readonly messageID: string;
             readonly partID?: string;
+            readonly contentIndex?: number;
+            readonly removedMessageIDs?: ReadonlyArray<string>;
             readonly snapshot?: string;
             readonly diff?: string;
             readonly files?: ReadonlyArray<{
@@ -6389,6 +7184,9 @@ export type SessionsEventsOutput = {
         readonly timestamp: number;
         readonly sessionID: string;
         readonly messageID: string;
+        readonly partID?: string;
+        readonly contentIndex?: number;
+        readonly removedMessageIDs?: ReadonlyArray<string>;
     };
 };
 export type SessionsInterruptInput = {
@@ -9376,6 +10174,35 @@ export type ControlPlaneMoveSessionInput = {
     }["moveChanges"];
 };
 export type ControlPlaneMoveSessionOutput = void;
+export type ServerPluginsRuntimeInput = {
+    readonly location?: {
+        readonly location?: {
+            readonly directory?: string | undefined;
+            readonly workspace?: string | undefined;
+        } | undefined;
+    }["location"];
+};
+export type ServerPluginsRuntimeOutput = {
+    readonly location: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+        readonly project: {
+            readonly id: string;
+            readonly directory: string;
+        };
+    };
+    readonly data: {
+        readonly plugins: ReadonlyArray<{
+            readonly id: string;
+            readonly state: "disabled" | "initializing" | "ready" | "degraded" | "failed";
+            readonly capabilities: ReadonlyArray<{
+                readonly name: "skills" | "commands" | "mcp" | "plugin" | "tools";
+                readonly state: "disabled" | "pending" | "ready" | "failed";
+                readonly message?: string | null;
+            }>;
+        }>;
+    };
+};
 export type ServerPluginsListOutput = {
     readonly marketplaces: ReadonlyArray<{
         readonly name: string;
@@ -9395,6 +10222,27 @@ export type ServerPluginsListOutput = {
         readonly capabilities: ReadonlyArray<string>;
         readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
         readonly enabled: boolean;
     }>;
 };
@@ -9424,6 +10272,27 @@ export type ServerPluginsAddOutput = {
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
 };
 export type ServerPluginsRefreshInput = {
     readonly name: {
@@ -9449,6 +10318,27 @@ export type ServerPluginsRefreshOutput = {
         readonly capabilities: ReadonlyArray<string>;
         readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
         readonly enabled: boolean;
     }>;
 };
@@ -9478,6 +10368,27 @@ export type ServerPluginsRemoveOutput = {
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
 };
 export type ServerPluginsInstallInput = {
     readonly id: {
@@ -9503,6 +10414,27 @@ export type ServerPluginsInstallOutput = {
         readonly capabilities: ReadonlyArray<string>;
         readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
         readonly enabled: boolean;
     }>;
 };
@@ -9532,6 +10464,27 @@ export type ServerPluginsUninstallOutput = {
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
 };
 export type ServerPluginsEnableInput = {
     readonly id: {
@@ -9559,6 +10512,27 @@ export type ServerPluginsEnableOutput = {
         readonly installed: boolean;
         readonly enabled: boolean;
     }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
 };
 export type ServerPluginsDisableInput = {
     readonly id: {
@@ -9584,6 +10558,489 @@ export type ServerPluginsDisableOutput = {
         readonly capabilities: ReadonlyArray<string>;
         readonly mcpServers: ReadonlyArray<string>;
         readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsInspectDirectInput = {
+    readonly source: {
+        readonly source: string;
+    }["source"];
+};
+export type ServerPluginsInspectDirectOutput = {
+    readonly source: string;
+    readonly name: string;
+    readonly description?: string | undefined;
+    readonly version?: string | undefined;
+    readonly api?: string | undefined;
+    readonly targets: ReadonlyArray<"server" | "tui">;
+    readonly requestedCapabilities: ReadonlyArray<{
+        readonly name: string;
+        readonly tier: "declarative" | "runtime" | "trusted-runtime";
+    }>;
+};
+export type ServerPluginsInstallDirectInput = {
+    readonly source: {
+        readonly source: string;
+        readonly trusted: boolean;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+    }["source"];
+    readonly trusted: {
+        readonly source: string;
+        readonly trusted: boolean;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+    }["trusted"];
+    readonly approvedCapabilities: {
+        readonly source: string;
+        readonly trusted: boolean;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+    }["approvedCapabilities"];
+};
+export type ServerPluginsInstallDirectOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsUninstallDirectInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsUninstallDirectOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsEnableDirectInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsEnableDirectOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsDisableDirectInput = {
+    readonly id: {
+        readonly id: string;
+    }["id"];
+};
+export type ServerPluginsDisableDirectOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsInstallMcpInput = {
+    readonly name: {
+        readonly name: string;
+        readonly config: {
+            readonly type: "local";
+            readonly command: ReadonlyArray<string>;
+            readonly cwd?: string | undefined;
+            readonly environment?: {
+                readonly [x: string]: string;
+            } | undefined;
+            readonly timeout?: {
+                readonly startup?: number | undefined;
+                readonly request?: number | undefined;
+            } | undefined;
+        } | {
+            readonly type: "remote";
+            readonly url: string;
+            readonly headers?: {
+                readonly [x: string]: string;
+            } | undefined;
+            readonly oauth?: false | undefined;
+            readonly timeout?: {
+                readonly startup?: number | undefined;
+                readonly request?: number | undefined;
+            } | undefined;
+        };
+    }["name"];
+    readonly config: {
+        readonly name: string;
+        readonly config: {
+            readonly type: "local";
+            readonly command: ReadonlyArray<string>;
+            readonly cwd?: string | undefined;
+            readonly environment?: {
+                readonly [x: string]: string;
+            } | undefined;
+            readonly timeout?: {
+                readonly startup?: number | undefined;
+                readonly request?: number | undefined;
+            } | undefined;
+        } | {
+            readonly type: "remote";
+            readonly url: string;
+            readonly headers?: {
+                readonly [x: string]: string;
+            } | undefined;
+            readonly oauth?: false | undefined;
+            readonly timeout?: {
+                readonly startup?: number | undefined;
+                readonly request?: number | undefined;
+            } | undefined;
+        };
+    }["config"];
+};
+export type ServerPluginsInstallMcpOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsRemoveMcpInput = {
+    readonly name: {
+        readonly name: string;
+    }["name"];
+};
+export type ServerPluginsRemoveMcpOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsEnableMcpInput = {
+    readonly name: {
+        readonly name: string;
+    }["name"];
+};
+export type ServerPluginsEnableMcpOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
+        readonly enabled: boolean;
+    }>;
+};
+export type ServerPluginsDisableMcpInput = {
+    readonly name: {
+        readonly name: string;
+    }["name"];
+};
+export type ServerPluginsDisableMcpOutput = {
+    readonly marketplaces: ReadonlyArray<{
+        readonly name: string;
+        readonly source: string;
+        readonly lastUpdated: string;
+        readonly pluginCount: number;
+        readonly error?: string | undefined;
+    }>;
+    readonly plugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly marketplace: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly category?: string | undefined;
+        readonly tags: ReadonlyArray<string>;
+        readonly capabilities: ReadonlyArray<string>;
+        readonly mcpServers: ReadonlyArray<string>;
+        readonly installed: boolean;
+        readonly enabled: boolean;
+    }>;
+    readonly directPlugins: ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly source: string;
+        readonly description?: string | undefined;
+        readonly version?: string | undefined;
+        readonly api?: string | undefined;
+        readonly targets: ReadonlyArray<"server" | "tui">;
+        readonly requestedCapabilities: ReadonlyArray<{
+            readonly name: string;
+            readonly tier: "declarative" | "runtime" | "trusted-runtime";
+        }>;
+        readonly approvedCapabilities: ReadonlyArray<string>;
+        readonly enabled: boolean;
+        readonly installedAt: string;
+    }>;
+    readonly mcpServers: ReadonlyArray<{
+        readonly name: string;
+        readonly type: "local" | "remote";
         readonly enabled: boolean;
     }>;
 };

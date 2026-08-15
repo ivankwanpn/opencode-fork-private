@@ -9,6 +9,7 @@ import {
 
 import * as ConfigPaths from "@/config/paths"
 import { Global } from "@opencode-ai/core/global"
+import { ConfigMigrateV1 } from "@opencode-ai/core/v1/config/migrate"
 import { Filesystem } from "@/util/filesystem"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { isRecord } from "@/util/record"
@@ -16,7 +17,8 @@ import { isRecord } from "@/util/record"
 import { parsePluginSpecifier, readPackageThemes, readPluginPackage, resolvePluginTarget } from "./shared"
 
 type Mode = "noop" | "add" | "replace"
-type Kind = "server" | "tui"
+export type Kind = "server" | "tui"
+export type ConfigField = "plugin" | "plugins"
 
 export type Target = {
   kind: Kind
@@ -37,6 +39,7 @@ export type PatchDeps = {
 export type PatchInput = {
   spec: string
   targets: Target[]
+  api?: string
   force?: boolean
   global?: boolean
   vcs?: string
@@ -57,12 +60,20 @@ type Err<C extends string, T> = {
 export type InstallResult = Ok<{ target: string }> | Err<"install_failed", { error: unknown }>
 
 export type ManifestResult =
-  | Ok<{ targets: Target[] }>
+  | Ok<{
+      name: string
+      version?: string
+      description?: string
+      api?: string
+      capabilities: string[]
+      targets: Target[]
+    }>
   | Err<"manifest_read_failed", { file: string; error: unknown }>
   | Err<"manifest_no_targets", { file: string }>
 
 export type PatchItem = {
   kind: Kind
+  field: ConfigField
   mode: Mode
   file: string
 }
@@ -73,7 +84,20 @@ type PatchErr =
 
 type PatchOne = Ok<{ item: PatchItem }> | PatchErr
 
-export type PatchResult = Ok<{ dir: string; items: PatchItem[] }> | (PatchErr & { dir: string })
+export type PatchResult = Ok<{ dir: string; items: PatchItem[] }> | (PatchErr & { dir: string; items: PatchItem[] })
+
+export type RemoveInput = {
+  spec: string
+  items: Array<Pick<PatchItem, "kind" | "field" | "file">>
+}
+
+export type RemoveItem = {
+  kind: Kind
+  file: string
+  removed: boolean
+}
+
+export type RemoveResult = Ok<{ items: RemoveItem[] }> | PatchErr
 
 const defaultInstallDeps: InstallDeps = {
   resolve: (spec) => resolvePluginTarget(spec),
@@ -90,16 +114,17 @@ const defaultPatchDeps: PatchDeps = {
 
 function pluginSpec(item: unknown) {
   if (typeof item === "string") return item
+  if (isRecord(item) && typeof item.package === "string") return item.package
   if (!Array.isArray(item)) return
   if (typeof item[0] !== "string") return
   return item[0]
 }
 
-function pluginList(data: unknown) {
+function pluginList(data: unknown, field: ConfigField) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return
-  const item = data as { plugin?: unknown }
-  if (!Array.isArray(item.plugin)) return
-  return item.plugin
+  const value = (data as Record<string, unknown>)[field]
+  if (!Array.isArray(value)) return
+  return value
 }
 
 function exportValue(value: unknown): string | undefined {
@@ -165,6 +190,42 @@ function packageTargets(pkg: { json: Record<string, unknown>; dir: string; pkg: 
   return targets
 }
 
+function packageManifest(pkg: { json: Record<string, unknown>; dir: string; pkg: string }) {
+  const name = typeof pkg.json.name === "string" ? pkg.json.name.trim() : ""
+  if (!name) throw new TypeError(`Plugin package ${pkg.pkg} is missing name`)
+
+  const opencode = pkg.json.opencode
+  if (opencode !== undefined && !isRecord(opencode)) {
+    throw new TypeError(`Plugin package ${pkg.pkg} has an invalid opencode manifest`)
+  }
+  const api = opencode?.api
+  if (api !== undefined && typeof api !== "string") {
+    throw new TypeError(`Plugin package ${pkg.pkg} has an invalid opencode.api value`)
+  }
+  const requested = opencode?.capabilities
+  if (requested !== undefined && !Array.isArray(requested)) {
+    throw new TypeError(`Plugin package ${pkg.pkg} has an invalid opencode.capabilities value`)
+  }
+  const capabilities = (requested ?? []).map((item) => {
+    if (typeof item !== "string" || !item.trim()) {
+      throw new TypeError(`Plugin package ${pkg.pkg} has an invalid capability declaration`)
+    }
+    return item.trim()
+  })
+  const version = typeof pkg.json.version === "string" && pkg.json.version.trim() ? pkg.json.version.trim() : undefined
+  const description =
+    typeof pkg.json.description === "string" && pkg.json.description.trim() ? pkg.json.description.trim() : undefined
+
+  return {
+    name,
+    ...(version ? { version } : {}),
+    ...(description ? { description } : {}),
+    ...(typeof api === "string" && api.trim() ? { api: api.trim() } : {}),
+    capabilities: Array.from(new Set(capabilities)),
+    targets: packageTargets(pkg),
+  }
+}
+
 function patch(text: string, path: Array<string | number>, value: unknown, insert = false) {
   return applyEdits(
     text,
@@ -181,6 +242,7 @@ function patch(text: string, path: Array<string | number>, value: unknown, inser
 function patchPluginList(
   text: string,
   list: unknown[] | undefined,
+  field: ConfigField,
   spec: string,
   next: unknown,
   force = false,
@@ -193,21 +255,19 @@ function patchPluginList(
   }))
   const dup = rows.filter((item) => {
     if (!item.spec) return false
-    if (item.spec === spec) return true
-    if (item.spec.startsWith("file://")) return false
-    return parsePluginSpecifier(item.spec).pkg === pkg
+    return samePluginSpec(item.spec, spec, pkg)
   })
 
   if (!dup.length) {
     if (!list) {
       return {
         mode: "add",
-        text: patch(text, ["plugin"], [next]),
+        text: patch(text, [field], [next]),
       }
     }
     return {
       mode: "add",
-      text: patch(text, ["plugin", list.length], next, true),
+      text: patch(text, [field, list.length], next, true),
     }
   }
 
@@ -235,10 +295,10 @@ function patchPluginList(
 
   let out = text
   if (typeof keep.item === "string") {
-    out = patch(out, ["plugin", keep.i], next)
+    out = patch(out, [field, keep.i], next)
   }
   if (Array.isArray(keep.item) && typeof keep.item[0] === "string") {
-    out = patch(out, ["plugin", keep.i, 0], spec)
+    out = patch(out, [field, keep.i, 0], spec)
   }
 
   const del = dup
@@ -247,13 +307,19 @@ function patchPluginList(
     .sort((a, b) => b - a)
 
   for (const i of del) {
-    out = patch(out, ["plugin", i], undefined)
+    out = patch(out, [field, i], undefined)
   }
 
   return {
     mode: "replace",
     text: out,
   }
+}
+
+function samePluginSpec(current: string, spec: string, pkg = parsePluginSpecifier(spec).pkg) {
+  if (current === spec) return true
+  if (current.startsWith("file://")) return false
+  return parsePluginSpecifier(current).pkg === pkg
 }
 
 export async function installPlugin(spec: string, dep: InstallDeps = defaultInstallDeps): Promise<InstallResult> {
@@ -300,23 +366,23 @@ export async function readPluginManifest(target: string): Promise<ManifestResult
     }
   }
 
-  const targets = await Promise.resolve()
-    .then(() => packageTargets(pkg.item))
+  const manifest = await Promise.resolve()
+    .then(() => packageManifest(pkg.item))
     .then(
       (item) => ({ ok: true as const, item }),
       (error: unknown) => ({ ok: false as const, error }),
     )
 
-  if (!targets.ok) {
+  if (!manifest.ok) {
     return {
       ok: false,
       code: "manifest_read_failed",
       file: pkg.item.pkg,
-      error: targets.error,
+      error: manifest.error,
     }
   }
 
-  if (!targets.item.length) {
+  if (!manifest.item.targets.length) {
     return {
       ok: false,
       code: "manifest_no_targets",
@@ -326,7 +392,7 @@ export async function readPluginManifest(target: string): Promise<ManifestResult
 
   return {
     ok: true,
-    targets: targets.item,
+    ...manifest.item,
   }
 }
 
@@ -342,19 +408,91 @@ function patchName(kind: Kind): "opencode" | "tui" {
   return "tui"
 }
 
-async function patchOne(dir: string, target: Target, spec: string, force: boolean, dep: PatchDeps): Promise<PatchOne> {
+function patchField(target: Target, api?: string): ConfigField {
+  if (target.kind === "server" && api === "v2") return "plugins"
+  return "plugin"
+}
+
+async function v2ConfigFile(files: string[], dep: PatchDeps) {
+  const missing: string[] = []
+  for (const file of files) {
+    if (!(await dep.exists(file))) {
+      missing.push(file)
+      continue
+    }
+    const text = await dep.readText(file)
+    const errors: JsoncParseError[] = []
+    const data = parseJsonc(text, errors, { allowTrailingComma: true })
+    if (errors.length) return file
+    if (!ConfigMigrateV1.isV1(data)) return file
+  }
+  return missing[0]
+}
+
+async function configuredPlugin(files: string[], spec: string, dep: PatchDeps) {
+  const pkg = parsePluginSpecifier(spec).pkg
+  for (const file of files) {
+    if (!(await dep.exists(file))) continue
+    const text = await dep.readText(file)
+    const errors: JsoncParseError[] = []
+    const data = parseJsonc(text, errors, { allowTrailingComma: true })
+    if (errors.length) continue
+    for (const field of ["plugin", "plugins"] as const) {
+      if (
+        (pluginList(data, field) ?? []).some((item) => {
+          const current = pluginSpec(item)
+          return current ? samePluginSpec(current, spec, pkg) : false
+        })
+      ) {
+        return { field, file }
+      }
+    }
+  }
+}
+
+async function patchOne(
+  dir: string,
+  target: Target,
+  spec: string,
+  force: boolean,
+  api: string | undefined,
+  dep: PatchDeps,
+): Promise<PatchOne> {
   const name = patchName(target.kind)
   await using _ = await Flock.acquire(`plug-config:${Filesystem.resolve(path.join(dir, name))}`)
 
   const files = dep.files(dir, name)
-  let cfg = files[0]
-  for (const file of files) {
-    if (!(await dep.exists(file))) continue
-    cfg = file
-    break
+  const field = patchField(target, api)
+  const existing = field === "plugins" ? await configuredPlugin(files, spec, dep) : undefined
+  if (existing) {
+    return {
+      ok: true,
+      item: {
+        kind: target.kind,
+        field: existing.field,
+        mode: "noop",
+        file: existing.file,
+      },
+    }
   }
+  const cfg =
+    field === "plugins"
+      ? await v2ConfigFile(files, dep)
+      : await files.reduce<Promise<string | undefined>>(
+          async (result, file) => (await result) ?? ((await dep.exists(file)) ? file : undefined),
+          Promise.resolve(undefined),
+        )
+  if (cfg === undefined && field === "plugins") {
+    return {
+      ok: false,
+      code: "patch_failed",
+      kind: target.kind,
+      error: new Error(`No V2 config file is available in ${dir}; both opencode config files use V1 syntax`),
+    }
+  }
+  const file = cfg ?? files[0]
 
-  const src = await dep.readText(cfg).catch((err: NodeJS.ErrnoException) => {
+  const src = await dep.readText(file).catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") return "{}"
     return err
   })
@@ -377,28 +515,36 @@ async function patchOne(dir: string, target: Target, spec: string, force: boolea
       ok: false,
       code: "invalid_json",
       kind: target.kind,
-      file: cfg,
+      file,
       line: lines.length,
       col: lines[lines.length - 1].length + 1,
       parse: printParseErrorCode(err.error),
     }
   }
 
-  const list = pluginList(data)
-  const item = target.opts ? ([spec, target.opts] as const) : spec
-  const out = patchPluginList(text, list, spec, item, force)
+  const list = pluginList(data, field)
+  const item =
+    field === "plugins"
+      ? target.opts
+        ? { package: spec, options: target.opts }
+        : spec
+      : target.opts
+        ? [spec, target.opts]
+        : spec
+  const out = patchPluginList(text, list, field, spec, item, force)
   if (out.mode === "noop") {
     return {
       ok: true,
       item: {
         kind: target.kind,
+        field,
         mode: out.mode,
-        file: cfg,
+        file,
       },
     }
   }
 
-  const write = await dep.write(cfg, out.text).catch((error: unknown) => error)
+  const write = await dep.write(file, out.text).catch((error: unknown) => error)
   if (write instanceof Error) {
     return {
       ok: false,
@@ -412,8 +558,9 @@ async function patchOne(dir: string, target: Target, spec: string, force: boolea
     ok: true,
     item: {
       kind: target.kind,
+      field,
       mode: out.mode,
-      file: cfg,
+      file,
     },
   }
 }
@@ -422,11 +569,12 @@ export async function patchPluginConfig(input: PatchInput, dep: PatchDeps = defa
   const dir = patchDir(input)
   const items: PatchItem[] = []
   for (const target of input.targets) {
-    const hit = await patchOne(dir, target, input.spec, Boolean(input.force), dep)
+    const hit = await patchOne(dir, target, input.spec, Boolean(input.force), input.api, dep)
     if (!hit.ok) {
       return {
         ...hit,
         dir,
+        items,
       }
     }
     items.push(hit.item)
@@ -436,4 +584,55 @@ export async function patchPluginConfig(input: PatchInput, dep: PatchDeps = defa
     dir,
     items,
   }
+}
+
+export async function removePluginConfig(
+  input: RemoveInput,
+  dep: Pick<PatchDeps, "readText" | "write" | "exists"> = defaultPatchDeps,
+): Promise<RemoveResult> {
+  const items: RemoveItem[] = []
+  for (const item of input.items) {
+    await using _ = await Flock.acquire(`plug-config:${Filesystem.resolve(item.file)}`)
+    if (!(await dep.exists(item.file))) {
+      items.push({ ...item, removed: false })
+      continue
+    }
+
+    const text = await dep.readText(item.file)
+    const errs: JsoncParseError[] = []
+    const data = parseJsonc(text, errs, { allowTrailingComma: true })
+    if (errs.length) {
+      const err = errs[0]
+      const lines = text.substring(0, err.offset).split("\n")
+      return {
+        ok: false,
+        code: "invalid_json",
+        kind: item.kind,
+        file: item.file,
+        line: lines.length,
+        col: lines[lines.length - 1].length + 1,
+        parse: printParseErrorCode(err.error),
+      }
+    }
+
+    const indexes = (pluginList(data, item.field) ?? [])
+      .map((entry, index) => ({ index, spec: pluginSpec(entry) }))
+      .filter((entry) => entry.spec === input.spec)
+      .map((entry) => entry.index)
+      .toSorted((a, b) => b - a)
+    const next = indexes.reduce((result, index) => patch(result, [item.field, index], undefined), text)
+    if (next !== text) {
+      const write = await dep.write(item.file, next).catch((error: unknown) => error)
+      if (write instanceof Error) {
+        return {
+          ok: false,
+          code: "patch_failed",
+          kind: item.kind,
+          error: write,
+        }
+      }
+    }
+    items.push({ ...item, removed: indexes.length > 0 })
+  }
+  return { ok: true, items }
 }

@@ -13,6 +13,7 @@ import { Effect, Layer } from "effect"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import { ClaudeMarketplaceManager, type ManagedMcpServer } from "./claude-marketplace"
+import { DirectExtensionManager } from "./direct-extension"
 import { runtimeSnapshot } from "./runtime-readiness"
 import { Plugin } from "."
 
@@ -23,7 +24,7 @@ function unavailable(action: string, error: unknown) {
   })
 }
 
-export const layerWith = (manager: ClaudeMarketplaceManager) =>
+export const layerWith = (manager: ClaudeMarketplaceManager, direct = new DirectExtensionManager()) =>
   Layer.effect(
     PluginCapability.Service,
     Effect.gen(function* () {
@@ -59,16 +60,25 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
         yield* config.updateGlobal({ ...current, mcp })
       })
 
-      const mutate = (action: string, task: () => Promise<Catalog>) =>
+      const list = Effect.fn("PluginManagement.list")(function* () {
+        const [marketplace, extensions] = yield* Effect.all([
+          run("Listing marketplace plugins", () => manager.list()),
+          run("Listing direct extensions", () => direct.list()),
+        ])
+        return { ...marketplace, ...extensions }
+      })
+
+      const mutate = (action: string, task: () => Promise<unknown>) =>
         Effect.gen(function* () {
           const previousKeys = yield* run(`${action} state lookup`, () => manager.managedMcpKeys())
-          const catalog = yield* run(action, task)
+          yield* run(action, task)
+          yield* config.invalidate()
           const nextServers = yield* run(`${action} MCP lookup`, () => manager.enabledMcpServers())
           yield* syncMcp(previousKeys, nextServers)
           yield* Effect.promise(() => InstanceState.invalidateGroup("plugins"))
           if (locations.invalidateAll) yield* locations.invalidateAll()
           yield* events.publish(Event.Updated, {})
-          return catalog
+          return yield* list()
         })
 
       return PluginCapability.Service.of({
@@ -89,7 +99,7 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
               toolSources: yield* tools.sources(),
             })
           }),
-        list: () => run("Listing plugins", () => manager.list()),
+        list,
         addMarketplace: (source) => mutate("Adding marketplace", () => manager.addMarketplace(source)),
         refreshMarketplace: (name) => mutate("Refreshing marketplace", () => manager.refreshMarketplace(name)),
         removeMarketplace: (name) => mutate("Removing marketplace", () => manager.removeMarketplace(name)),
@@ -97,6 +107,16 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
         uninstall: (id) => mutate("Uninstalling plugin", () => manager.uninstall(id)),
         enable: (id) => mutate("Enabling plugin", () => manager.enable(id)),
         disable: (id) => mutate("Disabling plugin", () => manager.disable(id)),
+        inspectDirect: (source) => run("Inspecting direct plugin", () => direct.inspectPlugin(source)),
+        installDirect: (source, trusted, approvedCapabilities) =>
+          mutate("Installing direct plugin", () => direct.installDirectPlugin(source, trusted, approvedCapabilities)),
+        uninstallDirect: (id) => mutate("Uninstalling direct plugin", () => direct.uninstallDirectPlugin(id)),
+        enableDirect: (id) => mutate("Enabling direct plugin", () => direct.enableDirectPlugin(id)),
+        disableDirect: (id) => mutate("Disabling direct plugin", () => direct.disableDirectPlugin(id)),
+        installMcp: (name, mcp) => mutate("Installing managed MCP server", () => direct.installMcp(name, mcp)),
+        removeMcp: (name) => mutate("Removing managed MCP server", () => direct.removeMcp(name)),
+        enableMcp: (name) => mutate("Enabling managed MCP server", () => direct.enableMcp(name)),
+        disableMcp: (name) => mutate("Disabling managed MCP server", () => direct.disableMcp(name)),
       })
     }),
   )

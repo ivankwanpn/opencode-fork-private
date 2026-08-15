@@ -11,9 +11,7 @@ class SessionLocationMiddleware extends HttpApiMiddleware.Service<SessionLocatio
   { error: [InvalidRequestError, SessionNotFoundError] },
 ) {}
 
-type ClientApi = ReturnType<
-  typeof makeDefaultApi<LocationMiddleware, never, SessionLocationMiddleware, never>
->
+type ClientApi = ReturnType<typeof makeDefaultApi<LocationMiddleware, never, SessionLocationMiddleware, never>>
 
 export const ClientApi: ClientApi = makeDefaultApi({
   locationMiddleware: LocationMiddleware,
@@ -76,6 +74,15 @@ export const endpointNames = {
   "console.org.switch": "switchOrg",
   "workspace.adapter.list": "listAdapters",
   "workspace.syncList": "syncList",
+  "plugins.direct.inspect": "inspectDirect",
+  "plugins.direct.install": "installDirect",
+  "plugins.direct.uninstall": "uninstallDirect",
+  "plugins.direct.enable": "enableDirect",
+  "plugins.direct.disable": "disableDirect",
+  "plugins.mcp.install": "installMcp",
+  "plugins.mcp.remove": "removeMcp",
+  "plugins.mcp.enable": "enableMcp",
+  "plugins.mcp.disable": "disableMcp",
 } as const
 
 export const omitEndpoints = new Set(["pty.connect", "pty.connectToken"])

@@ -18,6 +18,7 @@ import { Effect, Layer, LayerMap } from "effect"
 import { Config } from "../config/config"
 import { ConfigCommand } from "../config/command"
 import { ClaudeMarketplaceManager, type MarketplacePaths } from "./claude-marketplace"
+import { DirectExtensionManager } from "./direct-extension"
 import { NativeClaudeMarketplace } from "./native-claude-marketplace"
 import { Process } from "../util/process"
 import { Service } from "."
@@ -40,6 +41,13 @@ function testPaths(): MarketplacePaths {
     generatedSkillDirectory: path.join(temporaryDirectory, "config", "skills", "claude"),
     generatedCommandDirectory: path.join(temporaryDirectory, "config", "commands", "claude"),
   }
+}
+
+function directManager() {
+  return new DirectExtensionManager({
+    stateFile: path.join(temporaryDirectory, "state", "direct-extensions.json"),
+    configDirectory: path.join(temporaryDirectory, "config"),
+  })
 }
 
 async function writeMarketplace(root: string, source: string | Record<string, string>) {
@@ -268,7 +276,7 @@ describe("NativeClaudeMarketplace", () => {
       ),
     )
     const events = Layer.mock(EventV2.Service, {})
-    const capability = NativeClaudeMarketplace.layerWith(manager).pipe(
+    const capability = NativeClaudeMarketplace.layerWith(manager, directManager()).pipe(
       Layer.provide(
         Layer.mergeAll(
           config,
@@ -338,6 +346,7 @@ describe("NativeClaudeMarketplace", () => {
 
     const config = Layer.mock(Config.Service)({
       getGlobal: () => Effect.succeed(current),
+      invalidate: () => Effect.void,
       updateGlobal: (next) =>
         Effect.sync(() => {
           const changed = JSON.stringify(current) !== JSON.stringify(next)
@@ -368,7 +377,7 @@ describe("NativeClaudeMarketplace", () => {
           return undefined as never
         }),
     })
-    const runtime = NativeClaudeMarketplace.layerWith(manager).pipe(
+    const runtime = NativeClaudeMarketplace.layerWith(manager, directManager()).pipe(
       Layer.provide(
         Layer.mergeAll(
           config,

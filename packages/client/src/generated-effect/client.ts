@@ -1178,6 +1178,66 @@ type Endpoint25_8Input = { readonly id: Endpoint25_8Request["payload"]["id"] }
 const Endpoint25_8 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_8Input) =>
   raw["plugins.disable"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
 
+type Endpoint25_9Request = Parameters<RawClient["server.plugins"]["plugins.direct.inspect"]>[0]
+type Endpoint25_9Input = { readonly source: Endpoint25_9Request["payload"]["source"] }
+const Endpoint25_9 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_9Input) =>
+  raw["plugins.direct.inspect"]({ payload: { source: input["source"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_10Request = Parameters<RawClient["server.plugins"]["plugins.direct.install"]>[0]
+type Endpoint25_10Input = {
+  readonly source: Endpoint25_10Request["payload"]["source"]
+  readonly trusted: Endpoint25_10Request["payload"]["trusted"]
+  readonly approvedCapabilities: Endpoint25_10Request["payload"]["approvedCapabilities"]
+}
+const Endpoint25_10 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_10Input) =>
+  raw["plugins.direct.install"]({
+    payload: {
+      source: input["source"],
+      trusted: input["trusted"],
+      approvedCapabilities: input["approvedCapabilities"],
+    },
+  }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_11Request = Parameters<RawClient["server.plugins"]["plugins.direct.uninstall"]>[0]
+type Endpoint25_11Input = { readonly id: Endpoint25_11Request["payload"]["id"] }
+const Endpoint25_11 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_11Input) =>
+  raw["plugins.direct.uninstall"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_12Request = Parameters<RawClient["server.plugins"]["plugins.direct.enable"]>[0]
+type Endpoint25_12Input = { readonly id: Endpoint25_12Request["payload"]["id"] }
+const Endpoint25_12 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_12Input) =>
+  raw["plugins.direct.enable"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_13Request = Parameters<RawClient["server.plugins"]["plugins.direct.disable"]>[0]
+type Endpoint25_13Input = { readonly id: Endpoint25_13Request["payload"]["id"] }
+const Endpoint25_13 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_13Input) =>
+  raw["plugins.direct.disable"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_14Request = Parameters<RawClient["server.plugins"]["plugins.mcp.install"]>[0]
+type Endpoint25_14Input = {
+  readonly name: Endpoint25_14Request["payload"]["name"]
+  readonly config: Endpoint25_14Request["payload"]["config"]
+}
+const Endpoint25_14 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_14Input) =>
+  raw["plugins.mcp.install"]({ payload: { name: input["name"], config: input["config"] } }).pipe(
+    Effect.mapError(mapClientError),
+  )
+
+type Endpoint25_15Request = Parameters<RawClient["server.plugins"]["plugins.mcp.remove"]>[0]
+type Endpoint25_15Input = { readonly name: Endpoint25_15Request["payload"]["name"] }
+const Endpoint25_15 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_15Input) =>
+  raw["plugins.mcp.remove"]({ payload: { name: input["name"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_16Request = Parameters<RawClient["server.plugins"]["plugins.mcp.enable"]>[0]
+type Endpoint25_16Input = { readonly name: Endpoint25_16Request["payload"]["name"] }
+const Endpoint25_16 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_16Input) =>
+  raw["plugins.mcp.enable"]({ payload: { name: input["name"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_17Request = Parameters<RawClient["server.plugins"]["plugins.mcp.disable"]>[0]
+type Endpoint25_17Input = { readonly name: Endpoint25_17Request["payload"]["name"] }
+const Endpoint25_17 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_17Input) =>
+  raw["plugins.mcp.disable"]({ payload: { name: input["name"] } }).pipe(Effect.mapError(mapClientError))
+
 const adaptGroup25 = (raw: RawClient["server.plugins"]) => ({
   runtime: Endpoint25_0(raw),
   list: Endpoint25_1(raw),
@@ -1188,6 +1248,15 @@ const adaptGroup25 = (raw: RawClient["server.plugins"]) => ({
   uninstall: Endpoint25_6(raw),
   enable: Endpoint25_7(raw),
   disable: Endpoint25_8(raw),
+  inspectDirect: Endpoint25_9(raw),
+  installDirect: Endpoint25_10(raw),
+  uninstallDirect: Endpoint25_11(raw),
+  enableDirect: Endpoint25_12(raw),
+  disableDirect: Endpoint25_13(raw),
+  installMcp: Endpoint25_14(raw),
+  removeMcp: Endpoint25_15(raw),
+  enableMcp: Endpoint25_16(raw),
+  disableMcp: Endpoint25_17(raw),
 })
 
 const Endpoint26_0 = (raw: RawClient["server.event"]) => () =>

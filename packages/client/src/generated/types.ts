@@ -7398,6 +7398,27 @@ export type ServerPluginsListOutput = {
     readonly installed: boolean
     readonly enabled: boolean
   }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
 }
 
 export type ServerPluginsAddInput = { readonly source: { readonly source: string }["source"] }
@@ -7421,6 +7442,27 @@ export type ServerPluginsAddOutput = {
     readonly capabilities: ReadonlyArray<string>
     readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
     readonly enabled: boolean
   }>
 }
@@ -7448,6 +7490,27 @@ export type ServerPluginsRefreshOutput = {
     readonly installed: boolean
     readonly enabled: boolean
   }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
 }
 
 export type ServerPluginsRemoveInput = { readonly name: { readonly name: string }["name"] }
@@ -7471,6 +7534,27 @@ export type ServerPluginsRemoveOutput = {
     readonly capabilities: ReadonlyArray<string>
     readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
     readonly enabled: boolean
   }>
 }
@@ -7498,6 +7582,27 @@ export type ServerPluginsInstallOutput = {
     readonly installed: boolean
     readonly enabled: boolean
   }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
 }
 
 export type ServerPluginsUninstallInput = { readonly id: { readonly id: string }["id"] }
@@ -7521,6 +7626,27 @@ export type ServerPluginsUninstallOutput = {
     readonly capabilities: ReadonlyArray<string>
     readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
     readonly enabled: boolean
   }>
 }
@@ -7548,6 +7674,27 @@ export type ServerPluginsEnableOutput = {
     readonly installed: boolean
     readonly enabled: boolean
   }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
 }
 
 export type ServerPluginsDisableInput = { readonly id: { readonly id: string }["id"] }
@@ -7571,6 +7718,471 @@ export type ServerPluginsDisableOutput = {
     readonly capabilities: ReadonlyArray<string>
     readonly mcpServers: ReadonlyArray<string>
     readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsInspectDirectInput = { readonly source: { readonly source: string }["source"] }
+
+export type ServerPluginsInspectDirectOutput = {
+  readonly source: string
+  readonly name: string
+  readonly description?: string | undefined
+  readonly version?: string | undefined
+  readonly api?: string | undefined
+  readonly targets: ReadonlyArray<"server" | "tui">
+  readonly requestedCapabilities: ReadonlyArray<{
+    readonly name: string
+    readonly tier: "declarative" | "runtime" | "trusted-runtime"
+  }>
+}
+
+export type ServerPluginsInstallDirectInput = {
+  readonly source: {
+    readonly source: string
+    readonly trusted: boolean
+    readonly approvedCapabilities: ReadonlyArray<string>
+  }["source"]
+  readonly trusted: {
+    readonly source: string
+    readonly trusted: boolean
+    readonly approvedCapabilities: ReadonlyArray<string>
+  }["trusted"]
+  readonly approvedCapabilities: {
+    readonly source: string
+    readonly trusted: boolean
+    readonly approvedCapabilities: ReadonlyArray<string>
+  }["approvedCapabilities"]
+}
+
+export type ServerPluginsInstallDirectOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsUninstallDirectInput = { readonly id: { readonly id: string }["id"] }
+
+export type ServerPluginsUninstallDirectOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsEnableDirectInput = { readonly id: { readonly id: string }["id"] }
+
+export type ServerPluginsEnableDirectOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsDisableDirectInput = { readonly id: { readonly id: string }["id"] }
+
+export type ServerPluginsDisableDirectOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsInstallMcpInput = {
+  readonly name: {
+    readonly name: string
+    readonly config:
+      | {
+          readonly type: "local"
+          readonly command: ReadonlyArray<string>
+          readonly cwd?: string | undefined
+          readonly environment?: { readonly [x: string]: string } | undefined
+          readonly timeout?:
+            | { readonly startup?: number | undefined; readonly request?: number | undefined }
+            | undefined
+        }
+      | {
+          readonly type: "remote"
+          readonly url: string
+          readonly headers?: { readonly [x: string]: string } | undefined
+          readonly oauth?: false | undefined
+          readonly timeout?:
+            | { readonly startup?: number | undefined; readonly request?: number | undefined }
+            | undefined
+        }
+  }["name"]
+  readonly config: {
+    readonly name: string
+    readonly config:
+      | {
+          readonly type: "local"
+          readonly command: ReadonlyArray<string>
+          readonly cwd?: string | undefined
+          readonly environment?: { readonly [x: string]: string } | undefined
+          readonly timeout?:
+            | { readonly startup?: number | undefined; readonly request?: number | undefined }
+            | undefined
+        }
+      | {
+          readonly type: "remote"
+          readonly url: string
+          readonly headers?: { readonly [x: string]: string } | undefined
+          readonly oauth?: false | undefined
+          readonly timeout?:
+            | { readonly startup?: number | undefined; readonly request?: number | undefined }
+            | undefined
+        }
+  }["config"]
+}
+
+export type ServerPluginsInstallMcpOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsRemoveMcpInput = { readonly name: { readonly name: string }["name"] }
+
+export type ServerPluginsRemoveMcpOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsEnableMcpInput = { readonly name: { readonly name: string }["name"] }
+
+export type ServerPluginsEnableMcpOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
+    readonly enabled: boolean
+  }>
+}
+
+export type ServerPluginsDisableMcpInput = { readonly name: { readonly name: string }["name"] }
+
+export type ServerPluginsDisableMcpOutput = {
+  readonly marketplaces: ReadonlyArray<{
+    readonly name: string
+    readonly source: string
+    readonly lastUpdated: string
+    readonly pluginCount: number
+    readonly error?: string | undefined
+  }>
+  readonly plugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly marketplace: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly category?: string | undefined
+    readonly tags: ReadonlyArray<string>
+    readonly capabilities: ReadonlyArray<string>
+    readonly mcpServers: ReadonlyArray<string>
+    readonly installed: boolean
+    readonly enabled: boolean
+  }>
+  readonly directPlugins: ReadonlyArray<{
+    readonly id: string
+    readonly name: string
+    readonly source: string
+    readonly description?: string | undefined
+    readonly version?: string | undefined
+    readonly api?: string | undefined
+    readonly targets: ReadonlyArray<"server" | "tui">
+    readonly requestedCapabilities: ReadonlyArray<{
+      readonly name: string
+      readonly tier: "declarative" | "runtime" | "trusted-runtime"
+    }>
+    readonly approvedCapabilities: ReadonlyArray<string>
+    readonly enabled: boolean
+    readonly installedAt: string
+  }>
+  readonly mcpServers: ReadonlyArray<{
+    readonly name: string
+    readonly type: "local" | "remote"
     readonly enabled: boolean
   }>
 }

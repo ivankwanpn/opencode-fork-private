@@ -4,6 +4,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { GlobalBus } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { Location } from "@opencode-ai/core/location"
 import { Project } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -579,6 +580,7 @@ export function legacyEventPayloads(
   projectLegacy: ReturnType<typeof legacyEventProjection>,
   source: EventV2.Payload,
 ): ReadonlyArray<LegacyEvent> {
+  if (source.type === SessionEvent.ToolDiscovery.Completed.type) return []
   const projected = projectLegacy(source)
   return projected.length === 0
     ? [

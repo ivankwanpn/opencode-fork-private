@@ -3446,6 +3446,37 @@ export type SessionsHistoryOutput = {
     | {
         readonly id: string
         readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.tool-discovery.completed"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly assistantMessageID: string
+          readonly callID: string
+          readonly query: string
+          readonly limit: number
+          readonly catalogRevision: string
+          readonly matches: ReadonlyArray<{
+            readonly key: string
+            readonly callableName: string
+            readonly definitionHash: string
+            readonly source: {
+              readonly type: "builtin" | "plugin" | "mcp" | "app"
+              readonly id: string
+              readonly displayName?: string
+            }
+          }>
+          readonly pendingSources: ReadonlyArray<{
+            readonly type: "builtin" | "plugin" | "mcp" | "app"
+            readonly id: string
+            readonly displayName?: string
+          }>
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
         readonly type: "session.next.reasoning.started"
         readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
         readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -4903,6 +4934,37 @@ export type SessionsEventsOutput =
           readonly executed: boolean
           readonly metadata?: { readonly [x: string]: { readonly [x: string]: unknown } }
         }
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.tool-discovery.completed"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly assistantMessageID: string
+        readonly callID: string
+        readonly query: string
+        readonly limit: number
+        readonly catalogRevision: string
+        readonly matches: ReadonlyArray<{
+          readonly key: string
+          readonly callableName: string
+          readonly definitionHash: string
+          readonly source: {
+            readonly type: "builtin" | "plugin" | "mcp" | "app"
+            readonly id: string
+            readonly displayName?: string
+          }
+        }>
+        readonly pendingSources: ReadonlyArray<{
+          readonly type: "builtin" | "plugin" | "mcp" | "app"
+          readonly id: string
+          readonly displayName?: string
+        }>
       }
     }
   | {

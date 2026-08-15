@@ -423,6 +423,23 @@ describe("legacy event projection", () => {
     })
   })
 
+  test("keeps durable tool discovery out of the legacy event stream", () => {
+    const project = legacyEventProjection()
+    const source = canonicalEvent("session.next.tool-discovery.completed", {
+      sessionID: "ses_test",
+      assistantMessageID: "msg_assistant",
+      callID: "call_search",
+      query: "calendar",
+      limit: 8,
+      catalogRevision: "revision",
+      matches: [],
+      pendingSources: [],
+      timestamp: 1,
+    })
+
+    expect(legacyEventPayloads(project, source)).toEqual([])
+  })
+
   test("projects transcript mutation compatibility events", () => {
     const project = legacyEventProjection()
     expect(
@@ -650,7 +667,7 @@ describe("event HttpApi", () => {
 
         const created = yield* requestInDirectory("/session", directory, { method: "POST" })
         expect(created.status).toBe(200)
-        expect(yield* readEvent(reader)).toMatchObject({ type: "session.created" })
+        expect(yield* readEvent(reader)).toMatchObject({ type: "session.next.created" })
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

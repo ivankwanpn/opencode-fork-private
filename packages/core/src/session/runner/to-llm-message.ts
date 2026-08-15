@@ -150,7 +150,8 @@ const assistant = (message: SessionMessage.Assistant, model: Model) => {
       toolResult(item, reuseProviderMetadata ? (item.provider?.resultMetadata ?? item.provider?.metadata) : undefined),
     )
     .filter((message) => message !== undefined)
-  const resultMessage = results.length === 0 ? [] : [Message.make({ role: "tool", content: results })]
+  const resultMessage =
+    results.length === 0 ? [] : [Message.make({ id: message.id, role: "tool", content: results })]
   if (meaningful.length === 0) return resultMessage
   return [
     Message.make({ id: message.id, role: "assistant", content: meaningful, metadata: message.metadata }),

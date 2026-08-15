@@ -1,6 +1,6 @@
 # OpenAI Responses Native Tool Search Implementation Plan
 
-> **完成狀態（2026-08-15）：** Task 1–5 已實作並通過 package-local 測試與型別檢查。OpenAI Responses native 路徑只由明確 model compatibility 啟用；Anthropic native、自動 capability downgrade 持久化與 child-OS-process E2E 維持非目標／後續工作。
+> **完成狀態（2026-08-15）：** Task 1–5 與 post-implementation review hardening 已實作並通過 package-local 測試與型別檢查。OpenAI Responses native 路徑只由明確 model compatibility 啟用；Anthropic native、自動 capability downgrade 持久化與 child-OS-process E2E 維持非目標／後續工作。
 
 > **For Codex:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
 
@@ -260,3 +260,25 @@ git commit -m "test(core): cover native tool search loop"
 ```
 
 Do not push the new implementation commits until the user asks for another push.
+
+---
+
+## Post-implementation review hardening
+
+不可只以 provider-local `callID` 關聯 durable search。Core 的 invocation identity 是
+`(assistantMessageID, callID)`，因此 provider-neutral `ToolDiscovery` 也保存
+`assistantMessageID`，而 Core 產生的 assistant/tool replay messages 共用該來源 ID。OpenAI
+Responses lowering 以完整 invocation identity 配對 call/output；重複 search ID，以及普通工具在
+後續 assistant message 重用同一 ID，都有獨立回歸。
+
+另外完成以下 recovery 與 protocol 邊界：
+
+- durable call 只剩一側時補成合法 native pair，output-only history 不會重複輸出；
+- native request token estimate 包含 durable discovery schemas，且不重複計算已隱藏的 deferred top-level definitions；
+- stream 只把 `execution: "client"` 且有 `call_id` 的 Tool Search 交給 Core，server/null-ID items 安全忽略；
+- native 匿名 Tool Search 不接受以 semantic function 名稱強制 `tool_choice`；
+- canonical `ToolDefinition.kind` 改為必填 discriminator，ergonomic input 仍由 `ToolDefinition.make` 預設為 `function`。
+
+新鮮驗證結果：LLM `334 pass / 30 skip / 0 fail`、Core
+`1605 pass / 7 skip / 0 fail`；LLM、Core、Schema、Protocol、Client、Server、OpenCode、App、TUI
+package typecheck 全部通過。

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { LLM, LLMEvent, Model, type LLMRequest } from "@opencode-ai/llm"
 import * as OpenAIChat from "@opencode-ai/llm/protocols/openai-chat"
+import * as OpenAIResponses from "@opencode-ai/llm/protocols/openai-responses"
+import { Config } from "@opencode-ai/core/config"
+import { ConfigCompaction } from "@opencode-ai/core/config/compaction"
 import { DateTime, Effect, Layer, Stream } from "effect"
 import { EventV2 } from "@opencode-ai/core/event"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
@@ -41,6 +44,12 @@ const model = Model.make({
   id: "compact-test",
   provider: "test",
   route: OpenAIChat.route.with({ limits: { context: 20_000, output: 1_000 } }),
+})
+const nativeModel = Model.make({
+  id: "native-compact-test",
+  provider: "openai",
+  route: OpenAIResponses.route.with({ limits: { context: 600, output: 100 } }),
+  compatibility: { toolSearch: "openai-responses" },
 })
 const user = SessionMessage.User.make({
   id: SessionMessage.ID.create(),
@@ -173,6 +182,78 @@ describe("SessionCompaction manual lifecycle", () => {
 })
 
 describe("SessionCompaction automatic lifecycle", () => {
+  it.effect("counts durable native discovery history before deciding whether to compact", () =>
+    Effect.gen(function* () {
+      const published: Array<{ type: string; data: Record<string, unknown> }> = []
+      const requests: LLMRequest[] = []
+      const events = {
+        publish: (definition: { readonly type: string }, data: Record<string, unknown>) =>
+          Effect.sync(() => {
+            published.push({ type: definition.type, data })
+            return { id: EventV2.ID.create(), type: definition.type, data }
+          }),
+      } as unknown as EventV2.Interface
+      const compaction = SessionCompaction.make({
+        events,
+        config: [
+          new Config.Document({
+            type: "document",
+            info: new Config.Info({
+              compaction: new ConfigCompaction.Info({
+                buffer: 0,
+                keep: new ConfigCompaction.Keep({ tokens: 0 }),
+              }),
+            }),
+          }),
+        ],
+        plugins: PluginRuntime.make(),
+        llm: {
+          stream: (request) => {
+            requests.push(request)
+            return Stream.make(LLMEvent.textDelta({ id: "summary", text: "Native discovery summary" }))
+          },
+        },
+      })
+      const deferred = {
+        name: "deferred_calendar",
+        description: `Create calendar events ${"with detailed scheduling metadata ".repeat(12)}`,
+        inputSchema: { type: "object" },
+        deferLoading: true as const,
+      }
+      const request = LLM.request({
+        model: nativeModel,
+        tools: [
+          {
+            kind: "tool-search",
+            name: "discover_tools",
+            description: "Search tools",
+            inputSchema: { type: "object" },
+          },
+          deferred,
+        ],
+        toolDiscoveries: Array.from({ length: 20 }, (_, index) => ({
+          assistantMessageID: `assistant-${index}`,
+          callID: `search-${index}`,
+          query: `calendar-${index}`,
+          limit: 8,
+          catalogRevision: "catalog-1",
+          tools: [deferred],
+        })),
+      })
+
+      expect(
+        yield* compaction.compactIfNeeded({
+          sessionID,
+          entries: [{ seq: 1, message: user }],
+          model: nativeModel,
+          request,
+        }),
+      ).toBeTrue()
+      expect(requests).toHaveLength(1)
+      expect(published.at(-1)?.data).toMatchObject({ reason: "auto", text: "Native discovery summary" })
+    }),
+  )
+
   it.effect("leaves short history unchanged", () =>
     Effect.gen(function* () {
       const requests: LLMRequest[] = []

@@ -103,6 +103,16 @@ export type Result = {
 
 const estimate = (value: unknown) => Token.estimate(JSON.stringify(value))
 
+const estimateRequest = (request: LLMRequest) => {
+  const nativeToolSearch = request.model.compatibility?.toolSearch === "openai-responses"
+  return estimate({
+    system: request.system,
+    messages: request.messages,
+    tools: nativeToolSearch ? request.tools.filter((tool) => tool.deferLoading !== true) : request.tools,
+    ...(nativeToolSearch ? { toolDiscoveries: request.toolDiscoveries } : {}),
+  })
+}
+
 const truncate = (value: string) =>
   value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
 
@@ -357,10 +367,7 @@ export const make = (dependencies: Dependencies) => {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
-    if (
-      estimate({ system: input.request.system, messages: input.request.messages, tools: input.request.tools }) <=
-      context - Math.max(output, config.buffer)
-    )
+    if (estimateRequest(input.request) <= context - Math.max(output, config.buffer))
       return false
     return yield* compactAfterOverflow(input)
   })

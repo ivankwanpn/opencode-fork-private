@@ -361,6 +361,7 @@ const layer = Layer.effect(
       const structuredFormat = prompt?.format?.type === "json_schema" ? prompt.format : undefined
       const structuredOutputTool = structuredFormat
         ? new ToolDefinition({
+            kind: "function",
             name: STRUCTURED_OUTPUT_TOOL_NAME,
             description: STRUCTURED_OUTPUT_DESCRIPTION,
             inputSchema: Object.fromEntries(

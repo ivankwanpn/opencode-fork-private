@@ -52,7 +52,7 @@
 
 2026-08-15 durable tranche 的新鮮回歸證據為 Schema `29 pass / 0 fail`、Core `1600 pass / 7 skip / 0 fail`、Client `21 pass / 0 fail`、App reducer `11 pass / 0 fail`、TUI data `8 pass / 0 fail`、OpenCode event/bridge `11 pass / 0 fail`；Schema、Core、Client、Protocol、Server、App、TUI、OpenCode 的 `bun typecheck` 與 Client `check:generated` 全部通過。
 
-2026-08-15 OpenAI Responses native tranche 新增 explicit provider-neutral discovery semantics、durable native history rebuild、fail-closed model capability、native request lowering/parser，以及真實 adapter 的三輪 V2 Session regression。新鮮證據為 LLM `326 pass / 30 skip / 0 fail`、Core `1604 pass / 7 skip / 0 fail`（其中關鍵整合子集 `152 pass / 0 fail`）、Plugin loading/runtime UI `14 pass / 0 fail`；LLM、Core、App package typecheck 通過，推送鉤子的全倉 typecheck 為 `30 successful / 30 total`。
+2026-08-15 OpenAI Responses native tranche 新增 explicit provider-neutral discovery semantics、durable native history rebuild、fail-closed model capability、native request lowering/parser，以及真實 adapter 的三輪 V2 Session regression。Post-implementation review 進一步把 durable carrier 與 native history correlation 收斂為完整 `(assistantMessageID, callID)` invocation identity，修復 partial pair reconstruction、native discovery token estimate、client-only stream dispatch、anonymous search tool choice 與 canonical `ToolDefinition.kind`。新鮮證據為 LLM `334 pass / 30 skip / 0 fail`、Core `1605 pass / 7 skip / 0 fail`、Plugin loading/runtime UI `14 pass / 0 fail`；LLM、Core、Schema、Protocol、Client、Server、OpenCode、App、TUI package typecheck 全部通過。
 
 仍未完成且不得提前宣稱完成：
 

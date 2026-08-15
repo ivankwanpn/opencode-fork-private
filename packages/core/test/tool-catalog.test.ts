@@ -9,6 +9,7 @@ const mcp = { type: "mcp" as const, id: "calendar", displayName: "Calendar MCP" 
 
 const definition = (description: string, inputSchema: Record<string, unknown> = {}) =>
   new ToolDefinition({
+    kind: "function",
     name: "calendar_create",
     description,
     inputSchema,
@@ -92,11 +93,16 @@ describe("ToolCatalog", () => {
 
   test("snapshot revision is deterministic and changes with definitions or source state", () => {
     const create = searchable(plugin, "create_event")
-    const remove = searchable(plugin, "remove_event", new ToolDefinition({
-      name: "calendar_remove",
-      description: "Remove a calendar event",
-      inputSchema: { type: "object", properties: { eventID: { type: "string" } } },
-    }))
+    const remove = searchable(
+      plugin,
+      "remove_event",
+      new ToolDefinition({
+        kind: "function",
+        name: "calendar_remove",
+        description: "Remove a calendar event",
+        inputSchema: { type: "object", properties: { eventID: { type: "string" } } },
+      }),
+    )
     const ready = { source: plugin, state: "ready" as const }
     const first = ToolCatalog.snapshot({ tools: [create, remove], sources: [ready] })
     const reordered = ToolCatalog.snapshot({ tools: [remove, create], sources: [ready] })

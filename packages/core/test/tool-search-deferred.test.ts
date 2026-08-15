@@ -27,6 +27,7 @@ const catalogTool = (input: {
   readonly exposure?: ToolCatalog.Exposure
 }): ToolCatalog.SearchableTool => {
   const definition = new ToolDefinition({
+    kind: "function",
     name: input.name,
     description: input.description,
     inputSchema: input.inputSchema ?? { type: "object", properties: {} },

@@ -120,6 +120,7 @@ export const records = Effect.fn("SessionToolDiscovery.records")(function* (
   const current = new Map(snapshot.tools.map((tool) => [tool.key, tool]))
   return rows.map((row) =>
     ToolDiscovery.make({
+      assistantMessageID: row.assistant_message_id,
       callID: row.tool_call_id,
       query: row.query,
       limit: row.limit,

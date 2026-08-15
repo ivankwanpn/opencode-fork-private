@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { ConfigProvider, Effect, Layer, Stream } from "effect"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
-import { LLM, LLMError, Message, Model, ToolCallPart, Usage } from "../../src"
+import { LLM, LLMError, Message, Model, ToolCallPart, ToolResultPart, Usage } from "../../src"
 import { Auth, LLMClient, RequestExecutor, WebSocketExecutor } from "../../src/route"
 import * as Azure from "../../src/providers/azure"
 import * as OpenAI from "../../src/providers/openai"
@@ -218,6 +218,7 @@ describe("OpenAI Responses route", () => {
           tools: [discoveryTool, deferredCalendarTool],
           toolDiscoveries: [
             {
+              assistantMessageID: "assistant-search-1",
               callID: "search-1",
               query: "calendar",
               limit: 8,
@@ -292,6 +293,165 @@ describe("OpenAI Responses route", () => {
     }),
   )
 
+  it.effect("keeps repeated provider-local search call ids scoped to their assistant messages", () =>
+    Effect.gen(function* () {
+      const deferredChatTool = {
+        name: "chat_search",
+        description: "Search chat history",
+        inputSchema: { type: "object" },
+        deferLoading: true as const,
+        namespace: "chat",
+      }
+      const prepared = yield* LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(
+        LLM.request({
+          model: nativeToolSearchModel,
+          messages: [
+            Message.make({
+              id: "assistant-calendar",
+              role: "assistant",
+              content: ToolCallPart.make({ id: "duplicate", name: "discover_tools", input: { query: "calendar" } }),
+            }),
+            Message.make({
+              id: "assistant-calendar",
+              role: "tool",
+              content: ToolResultPart.make({
+                id: "duplicate",
+                name: "discover_tools",
+                result: { matches: ["calendar_create"] },
+              }),
+            }),
+            Message.make({
+              id: "assistant-chat",
+              role: "assistant",
+              content: ToolCallPart.make({ id: "duplicate", name: "discover_tools", input: { query: "chat" } }),
+            }),
+            Message.make({
+              id: "assistant-chat",
+              role: "tool",
+              content: ToolResultPart.make({
+                id: "duplicate",
+                name: "discover_tools",
+                result: { matches: ["chat_search"] },
+              }),
+            }),
+          ],
+          tools: [discoveryTool, deferredCalendarTool, deferredChatTool],
+          toolDiscoveries: [
+            {
+              assistantMessageID: "assistant-calendar",
+              callID: "duplicate",
+              query: "calendar",
+              limit: 8,
+              catalogRevision: "catalog-1",
+              tools: [deferredCalendarTool],
+            },
+            {
+              assistantMessageID: "assistant-chat",
+              callID: "duplicate",
+              query: "chat",
+              limit: 8,
+              catalogRevision: "catalog-2",
+              tools: [deferredChatTool],
+            },
+          ],
+        }),
+      )
+
+      const outputs = prepared.body.input?.filter(
+        (item): item is Extract<(typeof prepared.body.input)[number], { type: "tool_search_output" }> =>
+          "type" in item && item.type === "tool_search_output",
+      )
+      expect(outputs).toHaveLength(2)
+      expect(outputs?.[0]?.tools).toEqual([
+        expect.objectContaining({
+          type: "namespace",
+          name: "calendar",
+          tools: [expect.objectContaining({ name: "calendar_create" })],
+        }),
+      ])
+      expect(outputs?.[1]?.tools).toEqual([
+        expect.objectContaining({
+          type: "namespace",
+          name: "chat",
+          tools: [expect.objectContaining({ name: "chat_search" })],
+        }),
+      ])
+    }),
+  )
+
+  it.effect("does not classify an ordinary tool result by a search call id from another message", () =>
+    Effect.gen(function* () {
+      const prepared = yield* LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(
+        LLM.request({
+          model: nativeToolSearchModel,
+          messages: [
+            Message.make({
+              id: "assistant-search",
+              role: "assistant",
+              content: ToolCallPart.make({ id: "duplicate", name: "discover_tools", input: { query: "calendar" } }),
+            }),
+            Message.make({
+              id: "assistant-search",
+              role: "tool",
+              content: ToolResultPart.make({ id: "duplicate", name: "discover_tools", result: { matches: [] } }),
+            }),
+            Message.make({
+              id: "assistant-function",
+              role: "assistant",
+              content: ToolCallPart.make({ id: "duplicate", name: "direct_lookup", input: { query: "today" } }),
+            }),
+            Message.make({
+              id: "assistant-function",
+              role: "tool",
+              content: ToolResultPart.make({ id: "duplicate", name: "direct_lookup", result: { value: "done" } }),
+            }),
+          ],
+          tools: [
+            discoveryTool,
+            {
+              name: "direct_lookup",
+              description: "Look up direct data",
+              inputSchema: { type: "object" },
+            },
+          ],
+          toolDiscoveries: [
+            {
+              assistantMessageID: "assistant-search",
+              callID: "duplicate",
+              query: "calendar",
+              limit: 8,
+              catalogRevision: "catalog-1",
+              tools: [],
+            },
+          ],
+        }),
+      )
+
+      expect(prepared.body.input).toContainEqual({
+        type: "function_call_output",
+        call_id: "duplicate",
+        output: '{"value":"done"}',
+      })
+    }),
+  )
+
+  it.effect("rejects selecting the anonymous native search tool by its semantic name", () =>
+    Effect.gen(function* () {
+      const error = yield* LLMClient.prepare(
+        LLM.request({
+          model: nativeToolSearchModel,
+          tools: [discoveryTool],
+          toolChoice: "discover_tools",
+        }),
+      ).pipe(Effect.flip)
+
+      expect(error).toBeInstanceOf(LLMError)
+      expect(error.reason).toMatchObject({ _tag: "InvalidRequest" })
+      expect(error.message).toContain("native tool search")
+      expect(error.message).toContain("discover_tools")
+    }),
+  )
+
   it.effect("synthesizes compacted native search history before chronological messages", () =>
     Effect.gen(function* () {
       const prepared = yield* LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(
@@ -302,6 +462,7 @@ describe("OpenAI Responses route", () => {
           tools: [discoveryTool],
           toolDiscoveries: [
             {
+              assistantMessageID: "assistant-compacted",
               callID: "search-compacted",
               query: "missing",
               limit: 8,
@@ -328,6 +489,50 @@ describe("OpenAI Responses route", () => {
           tools: [],
         },
         { role: "user", content: [{ type: "input_text", text: "Continue after compaction." }] },
+      ])
+    }),
+  )
+
+  it.effect("repairs a durable native search whose chronological output is missing", () =>
+    Effect.gen(function* () {
+      const prepared = yield* LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(
+        LLM.request({
+          model: nativeToolSearchModel,
+          messages: [
+            Message.user("Find calendar tools."),
+            Message.assistant([
+              ToolCallPart.make({ id: "search-call-only", name: "discover_tools", input: { query: "calendar" } }),
+            ]),
+          ],
+          tools: [discoveryTool, deferredCalendarTool],
+          toolDiscoveries: [
+            {
+              assistantMessageID: "assistant-call-only",
+              callID: "search-call-only",
+              query: "calendar",
+              limit: 8,
+              catalogRevision: "catalog-1",
+              tools: [deferredCalendarTool],
+            },
+          ],
+        }),
+      )
+
+      expect(prepared.body.input).toEqual([
+        { role: "user", content: [{ type: "input_text", text: "Find calendar tools." }] },
+        {
+          type: "tool_search_call",
+          call_id: "search-call-only",
+          execution: "client",
+          arguments: { query: "calendar" },
+        },
+        expect.objectContaining({
+          type: "tool_search_output",
+          call_id: "search-call-only",
+          status: "completed",
+          execution: "client",
+          tools: [expect.objectContaining({ type: "namespace", name: "calendar" })],
+        }),
       ])
     }),
   )
@@ -384,6 +589,7 @@ describe("OpenAI Responses route", () => {
           tools: [discoveryTool, deferredCalendarTool],
           toolDiscoveries: [
             {
+              assistantMessageID: "assistant-generic",
               callID: "search-generic",
               query: "calendar",
               limit: 8,
@@ -1638,6 +1844,127 @@ describe("OpenAI Responses route", () => {
         },
       ])
       expect(response.finishReason).toBe("tool-calls")
+    }),
+  )
+
+  it.effect("keys native tool-search streams by call_id when the item id arrives late", () =>
+    Effect.gen(function* () {
+      const added = {
+        type: "tool_search_call",
+        call_id: "search-stable",
+        execution: "client",
+        arguments: { query: "calendar" },
+      }
+      const response = yield* LLMClient.generate(
+        LLM.request({ model: nativeToolSearchModel, tools: [discoveryTool] }),
+      ).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              { type: "response.output_item.added", item: added },
+              { type: "response.output_item.done", item: { ...added, id: "tsc-late", status: "completed" } },
+              { type: "response.completed", response: {} },
+            ),
+          ),
+        ),
+      )
+
+      expect(response.events.filter((event) => event.type.startsWith("tool-"))).toEqual([
+        {
+          type: "tool-input-start",
+          id: "search-stable",
+          name: "discover_tools",
+          providerMetadata: { openai: { execution: "client", toolSearch: true } },
+        },
+        {
+          type: "tool-input-end",
+          id: "search-stable",
+          name: "discover_tools",
+          providerMetadata: { openai: { execution: "client", toolSearch: true } },
+        },
+        {
+          type: "tool-call",
+          id: "search-stable",
+          name: "discover_tools",
+          input: { query: "calendar" },
+          providerExecuted: undefined,
+          providerMetadata: { openai: { execution: "client", toolSearch: true } },
+        },
+      ])
+    }),
+  )
+
+  it.effect("ignores native tool-search items without a provider call_id", () =>
+    Effect.gen(function* () {
+      const response = yield* LLMClient.generate(
+        LLM.request({ model: nativeToolSearchModel, tools: [discoveryTool] }),
+      ).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              {
+                type: "response.output_item.done",
+                item: {
+                  type: "tool_search_call",
+                  id: "tsc-without-call",
+                  execution: "client",
+                  arguments: { query: "calendar" },
+                },
+              },
+              { type: "response.completed", response: {} },
+            ),
+          ),
+        ),
+      )
+
+      expect(response.events.filter((event) => event.type.startsWith("tool-"))).toEqual([])
+      expect(response.finishReason).toBe("stop")
+    }),
+  )
+
+  it.effect("ignores provider-executed and null-id native search items", () =>
+    Effect.gen(function* () {
+      const response = yield* LLMClient.generate(
+        LLM.request({ model: nativeToolSearchModel, tools: [discoveryTool] }),
+      ).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              {
+                type: "response.output_item.added",
+                item: {
+                  type: "tool_search_call",
+                  call_id: "server-search",
+                  execution: "server",
+                  arguments: { query: "calendar" },
+                },
+              },
+              {
+                type: "response.output_item.done",
+                item: {
+                  type: "tool_search_call",
+                  call_id: "server-search",
+                  execution: "server",
+                  arguments: { query: "calendar" },
+                },
+              },
+              {
+                type: "response.output_item.done",
+                item: {
+                  type: "tool_search_call",
+                  call_id: null,
+                  execution: "server",
+                  arguments: { query: "chat" },
+                },
+              },
+              { type: "response.completed", response: {} },
+            ),
+          ),
+        ),
+      )
+
+      expect(response.events.filter((event) => event.type.startsWith("tool-"))).toEqual([])
+      expect(response.finishReason).toBe("stop")
     }),
   )
 

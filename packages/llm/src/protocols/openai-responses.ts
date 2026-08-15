@@ -222,7 +222,7 @@ type OpenAIResponsesUsage = Schema.Schema.Type<typeof OpenAIResponsesUsage>
 const OpenAIResponsesStreamItem = Schema.Struct({
   type: Schema.String,
   id: Schema.optional(Schema.String),
-  call_id: Schema.optional(Schema.String),
+  call_id: optionalNull(Schema.String),
   name: Schema.optional(Schema.String),
   namespace: Schema.optional(Schema.String),
   execution: Schema.optional(Schema.String),
@@ -475,31 +475,71 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (
     request.system.length === 0 ? [] : [{ role: "system", content: ProviderShared.joinText(request.system) }]
   const input: OpenAIResponsesInputItem[] = [...system]
   const discoveries = nativeToolSearch ? (request.toolDiscoveries ?? []) : []
-  const discoveryByCallID = new Map(discoveries.map((discovery) => [discovery.callID, discovery]))
+  const invocationKey = (assistantMessageID: string, callID: string) =>
+    JSON.stringify([assistantMessageID, callID])
+  const discoveryKey = (discovery: (typeof discoveries)[number]) =>
+    invocationKey(discovery.assistantMessageID, discovery.callID)
+  const discoveryByInvocation = new Map(discoveries.map((discovery) => [discoveryKey(discovery), discovery]))
+  const discoveriesByCallID = Map.groupBy(discoveries, (discovery) => discovery.callID)
+  const discoveryFor = (message: LLMRequest["messages"][number], callID: string) => {
+    if (message.id !== undefined) return discoveryByInvocation.get(invocationKey(message.id, callID))
+    const matches = discoveriesByCallID.get(callID)
+    return matches?.length === 1 ? matches[0] : undefined
+  }
+  const searchKey = (message: LLMRequest["messages"][number], callID: string) => {
+    const discovery = discoveryFor(message, callID)
+    return discovery ? discoveryKey(discovery) : invocationKey(message.id ?? "", callID)
+  }
   const searchToolName = nativeToolSearch
     ? request.tools.find((tool) => tool.kind === "tool-search")?.name
     : undefined
-  const chronologicalSearchCalls = new Set(
+  const chronologicalSearchCallEntries = request.messages.flatMap((message) =>
+    message.role === "assistant"
+      ? message.content.flatMap((part) =>
+          part.type === "tool-call" &&
+          (discoveryFor(message, part.id) !== undefined ||
+            part.name === searchToolName ||
+            (ProviderShared.isRecord(part.providerMetadata?.openai) &&
+              part.providerMetadata.openai.toolSearch === true))
+            ? [{ callID: part.id, key: searchKey(message, part.id) }]
+            : [],
+        )
+      : [],
+  )
+  const chronologicalSearchCalls = new Set(chronologicalSearchCallEntries.map((entry) => entry.key))
+  const chronologicalSearchCallsByID = Map.groupBy(chronologicalSearchCallEntries, (entry) => entry.callID)
+  const outputSearchKey = (message: LLMRequest["messages"][number], callID: string) => {
+    const discovery = discoveryFor(message, callID)
+    if (discovery) return discoveryKey(discovery)
+    const calls = chronologicalSearchCallsByID.get(callID)
+    if (message.id === undefined && calls?.length === 1) return calls[0]!.key
+    return invocationKey(message.id ?? "", callID)
+  }
+  const chronologicalSearchOutputs = new Set(
     request.messages.flatMap((message) =>
-      message.role === "assistant"
+      message.role === "tool"
         ? message.content.flatMap((part) =>
-            part.type === "tool-call" &&
-            (discoveryByCallID.has(part.id) ||
+            part.type === "tool-result" &&
+            (discoveryFor(message, part.id) !== undefined ||
+              chronologicalSearchCalls.has(outputSearchKey(message, part.id)) ||
               part.name === searchToolName ||
               (ProviderShared.isRecord(part.providerMetadata?.openai) &&
                 part.providerMetadata.openai.toolSearch === true))
-              ? [part.id]
+              ? [outputSearchKey(message, part.id)]
               : [],
           )
         : [],
     ),
   )
+  const synthesizedSearches = new Set<string>()
   for (const discovery of discoveries) {
-    if (chronologicalSearchCalls.has(discovery.callID)) continue
+    const key = discoveryKey(discovery)
+    if (chronologicalSearchCalls.has(key)) continue
     input.push(
       lowerSearchCall(discovery.callID, { query: discovery.query, limit: discovery.limit }),
       lowerSearchOutput(discovery.callID, discovery.tools),
     )
+    synthesizedSearches.add(key)
   }
   const store = OpenAIOptions.store(request)
   const pendingUserFiles: Array<Schema.Schema.Type<typeof OpenAIResponsesInputFile>> = []
@@ -575,12 +615,17 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (
         if (part.type === "tool-call") {
           flushText()
           if (part.providerExecuted === true) continue
-          const discovery = discoveryByCallID.get(part.id)
-          input.push(
-            discovery || chronologicalSearchCalls.has(part.id)
-              ? lowerSearchCall(part.id, part.input)
-              : lowerToolCall(part),
-          )
+          const discovery = discoveryFor(message, part.id)
+          const key = searchKey(message, part.id)
+          const search = discovery !== undefined || chronologicalSearchCalls.has(key)
+          if (!search) {
+            input.push(lowerToolCall(part))
+            continue
+          }
+          if (synthesizedSearches.has(key)) continue
+          input.push(lowerSearchCall(part.id, part.input))
+          if (!chronologicalSearchOutputs.has(key))
+            input.push(lowerSearchOutput(part.id, discovery?.tools ?? []))
           continue
         }
         if (part.type === "tool-result" && part.providerExecuted === true) {
@@ -605,8 +650,11 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (
     for (const part of message.content) {
       if (!ProviderShared.supportsContent(part, ["tool-result"]))
         return yield* ProviderShared.unsupportedContent("OpenAI Responses", "tool", ["tool-result"])
-      const discovery = discoveryByCallID.get(part.id)
-      if (discovery || chronologicalSearchCalls.has(part.id)) {
+      const discovery = discoveryFor(message, part.id)
+      const key = outputSearchKey(message, part.id)
+      if (synthesizedSearches.has(key)) continue
+      if (discovery || chronologicalSearchCalls.has(key) || chronologicalSearchOutputs.has(key)) {
+        if (!discovery && !chronologicalSearchCalls.has(key)) continue
         input.push(lowerSearchOutput(part.id, discovery?.tools ?? []))
         continue
       }
@@ -659,6 +707,16 @@ const fromRequest = Effect.fn("OpenAIResponses.fromRequest")(function* (request:
   const options = yield* lowerOptions(request)
   const toolSchemaCompatibility = request.model.compatibility?.toolSchema
   const nativeToolSearch = request.model.compatibility?.toolSearch === ADAPTER
+  const semanticSearch = nativeToolSearch
+    ? request.tools.find((tool) => tool.kind === "tool-search")
+    : undefined
+  if (
+    request.toolChoice?.type === "tool" &&
+    request.toolChoice.name === semanticSearch?.name
+  )
+    return yield* invalid(
+      `OpenAI Responses native tool search cannot be selected by its semantic name ${request.toolChoice.name}`,
+    )
   const tools = request.tools.flatMap((tool): ReadonlyArray<OpenAIResponsesTool> => {
     const inputSchema = ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)
     if (!nativeToolSearch) return [lowerTool(tool, inputSchema)]
@@ -865,8 +923,7 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
     ]
   }
   if (item?.type === "tool_search_call") {
-    const itemID = item.id ?? item.call_id
-    if (!itemID || !state.searchToolName) return [state, NO_EVENTS]
+    if (item.execution !== "client" || !item.call_id || !state.searchToolName) return [state, NO_EVENTS]
     const providerMetadata = searchMetadata(item)
     const events: LLMEvent[] = []
     const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
@@ -874,8 +931,8 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
       {
         ...state,
         lifecycle,
-        tools: ToolStream.start(state.tools, itemID, {
-          id: item.call_id ?? itemID,
+        tools: ToolStream.start(state.tools, item.call_id, {
+          id: item.call_id,
           name: state.searchToolName,
           input: item.arguments === undefined ? "" : ProviderShared.encodeJson(item.arguments),
           providerMetadata,
@@ -884,7 +941,7 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
       [
         ...events,
         LLMEvent.toolInputStart({
-          id: item.call_id ?? itemID,
+          id: item.call_id,
           name: state.searchToolName,
           providerMetadata,
         }),
@@ -1035,20 +1092,25 @@ const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function*
   if (!item) return [state, NO_EVENTS] satisfies StepResult
 
   if (item.type === "tool_search_call") {
-    const itemID = item.id ?? item.call_id
-    if (!itemID || !state.searchToolName) return [state, NO_EVENTS] satisfies StepResult
+    if (item.execution !== "client" || !item.call_id || !state.searchToolName)
+      return [state, NO_EVENTS] satisfies StepResult
     const providerMetadata = searchMetadata(item)
-    const tools = state.tools[itemID]
+    const tools = state.tools[item.call_id]
       ? state.tools
-      : ToolStream.start(state.tools, itemID, {
-          id: item.call_id ?? itemID,
+      : ToolStream.start(state.tools, item.call_id, {
+          id: item.call_id,
           name: state.searchToolName,
           providerMetadata,
         })
     const result =
       item.arguments === undefined
-        ? yield* ToolStream.finish(ADAPTER, tools, itemID)
-        : yield* ToolStream.finishWithInput(ADAPTER, tools, itemID, ProviderShared.encodeJson(item.arguments))
+        ? yield* ToolStream.finish(ADAPTER, tools, item.call_id)
+        : yield* ToolStream.finishWithInput(
+            ADAPTER,
+            tools,
+            item.call_id,
+            ProviderShared.encodeJson(item.arguments),
+          )
     const events: LLMEvent[] = []
     const resultEvents = result.events ?? []
     const lifecycle = resultEvents.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle

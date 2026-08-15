@@ -32,6 +32,7 @@ const source = { type: "plugin" as const, id: "calendar", displayName: "Calendar
 
 const catalogTool = (description: string): ToolCatalog.SearchableTool => {
   const definition = new ToolDefinition({
+    kind: "function",
     name: "calendar_create",
     description,
     inputSchema: { type: "object", properties: { title: { type: "string" } } },
@@ -360,6 +361,7 @@ describe("Session tool discovery projection", () => {
       )
       expect(records).toHaveLength(3)
       expect(records[0]).toMatchObject({
+        assistantMessageID,
         callID: "call-current",
         query: "calendar",
         limit: 8,

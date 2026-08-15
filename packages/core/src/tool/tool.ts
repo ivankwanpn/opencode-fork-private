@@ -112,6 +112,7 @@ export function make<
       const cached = definitions.get(key)
       if (cached) return cached
       const definition = new ToolDefinition({
+        kind: "function",
         name,
         description,
         inputSchema: config.jsonSchema?.input ?? toJsonSchema(config.input),

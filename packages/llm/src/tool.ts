@@ -177,6 +177,7 @@ export function make(config: TypedToolConfig | DynamicToolConfig): AnyTool {
         project(config.toModelOutput, config.toStructuredOutput, parameters, callID, output),
       _legacyResult: config.toModelOutput === undefined && config.toStructuredOutput === undefined,
       _definition: new ToolDefinition({
+        kind: "function",
         name: "",
         description: config.description,
         inputSchema: config.jsonSchema,
@@ -197,6 +198,7 @@ export function make(config: TypedToolConfig | DynamicToolConfig): AnyTool {
       project(config.toModelOutput, config.toStructuredOutput, parameters, callID, output),
     _legacyResult: false,
     _definition: new ToolDefinition({
+      kind: "function",
       name: "",
       description: config.description,
       inputSchema: toJsonSchema(config.parameters),
@@ -222,6 +224,7 @@ export const toDefinitions = (tools: Tools): ReadonlyArray<ToolDefinitionClass> 
   Object.entries(tools).map(
     ([name, item]) =>
       new ToolDefinition({
+        kind: "function",
         name,
         description: item._definition.description,
         inputSchema: item._definition.inputSchema,

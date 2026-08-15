@@ -73,6 +73,7 @@ describe("OpenAI Chat route", () => {
           ],
           toolDiscoveries: [
             {
+              assistantMessageID: "assistant-1",
               callID: "search-1",
               query: "calendar",
               limit: 8,

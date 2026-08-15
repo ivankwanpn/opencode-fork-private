@@ -222,7 +222,7 @@ export namespace Message {
 }
 
 export class ToolDefinition extends Schema.Class<ToolDefinition>("LLM.ToolDefinition")({
-  kind: Schema.optional(Schema.Literals(["function", "tool-search"])),
+  kind: Schema.Literals(["function", "tool-search"]),
   name: Schema.String,
   description: Schema.String,
   inputSchema: JsonSchema,
@@ -238,17 +238,18 @@ export namespace ToolDefinition {
   export type Input =
     | ToolDefinition
     | (Omit<ConstructorParameters<typeof ToolDefinition>[0], "kind"> & {
-        readonly kind?: NonNullable<ToolDefinition["kind"]>
+        readonly kind?: ToolDefinition["kind"]
       })
 
   /** Normalize tool definition input into the canonical `ToolDefinition` class. */
   export const make = (input: Input) => {
-    if (input instanceof ToolDefinition && input.kind !== undefined) return input
+    if (input instanceof ToolDefinition) return input
     return new ToolDefinition({ ...input, kind: input.kind ?? "function" })
   }
 }
 
 export class ToolDiscovery extends Schema.Class<ToolDiscovery>("LLM.ToolDiscovery")({
+  assistantMessageID: Schema.String,
   callID: Schema.String,
   query: Schema.String,
   limit: Schema.Number,

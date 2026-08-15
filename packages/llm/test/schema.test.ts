@@ -3,7 +3,17 @@ import { Schema } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat"
 import * as OpenAIResponses from "../src/protocols/openai-responses"
 import { LLM } from "../src"
-import { ContentPart, LLMEvent, LLMRequest, Model, ModelCompatibility, ModelID, ProviderID, Usage } from "../src/schema"
+import {
+  ContentPart,
+  LLMEvent,
+  LLMRequest,
+  Model,
+  ModelCompatibility,
+  ModelID,
+  ProviderID,
+  ToolDefinition,
+  Usage,
+} from "../src/schema"
 import { ProviderShared } from "../src/protocols/shared"
 
 const model = new Model({
@@ -78,6 +88,7 @@ describe("llm schema", () => {
       ],
       toolDiscoveries: [
         {
+          assistantMessageID: "assistant-1",
           callID: "search-1",
           query: "calendar",
           limit: 8,
@@ -99,7 +110,18 @@ describe("llm schema", () => {
     expect(request.tools[1]).toMatchObject({ deferLoading: true, namespace: "calendar" })
     const discovery = request.toolDiscoveries?.[0]
     expect(discovery).toBeDefined()
+    expect(discovery?.assistantMessageID).toBe("assistant-1")
     expect(discovery?.tools[0]).toMatchObject({ kind: "function", deferLoading: true })
+  })
+
+  test("requires the canonical tool kind discriminator when decoding", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(ToolDefinition)({
+        name: "calendar_create",
+        description: "Create calendar events",
+        inputSchema: { type: "object" },
+      }),
+    ).toThrow()
   })
 
   test("decodes the explicit native responses tool-search capability", () => {

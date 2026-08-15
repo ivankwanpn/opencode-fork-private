@@ -1,6 +1,7 @@
 import path from "node:path"
 import { describe, expect, test } from "bun:test"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import type { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import type { Mcp } from "@opencode-ai/schema/mcp"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import type { RuntimeDescriptor } from "./claude-marketplace"
@@ -16,6 +17,7 @@ function descriptor(input: Partial<RuntimeDescriptor> = {}): RuntimeDescriptor {
     skillDirectory: path.join(root, "skills"),
     commandNames: ["claude/marketplace__demo/demo"],
     mcpServers: ["claude:marketplace:demo:server"],
+    toolSourceIDs: ["claude-marketplace/marketplace/demo"],
     ...input,
   }
 }
@@ -26,6 +28,7 @@ function observations(input: Partial<RuntimeObservations> = {}): RuntimeObservat
     commands: [],
     mcp: {},
     plugins: {},
+    toolSources: [],
     ...input,
   }
 }
@@ -144,16 +147,142 @@ describe("plugin runtime readiness", () => {
     }
   })
 
-  test("keeps ToolRegistry-backed tools pending until canonical source state is implemented", () => {
+  test("keeps tools pending until every expected Plugin source is observed and ready", () => {
+    const runtime = descriptor({
+      capabilities: ["tools"],
+      skillDirectory: undefined,
+      commandNames: [],
+      mcpServers: [],
+      toolSourceIDs: ["claude-marketplace/marketplace/demo", "claude-marketplace/marketplace/helper"],
+    })
+    const pending: ToolCatalog.SourceStatus = {
+      source: { type: "plugin", id: "claude-marketplace/marketplace/demo" },
+      state: "pending",
+    }
+
+    for (const toolSources of [[], [pending]]) {
+      expect(runtimeSnapshot([runtime], observations({ toolSources })).plugins[0]).toEqual({
+        id: Plugin.ID.make("demo@marketplace"),
+        state: "initializing",
+        capabilities: [{ name: "tools", state: "pending" }],
+      })
+    }
+  })
+
+  test("reports tools ready only when every exact Plugin source is ready", () => {
     const result = runtimeSnapshot(
-      [descriptor({ capabilities: ["tools"], skillDirectory: undefined, commandNames: [], mcpServers: [] })],
-      observations(),
+      [
+        descriptor({
+          capabilities: ["tools"],
+          skillDirectory: undefined,
+          commandNames: [],
+          mcpServers: [],
+          toolSourceIDs: ["claude-marketplace/marketplace/demo"],
+        }),
+      ],
+      observations({
+        toolSources: [
+          { source: { type: "mcp", id: "claude-marketplace/marketplace/demo" }, state: "ready" },
+          { source: { type: "plugin", id: "claude-marketplace/marketplace/demo" }, state: "ready" },
+        ],
+      }),
     )
 
     expect(result.plugins[0]).toEqual({
       id: Plugin.ID.make("demo@marketplace"),
-      state: "initializing",
-      capabilities: [{ name: "tools", state: "pending" }],
+      state: "ready",
+      capabilities: [{ name: "tools", state: "ready" }],
+    })
+  })
+
+  test("reports terminal tool source states with a count-only diagnostic", () => {
+    const runtime = descriptor({
+      capabilities: ["tools"],
+      skillDirectory: undefined,
+      commandNames: [],
+      mcpServers: [],
+      toolSourceIDs: ["claude-marketplace/marketplace/demo", "claude-marketplace/marketplace/helper"],
+    })
+    const result = runtimeSnapshot(
+      [runtime],
+      observations({
+        toolSources: [
+          {
+            source: { type: "plugin", id: "claude-marketplace/marketplace/demo" },
+            state: "failed",
+            message: "secret path and arguments must not escape",
+          },
+          {
+            source: { type: "plugin", id: "claude-marketplace/marketplace/helper" },
+            state: "disabled",
+          },
+        ],
+      }),
+    )
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "failed",
+      capabilities: [{ name: "tools", state: "failed", message: "Unavailable tool sources: 2" }],
+    })
+  })
+
+  test("reports mixed ready and failed tool sources as a failed capability and degraded plugin", () => {
+    const result = runtimeSnapshot(
+      [
+        descriptor({
+          capabilities: ["commands", "tools"],
+          skillDirectory: undefined,
+          mcpServers: [],
+          toolSourceIDs: ["claude-marketplace/marketplace/demo", "claude-marketplace/marketplace/helper"],
+        }),
+      ],
+      observations({
+        commands: [{ name: "claude/marketplace__demo/demo", template: "Demo command" }],
+        toolSources: [
+          { source: { type: "plugin", id: "claude-marketplace/marketplace/demo" }, state: "ready" },
+          { source: { type: "plugin", id: "claude-marketplace/marketplace/helper" }, state: "failed" },
+        ],
+      }),
+    )
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "degraded",
+      capabilities: [
+        { name: "commands", state: "ready" },
+        { name: "tools", state: "failed", message: "Unavailable tool sources: 1" },
+      ],
+    })
+  })
+
+  test("reports disabled tool capabilities without inspecting source state", () => {
+    const result = runtimeSnapshot(
+      [
+        descriptor({
+          enabled: false,
+          capabilities: ["tools"],
+          skillDirectory: undefined,
+          commandNames: [],
+          mcpServers: [],
+          toolSourceIDs: ["claude-marketplace/marketplace/demo"],
+        }),
+      ],
+      observations({
+        toolSources: [
+          {
+            source: { type: "plugin", id: "claude-marketplace/marketplace/demo" },
+            state: "failed",
+            message: "must not be inspected",
+          },
+        ],
+      }),
+    )
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "disabled",
+      capabilities: [{ name: "tools", state: "disabled" }],
     })
   })
 })

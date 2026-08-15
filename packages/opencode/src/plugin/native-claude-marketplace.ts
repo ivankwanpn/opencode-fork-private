@@ -6,6 +6,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Event } from "@opencode-ai/core/catalog"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { SkillV2 } from "@opencode-ai/core/skill"
+import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import type { Catalog } from "@opencode-ai/protocol/groups/plugin"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { Effect, Layer } from "effect"
@@ -75,12 +76,14 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
             const commands = yield* CommandV2.Service
             const mcp = yield* MCP.Service
             const plugins = yield* PluginV2.Service
+            const tools = yield* ToolRegistry.Service
             const descriptors = yield* run("Reading plugin runtime descriptors", () => manager.runtimeDescriptors())
             return runtimeSnapshot(descriptors, {
               skills: yield* skills.list(),
               commands: yield* commands.list(),
               mcp: yield* mcp.status(),
               plugins: yield* plugins.status(),
+              toolSources: yield* tools.sources(),
             })
           }),
         list: () => run("Listing plugins", () => manager.list()),

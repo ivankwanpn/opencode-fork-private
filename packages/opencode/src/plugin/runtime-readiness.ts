@@ -1,6 +1,7 @@
 import path from "node:path"
 import type { CommandV2 } from "@opencode-ai/core/command"
 import type { SkillV2 } from "@opencode-ai/core/skill"
+import type { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import type { Mcp } from "@opencode-ai/schema/mcp"
 import type { RuntimeDescriptor } from "./claude-marketplace"
@@ -10,6 +11,7 @@ export type RuntimeObservations = {
   readonly commands: readonly CommandV2.Info[]
   readonly mcp: Readonly<Record<string, Mcp.Status>>
   readonly plugins: Readonly<Record<string, Plugin.LoadStatus>>
+  readonly toolSources: readonly ToolCatalog.SourceStatus[]
 }
 
 export function runtimeSnapshot(
@@ -35,36 +37,56 @@ function capability(
   descriptor: RuntimeDescriptor,
   observations: RuntimeObservations,
 ): Plugin.RuntimeCapability {
-  if (name === "skills") {
-    if (!descriptor.skillDirectory) {
-      return { name, state: "failed", message: "Skill artifacts were not materialized" }
+  switch (name) {
+    case "skills": {
+      if (!descriptor.skillDirectory) {
+        return { name, state: "failed", message: "Skill artifacts were not materialized" }
+      }
+      const ready = observations.skills.some((skill) => inside(descriptor.skillDirectory!, skill.location))
+      return { name, state: ready ? "ready" : "pending" }
     }
-    const ready = observations.skills.some((skill) => inside(descriptor.skillDirectory!, skill.location))
-    return { name, state: ready ? "ready" : "pending" }
-  }
-
-  if (name === "commands") {
-    if (descriptor.commandNames.length === 0) {
-      return { name, state: "failed", message: "Command artifacts were not materialized" }
+    case "commands": {
+      if (descriptor.commandNames.length === 0) {
+        return { name, state: "failed", message: "Command artifacts were not materialized" }
+      }
+      const available = new Set(observations.commands.map((command) => command.name))
+      const ready = descriptor.commandNames.every((command) => available.has(command))
+      return { name, state: ready ? "ready" : "pending" }
     }
-    const available = new Set(observations.commands.map((command) => command.name))
-    const ready = descriptor.commandNames.every((command) => available.has(command))
-    return { name, state: ready ? "ready" : "pending" }
-  }
-
-  if (name === "mcp") return mcpCapability(descriptor, observations)
-
-  if (name === "plugin") {
-    if (!descriptor.pluginRuntimeID) {
-      return { name, state: "failed", message: "Plugin runtime identity is unavailable" }
+    case "mcp":
+      return mcpCapability(descriptor, observations)
+    case "plugin": {
+      if (!descriptor.pluginRuntimeID) {
+        return { name, state: "failed", message: "Plugin runtime identity is unavailable" }
+      }
+      const status = observations.plugins[descriptor.pluginRuntimeID]
+      if (!status || status.state === "initializing") return { name, state: "pending" }
+      if (status.state === "ready") return { name, state: "ready" }
+      return { name, state: "failed", ...(status.message ? { message: status.message } : {}) }
     }
-    const status = observations.plugins[descriptor.pluginRuntimeID]
-    if (!status || status.state === "initializing") return { name, state: "pending" }
-    if (status.state === "ready") return { name, state: "ready" }
-    return { name, state: "failed", ...(status.message ? { message: status.message } : {}) }
+    case "tools":
+      return toolCapability(descriptor, observations)
   }
+}
 
-  return { name, state: "pending" }
+function toolCapability(descriptor: RuntimeDescriptor, observations: RuntimeObservations): Plugin.RuntimeCapability {
+  const name = "tools" as const
+  if (descriptor.toolSourceIDs.length === 0) {
+    return { name, state: "failed", message: "Tool source identities are unavailable" }
+  }
+  const sources = new Map(
+    observations.toolSources.flatMap((status) =>
+      status.source.type === "plugin" ? [[status.source.id, status] as const] : [],
+    ),
+  )
+  const states = descriptor.toolSourceIDs.map((id) => sources.get(id))
+  if (states.some((status) => !status || status.state === "pending")) return { name, state: "pending" }
+  if (states.every((status) => status?.state === "ready")) return { name, state: "ready" }
+  return {
+    name,
+    state: "failed",
+    message: `Unavailable tool sources: ${states.filter((status) => status?.state !== "ready").length}`,
+  }
 }
 
 function mcpCapability(descriptor: RuntimeDescriptor, observations: RuntimeObservations): Plugin.RuntimeCapability {

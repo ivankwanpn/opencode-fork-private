@@ -92,6 +92,7 @@ export type RuntimeDescriptor = {
   readonly skillDirectory?: string
   readonly commandNames: readonly string[]
   readonly mcpServers: readonly string[]
+  readonly toolSourceIDs: readonly string[]
   readonly pluginRuntimeID?: string
 }
 
@@ -600,6 +601,7 @@ export class ClaudeMarketplaceManager {
             (capability): capability is PluginSchema.RuntimeCapabilityName =>
               PluginSchema.RuntimeCapabilityName.literals.includes(capability as PluginSchema.RuntimeCapabilityName),
           )
+          const runtimeID = `claude-marketplace/${plugin.marketplace}/${plugin.name}`
           if (!plugin.enabled) {
             return {
               id: plugin.id,
@@ -607,6 +609,7 @@ export class ClaudeMarketplaceManager {
               capabilities,
               commandNames: [],
               mcpServers: [],
+              toolSourceIDs: [runtimeID],
             }
           }
 
@@ -624,9 +627,8 @@ export class ClaudeMarketplaceManager {
             ...(skillDirectory ? { skillDirectory } : {}),
             commandNames,
             mcpServers: Object.keys(plugin.mcp).toSorted(),
-            ...(capabilities.includes("plugin")
-              ? { pluginRuntimeID: `claude-marketplace/${plugin.marketplace}/${plugin.name}` }
-              : {}),
+            toolSourceIDs: [runtimeID],
+            ...(capabilities.includes("plugin") ? { pluginRuntimeID: runtimeID } : {}),
           }
         }),
     )

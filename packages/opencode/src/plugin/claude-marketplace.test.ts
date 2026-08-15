@@ -10,6 +10,7 @@ import { MCP } from "@opencode-ai/core/mcp"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SkillV2 } from "@opencode-ai/core/skill"
+import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
@@ -112,6 +113,7 @@ describe("ClaudeMarketplaceManager", () => {
         skillDirectory: path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo"),
         commandNames: ["claude/local-marketplace__demo/demo"],
         mcpServers: ["claude:local-marketplace:demo:demo"],
+        toolSourceIDs: ["claude-marketplace/local-marketplace/demo"],
       },
     ])
 
@@ -130,6 +132,7 @@ describe("ClaudeMarketplaceManager", () => {
         capabilities: ["skills", "commands", "mcp"],
         commandNames: [],
         mcpServers: [],
+        toolSourceIDs: ["claude-marketplace/local-marketplace/demo"],
       },
     ])
     await manager.uninstall("demo@local-marketplace")
@@ -221,6 +224,7 @@ describe("NativeClaudeMarketplace", () => {
         status: () => Effect.succeed({ "claude:local-marketplace:demo:demo": { status: "connected" } }),
       }),
       Layer.mock(PluginV2.Service, { status: () => Effect.succeed({}) }),
+      Layer.mock(ToolRegistry.Service, { sources: () => Effect.succeed([]) }),
     )
 
     const result = await Effect.runPromise(

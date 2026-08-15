@@ -34,6 +34,24 @@ const oauthProviderKeys = [
   "provider.oauth.models.empty",
   "provider.oauth.models.context",
 ] as const
+const pluginRuntimeKeys = [
+  "plugin.catalog.loading",
+  "plugin.catalog.empty",
+  "plugin.catalog.failed",
+  "plugin.catalog.retry",
+  "plugin.catalog.stale",
+  "plugin.catalog.filteredEmpty",
+  "plugin.runtime.initializing",
+  "plugin.runtime.ready",
+  "plugin.runtime.degraded",
+  "plugin.runtime.failed",
+  "plugin.runtime.stale",
+  "plugin.capability.skills",
+  "plugin.capability.commands",
+  "plugin.capability.mcp",
+  "plugin.capability.plugin",
+  "plugin.capability.tools",
+] as const
 
 const domains = [
   {
@@ -102,6 +120,19 @@ describe.skipIf(!!process.env.CI)("i18n parity", () => {
     for (const locale of ["en", ...appLocales]) {
       const target = await dictionary(`./${locale}.ts`)
       for (const key of oauthProviderKeys) {
+        const value = target[key]
+        expect(value).toBeDefined()
+        if (value === undefined) continue
+        expect(value.trim()).not.toBe("")
+        expect(placeholders(value)).toEqual([])
+      }
+    }
+  })
+
+  test("Plugin catalog and runtime keys exist in every app locale", async () => {
+    for (const locale of ["en", ...appLocales]) {
+      const target = await dictionary(`./${locale}.ts`)
+      for (const key of pluginRuntimeKeys) {
         const value = target[key]
         expect(value).toBeDefined()
         if (value === undefined) continue

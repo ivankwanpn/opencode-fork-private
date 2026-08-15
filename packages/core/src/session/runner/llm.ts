@@ -50,6 +50,7 @@ import { SessionReminder } from "../reminder"
 import { SessionSchema } from "../schema"
 import { SessionStore } from "../store"
 import { SessionStopHook } from "../stop-hook"
+import { SessionToolDiscovery } from "../tool-discovery"
 import { type RunError, Service } from "./index"
 import { SessionRunnerModel } from "./model"
 import { SessionRunnerRequestPolicy } from "./request-policy"
@@ -388,12 +389,13 @@ const layer = Layer.effect(
               providerID: resolved?.model.providerID ?? ProviderV2.ID.make(model.provider),
               modelID: resolved?.model.id ?? ModelV2.ID.make(model.id),
             },
-            // P5 dynamic loading: searched deferred tools are injected into the
-            // advertised definitions, and tool_search writes new selections here
-            // for the next provider turn.
+            // Persist an exact catalog key/hash before exposing a searched tool to
+            // the next provider turn. Later drains restore the same durable union.
             selected: searchedTools.current,
-            executeSearch: (_input, _context, _snapshot, search) =>
-              search.pipe(Effect.tap((result) => Effect.sync(() => searchedTools.select(result.matches)))),
+            executeSearch: (input, context, snapshot, search) =>
+              SessionToolDiscovery.execute({ db, events, context, input, snapshot, search }).pipe(
+                Effect.tap((result) => Effect.sync(() => searchedTools.select(result.matches))),
+              ),
           })
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
       const mcpInstructions = SessionRunnerSystem.mcp(yield* mcp.instructions(), effectivePermissions)
@@ -1134,10 +1136,8 @@ const layer = Layer.effect(
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
-        // Exact deferred definitions accumulate only across provider turns in
-        // this drain. A later selection for the same key replaces its old hash.
         const searchedTools: SearchedTools = {
-          current: new Map(),
+          current: yield* SessionToolDiscovery.selections(db, input.sessionID),
           select: (selections) => {
             const current = new Map(searchedTools.current)
             for (const selection of selections) current.set(selection.key, selection.definitionHash)

@@ -968,6 +968,140 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("restores searched deferred tools in a later drain", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const applicationTools = yield* ApplicationTools.Service
+      const session = yield* SessionV2.Service
+      yield* applicationTools.register({
+        deferred_echo: Tool.withExposure(
+          Tool.make({
+            description: "Echo text after a tool_search",
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
+            execute: ({ text }) => Effect.succeed({ text }),
+          }),
+          "deferred",
+        ),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Find the echo tool" }), resume: false })
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-search-persisted", name: "tool_search", input: { query: "echo text" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-search-persisted", ["Found it"]).completeEvents,
+      ]
+      yield* session.resume(sessionID)
+
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Use it now" }), resume: false })
+      requests.length = 0
+      responses = undefined
+      response = fragmentFixture("text", "text-restored-tool", ["Done"]).completeEvents
+      yield* session.resume(sessionID)
+
+      expect(requests[0]?.tools.map((tool) => tool.name)).toContain("deferred_echo")
+    }),
+  )
+
+  it.effect("restores searched deferred tools after compaction", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const applicationTools = yield* ApplicationTools.Service
+      const events = yield* EventV2.Service
+      const session = yield* SessionV2.Service
+      yield* applicationTools.register({
+        deferred_echo: Tool.withExposure(
+          Tool.make({
+            description: "Echo text after a tool_search",
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
+            execute: ({ text }) => Effect.succeed({ text }),
+          }),
+          "deferred",
+        ),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Find the echo tool" }), resume: false })
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-search-before-compaction", name: "tool_search", input: { query: "echo text" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-before-compaction", ["Found it"]).completeEvents,
+      ]
+      yield* session.resume(sessionID)
+
+      const compactionID = SessionMessage.ID.create()
+      yield* events.publish(SessionEvent.Compaction.Started, {
+        sessionID,
+        messageID: compactionID,
+        timestamp: DateTime.makeUnsafe(1),
+        reason: "manual",
+      })
+      yield* events.publish(SessionEvent.Compaction.Ended, {
+        sessionID,
+        messageID: compactionID,
+        timestamp: DateTime.makeUnsafe(2),
+        reason: "manual",
+        text: "summary",
+        recent: "",
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Use the tool after compaction" }), resume: false })
+      requests.length = 0
+      responses = undefined
+      response = fragmentFixture("text", "text-after-tool-compaction", ["Done"]).completeEvents
+      yield* session.resume(sessionID)
+
+      expect(requests[0]?.tools.map((tool) => tool.name)).toContain("deferred_echo")
+    }),
+  )
+
+  it.effect("keeps a discovered deferred tool hidden by a later prompt override", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const applicationTools = yield* ApplicationTools.Service
+      const session = yield* SessionV2.Service
+      yield* applicationTools.register({
+        deferred_echo: Tool.withExposure(
+          Tool.make({
+            description: "Echo text after a tool_search",
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
+            execute: ({ text }) => Effect.succeed({ text }),
+          }),
+          "deferred",
+        ),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Find the echo tool" }), resume: false })
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-search-before-deny", name: "tool_search", input: { query: "echo text" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-before-deny", ["Found it"]).completeEvents,
+      ]
+      yield* session.resume(sessionID)
+
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Do not use echo", tools: { deferred_echo: false } }),
+        resume: false,
+      })
+      requests.length = 0
+      responses = undefined
+      response = fragmentFixture("text", "text-after-deny", ["Done"]).completeEvents
+      yield* session.resume(sessionID)
+
+      expect(requests[0]?.tools.map((tool) => tool.name)).not.toContain("deferred_echo")
+    }),
+  )
+
   it.effect("promotes nested instructions only after durable read settlement and rebuilds them after replay", () =>
     Effect.gen(function* () {
       yield* setup

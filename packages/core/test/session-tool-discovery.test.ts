@@ -390,4 +390,58 @@ describe("durable tool search execution", () => {
       expect(yield* SessionToolDiscovery.selections(db, sessionID)).toEqual(new Map())
     }),
   )
+
+  it.effect("does not expose a match when durable completion fails", () =>
+    Effect.gen(function* () {
+      const db = yield* setup
+      const events = yield* EventV2.Service
+      const tool = catalogTool("Create calendar events")
+      const snapshot = ToolCatalog.snapshot({ tools: [tool], sources: [{ source, state: "ready" }] })
+      const selected = new Map<ToolCatalog.Key, string>()
+      const search = db
+        .insert(SessionToolDiscoveryCallTable)
+        .values({
+          session_id: sessionID,
+          assistant_message_id: assistantMessageID,
+          tool_call_id: context.toolCallID,
+          query: "conflicting projection",
+          limit: 8,
+          catalog_revision: "conflicting-revision",
+          matches: [],
+          pending_sources: [],
+          seq: 99,
+          time_completed: 1,
+        })
+        .run()
+        .pipe(
+          Effect.orDie,
+          Effect.andThen(ToolSearch.makeIndex().search(snapshot, { query: "calendar" })),
+        )
+      const completed = SessionToolDiscovery.execute({
+        db,
+        events,
+        context,
+        input: { query: "calendar" },
+        snapshot,
+        search,
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            for (const match of result.matches) selected.set(match.key, match.definitionHash)
+          }),
+        ),
+      )
+
+      expect(Exit.isFailure(yield* Effect.exit(completed))).toBe(true)
+      expect(selected).toEqual(new Map())
+      expect(yield* SessionToolDiscovery.selections(db, sessionID)).toEqual(new Map())
+      expect(
+        yield* db
+          .select()
+          .from(EventTable)
+          .where(eq(EventTable.type, EventV2.versionedType(SessionEvent.ToolDiscovery.Completed.type, 1)))
+          .all(),
+      ).toEqual([])
+    }),
+  )
 })

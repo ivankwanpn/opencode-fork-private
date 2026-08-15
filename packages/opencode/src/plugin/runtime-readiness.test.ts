@@ -2,6 +2,7 @@ import path from "node:path"
 import { describe, expect, test } from "bun:test"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import type { Mcp } from "@opencode-ai/schema/mcp"
+import { Plugin } from "@opencode-ai/schema/plugin"
 import type { RuntimeDescriptor } from "./claude-marketplace"
 import { runtimeSnapshot, type RuntimeObservations } from "./runtime-readiness"
 
@@ -35,7 +36,7 @@ describe("plugin runtime readiness", () => {
 
     expect(result.plugins).toEqual([
       {
-        id: "demo@marketplace",
+        id: Plugin.ID.make("demo@marketplace"),
         state: "disabled",
         capabilities: [
           { name: "skills", state: "disabled" },
@@ -50,7 +51,7 @@ describe("plugin runtime readiness", () => {
     const result = runtimeSnapshot([descriptor()], observations())
 
     expect(result.plugins[0]).toEqual({
-      id: "demo@marketplace",
+      id: Plugin.ID.make("demo@marketplace"),
       state: "initializing",
       capabilities: [
         { name: "skills", state: "pending" },
@@ -82,7 +83,7 @@ describe("plugin runtime readiness", () => {
     )
 
     expect(result.plugins[0]).toEqual({
-      id: "demo@marketplace",
+      id: Plugin.ID.make("demo@marketplace"),
       state: "ready",
       capabilities: [
         { name: "skills", state: "ready" },
@@ -109,7 +110,7 @@ describe("plugin runtime readiness", () => {
     )
 
     expect(result.plugins[0]).toEqual({
-      id: "demo@marketplace",
+      id: Plugin.ID.make("demo@marketplace"),
       state: "degraded",
       capabilities: [
         { name: "skills", state: "ready" },
@@ -136,7 +137,7 @@ describe("plugin runtime readiness", () => {
           observations({ mcp: { "claude:marketplace:demo:server": item.status } }),
         ).plugins[0],
       ).toEqual({
-        id: "demo@marketplace",
+        id: Plugin.ID.make("demo@marketplace"),
         state: "failed",
         capabilities: [{ name: "mcp", state: "failed", message: item.message }],
       })
@@ -150,7 +151,7 @@ describe("plugin runtime readiness", () => {
     )
 
     expect(result.plugins[0]).toEqual({
-      id: "demo@marketplace",
+      id: Plugin.ID.make("demo@marketplace"),
       state: "initializing",
       capabilities: [{ name: "tools", state: "pending" }],
     })

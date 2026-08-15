@@ -1135,53 +1135,59 @@ const Endpoint24_0 = (raw: RawClient["server.controlPlane"]) => (input: Endpoint
 
 const adaptGroup24 = (raw: RawClient["server.controlPlane"]) => ({ moveSession: Endpoint24_0(raw) })
 
-const Endpoint25_0 = (raw: RawClient["server.plugins"]) => () =>
+type Endpoint25_0Request = Parameters<RawClient["server.plugins"]["plugins.runtime"]>[0]
+type Endpoint25_0Input = { readonly location?: Endpoint25_0Request["query"]["location"] }
+const Endpoint25_0 = (raw: RawClient["server.plugins"]) => (input?: Endpoint25_0Input) =>
+  raw["plugins.runtime"]({ query: { location: input?.["location"] } }).pipe(Effect.mapError(mapClientError))
+
+const Endpoint25_1 = (raw: RawClient["server.plugins"]) => () =>
   raw["plugins.list"]({}).pipe(Effect.mapError(mapClientError))
 
-type Endpoint25_1Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.add"]>[0]
-type Endpoint25_1Input = { readonly source: Endpoint25_1Request["payload"]["source"] }
-const Endpoint25_1 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_1Input) =>
+type Endpoint25_2Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.add"]>[0]
+type Endpoint25_2Input = { readonly source: Endpoint25_2Request["payload"]["source"] }
+const Endpoint25_2 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_2Input) =>
   raw["plugins.marketplace.add"]({ payload: { source: input["source"] } }).pipe(Effect.mapError(mapClientError))
 
-type Endpoint25_2Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.refresh"]>[0]
-type Endpoint25_2Input = { readonly name: Endpoint25_2Request["payload"]["name"] }
-const Endpoint25_2 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_2Input) =>
-  raw["plugins.marketplace.refresh"]({ payload: { name: input["name"] } }).pipe(Effect.mapError(mapClientError))
-
-type Endpoint25_3Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.remove"]>[0]
+type Endpoint25_3Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.refresh"]>[0]
 type Endpoint25_3Input = { readonly name: Endpoint25_3Request["payload"]["name"] }
 const Endpoint25_3 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_3Input) =>
+  raw["plugins.marketplace.refresh"]({ payload: { name: input["name"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_4Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.remove"]>[0]
+type Endpoint25_4Input = { readonly name: Endpoint25_4Request["payload"]["name"] }
+const Endpoint25_4 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_4Input) =>
   raw["plugins.marketplace.remove"]({ payload: { name: input["name"] } }).pipe(Effect.mapError(mapClientError))
 
-type Endpoint25_4Request = Parameters<RawClient["server.plugins"]["plugins.install"]>[0]
-type Endpoint25_4Input = { readonly id: Endpoint25_4Request["payload"]["id"] }
-const Endpoint25_4 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_4Input) =>
-  raw["plugins.install"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
-
-type Endpoint25_5Request = Parameters<RawClient["server.plugins"]["plugins.uninstall"]>[0]
+type Endpoint25_5Request = Parameters<RawClient["server.plugins"]["plugins.install"]>[0]
 type Endpoint25_5Input = { readonly id: Endpoint25_5Request["payload"]["id"] }
 const Endpoint25_5 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_5Input) =>
-  raw["plugins.uninstall"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
+  raw["plugins.install"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
 
-type Endpoint25_6Request = Parameters<RawClient["server.plugins"]["plugins.enable"]>[0]
+type Endpoint25_6Request = Parameters<RawClient["server.plugins"]["plugins.uninstall"]>[0]
 type Endpoint25_6Input = { readonly id: Endpoint25_6Request["payload"]["id"] }
 const Endpoint25_6 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_6Input) =>
-  raw["plugins.enable"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
+  raw["plugins.uninstall"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
 
-type Endpoint25_7Request = Parameters<RawClient["server.plugins"]["plugins.disable"]>[0]
+type Endpoint25_7Request = Parameters<RawClient["server.plugins"]["plugins.enable"]>[0]
 type Endpoint25_7Input = { readonly id: Endpoint25_7Request["payload"]["id"] }
 const Endpoint25_7 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_7Input) =>
+  raw["plugins.enable"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
+
+type Endpoint25_8Request = Parameters<RawClient["server.plugins"]["plugins.disable"]>[0]
+type Endpoint25_8Input = { readonly id: Endpoint25_8Request["payload"]["id"] }
+const Endpoint25_8 = (raw: RawClient["server.plugins"]) => (input: Endpoint25_8Input) =>
   raw["plugins.disable"]({ payload: { id: input["id"] } }).pipe(Effect.mapError(mapClientError))
 
 const adaptGroup25 = (raw: RawClient["server.plugins"]) => ({
-  list: Endpoint25_0(raw),
-  add: Endpoint25_1(raw),
-  refresh: Endpoint25_2(raw),
-  remove: Endpoint25_3(raw),
-  install: Endpoint25_4(raw),
-  uninstall: Endpoint25_5(raw),
-  enable: Endpoint25_6(raw),
-  disable: Endpoint25_7(raw),
+  runtime: Endpoint25_0(raw),
+  list: Endpoint25_1(raw),
+  add: Endpoint25_2(raw),
+  refresh: Endpoint25_3(raw),
+  remove: Endpoint25_4(raw),
+  install: Endpoint25_5(raw),
+  uninstall: Endpoint25_6(raw),
+  enable: Endpoint25_7(raw),
+  disable: Endpoint25_8(raw),
 })
 
 const Endpoint26_0 = (raw: RawClient["server.event"]) => () =>

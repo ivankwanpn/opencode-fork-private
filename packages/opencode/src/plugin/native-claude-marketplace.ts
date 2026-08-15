@@ -1,13 +1,18 @@
+import { CommandV2 } from "@opencode-ai/core/command"
 import { ServiceUnavailableError } from "@opencode-ai/protocol/errors"
+import { MCP } from "@opencode-ai/core/mcp"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Event } from "@opencode-ai/core/catalog"
+import { PluginV2 } from "@opencode-ai/core/plugin"
+import { SkillV2 } from "@opencode-ai/core/skill"
 import type { Catalog } from "@opencode-ai/protocol/groups/plugin"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { Effect, Layer } from "effect"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import { ClaudeMarketplaceManager, type ManagedMcpServer } from "./claude-marketplace"
+import { runtimeSnapshot } from "./runtime-readiness"
 
 function unavailable(action: string, error: unknown) {
   return new ServiceUnavailableError({
@@ -64,6 +69,20 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
         })
 
       return PluginCapability.Service.of({
+        runtime: () =>
+          Effect.gen(function* () {
+            const skills = yield* SkillV2.Service
+            const commands = yield* CommandV2.Service
+            const mcp = yield* MCP.Service
+            const plugins = yield* PluginV2.Service
+            const descriptors = yield* run("Reading plugin runtime descriptors", () => manager.runtimeDescriptors())
+            return runtimeSnapshot(descriptors, {
+              skills: yield* skills.list(),
+              commands: yield* commands.list(),
+              mcp: yield* mcp.status(),
+              plugins: yield* plugins.status(),
+            })
+          }),
         list: () => run("Listing plugins", () => manager.list()),
         addMarketplace: (source) => mutate("Adding marketplace", () => manager.addMarketplace(source)),
         refreshMarketplace: (name) => mutate("Refreshing marketplace", () => manager.refreshMarketplace(name)),

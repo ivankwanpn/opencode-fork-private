@@ -46,6 +46,7 @@ function recordingLocationServiceMap(added: string[], removed: string[]) {
         removed.push(id)
       }),
     wait: () => Effect.void,
+    status: () => Effect.succeed({}),
   })
   return Layer.effect(
     LocationServiceMap.Service,

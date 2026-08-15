@@ -73,7 +73,7 @@ const makeApiFromGroup = <
     .add(ConfigGroup.middleware(locationMiddleware))
     .add(WorkspaceGroup.middleware(locationMiddleware))
     .add(ControlPlaneGroup)
-    .add(PluginGroup)
+    .add(PluginGroup.middleware(locationMiddleware))
     .add(eventGroup)
     .add(PtyGroup.middleware(locationMiddleware))
     .add(makeQuestionGroup(locationMiddleware, sessionLocationMiddleware))

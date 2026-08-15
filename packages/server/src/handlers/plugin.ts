@@ -1,12 +1,14 @@
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
+import { response } from "../location"
 import { PluginCapability } from "../plugin-capability"
 
 export const PluginHandler = HttpApiBuilder.group(Api, "server.plugins", (handlers) =>
   Effect.gen(function* () {
     const plugins = yield* PluginCapability.Service
     return handlers
+      .handle("plugins.runtime", () => response(plugins.runtime()))
       .handle("plugins.list", () => plugins.list())
       .handle("plugins.marketplace.add", (ctx) => plugins.addMarketplace(ctx.payload.source))
       .handle("plugins.marketplace.refresh", (ctx) => plugins.refreshMarketplace(ctx.payload.name))

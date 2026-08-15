@@ -1,6 +1,9 @@
+import { Location } from "@opencode-ai/schema/location"
+import { RuntimeSnapshot } from "@opencode-ai/schema/plugin"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { ServiceUnavailableError } from "../errors"
+import { LocationQuery, locationQueryOpenApi } from "./location"
 
 export const Marketplace = Schema.Struct({
   name: Schema.String,
@@ -33,6 +36,13 @@ const NamePayload = Schema.Struct({ name: Schema.String })
 const PluginPayload = Schema.Struct({ id: Schema.String })
 
 export const PluginGroup = HttpApiGroup.make("server.plugins")
+  .add(
+    HttpApiEndpoint.get("plugins.runtime", "/api/plugins/runtime", {
+      query: LocationQuery,
+      success: Location.response(RuntimeSnapshot),
+      error: ServiceUnavailableError,
+    }).annotateMerge(locationQueryOpenApi),
+  )
   .add(
     HttpApiEndpoint.get("plugins.list", "/api/plugins", {
       success: Catalog,

@@ -7290,6 +7290,31 @@ export type ControlPlaneMoveSessionInput = {
 
 export type ControlPlaneMoveSessionOutput = void
 
+export type ServerPluginsRuntimeInput = {
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type ServerPluginsRuntimeOutput = {
+  readonly location: {
+    readonly directory: string
+    readonly workspaceID?: string
+    readonly project: { readonly id: string; readonly directory: string }
+  }
+  readonly data: {
+    readonly plugins: ReadonlyArray<{
+      readonly id: string
+      readonly state: "disabled" | "initializing" | "ready" | "degraded" | "failed"
+      readonly capabilities: ReadonlyArray<{
+        readonly name: "skills" | "commands" | "mcp" | "plugin" | "tools"
+        readonly state: "disabled" | "pending" | "ready" | "failed"
+        readonly message?: string | null
+      }>
+    }>
+  }
+}
+
 export type ServerPluginsListOutput = {
   readonly marketplaces: ReadonlyArray<{
     readonly name: string

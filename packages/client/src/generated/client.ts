@@ -197,6 +197,8 @@ import type {
   WorkspacesWarpOutput,
   ControlPlaneMoveSessionInput,
   ControlPlaneMoveSessionOutput,
+  ServerPluginsRuntimeInput,
+  ServerPluginsRuntimeOutput,
   ServerPluginsListOutput,
   ServerPluginsAddInput,
   ServerPluginsAddOutput,
@@ -1681,6 +1683,18 @@ export function make(options: ClientOptions) {
         ),
     },
     "server.plugins": {
+      runtime: (input?: ServerPluginsRuntimeInput, requestOptions?: RequestOptions) =>
+        request<ServerPluginsRuntimeOutput>(
+          {
+            method: "GET",
+            path: `/api/plugins/runtime`,
+            query: { location: input?.["location"] },
+            successStatus: 200,
+            declaredStatuses: [503, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
       list: (requestOptions?: RequestOptions) =>
         request<ServerPluginsListOutput>(
           { method: "GET", path: `/api/plugins`, successStatus: 200, declaredStatuses: [503, 401, 400], empty: false },

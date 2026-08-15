@@ -5,7 +5,13 @@ import { pathToFileURL } from "node:url"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap, type LocationServices } from "@opencode-ai/core/location-services"
 import { EventV2 } from "@opencode-ai/core/event"
+import { CommandV2 } from "@opencode-ai/core/command"
+import { MCP } from "@opencode-ai/core/mcp"
+import { PluginV2 } from "@opencode-ai/core/plugin"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { SkillV2 } from "@opencode-ai/core/skill"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
+import { Plugin } from "@opencode-ai/schema/plugin"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, LayerMap } from "effect"
 import { Config } from "../config/config"
@@ -173,6 +179,70 @@ describe("ClaudeMarketplaceManager", () => {
 })
 
 describe("NativeClaudeMarketplace", () => {
+  test("projects enabled marketplace contributions from Location runtime services", async () => {
+    const marketplace = path.join(temporaryDirectory, "source")
+    await writeMarketplace(marketplace, "./plugins/demo")
+    const manager = new ClaudeMarketplaceManager(testPaths())
+    await manager.addMarketplace(marketplace)
+    await manager.install("demo@local-marketplace")
+
+    const config = Layer.mock(Config.Service, {})
+    const locations = Layer.effect(
+      LocationServiceMap.Service,
+      Effect.map(
+        LayerMap.make((_ref: Location.Ref) => Layer.empty as Layer.Layer<LocationServices>, {
+          idleTimeToLive: "1 minute",
+        }),
+        (map) => LocationServiceMap.Service.of(map),
+      ),
+    )
+    const events = Layer.mock(EventV2.Service, {})
+    const capability = NativeClaudeMarketplace.layerWith(manager).pipe(
+      Layer.provide(Layer.mergeAll(config, locations, events)),
+    )
+    const observations = Layer.mergeAll(
+      Layer.mock(SkillV2.Service, {
+        list: () =>
+          Effect.succeed([
+            {
+              name: "demo",
+              location: AbsolutePath.make(
+                path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo", "demo", "SKILL.md"),
+              ),
+              content: "Demo skill",
+            },
+          ]),
+      }),
+      Layer.mock(CommandV2.Service, {
+        list: () =>
+          Effect.succeed([{ name: "claude/local-marketplace__demo/demo", template: "Demo command" }]),
+      }),
+      Layer.mock(MCP.Service, {
+        status: () => Effect.succeed({ "claude:local-marketplace:demo:demo": { status: "connected" } }),
+      }),
+      Layer.mock(PluginV2.Service, { status: () => Effect.succeed({}) }),
+    )
+
+    const result = await Effect.runPromise(
+      PluginCapability.Service.use((plugins) => plugins.runtime()).pipe(
+        Effect.provide(capability),
+        Effect.provide(observations),
+      ),
+    )
+
+    expect(result.plugins).toEqual([
+      {
+        id: Plugin.ID.make("demo@local-marketplace"),
+        state: "ready",
+        capabilities: [
+          { name: "skills", state: "ready" },
+          { name: "commands", state: "ready" },
+          { name: "mcp", state: "ready" },
+        ],
+      },
+    ])
+  })
+
   test("invalidates V2 locations after managed MCP changes", async () => {
     const marketplace = path.join(temporaryDirectory, "source")
     await writeMarketplace(marketplace, "./plugins/demo")

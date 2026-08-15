@@ -50,7 +50,37 @@ test("exposes every standard HTTP API group", () => {
   ])
   expect(Object.keys(client.files)).toEqual(["read", "list", "find"])
   expect(Object.keys(client.ptys)).toEqual(["shells", "list", "create", "get", "update", "remove"])
-  expect(Object.keys(client.providers)).toEqual(["catalog", "list", "get", "discoverCustom", "configureCustom"])
+  expect(Object.keys(client.providers)).toEqual([
+    "catalog",
+    "list",
+    "get",
+    "discoverModels",
+    "disconnect",
+    "discoverCustom",
+    "configureCustom",
+    "disconnectCustom",
+  ])
+})
+
+test("plugin runtime uses the Location-aware HTTP contract", async () => {
+  const requests: string[] = []
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:3000",
+    fetch: async (input) => {
+      requests.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
+      return Response.json({
+        location: { directory: "/tmp/project", project: { id: "project", directory: "/tmp/project" } },
+        data: { plugins: [] },
+      })
+    },
+  })
+
+  expect(await client["server.plugins"].runtime({ location: { directory: "/tmp/project" } })).toMatchObject({
+    data: { plugins: [] },
+  })
+  expect(requests).toEqual([
+    "http://localhost:3000/api/plugins/runtime?location%5Bdirectory%5D=%2Ftmp%2Fproject",
+  ])
 })
 
 test("project and path methods use the v2 HTTP contract", async () => {

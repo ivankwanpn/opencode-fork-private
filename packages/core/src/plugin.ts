@@ -1,7 +1,7 @@
 export * as PluginV2 from "./plugin"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Deferred, Effect, Exit, Layer, Scope } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Layer, Scope } from "effect"
 import type { Plugin as PluginRuntime } from "@opencode-ai/plugin/v2/effect"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import { AgentV2 } from "./agent"
@@ -25,6 +25,7 @@ export interface Interface {
   readonly add: (id: ID, effect: PluginRuntime["effect"]) => Effect.Effect<void>
   readonly remove: (id: ID) => Effect.Effect<void>
   readonly wait: (id: ID) => Effect.Effect<void>
+  readonly status: () => Effect.Effect<Readonly<Record<string, Plugin.LoadStatus>>>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/Plugin") {}
@@ -131,6 +132,25 @@ const layer = Layer.effect(
       )
     })
 
+    const status = Effect.fn("Plugin.status")(function* () {
+      return Object.fromEntries(
+        Array.from(new Set([...loading, ...active.keys(), ...failures.keys()]))
+          .toSorted()
+          .map((id) => {
+            if (loading.has(id)) return [id, { state: "initializing" as const }]
+            if (active.has(id)) return [id, { state: "ready" as const }]
+            const failure = failures.get(id)
+            return [
+              id,
+              {
+                state: "failed" as const,
+                ...(failure && Exit.isFailure(failure) ? { message: Cause.pretty(failure.cause) } : {}),
+              },
+            ]
+          }),
+      )
+    })
+
     yield* Effect.addFinalizer((exit) =>
       Effect.gen(function* () {
         active.clear()
@@ -142,6 +162,7 @@ const layer = Layer.effect(
       add,
       remove,
       wait,
+      status,
     })
     host = yield* PluginHost.make(service)
     return service

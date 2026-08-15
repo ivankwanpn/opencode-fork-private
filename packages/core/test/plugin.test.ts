@@ -29,6 +29,52 @@ function mutable<Value>(initial: Value) {
 }
 
 describe("PluginV2", () => {
+  it.effect("reports a plugin as initializing until activation completes", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const started = yield* Deferred.make<void>()
+      const gate = yield* Deferred.make<void>()
+      const id = PluginV2.ID.make("status-loading")
+      const loading = yield* plugins
+        .add(id, () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(gate))))
+        .pipe(Effect.forkChild)
+
+      yield* Deferred.await(started)
+      expect((yield* plugins.status())[id]).toEqual({ state: "initializing" })
+
+      yield* Deferred.succeed(gate, undefined)
+      yield* Fiber.join(loading)
+      expect((yield* plugins.status())[id]).toEqual({ state: "ready" })
+    }),
+  )
+
+  it.effect("retains a failed activation as inspectable runtime state", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const id = PluginV2.ID.make("status-failed")
+
+      yield* plugins.add(id, () => Effect.die("boom")).pipe(Effect.exit)
+
+      expect((yield* plugins.status())[id]).toMatchObject({
+        state: "failed",
+        message: expect.stringContaining("boom"),
+      })
+    }),
+  )
+
+  it.effect("removes runtime state when a plugin is removed", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const id = PluginV2.ID.make("status-removed")
+
+      yield* plugins.add(id, () => Effect.void)
+      expect((yield* plugins.status())[id]).toEqual({ state: "ready" })
+      yield* plugins.remove(id)
+
+      expect((yield* plugins.status())[id]).toBeUndefined()
+    }),
+  )
+
   it.effect("waits for a plugin and returns immediately once active", () =>
     Effect.gen(function* () {
       const plugins = yield* PluginV2.Service

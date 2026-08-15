@@ -1,12 +1,14 @@
 # Plugin Runtime Readiness Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]` / `- [x]`) syntax for tracking.
 
 **Goal:** Make the Plugin settings page distinguish catalog loading, empty, failed, and stale states, and report Location-scoped runtime readiness from actual Skill, Command, MCP, and PluginV2 observations.
 
 **Architecture:** Keep `/api/plugins` as the global marketplace and installation catalog, then add a separate Location-aware `/api/plugins/runtime` projection. The native Claude marketplace capability supplies expected contributions, Core services supply observed contributions, and the App retains the last successful snapshots while rejecting stale server, protocol-generation, location, and request results.
 
 **Tech Stack:** TypeScript, Effect 4, Effect HttpApi, SolidJS, Bun test, generated `@opencode-ai/client`, App i18n dictionaries.
+
+**Verified:** 2026-08-15 on branch `888.0.18`. Focused suites passed with Core 9, OpenCode 40, Client 11, and App 20 tests; generated-client drift and all seven affected package typechecks exited 0. The next independent plan is `docs/superpowers/plans/2026-08-15-canonical-tool-catalog.md`.
 
 ## Global Constraints
 
@@ -69,7 +71,7 @@
 - Consumes: the existing `Plugin.ID`, PluginV2 `active`, `loading`, and `failures` collections.
 - Produces: `Plugin.LoadStatus`, `Plugin.RuntimeCapability`, `Plugin.RuntimeInfo`, `Plugin.RuntimeSnapshot`, and `PluginV2.Interface.status(): Effect.Effect<Readonly<Record<string, Plugin.LoadStatus>>>`.
 
-- [ ] **Step 1: Write failing PluginV2 status tests**
+- [x] **Step 1: Write failing PluginV2 status tests**
 
 Add tests which hold an activation with a `Deferred`, inspect it while loading, inspect a successful activation, inspect `Effect.die("boom")`, and verify removal deletes the entry:
 
@@ -97,7 +99,7 @@ it.effect("reports initializing, ready, failed, and removed plugins", () =>
 )
 ```
 
-- [ ] **Step 2: Run the focused Core test and confirm failure**
+- [x] **Step 2: Run the focused Core test and confirm failure**
 
 Run from `packages/core`:
 
@@ -107,7 +109,7 @@ bun test test/plugin.test.ts
 
 Expected: FAIL because `PluginV2.Interface` has no `status` method.
 
-- [ ] **Step 3: Add the shared schemas**
+- [x] **Step 3: Add the shared schemas**
 
 Extend `packages/schema/src/plugin.ts` with these exact public shapes:
 
@@ -152,7 +154,7 @@ export type RuntimeSnapshot = typeof RuntimeSnapshot.Type
 
 Export `Plugin` from `packages/schema/src/index.ts` alongside the other namespaces.
 
-- [ ] **Step 4: Implement a side-effect-free PluginV2 status snapshot**
+- [x] **Step 4: Implement a side-effect-free PluginV2 status snapshot**
 
 Add `status` to `PluginV2.Interface` and implement it by copying current state. Precedence is `loading`, then `active`, then `failures`; failed messages use Effect's rendered cause and never expose the mutable maps:
 
@@ -183,7 +185,7 @@ const status = Effect.fn("Plugin.status")(function* () {
 
 Import `Cause`, return `status` from the service, and keep `add`, `remove`, and `wait` behavior unchanged.
 
-- [ ] **Step 5: Run Core tests and typecheck**
+- [x] **Step 5: Run Core tests and typecheck**
 
 Run from `packages/core`:
 
@@ -194,7 +196,7 @@ bun typecheck
 
 Expected: both commands exit 0.
 
-- [ ] **Step 6: Commit the runtime vocabulary**
+- [x] **Step 6: Commit the runtime vocabulary**
 
 ```powershell
 git add packages/schema/src/plugin.ts packages/schema/src/index.ts packages/core/src/plugin.ts packages/core/test/plugin.test.ts
@@ -215,7 +217,7 @@ git commit -m "feat(core): expose plugin runtime status"
 - Consumes: `Plugin.RuntimeSnapshot`, catalog entries, installed artifact directories, `SkillV2.Info[]`, `CommandV2.Info[]`, `MCP.Status`, and `Plugin.LoadStatus`.
 - Produces: `ClaudeMarketplaceManager.runtimeDescriptors(): Promise<RuntimeDescriptor[]>` and `runtimeSnapshot(descriptors, observations): Plugin.RuntimeSnapshot`.
 
-- [ ] **Step 1: Write failing descriptor and reducer tests**
+- [x] **Step 1: Write failing descriptor and reducer tests**
 
 Extend the marketplace install test to assert:
 
@@ -244,7 +246,7 @@ expect(runtimeSnapshot([enabled], failedObservations).plugins[0]?.state).toBe("f
 
 Also assert that MCP `needs_auth`, `needs_client_registration`, `disabled`, and `failed` become capability `failed`, while an absent expected MCP server remains `pending`.
 
-- [ ] **Step 2: Run focused OpenCode tests and confirm failure**
+- [x] **Step 2: Run focused OpenCode tests and confirm failure**
 
 Run from `packages/opencode`:
 
@@ -254,7 +256,7 @@ bun test src/plugin/claude-marketplace.test.ts src/plugin/runtime-readiness.test
 
 Expected: FAIL because the descriptor and reducer do not exist.
 
-- [ ] **Step 3: Implement deterministic marketplace descriptors**
+- [x] **Step 3: Implement deterministic marketplace descriptors**
 
 Export this type from `claude-marketplace.ts`:
 
@@ -283,7 +285,7 @@ Add `runtimeDescriptors()` to the manager. It must:
 
 When a plugin is disabled, keep its declared capabilities but omit active artifact paths/names so the reducer produces `disabled` without treating missing artifacts as failures.
 
-- [ ] **Step 4: Implement the pure readiness reducer**
+- [x] **Step 4: Implement the pure readiness reducer**
 
 Create these observation and reduction boundaries:
 
@@ -313,7 +315,7 @@ Use exact capability rules:
 
 Use `path.relative` for directory containment and reject `..`, `..${path.sep}`, and absolute relative results.
 
-- [ ] **Step 5: Run focused OpenCode tests and typecheck**
+- [x] **Step 5: Run focused OpenCode tests and typecheck**
 
 Run from `packages/opencode`:
 
@@ -324,7 +326,7 @@ bun typecheck
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit descriptor and reduction behavior**
+- [x] **Step 6: Commit descriptor and reduction behavior**
 
 ```powershell
 git add packages/opencode/src/plugin/claude-marketplace.ts packages/opencode/src/plugin/claude-marketplace.test.ts packages/opencode/src/plugin/runtime-readiness.ts packages/opencode/src/plugin/runtime-readiness.test.ts
@@ -350,7 +352,7 @@ git commit -m "feat(plugin): model runtime readiness"
 - Consumes: `runtimeDescriptors()`, `runtimeSnapshot(...)`, Location middleware, `SkillV2.Service`, `CommandV2.Service`, `MCP.Service`, and `PluginV2.Service`.
 - Produces: `GET /api/plugins/runtime?location[directory]=...`, returning `Location.response(Plugin.RuntimeSnapshot)`, and `client["server.plugins"].runtime(input)`.
 
-- [ ] **Step 1: Write failing native capability and Promise client tests**
+- [x] **Step 1: Write failing native capability and Promise client tests**
 
 In the native capability test, provide mocked Location-scoped services and assert that `plugins.runtime()` returns a ready `demo@local-marketplace` snapshot after installation.
 
@@ -379,7 +381,7 @@ test("plugin runtime uses the Location-aware HTTP contract", async () => {
 })
 ```
 
-- [ ] **Step 2: Run tests and confirm the missing API**
+- [x] **Step 2: Run tests and confirm the missing API**
 
 Run from `packages/opencode`:
 
@@ -395,7 +397,7 @@ bun test test/promise.test.ts
 
 Expected: FAIL because `runtime` is not in the capability or generated client.
 
-- [ ] **Step 3: Declare the Protocol endpoint and Server capability**
+- [x] **Step 3: Declare the Protocol endpoint and Server capability**
 
 In `groups/plugin.ts`, import `Plugin` from Schema plus `LocationQuery` and `locationQueryOpenApi`, then add:
 
@@ -421,7 +423,7 @@ readonly runtime: () => Effect.Effect<
 
 The unavailable layer returns `{ plugins: [] }`; it must not label absent host support as a ready installed plugin.
 
-- [ ] **Step 4: Implement the native Location projection and handler**
+- [x] **Step 4: Implement the native Location projection and handler**
 
 Implement `runtime` in `native-claude-marketplace.ts` as one Effect:
 
@@ -450,7 +452,7 @@ Handle the endpoint with:
 
 Do not cache the projection in the global capability; LocationServiceMap owns the lifecycle of the observed services.
 
-- [ ] **Step 5: Regenerate clients and update generated-client assertions**
+- [x] **Step 5: Regenerate clients and update generated-client assertions**
 
 Run from `packages/client`:
 
@@ -460,7 +462,7 @@ bun run generate
 
 Keep all generator output. Add `runtime` to the expected `server.plugins` method list if the generated-client inventory test asserts method names.
 
-- [ ] **Step 6: Run API tests and typechecks**
+- [x] **Step 6: Run API tests and typechecks**
 
 Run from `packages/client`:
 
@@ -483,7 +485,7 @@ bun test src/plugin/claude-marketplace.test.ts
 
 Expected: every command exits 0.
 
-- [ ] **Step 7: Commit the Location runtime endpoint**
+- [x] **Step 7: Commit the Location runtime endpoint**
 
 ```powershell
 git add packages/protocol/src/groups/plugin.ts packages/protocol/src/api.ts packages/server/src/plugin-capability.ts packages/server/src/handlers/plugin.ts packages/opencode/src/plugin/native-claude-marketplace.ts packages/opencode/src/plugin/claude-marketplace.test.ts packages/client/src/generated packages/client/src/generated-effect packages/client/test/promise.test.ts
@@ -502,7 +504,7 @@ git commit -m "feat(plugin): expose location runtime readiness"
 - Consumes: monotonically increasing request IDs plus success/failure results.
 - Produces: `PluginLoadState<T>`, `beginPluginLoad`, `resolvePluginLoad`, and `rejectPluginLoad`.
 
-- [ ] **Step 1: Write failing reducer tests**
+- [x] **Step 1: Write failing reducer tests**
 
 Cover these transitions:
 
@@ -527,7 +529,7 @@ expect(resolvePluginLoad({ state: "loading", request: 2 }, 1, oldCatalog)).toEqu
 
 Also verify a first-load failure is `{ state: "failed", error }`, beginning a refresh preserves the prior value, and stale rejection does not replace a newer request.
 
-- [ ] **Step 2: Run the focused App test and confirm failure**
+- [x] **Step 2: Run the focused App test and confirm failure**
 
 Run from `packages/app`:
 
@@ -537,7 +539,7 @@ bun test --conditions=browser --preload ./happydom.ts ./src/components/settings-
 
 Expected: FAIL because the reducer module does not exist.
 
-- [ ] **Step 3: Implement the discriminated resource state**
+- [x] **Step 3: Implement the discriminated resource state**
 
 Use this exact public union:
 
@@ -553,7 +555,7 @@ export type PluginLoadState<T> =
 
 `beginPluginLoad` increments only through the caller-provided request ID, preserves the last value for `ready`, `refreshing`, and `stale`, and otherwise enters `loading`. Resolve and reject return the current state unchanged when `request !== current.request`.
 
-- [ ] **Step 4: Run the reducer test and App typecheck**
+- [x] **Step 4: Run the reducer test and App typecheck**
 
 Run from `packages/app`:
 
@@ -564,7 +566,7 @@ bun typecheck
 
 Expected: both commands exit 0.
 
-- [ ] **Step 5: Commit the request-state boundary**
+- [x] **Step 5: Commit the request-state boundary**
 
 ```powershell
 git add packages/app/src/components/settings-v2/plugin-load-state.ts packages/app/src/components/settings-v2/plugin-load-state.test.ts
@@ -587,7 +589,7 @@ git commit -m "feat(app): add stale-safe plugin loading state"
 - Consumes: `PluginLoadState<Catalog>`, `PluginLoadState<LocationResponse<Plugin.RuntimeSnapshot>>`, `sdk().protocolGeneration()`, the active SDK object, and the active directory.
 - Produces: a page which never displays false empty/readiness states and preserves the last successful view during refresh failures.
 
-- [ ] **Step 1: Expand status and DOM regressions before changing the component**
+- [x] **Step 1: Expand status and DOM regressions before changing the component**
 
 Replace the MCP-only status tests with `pluginRuntimePresentation(...)` tests that assert:
 
@@ -608,7 +610,7 @@ expect(document.body.textContent).toContain("plugin.catalog.empty")
 
 Add the smoke test as a second isolated Bun child process in `plugins-context.test.ts` so `mock.module` does not leak into other tests.
 
-- [ ] **Step 2: Run the focused App regressions and confirm failure**
+- [x] **Step 2: Run the focused App regressions and confirm failure**
 
 Run from `packages/app`:
 
@@ -618,7 +620,7 @@ bun test --conditions=browser --preload ./happydom.ts ./src/components/settings-
 
 Expected: FAIL because the component still initializes the catalog as an empty success and has no runtime endpoint state.
 
-- [ ] **Step 3: Drive independent catalog and runtime requests**
+- [x] **Step 3: Drive independent catalog and runtime requests**
 
 In `plugins.tsx`:
 
@@ -638,7 +640,7 @@ The runtime request must call:
 api.plugins.runtime({ location: { directory } })
 ```
 
-- [ ] **Step 4: Render loading, failed, stale, empty, filtered-empty, and runtime states**
+- [x] **Step 4: Render loading, failed, stale, empty, filtered-empty, and runtime states**
 
 Use these rules in `plugins.tsx`:
 
@@ -656,7 +658,7 @@ Do not read `mcp_ready` or derive plugin readiness directly from directory sync.
 
 Add `aria-live="polite"` to loading/stale/error status containers and keep Retry as a real button.
 
-- [ ] **Step 5: Add focused styles without changing the settings layout**
+- [x] **Step 5: Add focused styles without changing the settings layout**
 
 Extend the existing Plugin settings classes with:
 
@@ -676,7 +678,7 @@ Extend the existing Plugin settings classes with:
 
 Use existing design tokens present in `settings-v2.css`; if one of these exact token names is absent, select the existing warning/critical token from the same file instead of introducing a raw color.
 
-- [ ] **Step 6: Run focused App tests and typecheck**
+- [x] **Step 6: Run focused App tests and typecheck**
 
 Run from `packages/app`:
 
@@ -687,7 +689,7 @@ bun typecheck
 
 Expected: every command exits 0.
 
-- [ ] **Step 7: Commit the truthful Plugin UI state machine**
+- [x] **Step 7: Commit the truthful Plugin UI state machine**
 
 ```powershell
 git add packages/app/src/components/settings-v2/plugins.tsx packages/app/src/components/settings-v2/plugin-runtime-status.ts packages/app/src/components/settings-v2/plugin-runtime-status.test.ts packages/app/src/components/settings-v2/plugins-loading.smoke.tsx packages/app/src/components/settings-v2/plugins-context.test.ts packages/app/src/components/settings-v2/settings-v2.css
@@ -723,7 +725,7 @@ git commit -m "fix(app): show truthful plugin loading state"
 - Consumes: the App `language.t(key)` contract.
 - Produces: nonempty, parity-checked translations for every new Plugin state key.
 
-- [ ] **Step 1: Add a failing targeted key-presence test**
+- [x] **Step 1: Add a failing targeted key-presence test**
 
 Add this constant to `parity.test.ts`:
 
@@ -750,7 +752,7 @@ const pluginRuntimeKeys = [
 
 For every App locale including English, assert each value exists and `trim()` is nonempty.
 
-- [ ] **Step 2: Run parity tests and confirm failure**
+- [x] **Step 2: Run parity tests and confirm failure**
 
 Run from `packages/app`:
 
@@ -760,7 +762,7 @@ bun test --conditions=browser --preload ./happydom.ts ./src/i18n/parity.test.ts
 
 Expected: FAIL listing the missing Plugin keys.
 
-- [ ] **Step 3: Add English, Simplified Chinese, and Traditional Chinese copy**
+- [x] **Step 3: Add English, Simplified Chinese, and Traditional Chinese copy**
 
 Use these exact English values:
 
@@ -785,11 +787,11 @@ Use these exact English values:
 
 Use native Simplified and Traditional Chinese translations in `zh.ts` and `zht.ts`. Add accurate native translations for the other locales; do not leave empty strings, copied key names, or delete existing locale keys.
 
-- [ ] **Step 4: Replace all new Plugin page literals with i18n lookups**
+- [x] **Step 4: Replace all new Plugin page literals with i18n lookups**
 
 Verify `plugins.tsx` uses `language.t(...)` for every loading, empty, filtered-empty, stale, Retry, runtime state, and capability label introduced by Tasks 4–5. Server diagnostic messages remain data and are displayed as supplemental safe text.
 
-- [ ] **Step 5: Run i18n, component, and typecheck verification**
+- [x] **Step 5: Run i18n, component, and typecheck verification**
 
 Run from `packages/app`:
 
@@ -800,7 +802,7 @@ bun typecheck
 
 Expected: every command exits 0.
 
-- [ ] **Step 6: Commit localized Plugin readiness copy**
+- [x] **Step 6: Commit localized Plugin readiness copy**
 
 ```powershell
 git add packages/app/src/i18n packages/app/src/components/settings-v2/plugins.tsx
@@ -819,7 +821,7 @@ git commit -m "feat(app): localize plugin readiness states"
 - Consumes: all deliverables from Tasks 1–6.
 - Produces: a verified first tranche and an explicit handoff boundary for the canonical Tool Catalog plan.
 
-- [ ] **Step 1: Run generated-code drift verification**
+- [x] **Step 1: Run generated-code drift verification**
 
 Run from `packages/client`:
 
@@ -829,7 +831,7 @@ bun run check:generated
 
 Expected: exit 0 with no generated client diff.
 
-- [ ] **Step 2: Run focused tests package by package**
+- [x] **Step 2: Run focused tests package by package**
 
 Run from `packages/core`:
 
@@ -857,7 +859,7 @@ bun test --conditions=browser --preload ./happydom.ts ./src/i18n/parity.test.ts 
 
 Expected: all focused suites pass.
 
-- [ ] **Step 3: Run all affected package typechecks**
+- [x] **Step 3: Run all affected package typechecks**
 
 Run `bun typecheck` separately from each directory:
 
@@ -873,7 +875,7 @@ packages/app
 
 Expected: all seven typechecks exit 0.
 
-- [ ] **Step 4: Inspect the final diff and protected paths**
+- [x] **Step 4: Inspect the final diff and protected paths**
 
 Run from the repository root:
 
@@ -885,7 +887,7 @@ git diff --stat 12338c50de205a6ce963e723b4548b8535d0e616..HEAD
 
 Expected: `git diff --check` exits 0; `docs/superpowers/handoffs/` is still the only unrelated untracked path; no runtime artifact, database, cache, or secret file is staged.
 
-- [ ] **Step 5: Mark the tranche complete and name the next plan**
+- [x] **Step 5: Mark the tranche complete and name the next plan**
 
 Update the design status to state that Plugin readiness is implemented and that the next independent document is:
 
@@ -895,7 +897,7 @@ docs/superpowers/plans/2026-08-15-canonical-tool-catalog.md
 
 Check off completed steps in this plan. Do not claim Tool Search durability or provider-native behavior is complete; those remain separate plans.
 
-- [ ] **Step 6: Commit verification documentation**
+- [x] **Step 6: Commit verification documentation**
 
 ```powershell
 git add docs/superpowers/specs/2026-08-11-provider-native-tool-search-design.md docs/superpowers/plans/2026-08-15-plugin-runtime-readiness.md

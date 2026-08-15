@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：設計已確認；`888.0.18` 依分批 implementation plan 實作中
+> 狀態：Plugin runtime readiness 第一批已實作並驗證；`888.0.18` 下一批為 canonical Tool Catalog
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`
@@ -647,7 +647,7 @@ Generic：
 - [x] 核對 Codex 結構化 output/BM25/native Responses 行為；
 - [x] 核對 Claude Code exact select/tool reference/MCP pending 行為；
 - [x] 更新 Plugin/MCP 已共用 V2 ToolRegistry 的失效假設；
-- [ ] 本設計確認後撰寫逐檔 TDD implementation plan。
+- [x] 本設計確認後撰寫逐檔 TDD implementation plan。
 
 ### Phase 1：Plugin readiness、Canonical catalog 與搜索服務
 

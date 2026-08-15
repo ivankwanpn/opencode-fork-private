@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、durable discovery、generic cross-drain fallback、OpenAI Responses 原生 Tool Search，以及跨 OS process restart recovery；Anthropic native 與其餘 hardening 尚未完成
+> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、全協議 generic fallback、durable discovery、OpenAI Responses 原生 Tool Search、跨 OS process restart recovery，以及 subagent grant intersection；MCP reconnect/late-load、selection budget 與 observability 尚未完成
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`
@@ -9,16 +9,16 @@
 
 ## 1. 文件目的
 
-目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。OpenAI OAuth 經 ChatGPT Codex endpoint 解析出的 Responses route 已能使用原生 `tool_search`／`tool_search_output`，並由三輪 V2 Session regression 驗證不會把已發現工具重新注入普通 definitions。另有兩個完全獨立的 Bun OS processes 共用同一 SQLite 檔案：第一個完成搜索並退出，第二個建立全新 V2 runtime 後恢復相同 `tool_search_call`／`tool_search_output` 配對與 discovered spec。Anthropic 原生協議仍待後續 phase。
+目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。OpenAI OAuth 經 ChatGPT Codex endpoint 解析出的 Responses route 已能使用原生 `tool_search`／`tool_search_output`，並由三輪 V2 Session regression 驗證不會把已發現工具重新注入普通 definitions。另有兩個完全獨立的 Bun OS processes 共用同一 SQLite 檔案：第一個完成搜索並退出，第二個建立全新 V2 runtime 後恢復相同 `tool_search_call`／`tool_search_output` 配對與 discovered spec。所有 active LLM protocol lowerer 都能把同一 semantic search 降級成普通 function/custom tool，因此原生 wire 只是透明優化，不是功能開關。
 
-本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery、generic cross-drain fallback、OpenAI Responses native adapter 與 child-OS-process runner 回歸；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`、`docs/superpowers/plans/2026-08-15-openai-responses-native-tool-search.md` 與 `docs/superpowers/plans/2026-08-15-native-tool-search-process-restart.md`。後續工作應依序補 Anthropic native adapter、自動 capability downgrade 持久化，以及 MCP／subagent hardening。
+本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery、generic cross-drain fallback、OpenAI Responses native adapter、child-OS-process runner 回歸與 subagent grant intersection；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`、`docs/superpowers/plans/2026-08-15-openai-responses-native-tool-search.md` 與 `docs/superpowers/plans/2026-08-15-native-tool-search-process-restart.md`。後續必做工作集中在 MCP reconnect/late-load、selected-tool budget 與 observability；Anthropic native adapter 降為可選的協議效率優化。
 
 核心決策是：
 
 1. 以 Codex 的結構化搜索結果、BM25、namespace 和 OpenAI Responses 原生 `tool_search_output` 為主要架構參考。
-2. 以 Claude Code 的 deferred-tool 生命週期、`tool_reference`、MCP pending 狀態、相容性門控和錯誤恢復為運行參考。
+2. 以 Codex 的「native 不能降低 generic 能力」原則處理 capability：原生 shape 無法表達請求時，該請求回退到 ordinary function lowering，而不是本地報錯。
 3. 不把任何 provider wire format 當成 OpenCode 真實狀態；已發現工具必須保存為 OpenCode V2 durable session record。
-4. OpenAI Responses、Anthropic Messages 和 generic provider 各自使用獨立 adapter，但共用同一份 canonical catalog、搜索服務和 durable discovery projection。
+4. 所有 provider adapter 共用同一份 canonical catalog、搜索服務和 durable discovery projection；只有已明確支援的 route 才選擇 native wire，其他全部走 ordinary tool fallback。
 
 ## 1.1 `999.0.17` 基線審計結果
 
@@ -58,9 +58,11 @@
 
 仍未完成且不得提前宣稱完成：
 
-- Anthropic Messages 原生 `tool_reference`／`defer_loading` adapter；
-- Anthropic provider-native history reconstruction，以及 capability negotiation 的自動 downgrade 持久化；
-- MCP reconnect/late-load 與 subagent grant intersection 的後續 hardening。
+- MCP reconnect/late-load 的完整恢復回歸；
+- durable selected-tool 總量 budget／eviction policy；
+- production V2 resolver 尚未接入的 Gemini／Bedrock provider family（屬 provider migration，不是 Tool Search lowering 缺口）；
+- Task 建立的 child Session 經 durable permission persistence、runner merge 與 catalog materialization 的整合回歸；
+- observability。Anthropic Messages 原生 `tool_reference`／`defer_loading` 可另做優化，但不再阻塞全模型 Tool Search 驗收。
 
 ## 1.3 方案比較與選擇
 
@@ -93,7 +95,7 @@
 
 ## 3. Phase 1 前 P5 的問題與目前邊界
 
-以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足、revision cache、process-local discovery、durable replay、compaction 與 OpenAI Responses provider-native wire 已在 `888.0.18` 修正；Anthropic native wire 與完整 process-restart 整合回歸仍未完成。
+以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足、revision cache、process-local discovery、durable replay、compaction、OpenAI Responses provider-native wire 與完整 process-restart 整合回歸已在 `888.0.18` 修正；Anthropic native wire 只保留為可選優化。
 
 - `packages/core/src/tool/tool-search.ts`
   - `Output` 是 `Schema.String`；
@@ -143,7 +145,7 @@
 - 假設所有 provider 都支援 Responses native Tool Search；
 - 把 Codex Apps 的 source 模型直接套到所有 Plugin/MCP。
 
-### 4.2 Claude Code 應吸收的部分
+### 4.2 Claude Code 可吸收的運行經驗
 
 參考：
 
@@ -158,11 +160,11 @@
 
 - `select:ToolA,ToolB` 精確選擇 fast path；
 - MCP tool name、server name、action name 和 `searchHint` 的搜索處理；
-- `tool_reference` Anthropic 原生結果；
+- `tool_reference` Anthropic 原生結果可作為未來 adapter 優化，但不是功能基線；
 - 已發現工具做 union，不因下一次搜索而撤銷前一次結果；
 - MCP server 尚在 connecting 時，把空結果視為暫時狀態；
-- 模型、provider route、beta header 和第三方 proxy 的 capability gate；
-- 不支援原生格式時退回 generic mode；
+- 原生 adapter 的 route／beta header／proxy compatibility 判定；
+- 原生格式不能完整表達請求時，該次請求退回 generic mode；
 - 模型直接調用未載入工具時，回覆 `select:<exact-name>` 的可操作錯誤；
 - catalog 變化時失效 description/search cache；
 - 對 deferred catalog 大小使用門檻，避免工具很少時多花一次搜索 round trip。
@@ -329,7 +331,7 @@ Projection 使用兩個明確用途的表：
 
 Compaction 只改變提供給模型的上下文，不刪除 durable discovery event。Session 恢復時，projection 從 event log 重建 active discovered set；不需要 Claude Code 的 `preCompactDiscoveredTools` 特殊欄位。
 
-既有 generic Tool Called/Success message 是 provider-neutral 的 search call/output carrier。Provider adapter 根據 tool-search semantic definition 與 typed structured result，將同一對 canonical tool call/result 映射成 `tool_search_output` 或 `tool_reference`；不把原始 provider SDK object存入 Core。
+既有 generic Tool Called/Success message 是 provider-neutral 的 search call/output carrier。Provider adapter 先以 ordinary tool call/result 保留完整語義；明確支援的原生 adapter 才根據 tool-search semantic definition 與 typed structured result 映射成 `tool_search_output`，未來也可以選擇映射成 `tool_reference`。原始 provider SDK object不得存入 Core。
 
 Compaction 後，history builder 必須保留或由 durable call projection重建仍 active 的 search call/result pair，讓 native provider 看得到 loadable spec。不能只恢復 `session_tool_discovery` 的 unlock set，卻丟掉 native provider 執行 deferred call 所需的 wire history。
 
@@ -351,17 +353,9 @@ Compaction 後，history builder 必須保留或由 durable call projection重�
 
 ### 9.2 Anthropic Messages
 
-能力可用時：
+必須基線是 generic ordinary-tool fallback：`tool_search` 與已發現 deferred definitions 都降低成普通 Anthropic custom tools，chronological `tool_use`／`tool_result` history 保持 provider-neutral discovery 語義。這條路徑不得依賴 model ID、官方 endpoint 或 beta header 白名單。
 
-- `tool_search` 仍可表現為 client-side tool；
-- 搜索結果映射為 `tool_result.content[].type = "tool_reference"`；
-- 對 deferred definitions 使用 Anthropic 支援的 `defer_loading`；
-- 添加正確 beta header；
-- 從 OpenCode durable projection決定哪些工具已發現，而不是掃描 SDK message object 作真實來源；
-- adapter 可掃描 provider history作一致性檢查，但不能取代 projection；
-- 不支援 `tool_reference` 的模型、route 或 proxy 必須改走 generic adapter。
-
-能力判定必須 fail closed。不能只用 model name 猜測後永久假定可用；provider／route 明確拒絕 beta block 時，應記錄安全的 capability downgrade。
+未來若加入 `tool_reference`／`defer_loading`，只能是 route 明確選擇的可選優化；原生 shape 無法表達 named choice、proxy 拒絕 beta 或 capability 不確定時，必須 request-local 回退 generic，不得讓原生模式比 generic 少功能。OpenCode durable projection仍是唯一真實來源，不能改成掃描 SDK message object。
 
 ### 9.3 Generic provider fallback
 
@@ -374,14 +368,14 @@ Compaction 後，history builder 必須保留或由 durable call projection重�
 - 如果模型直接調用未發現的 deferred tool，回覆：先執行 `tool_search`，使用 `select:<exact-name>`，然後重試；
 - 不應在同一 provider error 上無限自動重試 native／generic 模式。
 
-Generic fallback 是相容路徑，不應限制 OpenAI／Anthropic 原生路徑的資料模型。
+Generic fallback 是所有 production-supported V2 route 的功能基線，不是次等相容路徑；任何原生 adapter 都不得限制它的資料模型或減少可表達能力。Core 不使用 `ModelV2.capabilities.tools` 作為 Tool Search 的本地開關，因為 live discovery／custom model metadata 可能保守地預設為 false；若模型或上游實際不接受普通工具，讓 provider 回傳協議錯誤，不在送出前以不完整 catalog metadata 封鎖。
 
 ### 9.4 Protocol-neutral semantic carrier
 
 `LLMRequest.tools` 已加入 discriminated semantic tool spec（普通 function 與 tool-search），並以 `deferLoading`、`namespace` 與 typed `toolDiscoveries` 承載 provider-neutral discovery 語義，讓各 protocol mapper 都能看到同一個 `tool-search` 意圖：
 
 - OpenAI Responses lowering 成 provider-native `type: "tool_search"`；
-- Anthropic lowering 成帶 deferred semantics 的 client tool；
+- Anthropic／Gemini／Bedrock／OpenAI-compatible lowering 成普通 provider function/custom tool；
 - generic lowering 成普通 function definition。
 
 這不是把 provider wire format放進 Core，而是把「這是一個 discovery tool」表示為 provider-neutral semantic。不得靠名稱字串、任意 `native` record 或 providerID scattered checks 猜測。
@@ -414,7 +408,7 @@ Capability 的 ownership 分三層：
 2. resolved route/model capability 明確選擇 native、generic 或 disabled，並可因 proxy/base URL／feature override 降級；
 3. Session runner 只消費 resolved capability，不自行用 model name 或 providerID 猜測。
 
-第一個可執行 tranche 先完成 `generic-injection`，其後已打開 OpenAI Responses native adapter。OpenAI native capability 目前只在 OpenAI OAuth 經 `https://chatgpt.com/backend-api/codex` 解析出的 route 上 fail-closed 啟用；API key、自訂 endpoint、proxy 與僅手動選擇 Responses protocol 的模型仍使用 generic semantics。Anthropic native adapter 與 provider 拒絕後的自動 downgrade 持久化仍屬後續 phase。
+第一個可執行 tranche 先完成 `generic-injection`，其後已打開 OpenAI Responses native adapter。OpenAI native capability 目前只在 OpenAI OAuth 經 `https://chatgpt.com/backend-api/codex` 解析出的 route 上 fail-closed 啟用；API key、自訂 endpoint、proxy 與僅手動選擇 Responses protocol 的模型仍使用 generic semantics。若 named tool choice 等請求語義無法由 anonymous native search 表達，該次請求直接回退 generic。Anthropic native adapter不再是必要 phase。
 
 ## 11. MCP 與 Plugin 動態目錄
 
@@ -613,11 +607,12 @@ OpenAI Responses：
 -function 和 namespace 都可執行；
 -history normalization 保持 call/output 配對。
 
-Anthropic Messages：
+Anthropic Messages／Gemini／Bedrock／OpenAI-compatible／OpenRouter：
 
--正確 beta header；
--search result 是 `tool_reference`；-只有 active discovered deferred definitions 被發送；-不支援模型／proxy 使用 generic fallback；
--fallback 時 provider message 不殘留無效 `tool_reference`。
+-semantic search 與 selected deferred definition 都降低成 ordinary provider tools；
+-ordinary chronological tool call/result history 可承載搜索；
+-不依賴 model ID 或 provider 白名單；
+-native compatibility 缺失時不殘留 provider-specific search blocks。
 
 Generic：
 
@@ -685,19 +680,20 @@ Generic：
 - [x] history normalization，含 compaction 後由 durable record 合成缺失配對；
 - [x] 禁止 follow-up ordinary definition injection，並以三輪 V2 Session + 真實 Responses adapter regression 固定。
 
-### Phase 5：Anthropic native adapter
+### Optional Phase 5：Anthropic native adapter
 
 - [ ] `tool_reference`；
 - [ ] `defer_loading`；
 - [ ] beta headers 和 capability gate；
-- [ ] proxy/model fallback。
+- [x] 所有 production-supported V2 route 先有 generic ordinary-tool fallback；本 phase 不阻塞 universal Tool Search。
 
 ### Phase 6：MCP／Plugin／subagent hardening
 
 - [x] pending/ready/failed/disabled source publication 基礎；
 - [ ] catalog revision／reconnect 完整恢復；
 - [ ] 驗證 Plugin readiness 和 Tool Search source lifecycle 在 reconnect／late load／source replacement 時保持一致；
-- [ ] capability grant intersection；
+- [x] capability grant intersection 實作；明確 child tool grant 自動帶入 Session-scoped `tool_search` grant，目錄仍只包含授權交集；
+- [ ] 補真實 durable child Session → runner → catalog 的 permission intersection 整合回歸；目前 grant construction 與 catalog filtering 分別有單元測試；
 - [ ] observability；
 - [x] durable projection 完成後刪除過時 process-local discovery 真實來源；runner 只保留每 turn 的可重建快取。
 
@@ -706,8 +702,8 @@ Generic：
 只有以下條件全部成立，才能宣稱新 Tool Search 完成：
 
 1. OpenAI Responses 走原生 `tool_search_output`，follow-up 不普通注入 definitions。
-2. Anthropic 支援時走 `tool_reference`，不支援時安全退回 generic。
-3. 其他 provider 可以使用 generic fallback。
+2. 所有 production-supported V2 model 都能使用 provider-neutral Tool Search；沒有 model ID／provider 白名單。
+3. Anthropic Messages、OpenAI-compatible 與其他 active protocol adapter 使用 ordinary-tool generic fallback；provider-native wire 只是透明優化。
 4. 搜索結果是結構化 spec，不是純文字 JSON dump。
 5. 多次搜索累積，不互相覆蓋。
 6. 新 drain、restart 和 compaction 後 discovery 保留。
@@ -735,10 +731,11 @@ Generic：
 
 ## 19. 最終建議
 
-不要在 Codex 和 Claude Code 之間選擇單一整套移植：
+採用 Codex 架構作唯一主線：
 
-- Codex 適合定義搜索、結構化結果和 OpenAI Responses adapter；
-- Claude Code 適合定義 Anthropic adapter、deferred runtime 邊界和失敗恢復；
-- OpenCode V2 必須自己擁有 durable discovery state、catalog revision 和跨 provider projection。
+- provider-neutral semantic `tool_search` 是所有 production-supported V2 route 的共同功能；
+- OpenAI Responses native search 是可移除、可回退的 adapter 優化，不能成為功能閘門；
+- OpenCode V2 自己擁有 durable discovery state、catalog revision、permission intersection 和跨 provider projection；
+- 其他 provider 先使用穩定的 ordinary-tool lowering，只有在原生協議能完整保留 generic 語義時才增加專用 wire。
 
-如此才能同時得到原生協議效率、多 provider 相容性，以及與 V1 → V2 遷移方向一致的可恢復狀態模型。
+如此可以先保證目前 V2 生產路徑一致可用，再逐步接入其餘 provider family 並取得原生協議效率，同時維持 V1 → V2 遷移要求的可恢復狀態模型。

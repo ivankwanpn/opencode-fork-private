@@ -4,6 +4,7 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { Tool } from "@opencode-ai/core/tool/tool"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
@@ -27,6 +28,12 @@ const defTool = (name: string, description: string) =>
     "deferred",
   )
 
+const selectFrom = (materialized: ToolRegistry.Materialization, name: string) => {
+  const tool = materialized.catalog.tools.find((tool) => tool.callableName === name)
+  if (!tool) throw new Error(`Missing catalog tool: ${name}`)
+  return new Map([[tool.key, tool.definitionHash]])
+}
+
 describe("P5 tool_search dynamic loading", () => {
   it.effect("materialize injects searched deferred tools into definitions", () =>
     Effect.gen(function* () {
@@ -36,9 +43,10 @@ describe("P5 tool_search dynamic loading", () => {
         tool_b: defTool("tool_b", "Beta tool for chat history"),
       })
 
+      const initial = yield* registry.materialize()
       const materialized = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-        selected: new Set(["tool_a"]),
+        selected: selectFrom(initial, "tool_a"),
       })
       const names = (definitions: ReadonlyArray<{ name: string }>) => definitions.map((d) => d.name)
 
@@ -83,7 +91,7 @@ describe("P5 tool_search dynamic loading", () => {
 })
 
 describe("P5 searched-tool flow", () => {
-  it.effect("tool_search selection carries into the next materialization", () =>
+  it.effect("tool_search selections accumulate across materializations", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
       yield* registry.register({
@@ -91,13 +99,16 @@ describe("P5 searched-tool flow", () => {
         chat: defTool("chat", "Chat history search"),
       })
 
-      let selected = new Set<string>()
+      let selected = new Map<ToolCatalog.Key, string>()
+      const onSelect: NonNullable<ToolRegistry.MaterializationContext["onSelect"]> = (selections) => {
+        const current = new Map(selected)
+        for (const selection of selections) current.set(selection.key, selection.definitionHash)
+        selected = current
+      }
       const materialized = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
         selected,
-        onSelect: (names) => {
-          selected = new Set(names)
-        },
+        onSelect,
       })
 
       // model searches "calendar" → onSelect records the hit
@@ -108,21 +119,68 @@ describe("P5 searched-tool flow", () => {
         call: { type: "tool-call", id: "c1", name: "tool_search", input: { query: "calendar events" } },
       })
       expect(search.result.type).toBe("text")
-      expect(selected.has("calendar")).toBe(true)
-      expect(selected.has("chat")).toBe(false)
+      expect([...selected.values()]).toHaveLength(1)
 
-      // next materialization injects the searched tool into definitions
       const next = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
         selected,
-        onSelect: (names) => {
-          selected = new Set(names)
-        },
+        onSelect,
+      })
+      yield* next.settle({
+        sessionID: "ses_t" as never,
+        agent: "build" as never,
+        assistantMessageID: "msg_t" as never,
+        call: { type: "tool-call", id: "c2", name: "tool_search", input: { query: "chat history" } },
+      })
+
+      const final = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
       })
       const names = (definitions: ReadonlyArray<{ name: string }>) => definitions.map((d) => d.name)
-      expect(names(next.definitions)).toContain("calendar")
-      expect(names(next.definitions)).not.toContain("chat")
-      expect(names(next.deferred)).toContain("chat")
+      expect(names(final.definitions)).toContain("calendar")
+      expect(names(final.definitions)).toContain("chat")
+    }),
+  )
+
+  it.effect("does not authorize a replacement definition with a stale selection", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      yield* registry.register({ calendar: defTool("calendar", "Original calendar tool") })
+      let selected = new Map<ToolCatalog.Key, string>()
+      const original = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+        onSelect: (selections) => {
+          selected = new Map(selections.map((selection) => [selection.key, selection.definitionHash]))
+        },
+      })
+      yield* original.settle({
+        sessionID: "ses_t" as never,
+        agent: "build" as never,
+        assistantMessageID: "msg_t" as never,
+        call: { type: "tool-call", id: "search-original", name: "tool_search", input: { query: "calendar" } },
+      })
+
+      yield* registry.register({ calendar: defTool("calendar", "Replacement calendar tool") })
+      const replacement = yield* registry.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+      })
+      expect(replacement.definitions.map((definition) => definition.name)).not.toContain("calendar")
+      expect(
+        yield* replacement
+          .settle({
+            sessionID: "ses_t" as never,
+            agent: "build" as never,
+            assistantMessageID: "msg_t" as never,
+            call: { type: "tool-call", id: "call-replacement", name: "calendar", input: {} },
+          })
+          .pipe(Effect.map((settlement) => settlement.result)),
+      ).toEqual({
+        type: "error",
+        value: "unsupported call: calendar (search for it with tool_search first)",
+      })
     }),
   )
 })
@@ -135,7 +193,7 @@ describe("P5 settle authorization", () => {
 
       const materialized = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-        selected: new Set(),
+        selected: new Map(),
       })
       const result = yield* materialized.settle({
         sessionID: "ses_t" as never,
@@ -153,9 +211,10 @@ describe("P5 settle authorization", () => {
       const registry = yield* ToolRegistry.Service
       yield* registry.register({ calendar: defTool("calendar", "Calendar events") })
 
+      const initial = yield* registry.materialize()
       const materialized = yield* registry.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-        selected: new Set(["calendar"]),
+        selected: selectFrom(initial, "calendar"),
       })
       const result = yield* materialized.settle({
         sessionID: "ses_t" as never,

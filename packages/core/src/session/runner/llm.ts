@@ -33,6 +33,8 @@ import { SystemContextRegistry } from "../../system-context/registry"
 import { SkillGuidance } from "../../skill/guidance"
 import { ReferenceGuidance } from "../../reference/guidance"
 import { ToolRegistry } from "../../tool/registry"
+import { ToolCatalog } from "../../tool/catalog"
+import { ToolSearch } from "../../tool/tool-search"
 import { SessionContextEpoch } from "../context-epoch"
 import { SessionAttempt } from "../attempt"
 import { SessionAttachment } from "../attachment"
@@ -270,6 +272,11 @@ const layer = Layer.effect(
         },
       ).pipe(Effect.map(SystemContext.combine))
 
+    type SearchedTools = {
+      current: ReadonlyMap<ToolCatalog.Key, string>
+      readonly select: (selections: ReadonlyArray<ToolSearch.Selection>) => void
+    }
+
     const runTurnAttempt = Effect.fn("SessionRunner.runTurn")(function* (
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
@@ -278,7 +285,7 @@ const layer = Layer.effect(
       physical: PhysicalAttempt | undefined,
       stopBlockCount: PluginRuntime.Mutable<number>["value"],
       toolFailures: ToolFailureTracker,
-      searchedTools: { readonly current: ReadonlySet<string>; readonly select: (names: ReadonlySet<string>) => void },
+      searchedTools: SearchedTools,
     ) {
       const physicalAttempt: PhysicalAttempt = physical ?? { attempt: 1 }
       const session = yield* getSession(sessionID)
@@ -945,10 +952,6 @@ const layer = Layer.effect(
         }),
       )
     }, Effect.scoped)
-    type SearchedTools = {
-      current: ReadonlySet<string>
-      readonly select: (names: ReadonlySet<string>) => void
-    }
     type RunTurn = (
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
@@ -969,7 +972,7 @@ const layer = Layer.effect(
           physical,
           stopBlockCount,
           toolFailures,
-            searchedTools,
+          searchedTools,
         ).pipe(
           Effect.catchDefect(
             Effect.fnUntraced(function* (defect) {
@@ -985,7 +988,7 @@ const layer = Layer.effect(
                   defect.transition.physical,
                   stopBlockCount,
                   toolFailures,
-                    searchedTools,
+                  searchedTools,
                 )
               return yield* runAfterOverflowCompaction(
                 sessionID,
@@ -994,7 +997,7 @@ const layer = Layer.effect(
                 physical,
                 stopBlockCount,
                 toolFailures,
-                  searchedTools,
+                searchedTools,
               )
             }),
           ),
@@ -1012,7 +1015,7 @@ const layer = Layer.effect(
           physical,
           stopBlockCount,
           toolFailures,
-            searchedTools,
+          searchedTools,
         ).pipe(
           Effect.catchDefect(
             Effect.fnUntraced(function* (defect) {
@@ -1026,7 +1029,7 @@ const layer = Layer.effect(
                   undefined,
                   stopBlockCount,
                   toolFailures,
-                    searchedTools,
+                  searchedTools,
                 )
               if (defect.transition._tag === "RetryProvider")
                 return yield* runTurn(
@@ -1036,7 +1039,7 @@ const layer = Layer.effect(
                   defect.transition.physical,
                   stopBlockCount,
                   toolFailures,
-                    searchedTools,
+                  searchedTools,
                 )
               return yield* runTurn(
                 sessionID,
@@ -1045,7 +1048,7 @@ const layer = Layer.effect(
                 physical,
                 stopBlockCount,
                 toolFailures,
-                  searchedTools,
+                searchedTools,
               )
             }),
           ),
@@ -1130,13 +1133,14 @@ const layer = Layer.effect(
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
-        // P5 dynamic loading: searched deferred tools accumulate across the
-        // provider turns of this drain so tool_search in one turn unlocks the
-        // tool in the next.
+        // Exact deferred definitions accumulate only across provider turns in
+        // this drain. A later selection for the same key replaces its old hash.
         const searchedTools: SearchedTools = {
-          current: new Set<string>(),
-          select: (names) => {
-            searchedTools.current = new Set(names)
+          current: new Map(),
+          select: (selections) => {
+            const current = new Map(searchedTools.current)
+            for (const selection of selections) current.set(selection.key, selection.definitionHash)
+            searchedTools.current = current
           },
         }
         // One pool per turn: every `needsContinuation` iteration of the same
@@ -1162,7 +1166,7 @@ const layer = Layer.effect(
               initialPhysical,
               stopBlockCount.value,
               toolFailures,
-                searchedTools,
+              searchedTools,
             ).pipe(Effect.provideService(WebSocketPool.Service, pool))
             initialPhysical = undefined
             needsContinuation = result.needsContinuation

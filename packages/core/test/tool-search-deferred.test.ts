@@ -203,7 +203,14 @@ describe("materialize tool_search", () => {
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service
       yield* service.register({ hello: hello() })
-      const materialized = yield* service.materialize()
+      let selected = new Map<ToolCatalog.Key, string>()
+      const materialized = yield* service.materialize(undefined, undefined, {
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        selected,
+        onSelect: (selections) => {
+          selected = new Map(selections.map((selection) => [selection.key, selection.definitionHash]))
+        },
+      })
       expect(materialized.definitions.some((tool) => tool.name === "tool_search")).toBe(true)
       // P5: a deferred tool is rejected until the model searches for it.
       const denied = yield* materialized.settle(call("hello", { name: "bob" }))
@@ -213,7 +220,7 @@ describe("materialize tool_search", () => {
       yield* materialized.settle(call("tool_search", { query: "hello" }))
       const next = yield* service.materialize(undefined, undefined, {
         model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-        selected: new Set(["hello"]),
+        selected,
       })
       const settlement = yield* next.settle(call("hello", { name: "bob" }))
       expect(settlement.result).toEqual({ type: "text", value: "hello bob" })

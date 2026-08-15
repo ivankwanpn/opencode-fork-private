@@ -906,9 +906,65 @@ describe("SessionRunnerLLM", () => {
       const executedEcho = context.some(
         (message) =>
           message.type === "assistant" &&
-          message.content.some((part) => part.type === "tool" && part.id === "call-echo" && part.state?.status === "completed"),
+          message.content.some(
+            (part) => part.type === "tool" && part.id === "call-echo" && part.state?.status === "completed",
+          ),
       )
       expect(executedEcho).toBe(true)
+    }),
+  )
+
+  it.effect("accumulates consecutive tool_search selections within one drain", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const applicationTools = yield* ApplicationTools.Service
+      const session = yield* SessionV2.Service
+      yield* applicationTools.register({
+        deferred_calendar: Tool.withExposure(
+          Tool.make({
+            description: "Create calendar events",
+            input: Schema.Struct({}),
+            output: Schema.Struct({ ok: Schema.Boolean }),
+            execute: () => Effect.succeed({ ok: true }),
+          }),
+          "deferred",
+        ),
+        deferred_chat: Tool.withExposure(
+          Tool.make({
+            description: "Search chat history",
+            input: Schema.Struct({}),
+            output: Schema.Struct({ ok: Schema.Boolean }),
+            execute: () => Effect.succeed({ ok: true }),
+          }),
+          "deferred",
+        ),
+      })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Find both tools" }), resume: false })
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-search-calendar",
+            name: "tool_search",
+            input: { query: "select:deferred_calendar" },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-search-chat", name: "tool_search", input: { query: "select:deferred_chat" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-tool-search-union", ["Done"]).completeEvents,
+      ]
+      yield* session.resume(sessionID)
+
+      const thirdTurn = requests[2]?.tools.map((tool) => tool.name) ?? []
+      expect(thirdTurn).toContain("deferred_calendar")
+      expect(thirdTurn).toContain("deferred_chat")
     }),
   )
 

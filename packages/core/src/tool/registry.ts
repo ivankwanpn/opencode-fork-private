@@ -57,8 +57,8 @@ export interface Materialization {
   readonly definitions: ReadonlyArray<ToolDefinition>
   readonly deferred: ReadonlyArray<ToolDefinition>
   readonly catalog: ToolCatalog.Snapshot
-  /** Snapshot of the deferred tools searched so far (empty unless selected was provided). */
-  readonly selected: ReadonlySet<string>
+  /** Snapshot of exact deferred tool identities selected for this materialization. */
+  readonly selected: ReadonlyMap<ToolCatalog.Key, string>
   readonly settle: (input: ExecuteInput) => Effect.Effect<Settlement, SettlementError>
 }
 
@@ -74,10 +74,10 @@ export interface MaterializationContext {
     readonly modelID: ModelV2.ID
   }
   readonly features?: Partial<MaterializationFeatures>
-  /** Names of deferred tools the model already searched (Codex dynamic loading). */
-  readonly selected?: ReadonlySet<string>
-  /** Called when tool_search unlocks deferred tools; lets the caller persist the set across turns. */
-  readonly onSelect?: (names: ReadonlySet<string>) => void
+  /** Exact key/hash pairs for deferred tools selected earlier in this drain. */
+  readonly selected?: ReadonlyMap<ToolCatalog.Key, string>
+  /** Called when tool_search selects exact catalog entries for the next provider turn. */
+  readonly onSelect?: (selections: ReadonlyArray<ToolSearch.Selection>) => void
 }
 
 export interface MaterializationFeatures {
@@ -362,10 +362,9 @@ const registryLayer = Layer.effect(
           catalogTools.push(searchable)
           visibleSources.add(ToolCatalog.sourceKey(metadata.source))
           if (toolExposure === "deferred") {
-            // A deferred tool that the model already searched (P5 dynamic
-            // loading) is injected into the advertised definitions so the next
-            // provider turn can call it; the rest stay in the tool_search index.
-            if (context?.selected?.has(name)) {
+            // Only the exact definition selected in an earlier provider turn is
+            // advertised. A same-key replacement must be searched again.
+            if (context?.selected?.get(searchable.key) === searchable.definitionHash) {
               advertised.set(name, registration)
               definitions.push(toolDefinition)
             } else {
@@ -400,16 +399,12 @@ const registryLayer = Layer.effect(
             )
             .map(([, entry]) => entry.status),
         })
-        // Expose tool_search so the model can discover the deferred entries in this
-        // already-filtered canonical snapshot. The key/hash selection boundary lands
-        // in the next tranche; until then adapt structured selections to P5 names.
+        // Expose tool_search over the already-filtered canonical snapshot.
         const toolSearchRegistration =
           deferred.length > 0 && overrides[ToolSearch.name] !== false && !whollyDisabled([ToolSearch.name], permissions)
             ? {
                 identity: {},
-                tool: ToolSearch.makeToolSearchTool(catalog, toolSearchIndex, (selections) =>
-                  context?.onSelect?.(new Set(selections.map((selection) => selection.callableName))),
-                ),
+                tool: ToolSearch.makeToolSearchTool(catalog, toolSearchIndex, context?.onSelect),
                 catalog: {
                   source: { type: "builtin" as const, id: "opencode", displayName: "OpenCode" },
                   sourceLocalID: ToolSearch.name,
@@ -424,19 +419,16 @@ const registryLayer = Layer.effect(
           definitions,
           deferred,
           catalog,
-          selected: context?.selected ?? new Set(),
+          selected: context?.selected ?? new Map(),
           settle: (input) => {
             if (input.call.name === ToolSearch.name && toolSearchRegistration)
               return settleWith(input, toolSearchRegistration.identity, toolSearchRegistration)
             const advertisedRegistration = advertised.get(input.call.name)
             if (advertisedRegistration) return settleWith(input, advertisedRegistration.identity)
-            // Deferred tools may only run after the model searched for them in a
-            // previous turn (P5 dynamic loading) — mirror Codex's "unsupported
-            // call" for tools that were never unlocked.
+            // A deferred entry absent from advertised was not selected by exact
+            // key/hash for this provider turn, so it cannot execute.
             const deferredRegistration = deferredRegistrations.get(input.call.name)
             if (deferredRegistration) {
-              if (context?.selected?.has(input.call.name) ?? false)
-                return settleWith(input, deferredRegistration.identity)
               return Effect.succeed({
                 result: {
                   type: "error",

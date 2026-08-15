@@ -27,6 +27,7 @@ import { MCP } from "@opencode-ai/core/mcp"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { Effect, Layer, PubSub, Stream } from "effect"
@@ -258,12 +259,14 @@ function waitFor<A>(effect: Effect.Effect<A>, accept: (value: A) => boolean, mes
 // MCP tools are deferred by default and MCP resource helpers stay direct, so
 // presence checks must look across both materialized tool lists.
 const registeredToolNames = (registry: ToolRegistry.Interface) =>
-  registry.materialize().pipe(
-    Effect.map((materialized) => [
-      ...materialized.definitions.map((definition) => definition.name),
-      ...materialized.deferred.map((definition) => definition.name),
-    ]),
-  )
+  registry
+    .materialize()
+    .pipe(
+      Effect.map((materialized) => [
+        ...materialized.definitions.map((definition) => definition.name),
+        ...materialized.deferred.map((definition) => definition.name),
+      ]),
+    )
 
 it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchronized", () =>
   Effect.gen(function* () {
@@ -314,24 +317,37 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
 
     yield* waitFor(
       registeredToolNames(registry),
-      (names) =>
-        names.includes("demo_server_echo") &&
-        resourceHelpers.every((name) => names.includes(name)),
+      (names) => names.includes("demo_server_echo") && resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not registered",
     )
-    // P5: deferred MCP tools require a tool_search first; materialize with the
-    // searched set so the tool becomes callable.
+    // Deferred MCP tools require one exact catalog selection before they become callable.
+    let selected = new Map<ToolCatalog.Key, string>()
+    const searchable = yield* registry.materialize(undefined, undefined, {
+      model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+      selected,
+      onSelect: (selections) => {
+        selected = new Map(selections.map((selection) => [selection.key, selection.definitionHash]))
+      },
+    })
+    yield* searchable.settle({
+      sessionID,
+      agent,
+      assistantMessageID,
+      call: { type: "tool-call", id: "search_echo", name: "tool_search", input: { query: "demo_server_echo" } },
+    })
     const searched = yield* registry.materialize(undefined, undefined, {
       model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
-      selected: new Set(["demo_server_echo"]),
+      selected,
     })
     expect(
-      yield* searched.settle({
-        sessionID,
-        agent,
-        assistantMessageID,
-        call: { type: "tool-call", id: "call_echo", name: "demo_server_echo", input: { text: "hello" } },
-      }).pipe(Effect.map((settlement) => settlement.result)),
+      yield* searched
+        .settle({
+          sessionID,
+          agent,
+          assistantMessageID,
+          call: { type: "tool-call", id: "call_echo", name: "demo_server_echo", input: { text: "hello" } },
+        })
+        .pipe(Effect.map((settlement) => settlement.result)),
     ).toEqual({ type: "text", value: "hello" })
 
     remote.tools.splice(0, remote.tools.length, {
@@ -361,9 +377,7 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
     expect(yield* mcp.status()).toEqual({ "demo server": { status: "connected" } })
     yield* waitFor(
       registeredToolNames(registry),
-      (names) =>
-        names.includes("demo_server_next") &&
-        resourceHelpers.every((name) => names.includes(name)),
+      (names) => names.includes("demo_server_next") && resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not restored after reconnect",
     )
   }),
@@ -456,17 +470,13 @@ gatesIt.live(
           inputSchema: { type: "object", properties: {} },
         },
       )
-      yield* mcp.add(
-        "playwright",
-        new ConfigMCP.Remote({ type: "remote", url: remote.url, oauth: false }),
-      )
+      yield* mcp.add("playwright", new ConfigMCP.Remote({ type: "remote", url: remote.url, oauth: false }))
       expect(yield* mcp.status()).toEqual({ playwright: { status: "connected" } })
 
       // Both the deferred and the directTools tools must materialize somewhere.
       yield* waitFor(
         registeredToolNames(registry),
-        (names) =>
-          names.includes("playwright_playwright_snapshot") && names.includes("playwright_playwright_navigate"),
+        (names) => names.includes("playwright_playwright_snapshot") && names.includes("playwright_playwright_navigate"),
         "gated MCP tools were not registered",
       )
 

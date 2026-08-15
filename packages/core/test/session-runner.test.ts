@@ -21,6 +21,7 @@ import {
   type ToolContent,
 } from "@opencode-ai/llm"
 import * as OpenAIChat from "@opencode-ai/llm/protocols/openai-chat"
+import * as OpenAIResponses from "@opencode-ai/llm/protocols/openai-responses"
 import { Database } from "@opencode-ai/core/database/database"
 import { makeLocationNode } from "@opencode-ai/core/effect/app-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -45,6 +46,7 @@ import { AssistantErrorCodec } from "@opencode-ai/core/session/assistant-error-c
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionTurn } from "@opencode-ai/core/session/turn"
+import { SessionToolDiscovery } from "@opencode-ai/core/session/tool-discovery"
 import { Prompt, STRUCTURED_OUTPUT_TOOL_NAME } from "@opencode-ai/core/session/prompt"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
@@ -143,6 +145,10 @@ const client = Layer.succeed(
   }),
 )
 const model = Model.make({ id: "fake-model", provider: "fake", route: OpenAIChat.route })
+const nativeToolSearchModel = Model.update(model, {
+  route: OpenAIResponses.route,
+  compatibility: { toolSearch: "openai-responses" },
+})
 const replacementModel = Model.make({ id: "replacement", provider: "fake", route: OpenAIChat.route })
 const agentModel = Model.make({
   id: "agent-model",
@@ -922,6 +928,107 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("lowers a three-turn native Responses discovery loop without re-advertising deferred tools", () =>
+    Effect.gen(function* () {
+      yield* setup
+      currentModel = nativeToolSearchModel
+      const applicationTools = yield* ApplicationTools.Service
+      const session = yield* SessionV2.Service
+      const { db } = yield* Database.Service
+      yield* applicationTools.register({
+        deferred_echo: Tool.withExposure(
+          Tool.make({
+            description: "Echo text after native tool search",
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
+            execute: ({ text }) => Effect.succeed({ text }),
+            toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
+          }),
+          "deferred",
+        ),
+      })
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Search and use the native echo tool" }),
+        resume: false,
+      })
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({
+            id: "call-native-search",
+            name: "tool_search",
+            input: { query: "select:deferred_echo" },
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-native-echo", name: "deferred_echo", input: { text: "hello" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-native-tool-search", ["Done"]).completeEvents,
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(3)
+      const prepared = yield* Effect.forEach(requests, (request) =>
+        LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(request),
+      )
+      prepared.forEach((request) =>
+        expect(request.body.tools).not.toContainEqual(
+          expect.objectContaining({ type: "function", name: "deferred_echo" }),
+        ),
+      )
+      expect(prepared[0]?.body.tools).toContainEqual(expect.objectContaining({ type: "tool_search" }))
+      expect(prepared[0]?.body.input).not.toContainEqual(expect.objectContaining({ type: "tool_search_output" }))
+      expect(prepared[1]?.body.input).toEqual(
+        expect.arrayContaining([
+          {
+            type: "tool_search_call",
+            call_id: "call-native-search",
+            execution: "client",
+            arguments: { query: "select:deferred_echo" },
+          },
+          expect.objectContaining({
+            type: "tool_search_output",
+            call_id: "call-native-search",
+            status: "completed",
+            execution: "client",
+            tools: [expect.objectContaining({ type: "function", name: "deferred_echo", defer_loading: true })],
+          }),
+        ]),
+      )
+      expect(prepared[2]?.body.input).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "tool_search_call", call_id: "call-native-search" }),
+          expect.objectContaining({ type: "tool_search_output", call_id: "call-native-search" }),
+          {
+            type: "function_call",
+            call_id: "call-native-echo",
+            name: "deferred_echo",
+            arguments: '{"text":"hello"}',
+          },
+          expect.objectContaining({ type: "function_call_output", call_id: "call-native-echo" }),
+        ]),
+      )
+      const durableSelections = yield* SessionToolDiscovery.selections(db, sessionID)
+      expect(durableSelections.size).toBe(1)
+      expect([...durableSelections.keys()][0]).toMatch(/^tool_[a-f0-9]{64}$/)
+      expect([...durableSelections.values()][0]).toMatch(/^[a-f0-9]{64}$/)
+      expect(requests[2]?.toolDiscoveries).toEqual([
+        expect.objectContaining({
+          callID: "call-native-search",
+          tools: [expect.objectContaining({ name: "deferred_echo", deferLoading: true })],
+        }),
+      ])
+    }),
+  )
+
   it.effect("accumulates consecutive tool_search selections within one drain", () =>
     Effect.gen(function* () {
       yield* setup
@@ -1041,7 +1148,11 @@ describe("SessionRunnerLLM", () => {
       responses = [
         [
           LLMEvent.stepStart({ index: 0 }),
-          LLMEvent.toolCall({ id: "call-search-before-compaction", name: "tool_search", input: { query: "echo text" } }),
+          LLMEvent.toolCall({
+            id: "call-search-before-compaction",
+            name: "tool_search",
+            input: { query: "echo text" },
+          }),
           LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
           LLMEvent.finish({ reason: "tool-calls" }),
         ],
@@ -1064,7 +1175,11 @@ describe("SessionRunnerLLM", () => {
         text: "summary",
         recent: "",
       })
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Use the tool after compaction" }), resume: false })
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Use the tool after compaction" }),
+        resume: false,
+      })
       requests.length = 0
       responses = undefined
       response = fragmentFixture("text", "text-after-tool-compaction", ["Done"]).completeEvents

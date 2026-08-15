@@ -1,5 +1,7 @@
 # OpenAI Responses Native Tool Search Implementation Plan
 
+> **完成狀態（2026-08-15）：** Task 1–5 已實作並通過 package-local 測試與型別檢查。OpenAI Responses native 路徑只由明確 model compatibility 啟用；Anthropic native、自動 capability downgrade 持久化與 child-OS-process E2E 維持非目標／後續工作。
+
 > **For Codex:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
 
 **Goal:** Add Codex-style OpenAI Responses `tool_search` / `tool_search_output` without weakening the existing canonical Tool Registry, durable discovery projection, generic fallback, or provider capability boundaries.
@@ -258,4 +260,3 @@ git commit -m "test(core): cover native tool search loop"
 ```
 
 Do not push the new implementation commits until the user asks for another push.
-

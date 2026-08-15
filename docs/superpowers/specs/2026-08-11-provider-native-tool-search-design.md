@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、durable discovery 與 generic cross-drain fallback；provider-native adapters 尚未實作
+> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、durable discovery、generic cross-drain fallback，以及 OpenAI Responses 原生 Tool Search；Anthropic native 與其餘 hardening 尚未完成
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`
@@ -9,9 +9,9 @@
 
 ## 1. 文件目的
 
-目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。完整 child-OS-process runner 整合尚未直接執行回歸，OpenAI／Anthropic 原生協議也仍待後續 phase。
+目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。OpenAI OAuth 經 ChatGPT Codex endpoint 解析出的 Responses route 已能使用原生 `tool_search`／`tool_search_output`，並由三輪 V2 Session regression 驗證不會把已發現工具重新注入普通 definitions。完整 child-OS-process runner 整合與 Anthropic 原生協議仍待後續 phase。
 
-本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery 與 generic cross-drain fallback，並以關閉及重建獨立 runtime scope 的方式驗證 SQLite 持久狀態；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`。後續工作應依序補完整 child-OS-process runner 回歸、provider-native adapters 與 capability negotiation。
+本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery、generic cross-drain fallback 與 OpenAI Responses native adapter，並以關閉及重建獨立 runtime scope 的方式驗證 SQLite 持久狀態；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md` 與 `docs/superpowers/plans/2026-08-15-openai-responses-native-tool-search.md`。後續工作應依序補完整 child-OS-process runner 回歸、Anthropic native adapter、自動 capability downgrade 持久化，以及 MCP／subagent hardening。
 
 核心決策是：
 
@@ -52,12 +52,13 @@
 
 2026-08-15 durable tranche 的新鮮回歸證據為 Schema `29 pass / 0 fail`、Core `1600 pass / 7 skip / 0 fail`、Client `21 pass / 0 fail`、App reducer `11 pass / 0 fail`、TUI data `8 pass / 0 fail`、OpenCode event/bridge `11 pass / 0 fail`；Schema、Core、Client、Protocol、Server、App、TUI、OpenCode 的 `bun typecheck` 與 Client `check:generated` 全部通過。
 
+2026-08-15 OpenAI Responses native tranche 新增 explicit provider-neutral discovery semantics、durable native history rebuild、fail-closed model capability、native request lowering/parser，以及真實 adapter 的三輪 V2 Session regression。新鮮證據為 LLM `326 pass / 30 skip / 0 fail`、Core `1604 pass / 7 skip / 0 fail`（其中關鍵整合子集 `152 pass / 0 fail`）、Plugin loading/runtime UI `14 pass / 0 fail`；LLM、Core、App package typecheck 通過，推送鉤子的全倉 typecheck 為 `30 successful / 30 total`。
+
 仍未完成且不得提前宣稱完成：
 
 - 完整 child-OS-process runner 的端到端整合回歸（獨立 runtime scope + persistent SQLite 已覆蓋）；
-- OpenAI Responses 原生 `tool_search`／`tool_search_output` adapter；
 - Anthropic Messages 原生 `tool_reference`／`defer_loading` adapter；
-- provider-native history reconstruction 與 capability negotiation／downgrade；
+- Anthropic provider-native history reconstruction，以及 capability negotiation 的自動 downgrade 持久化；
 - MCP reconnect/late-load 與 subagent grant intersection 的後續 hardening。
 
 ## 1.3 方案比較與選擇
@@ -91,7 +92,7 @@
 
 ## 3. Phase 1 前 P5 的問題與目前邊界
 
-以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足、revision cache、process-local discovery、durable replay 與 compaction 已在 `888.0.18` 修正；provider-native wire 與完整 process-restart 整合回歸仍未完成。
+以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足、revision cache、process-local discovery、durable replay、compaction 與 OpenAI Responses provider-native wire 已在 `888.0.18` 修正；Anthropic native wire 與完整 process-restart 整合回歸仍未完成。
 
 - `packages/core/src/tool/tool-search.ts`
   - `Output` 是 `Schema.String`；
@@ -376,7 +377,7 @@ Generic fallback 是相容路徑，不應限制 OpenAI／Anthropic 原生路徑�
 
 ### 9.4 Protocol-neutral semantic carrier
 
-`LLMRequest.tools` 目前只有普通 `ToolDefinition`。實作時應加入 discriminated semantic tool spec（普通 function 與 tool-search），讓三個 protocol mapper 都能看到同一個 `tool-search` 意圖：
+`LLMRequest.tools` 已加入 discriminated semantic tool spec（普通 function 與 tool-search），並以 `deferLoading`、`namespace` 與 typed `toolDiscoveries` 承載 provider-neutral discovery 語義，讓各 protocol mapper 都能看到同一個 `tool-search` 意圖：
 
 - OpenAI Responses lowering 成 provider-native `type: "tool_search"`；
 - Anthropic lowering 成帶 deferred semantics 的 client tool；
@@ -399,13 +400,10 @@ type ToolDiscoveryCapability =
 判斷輸入至少包含：
 
 - provider protocol；
-- model capability；
--實際 route／base URL；
-- proxy 或 gateway 已知能力；
--使用者 feature override／kill switch；
+- model capability；-實際 route／base URL；
+- proxy 或 gateway 已知能力；-使用者 feature override／kill switch；
 - deferred catalog 大小；
-- Tool Search permission；
--是否有 pending MCP sources。
+- Tool Search permission；-是否有 pending MCP sources。
 
 若 deferred 工具很少，adapter 可以直接 materialize 它們而不啟用 Tool Search。門檻應基於估算 token 或 schema size，並提供 deterministic override 供測試和診斷。
 
@@ -415,7 +413,7 @@ Capability 的 ownership 分三層：
 2. resolved route/model capability 明確選擇 native、generic 或 disabled，並可因 proxy/base URL／feature override 降級；
 3. Session runner 只消費 resolved capability，不自行用 model name 或 providerID 猜測。
 
-第一個可執行 tranche 先完成 `generic-injection`；OpenAI 與 Anthropic native adapter 各自在後續 phase 打開。如此即使 native phase 尚未完成，durable discovery、identity 與 permission 語義也已穩定，不需要兩套 state machine。
+第一個可執行 tranche 先完成 `generic-injection`，其後已打開 OpenAI Responses native adapter。OpenAI native capability 目前只在 OpenAI OAuth 經 `https://chatgpt.com/backend-api/codex` 解析出的 route 上 fail-closed 啟用；API key、自訂 endpoint、proxy 與僅手動選擇 Responses protocol 的模型仍使用 generic semantics。Anthropic native adapter 與 provider 拒絕後的自動 downgrade 持久化仍屬後續 phase。
 
 ## 11. MCP 與 Plugin 動態目錄
 
@@ -429,8 +427,7 @@ Tool Search 必須把 enabled state 和 runtime health 分開：
 
 - 若有匹配結果，正常返回；
 - 若沒有結果且相關 source 尚 pending，返回 structured pending source 資訊並建議稍後重試；
-- source 更新時增加 catalog revision並重建／失效搜索索引；
--已發現工具 definitionHash 改變後不再 active，必須重新搜索；
+- source 更新時增加 catalog revision並重建／失效搜索索引；-已發現工具 definitionHash 改變後不再 active，必須重新搜索；
 - source disabled／removed 後不得再 materialize 或執行；
 - source 恢復且 key/hash 相同時，是否重新 active 應由 implementation plan 明確決定，預設採較安全策略：要求重新搜索。
 
@@ -538,11 +535,7 @@ canonical catalog
 
 ### 12.2 Subagent 隔離
 
-- discovery state 預設 Session-scoped；父 Session 的 discovered set 不自動複製到子 Session；
--父代理授予 capability 後，子代理可在自己的授權 catalog 中搜索；
--子代理不得藉由搜索列出未授權 MCP／Plugin tool；
--搜索結果不提升 grant；
--如果未來需要繼承 discovery，必須用明確的 handoff record，不得共享 process-global `Set`。
+- discovery state 預設 Session-scoped；父 Session 的 discovered set 不自動複製到子 Session；-父代理授予 capability 後，子代理可在自己的授權 catalog 中搜索；-子代理不得藉由搜索列出未授權 MCP／Plugin tool；-搜索結果不提升 grant；-如果未來需要繼承 discovery，必須用明確的 handoff record，不得共享 process-global `Set`。
 
 ## 13. 錯誤與恢復
 
@@ -580,10 +573,7 @@ canonical catalog
 - zero-result-with-pending；
 - index rebuild count 和 catalog revision；
 - native capability downgrade；
-- stale discovery；
--未搜索直接調用；
--搜索後到實際工具調用的 conversion rate；
--節省的 tool schema token 估算。
+- stale discovery；-未搜索直接調用；-搜索後到實際工具調用的 conversion rate；-節省的 tool schema token 估算。
 - Plugin catalog load latency／failure；
 - Plugin runtime snapshot latency、pending duration 與 degraded/failed capability count。
 
@@ -606,10 +596,7 @@ canonical catalog
 
 ### 15.2 Durable state
 
--兩次搜索結果做 union；
--第二次搜索不撤銷第一次結果；
--新 drain 恢復；
--程序重啟後 replay 恢復；
+-兩次搜索結果做 union；-第二次搜索不撤銷第一次結果；-新 drain 恢復；-程序重啟後 replay 恢復；
 -compaction 後恢復；
 -provider retry 冪等；
 -catalog hash 改變使舊 discovery 失效；
@@ -621,44 +608,33 @@ canonical catalog
 OpenAI Responses：
 
 -首個請求只包含 direct tools 和 native `tool_search`；
--search output 是結構化 loadable spec；
--第二個和第三個請求不普通注入 discovered tool；
+-search output 是結構化 loadable spec；-第二個和第三個請求不普通注入 discovered tool；
 -function 和 namespace 都可執行；
 -history normalization 保持 call/output 配對。
 
 Anthropic Messages：
 
 -正確 beta header；
--search result 是 `tool_reference`；
--只有 active discovered deferred definitions 被發送；
--不支援模型／proxy 使用 generic fallback；
+-search result 是 `tool_reference`；-只有 active discovered deferred definitions 被發送；-不支援模型／proxy 使用 generic fallback；
 -fallback 時 provider message 不殘留無效 `tool_reference`。
 
 Generic：
 
--search output 是 structured JSON；
--下一輪注入 active discovered definitions；
--未搜索直接調用被拒絕；
--第二次搜索仍保留第一次工具。
+-search output 是 structured JSON；-下一輪注入 active discovered definitions；-未搜索直接調用被拒絕；-第二次搜索仍保留第一次工具。
 
 ### 15.4 MCP／Plugin／subagent
 
 -Plugin catalog initial request pending 時顯示 loading，不顯示 `No plugins available`；
 -Plugin catalog 成功回傳空結果後才顯示 empty；
--Plugin catalog failure 顯示 Retry，並保留/標記最後成功資料；
--遲到的舊 generation catalog response 不覆蓋新 generation；
+-Plugin catalog failure 顯示 Retry，並保留/標記最後成功資料；-遲到的舊 generation catalog response 不覆蓋新 generation；
 -Plugin runtime initial snapshot 顯示 initializing；
--Skills／Commands／MCP／Plugin hooks／Plugin tools readiness 分別來自 authoritative catalog/runtime；
--部分 capability 失敗顯示 degraded，全部成功顯示 ready，全部失敗顯示 failed；
+-Skills／Commands／MCP／Plugin hooks／Plugin tools readiness 分別來自 authoritative catalog/runtime；-部分 capability 失敗顯示 degraded，全部成功顯示 ready，全部失敗顯示 failed；
 -UI aggregate 狀態與 Tool Search source state 使用相同 identity/state 語義；
 -MCP pending 空搜索提示重試；
 -late tools/list 後搜索成功；
 -MCP reconnect 更新 revision；
--Plugin disable 後 discovered tool 不能執行；
--同名不同 source 不錯誤復用；
--subagent 搜索只看到 grant 交集；
--父 Session discovery 不自動洩露給子 Session；
--搜索不繞過執行 permission。
+-Plugin disable 後 discovered tool 不能執行；-同名不同 source 不錯誤復用；
+-subagent 搜索只看到 grant 交集；-父 Session discovery 不自動洩露給子 Session；-搜索不繞過執行 permission。
 
 ## 16. 分階段落地順序
 
@@ -703,10 +679,10 @@ Generic：
 
 ### Phase 4：OpenAI Responses native adapter
 
-- [ ] 原生 `tool_search`／`tool_search_output`；
-- [ ] namespace/loadable spec；
-- [ ] history normalization；
-- [ ] 禁止 follow-up ordinary definition injection。
+- [x] 原生 `tool_search`／`tool_search_output`；
+- [x] namespace/loadable spec；
+- [x] history normalization，含 compaction 後由 durable record 合成缺失配對；
+- [x] 禁止 follow-up ordinary definition injection，並以三輪 V2 Session + 真實 Responses adapter regression 固定。
 
 ### Phase 5：Anthropic native adapter
 

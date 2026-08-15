@@ -51,6 +51,62 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
+  it.effect("keeps discovery semantics as ordinary functions for generic chat", () =>
+    Effect.gen(function* () {
+      const prepared = yield* LLMClient.prepare<OpenAIChat.OpenAIChatBody>(
+        LLM.request({
+          model,
+          tools: [
+            {
+              name: "tool_search",
+              description: "Search deferred tools",
+              inputSchema: { type: "object", properties: { query: { type: "string" } } },
+              kind: "tool-search",
+            },
+            {
+              name: "calendar_create",
+              description: "Create calendar events",
+              inputSchema: { type: "object" },
+              deferLoading: true,
+              namespace: "calendar",
+            },
+          ],
+          toolDiscoveries: [
+            {
+              callID: "search-1",
+              query: "calendar",
+              limit: 8,
+              catalogRevision: "catalog-1",
+              tools: [],
+            },
+          ],
+        }),
+      )
+
+      expect(prepared.body.tools).toEqual([
+        {
+          type: "function",
+          function: {
+            name: "tool_search",
+            description: "Search deferred tools",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "calendar_create",
+            description: "Create calendar events",
+            parameters: { type: "object" },
+          },
+        },
+      ])
+    }),
+  )
+
   it.effect("lowers chronological system updates to escaped user wrappers in order", () =>
     Effect.gen(function* () {
       const prepared = yield* LLMClient.prepare<OpenAIChat.OpenAIChatBody>(

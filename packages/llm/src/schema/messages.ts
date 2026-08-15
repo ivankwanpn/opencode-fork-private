@@ -222,20 +222,49 @@ export namespace Message {
 }
 
 export class ToolDefinition extends Schema.Class<ToolDefinition>("LLM.ToolDefinition")({
+  kind: Schema.optional(Schema.Literals(["function", "tool-search"])),
   name: Schema.String,
   description: Schema.String,
   inputSchema: JsonSchema,
   outputSchema: Schema.optional(JsonSchema),
+  deferLoading: Schema.optional(Schema.Literal(true)),
+  namespace: Schema.optional(Schema.String),
   cache: Schema.optional(CacheHint),
   metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
   native: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 }) {}
 
 export namespace ToolDefinition {
-  export type Input = ToolDefinition | ConstructorParameters<typeof ToolDefinition>[0]
+  export type Input =
+    | ToolDefinition
+    | (Omit<ConstructorParameters<typeof ToolDefinition>[0], "kind"> & {
+        readonly kind?: NonNullable<ToolDefinition["kind"]>
+      })
 
   /** Normalize tool definition input into the canonical `ToolDefinition` class. */
-  export const make = (input: Input) => (input instanceof ToolDefinition ? input : new ToolDefinition(input))
+  export const make = (input: Input) => {
+    if (input instanceof ToolDefinition && input.kind !== undefined) return input
+    return new ToolDefinition({ ...input, kind: input.kind ?? "function" })
+  }
+}
+
+export class ToolDiscovery extends Schema.Class<ToolDiscovery>("LLM.ToolDiscovery")({
+  callID: Schema.String,
+  query: Schema.String,
+  limit: Schema.Number,
+  catalogRevision: Schema.String,
+  tools: Schema.Array(ToolDefinition),
+}) {}
+
+export namespace ToolDiscovery {
+  export type Input = Omit<ConstructorParameters<typeof ToolDiscovery>[0], "tools"> & {
+    readonly tools: ReadonlyArray<ToolDefinition.Input>
+  }
+
+  export const make = (input: ToolDiscovery | Input) => {
+    if (input instanceof ToolDiscovery) return input
+    return new ToolDiscovery({ ...input, tools: input.tools.map(ToolDefinition.make) })
+  }
 }
 
 export class ToolChoice extends Schema.Class<ToolChoice>("LLM.ToolChoice")({
@@ -274,6 +303,7 @@ export class LLMRequest extends Schema.Class<LLMRequest>("LLM.Request")({
   system: Schema.Array(SystemPart),
   messages: Schema.Array(Message),
   tools: Schema.Array(ToolDefinition),
+  toolDiscoveries: Schema.optional(Schema.Array(ToolDiscovery)),
   toolChoice: Schema.optional(ToolChoice),
   generation: Schema.optional(GenerationOptions),
   providerOptions: Schema.optional(ProviderOptions),
@@ -292,6 +322,7 @@ export namespace LLMRequest {
     system: request.system,
     messages: request.messages,
     tools: request.tools,
+    toolDiscoveries: request.toolDiscoveries,
     toolChoice: request.toolChoice,
     generation: request.generation,
     providerOptions: request.providerOptions,

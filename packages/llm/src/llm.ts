@@ -12,6 +12,7 @@ import {
   type ModelInput as SchemaModelInput,
   SystemPart,
   ToolChoice,
+  ToolDiscovery,
   ToolDefinition,
   type ContentPart,
   ToolResultPart,
@@ -30,12 +31,13 @@ export type ToolResultInput = Parameters<typeof ToolResultPart.make>[0]
 /** Input accepted by `LLM.request`, normalized into the canonical `LLMRequest` class. */
 export type RequestInput = Omit<
   ConstructorParameters<typeof LLMRequest>[0],
-  "system" | "messages" | "tools" | "toolChoice" | "generation" | "http" | "providerOptions"
+  "system" | "messages" | "tools" | "toolDiscoveries" | "toolChoice" | "generation" | "http" | "providerOptions"
 > & {
   readonly system?: string | SystemPart | ReadonlyArray<SystemPart>
   readonly prompt?: string | ContentPart | ReadonlyArray<ContentPart>
   readonly messages?: ReadonlyArray<Message | MessageInput>
   readonly tools?: ReadonlyArray<ToolDefinition.Input>
+  readonly toolDiscoveries?: ReadonlyArray<ToolDiscovery.Input>
   readonly toolChoice?: ToolChoiceInput
   readonly generation?: GenerationOptions.Input
   readonly providerOptions?: ConstructorParameters<typeof LLMRequest>[0]["providerOptions"]
@@ -56,6 +58,7 @@ export const request = (input: RequestInput) => {
     prompt,
     messages,
     tools,
+    toolDiscoveries,
     toolChoice: requestToolChoice,
     generation: requestGeneration,
     providerOptions: requestProviderOptions,
@@ -67,6 +70,7 @@ export const request = (input: RequestInput) => {
     system: SystemPart.content(requestSystem),
     messages: [...(messages?.map(Message.make) ?? []), ...(prompt === undefined ? [] : [Message.user(prompt)])],
     tools: tools?.map(ToolDefinition.make) ?? [],
+    toolDiscoveries: toolDiscoveries?.map(ToolDiscovery.make) ?? [],
     toolChoice: requestToolChoice ? ToolChoice.make(requestToolChoice) : undefined,
     generation: requestGeneration === undefined ? undefined : GenerationOptions.make(requestGeneration),
     providerOptions: requestProviderOptions,

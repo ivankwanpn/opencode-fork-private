@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat"
 import * as OpenAIResponses from "../src/protocols/openai-responses"
+import { LLM } from "../src"
 import { ContentPart, LLMEvent, LLMRequest, Model, ModelID, ProviderID, Usage } from "../src/schema"
 import { ProviderShared } from "../src/protocols/shared"
 
@@ -55,6 +56,50 @@ describe("llm schema", () => {
   test("content part tagged union exposes guards", () => {
     expect(ContentPart.guards.text({ type: "text", text: "hi" })).toBe(true)
     expect(ContentPart.guards.media({ type: "text", text: "hi" })).toBe(false)
+  })
+
+  test("normalizes provider-neutral tool discovery semantics", () => {
+    const request = LLM.request({
+      model,
+      tools: [
+        {
+          name: "tool_search",
+          description: "Search deferred tools",
+          inputSchema: { type: "object" },
+          kind: "tool-search",
+        },
+        {
+          name: "calendar_create",
+          description: "Create calendar events",
+          inputSchema: { type: "object" },
+          deferLoading: true,
+          namespace: "calendar",
+        },
+      ],
+      toolDiscoveries: [
+        {
+          callID: "search-1",
+          query: "calendar",
+          limit: 8,
+          catalogRevision: "catalog-1",
+          tools: [
+            {
+              name: "calendar_create",
+              description: "Create calendar events",
+              inputSchema: { type: "object" },
+              deferLoading: true,
+              namespace: "calendar",
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(request.tools.map((tool) => tool.kind)).toEqual(["tool-search", "function"])
+    expect(request.tools[1]).toMatchObject({ deferLoading: true, namespace: "calendar" })
+    const discovery = request.toolDiscoveries?.[0]
+    expect(discovery).toBeDefined()
+    expect(discovery?.tools[0]).toMatchObject({ kind: "function", deferLoading: true })
   })
 })
 

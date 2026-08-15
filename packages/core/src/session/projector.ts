@@ -16,11 +16,8 @@ import { WorkspaceV2 } from "../workspace"
 import { SessionContextEpoch } from "./context-epoch"
 import { SessionAttempt } from "./attempt"
 import { SessionTurn } from "./turn"
-import {
-  SessionInputTable,
-  SessionMessageTable,
-  SessionTable,
-} from "./sql"
+import { SessionToolDiscovery } from "./tool-discovery"
+import { SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
 
 type DatabaseService = Database.Interface["db"]
 
@@ -94,7 +91,9 @@ function sessionRowFromSnapshot(snapshot: SessionEvent.SessionSnapshot): typeof 
     tokens_reasoning: snapshot.tokens.reasoning,
     tokens_cache_read: snapshot.tokens.cache.read,
     tokens_cache_write: snapshot.tokens.cache.write,
-    revert: snapshot.revert ? { ...snapshot.revert, messageID: SessionMessage.ID.make(snapshot.revert.messageID) } : null,
+    revert: snapshot.revert
+      ? { ...snapshot.revert, messageID: SessionMessage.ID.make(snapshot.revert.messageID) }
+      : null,
     permission: snapshot.permission ? [...snapshot.permission] : undefined,
     time_created: DateTime.toEpochMillis(snapshot.time.created),
     time_updated: DateTime.toEpochMillis(snapshot.time.updated),
@@ -306,7 +305,8 @@ const layer = Layer.effectDiscard(
           .pipe(Effect.orDie)
         if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.messageID}`)
         const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
-        if (message.type !== "user") return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
+        if (message.type !== "user")
+          return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
         const encoded = encodeMessage(
           SessionMessage.User.make({
             ...message,
@@ -338,7 +338,8 @@ const layer = Layer.effectDiscard(
           .pipe(Effect.orDie)
         if (!row) return yield* Effect.die(`Transcript message not found: ${event.data.messageID}`)
         const message = decodeMessage({ ...row.data, id: row.id, type: row.type })
-        if (message.type !== "user") return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
+        if (message.type !== "user")
+          return yield* Effect.die(`Transcript message is not a user message: ${event.data.messageID}`)
         const encoded = encodeMessage(
           SessionMessage.User.make({
             ...message,
@@ -535,6 +536,9 @@ const layer = Layer.effectDiscard(
     yield* events.project(SessionEvent.Tool.Progress, (event) => run(db, event))
     yield* events.project(SessionEvent.Tool.Success, (event) => run(db, event))
     yield* events.project(SessionEvent.Tool.Failed, (event) => run(db, event))
+    yield* events.project(SessionEvent.ToolDiscovery.Completed, (event) =>
+      SessionToolDiscovery.projectCompleted(db, event),
+    )
     yield* events.project(SessionEvent.Reasoning.Started, (event) => run(db, event))
     yield* events.project(SessionEvent.Reasoning.Ended, (event) => run(db, event))
     yield* events.project(SessionEvent.ProviderAttempt.Started, (event) => SessionAttempt.projectStarted(db, event))
@@ -680,7 +684,10 @@ const layer = Layer.effectDiscard(
                       gte(SessionInputTable.admitted_seq, boundary.seq),
                       gte(SessionInputTable.promoted_seq, boundary.seq),
                     )
-                  : or(gt(SessionInputTable.admitted_seq, boundary.seq), gt(SessionInputTable.promoted_seq, boundary.seq)),
+                  : or(
+                      gt(SessionInputTable.admitted_seq, boundary.seq),
+                      gt(SessionInputTable.promoted_seq, boundary.seq),
+                    ),
               ),
             )
             .run()

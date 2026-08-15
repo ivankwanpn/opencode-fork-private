@@ -1,11 +1,13 @@
 export * as CommandV2 from "./command"
 
+import path from "path"
 import type { Part } from "@opencode-ai/sdk/v2/types"
 import { makeLocationNode } from "./effect/app-node"
 import { Context, Effect, Layer, Types } from "effect"
 import { Command } from "@opencode-ai/schema/command"
 import { State } from "./state"
 import { PluginRuntime } from "./plugin/runtime"
+import { SkillV2 } from "./skill"
 
 export const Info = Command.Info
 export type Info = Command.Info
@@ -38,6 +40,7 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const plugins = yield* PluginRuntime.Service
+    const skills = yield* SkillV2.Service
     const state = State.create<Data, Draft>({
       initial: () => ({ commands: new Map() }),
       draft: (draft) => ({
@@ -59,10 +62,18 @@ const layer = Layer.effect(
       reload: state.reload,
       transform: state.transform,
       get: Effect.fn("CommandV2.get")(function* (name) {
-        return state.get().commands.get(name)
+        const command = state.get().commands.get(name)
+        if (command) return command
+        const skill = (yield* skills.list()).find((item) => item.name === name && item.slash !== false)
+        return skill && fromSkill(skill)
       }),
       list: Effect.fn("CommandV2.list")(function* () {
-        return Array.from(state.get().commands.values())
+        const commands = Array.from(state.get().commands.values())
+        const names = new Set(commands.map((command) => command.name))
+        return [
+          ...commands,
+          ...(yield* skills.list()).filter((skill) => skill.slash !== false && !names.has(skill.name)).map(fromSkill),
+        ]
       }),
       beforeExecute: Effect.fn("CommandV2.beforeExecute")(function* (input) {
         const parts = PluginRuntime.mutable(input.parts)
@@ -80,4 +91,17 @@ const layer = Layer.effect(
 
 export const locationLayer = layer
 
-export const node = makeLocationNode({ service: Service, layer, deps: [PluginRuntime.node] })
+export const node = makeLocationNode({ service: Service, layer, deps: [PluginRuntime.node, SkillV2.node] })
+
+function fromSkill(skill: SkillV2.Info) {
+  return Info.make({
+    name: skill.name,
+    template: [
+      skill.content,
+      "",
+      `Base directory for this skill: ${path.dirname(skill.location)}`,
+      "Relative paths in this skill (e.g., scripts/, references/) are relative to this base directory.",
+    ].join("\n"),
+    ...(skill.description === undefined ? {} : { description: skill.description }),
+  })
+}

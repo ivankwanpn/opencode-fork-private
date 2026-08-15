@@ -390,6 +390,22 @@ export const dict = {
 
   "plugin.status.enabled": "Enabled",
   "plugin.status.disabled": "Disabled",
+  "plugin.catalog.loading": "Loading plugins…",
+  "plugin.catalog.empty": "No plugins available",
+  "plugin.catalog.failed": "Plugins could not be loaded",
+  "plugin.catalog.retry": "Retry",
+  "plugin.catalog.stale": "Showing the last loaded plugin list",
+  "plugin.catalog.filteredEmpty": "No plugins match this search",
+  "plugin.runtime.initializing": "Initializing",
+  "plugin.runtime.ready": "Ready",
+  "plugin.runtime.degraded": "Partially available",
+  "plugin.runtime.failed": "Unavailable",
+  "plugin.runtime.stale": "Status may be out of date",
+  "plugin.capability.skills": "Skills",
+  "plugin.capability.commands": "Commands",
+  "plugin.capability.mcp": "MCP",
+  "plugin.capability.plugin": "Plugin hooks",
+  "plugin.capability.tools": "Tools",
 
   "dialog.fork.empty": "No messages to fork from",
 

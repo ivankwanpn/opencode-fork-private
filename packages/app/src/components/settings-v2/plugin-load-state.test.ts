@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   beginPluginLoad,
+  pluginLoadContextCurrent,
   rejectPluginLoad,
   resolvePluginLoad,
   type PluginLoadState,
@@ -60,5 +61,16 @@ describe("plugin loading state", () => {
     }
 
     expect(beginPluginLoad(stale, 3)).toEqual({ state: "refreshing", request: 3, value: loaded })
+  })
+
+  test("rejects request context from an older request, server, protocol generation, or directory", () => {
+    const server = {}
+    const expected = { request: 2, server, generation: 4, directory: "/workspace" }
+
+    expect(pluginLoadContextCurrent(expected, { ...expected })).toBe(true)
+    expect(pluginLoadContextCurrent(expected, { ...expected, request: 3 })).toBe(false)
+    expect(pluginLoadContextCurrent(expected, { ...expected, server: {} })).toBe(false)
+    expect(pluginLoadContextCurrent(expected, { ...expected, generation: 5 })).toBe(false)
+    expect(pluginLoadContextCurrent(expected, { ...expected, directory: "/other" })).toBe(false)
   })
 })

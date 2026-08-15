@@ -794,11 +794,22 @@
 }
 
 .settings-v2-plugin-runtime,
+.settings-v2-plugin-runtime-summary,
+.settings-v2-plugin-capabilities,
 .settings-v2-plugin-state {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.settings-v2-plugin-runtime,
+.settings-v2-plugin-runtime-summary,
+.settings-v2-plugin-state {
   white-space: nowrap;
+}
+
+.settings-v2-plugin-capabilities {
+  flex-wrap: wrap;
 }
 
 .settings-v2-plugin-state {
@@ -817,6 +828,19 @@
 
 .settings-v2-plugin-status-dot--connected {
   background: var(--v2-state-fg-success);
+}
+
+.settings-v2-plugin-status-dot--pending,
+.settings-v2-plugin-status-dot--degraded {
+  background: var(--v2-state-fg-warning);
+}
+
+.settings-v2-plugin-status-dot--failed {
+  background: var(--v2-state-fg-danger);
+}
+
+.settings-v2-plugins-status--stale {
+  color: var(--v2-state-fg-warning);
 }
 
 @media (max-width: 639px) {

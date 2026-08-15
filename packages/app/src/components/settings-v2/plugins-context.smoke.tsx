@@ -9,9 +9,15 @@ mock.module("@/context/language", () => ({
 
 mock.module("@/context/server-sdk", () => ({
   useServerSDK: () => () => ({
+    protocolGeneration: () => 1,
+    protocolKind: () => "v2",
     apiForGeneration: async () => ({
       plugins: {
         list: async () => ({ marketplaces: [], plugins: [] }),
+        runtime: async () => ({
+          location: { directory: "/workspace", project: { id: "project", directory: "/workspace" } },
+          data: { plugins: [] },
+        }),
       },
     }),
   }),

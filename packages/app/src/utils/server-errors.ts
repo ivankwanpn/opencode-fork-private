@@ -1,3 +1,5 @@
+import { isCancelledError } from "@tanstack/solid-query"
+
 export type ConfigInvalidError = {
   name: "ConfigInvalidError"
   data: {
@@ -37,6 +39,20 @@ export function formatServerError(error: unknown, translate?: Translator, fallba
   if (typeof error === "string" && error) return error
   if (fallback) return fallback
   return tr(translate, "error.chain.unknown", "Unknown error")
+}
+
+export function isRequestCancelled(error: unknown) {
+  return requestCancelled(error, new Set())
+}
+
+function requestCancelled(error: unknown, seen: Set<unknown>): boolean {
+  if (isCancelledError(error)) return true
+  if (typeof error !== "object" || error === null || seen.has(error)) return false
+  seen.add(error)
+  if ("name" in error && (error.name === "CancelledError" || error.name === "AbortError")) return true
+  if ("message" in error && error.message === "CancelledError") return true
+  if (!("cause" in error)) return false
+  return requestCancelled(error.cause, seen)
 }
 
 function readMessage(error: unknown): string | undefined {

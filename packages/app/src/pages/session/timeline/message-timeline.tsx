@@ -714,6 +714,24 @@ export function MessageTimeline(props: {
     },
   }))
 
+  const backgroundTool = (input: { sessionID: string; callID: string }) => {
+    const target = sdk()
+    return runServerSessionMutation({
+      sessionMutations: target.sessionMutations,
+      sessionID: input.sessionID,
+      apiForGeneration: target.apiForGeneration,
+      run: (api) => api.background(input),
+    })
+      .then(() => undefined)
+      .catch((err) => {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        })
+        throw err
+      })
+  }
+
   const shareSession = () => {
     const id = sessionID()
     if (!id || shareMutation.isPending) return
@@ -1088,6 +1106,7 @@ export function MessageTimeline(props: {
                 defaultOpen={defaultOpen()}
                 toolOpen={toolOpen[part().id] ?? defaultOpen()}
                 onToolOpenChange={(open) => setToolOpen(part().id, open)}
+                onToolBackground={backgroundTool}
                 deferToolContent
                 virtualizeDiff={false}
                 onContentRendered={onSizeChange}

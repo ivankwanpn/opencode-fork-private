@@ -1346,7 +1346,10 @@ export type SessionsInputCancelInput = {
 
 export type SessionsInputCancelOutput = void
 
-export type SessionsBackgroundInput = { readonly sessionID: { readonly sessionID: string }["sessionID"] }
+export type SessionsBackgroundInput = {
+  readonly sessionID: { readonly sessionID: string }["sessionID"]
+  readonly callID?: { readonly callID?: string | undefined }["callID"]
+}
 
 export type SessionsBackgroundOutput = boolean
 

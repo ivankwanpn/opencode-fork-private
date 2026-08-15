@@ -101,6 +101,7 @@ export const dict = {
   "ui.messagePart.context.list.one": "{{count}} قائمة",
   "ui.messagePart.context.list.other": "{{count}} قوائم",
   "ui.messagePart.diagnostic.error": "خطأ",
+  "ui.messagePart.shell.background": "نقل إلى الخلفية",
   "ui.messagePart.title.edit": "تحرير",
   "ui.messagePart.title.write": "كتابة",
   "ui.messagePart.option.typeOwnAnswer": "اكتب إجابتك الخاصة",

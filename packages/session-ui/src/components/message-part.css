@@ -381,6 +381,9 @@
   overflow: hidden;
 
   [data-slot="bash-copy"] {
+    display: flex;
+    align-items: center;
+    gap: 2px;
     position: absolute;
     top: 4px;
     right: 4px;

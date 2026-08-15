@@ -263,9 +263,14 @@ const Endpoint4_18 = (raw: RawClient["server.session"]) => (input: Endpoint4_18I
   )
 
 type Endpoint4_19Request = Parameters<RawClient["server.session"]["session.background"]>[0]
-type Endpoint4_19Input = { readonly sessionID: Endpoint4_19Request["params"]["sessionID"] }
+type Endpoint4_19Input = {
+  readonly sessionID: Endpoint4_19Request["params"]["sessionID"]
+  readonly callID?: Endpoint4_19Request["query"]["callID"]
+}
 const Endpoint4_19 = (raw: RawClient["server.session"]) => (input: Endpoint4_19Input) =>
-  raw["session.background"]({ params: { sessionID: input["sessionID"] } }).pipe(Effect.mapError(mapClientError))
+  raw["session.background"]({ params: { sessionID: input["sessionID"] }, query: { callID: input["callID"] } }).pipe(
+    Effect.mapError(mapClientError),
+  )
 
 type Endpoint4_20Request = Parameters<RawClient["server.session"]["session.command"]>[0]
 type Endpoint4_20Input = {

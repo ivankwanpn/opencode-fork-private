@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs"
 import path from "path"
 import { describe, expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Scope } from "effect"
+import { TestClock } from "effect/testing"
 import { ChildProcess } from "effect/unstable/process"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { Database } from "@opencode-ai/core/database/database"
@@ -529,6 +530,97 @@ describe("BashTool", () => {
             expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
 
             yield* jobs.cancel(taskID)
+            yield* Deferred.await(interrupted)
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.effect("caps foreground waiting at three minutes when a larger timeout is requested", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry, jobs) =>
+          Effect.gen(function* () {
+            const started = yield* Deferred.make<void>()
+            const interrupted = yield* Deferred.make<void>()
+            runHandler = () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+              )
+            const running = yield* settleTool(
+              registry,
+              call({ command: "long build", timeout: BashTool.MAX_TIMEOUT_MS }, "call-clamped-timeout"),
+            ).pipe(Effect.forkScoped)
+            yield* Deferred.await(started)
+            yield* Effect.yieldNow
+
+            yield* TestClock.adjust(BashTool.DEFAULT_TIMEOUT_MS - 1)
+            expect(running.pollUnsafe()).toBeUndefined()
+            yield* TestClock.adjust(1)
+
+            const settled = yield* Fiber.join(running)
+            const structured = settled.output?.structured as Record<string, unknown>
+            const taskID = String(structured.task_id)
+            expect(structured).toMatchObject({ status: "running", background_reason: "timeout" })
+            expect(yield* jobs.get(taskID)).toMatchObject({
+              status: "running",
+              metadata: { callID: "call-clamped-timeout", background: true, backgroundReason: "timeout" },
+            })
+            expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
+
+            yield* jobs.cancel(taskID)
+            yield* Deferred.await(interrupted)
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("releases a manually promoted shell without interrupting its process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry, jobs) =>
+          Effect.gen(function* () {
+            const started = yield* Deferred.make<void>()
+            const interrupted = yield* Deferred.make<void>()
+            runHandler = () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+              )
+            const running = yield* settleTool(
+              registry,
+              call({ command: "long build" }, "call-manual-background"),
+            ).pipe(Effect.forkScoped)
+            yield* Deferred.await(started)
+
+            const job = (yield* jobs.list()).find((item) => item.metadata?.callID === "call-manual-background")
+            expect(job).toMatchObject({
+              type: "shell",
+              status: "running",
+              metadata: { sessionID, callID: "call-manual-background" },
+            })
+            yield* jobs.update({ id: job!.id, metadata: { backgroundReason: "manual" } })
+            yield* jobs.promote(job!.id)
+
+            const settled = yield* Fiber.join(running)
+            expect(settled.output?.structured).toMatchObject({
+              task_id: job!.id,
+              status: "running",
+              background_reason: "manual",
+            })
+            expect((yield* jobs.get(job!.id))?.status).toBe("running")
+            expect((yield* Deferred.poll(interrupted))._tag).toBe("None")
+
+            yield* jobs.cancel(job!.id)
             yield* Deferred.await(interrupted)
           }),
         )

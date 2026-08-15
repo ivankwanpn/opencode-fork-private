@@ -24,7 +24,7 @@ import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/sessio
 import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta, State } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
-import { formatServerError } from "@/utils/server-errors"
+import { formatServerError, isRequestCancelled } from "@/utils/server-errors"
 import { queryOptions, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/solid-query"
 import type { SolidQueryOptions } from "@tanstack/solid-query"
 import { createRefreshQueue } from "./global-sync/queue"
@@ -458,6 +458,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     },
     onMcp: (directory, setStore) => {
       void loadDirectoryCommands(directory, setStore).catch((err) => {
+        if (isRequestCancelled(err)) return
         showToast({
           variant: "error",
           title: language.t("toast.project.reloadFailed.title", { project: getFilename(directory) }),
@@ -484,6 +485,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const existing = children.children[key]
     if (!existing || !children.mcp(key)) return Promise.resolve()
     return loadDirectoryCommands(key, existing[1]).catch((err) => {
+      if (isRequestCancelled(err)) return
       showToast({
         variant: "error",
         title: language.t("toast.project.reloadFailed.title", { project: getFilename(key) }),

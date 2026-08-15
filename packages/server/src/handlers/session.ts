@@ -580,16 +580,26 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         Effect.fn(function* (ctx) {
           const background = yield* BackgroundJob.Service
           const jobs = (yield* background.list()).filter(
-            (job) =>
-              job.type === "task" &&
-              job.status === "running" &&
-              job.metadata?.parentSessionId === ctx.params.sessionID &&
-              job.metadata.background !== true,
+            (job) => {
+              if (job.status !== "running" || job.metadata?.background === true) return false
+              if (ctx.query?.callID !== undefined)
+                return (
+                  job.type === "shell" &&
+                  job.metadata?.sessionID === ctx.params.sessionID &&
+                  job.metadata.callID === ctx.query.callID
+                )
+              if (job.type === "task") return job.metadata?.parentSessionId === ctx.params.sessionID
+              return job.type === "shell" && job.metadata?.sessionID === ctx.params.sessionID
+            },
           )
           const promoted = yield* Effect.forEach(
             jobs,
             (job) =>
-              background.promote(job.id).pipe(
+              Effect.gen(function* () {
+                if (job.type === "shell")
+                  yield* background.update({ id: job.id, metadata: { backgroundReason: "manual" } })
+                return yield* background.promote(job.id)
+              }).pipe(
                 Effect.mapError(
                   (error) => new InvalidRequestError({ message: error.message, kind: "background_promotion" }),
                 ),

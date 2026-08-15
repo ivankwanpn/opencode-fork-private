@@ -39,7 +39,7 @@ export const Input = Schema.Struct({
   timeout: PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_TIMEOUT_MS))
     .pipe(Schema.optional)
     .annotate({
-      description: `Foreground wait in milliseconds. Defaults to ${DEFAULT_TIMEOUT_MS} and may not exceed ${MAX_TIMEOUT_MS}; a command still running afterward continues as a background task.`,
+      description: `Foreground wait in milliseconds. Defaults to and is capped at ${DEFAULT_TIMEOUT_MS}; larger values up to ${MAX_TIMEOUT_MS} are accepted for compatibility but clamped. A command still running afterward continues as a background task.`,
     }),
   run_in_background: Schema.Boolean.pipe(Schema.optional).annotate({
     description: "Start the command as a background task and return its task ID immediately",
@@ -51,7 +51,7 @@ const StructuredOutput = Schema.Struct({
   truncated: Schema.Boolean,
   task_id: Schema.String.pipe(Schema.optional),
   status: Schema.Literals(["running", "completed"]).pipe(Schema.optional),
-  background_reason: Schema.Literals(["requested", "timeout", "steer"]).pipe(Schema.optional),
+  background_reason: Schema.Literals(["requested", "timeout", "steer", "manual"]).pipe(Schema.optional),
 })
 
 const Output = Schema.Struct({
@@ -139,7 +139,7 @@ const foregroundOutput = (info: BackgroundJob.Info) => {
 
 const backgroundOutput = (
   info: BackgroundJob.Info,
-  reason: "requested" | "timeout" | "steer",
+  reason: "requested" | "timeout" | "steer" | "manual",
 ): Output => ({
   task_id: info.id,
   status: "running",
@@ -235,7 +235,7 @@ const layer = Layer.effectDiscard(
                 })
 
               const shell = Shell.acceptable(Config.latest(yield* config.entries(), "shell"))
-              const timeout = input.timeout ?? DEFAULT_TIMEOUT_MS
+              const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
               const taskID = Identifier.ascending("job")
               const progress = yield* Ref.make({ tail: Buffer.alloc(0), bytes: 0, lastOutputAt: undefined as number | undefined })
               const execution = yield* SessionExecution.Current
@@ -313,7 +313,7 @@ const layer = Layer.effectDiscard(
                   Effect.onExit(notify),
                 )
               const background = Effect.fn("BashTool.background")(function* (
-                reason: "requested" | "timeout" | "steer",
+                reason: "requested" | "timeout" | "steer" | "manual",
               ) {
                 yield* jobs.update({ id: taskID, metadata: { backgroundReason: reason } })
                 const promoted = yield* jobs.promote(taskID)
@@ -332,6 +332,7 @@ const layer = Layer.effectDiscard(
                     metadata: {
                       sessionID: context.sessionID,
                       agent: context.agent,
+                      callID: context.toolCallID,
                       command: input.command,
                       workdir: target.canonical,
                       outputBytes: 0,
@@ -345,14 +346,26 @@ const layer = Layer.effectDiscard(
                       jobs.wait({ id: taskID, timeout }).pipe(
                         Effect.map((result) => ({ type: "job" as const, result })),
                       ),
-                      SessionInput.waitForPending(db, events, {
-                        sessionID: context.sessionID,
-                        delivery: "steer",
-                        includeSynthetic: false,
-                      }).pipe(Effect.as({ type: "steer" as const })),
+                      Effect.raceFirst(
+                        SessionInput.waitForPending(db, events, {
+                          sessionID: context.sessionID,
+                          delivery: "steer",
+                          includeSynthetic: false,
+                        }).pipe(Effect.as({ type: "steer" as const })),
+                        jobs
+                          .waitForPromotion(taskID)
+                          .pipe(Effect.map((info) => ({ type: "promotion" as const, info }))),
+                      ),
                     ),
                   ).pipe(Effect.onInterrupt(() => jobs.cancel(taskID).pipe(Effect.asVoid)))
                   if (observation.type === "steer") return yield* background("steer")
+                  if (observation.type === "promotion") {
+                    if (observation.info) return backgroundOutput(observation.info, "manual")
+                    const current = yield* jobs.get(taskID)
+                    if (!current)
+                      return yield* new ToolFailure({ message: "Shell task disappeared before settlement" })
+                    return yield* foregroundOutput(current)
+                  }
                   if (observation.result.timedOut) return yield* background("timeout")
                   if (!observation.result.info)
                     return yield* new ToolFailure({ message: "Shell task disappeared before settlement" })

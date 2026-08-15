@@ -7,7 +7,7 @@ import { readPartText } from "./message-part-text"
 import { DataProvider } from "../context"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
 import { I18nProvider, type UiI18n } from "@opencode-ai/ui/context/i18n"
-import type { AssistantMessage, Message, ReasoningPart, TextPart } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Message, ReasoningPart, TextPart, ToolPart } from "@opencode-ai/sdk/v2"
 
 // bun 1.3.14 types ship no expect.poll; the package preload (happydom.ts)
 // polyfills it at runtime with this exact matcher surface.
@@ -27,7 +27,11 @@ declare module "bun:test" {
 
 const i18n: UiI18n = { locale: () => "en", t: (key) => key }
 
-const host = (part: () => MessagePartProps["part"], message: () => Message) => {
+const host = (
+  part: () => MessagePartProps["part"],
+  message: () => Message,
+  props: Pick<MessagePartProps, "defaultOpen" | "onToolBackground"> = {},
+) => {
   const data = {
     session: [],
     session_status: {},
@@ -40,7 +44,7 @@ const host = (part: () => MessagePartProps["part"], message: () => Message) => {
     <DataProvider data={data} directory="/repo">
       <MarkedProvider>
         <I18nProvider value={i18n}>
-          <Part part={part()} message={message()} />
+          <Part part={part()} message={message()} {...props} />
         </I18nProvider>
       </MarkedProvider>
     </DataProvider>
@@ -161,5 +165,86 @@ describe("readPartText", () => {
 
   test("trims leading and trailing whitespace", () => {
     expect(readPartText(undefined, { id: "part_1", text: "\n  body  \n" })).toBe("body")
+  })
+})
+
+describe("shell background action", () => {
+  let dispose: () => void
+
+  afterEach(() => dispose?.())
+
+  test("backgrounds a running shell once and hides the action after completion", async () => {
+    const [status, setStatus] = createSignal<"running" | "completed">("running")
+    const calls: Array<{ sessionID: string; callID: string }> = []
+    let release = () => {}
+    const request = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const part = () =>
+      ({
+        id: "prt_shell",
+        sessionID: "ses_shell",
+        messageID: "msg_shell",
+        type: "tool",
+        callID: "call_shell",
+        tool: "bash",
+        state:
+          status() === "running"
+            ? { status: "running", input: { command: "bun test" }, time: { start: 1 } }
+            : {
+                status: "completed",
+                input: { command: "bun test" },
+                output: "done",
+                title: "Shell",
+                metadata: {},
+                time: { start: 1, end: 2 },
+              },
+      }) satisfies ToolPart
+    const message = () =>
+      ({
+        id: "msg_shell",
+        sessionID: "ses_shell",
+        role: "assistant",
+        time: { created: 1 },
+        parentID: "msg_user",
+        modelID: "model",
+        providerID: "provider",
+        mode: "build",
+        agent: "build",
+        path: { cwd: "/repo", root: "/repo" },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      }) satisfies AssistantMessage
+
+    dispose = createRoot((disposeRoot) => {
+      const cleanup = render(
+        () =>
+          host(part, message, {
+            defaultOpen: true,
+            onToolBackground: (input) => {
+              calls.push(input)
+              return request
+            },
+          }),
+        document.body,
+      )
+      return () => {
+        cleanup()
+        disposeRoot()
+      }
+    })
+
+    const button = document.querySelector<HTMLButtonElement>('button[data-slot="bash-background"]')
+    expect(button).toBeTruthy()
+    button!.click()
+    button!.click()
+    await Promise.resolve()
+    expect(calls).toEqual([{ sessionID: "ses_shell", callID: "call_shell" }])
+    expect(button!.disabled).toBe(true)
+
+    release()
+    await expect.poll(() => button!.disabled).toBe(false)
+    setStatus("completed")
+    await expect.poll(() => document.querySelector('button[data-slot="bash-background"]')).toBeNull()
   })
 })

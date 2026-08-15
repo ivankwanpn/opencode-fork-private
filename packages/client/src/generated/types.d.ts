@@ -1697,6 +1697,9 @@ export type SessionsBackgroundInput = {
     readonly sessionID: {
         readonly sessionID: string;
     }["sessionID"];
+    readonly callID?: {
+        readonly callID?: string | undefined;
+    }["callID"];
 };
 export type SessionsBackgroundOutput = boolean;
 export type SessionsCommandInput = {

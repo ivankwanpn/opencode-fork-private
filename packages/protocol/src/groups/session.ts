@@ -433,6 +433,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
     .add(
       HttpApiEndpoint.post("session.background", "/api/session/:sessionID/background", {
         params: { sessionID: Session.ID },
+        query: { callID: Schema.String.pipe(Schema.optional) },
         success: Schema.Boolean,
         error: SessionNotFoundError,
       })
@@ -441,7 +442,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
           OpenApi.annotations({
             identifier: "v2.session.background",
             summary: "Background foreground tasks",
-            description: "Promote running foreground subagent tasks so the parent session can continue.",
+            description:
+              "Promote running foreground subagent or shell tasks so the session can continue. When callID is provided, only the matching shell tool call is promoted.",
           }),
         ),
     )

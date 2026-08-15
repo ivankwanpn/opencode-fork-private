@@ -197,6 +197,7 @@ export interface MessagePartProps {
   defaultOpen?: boolean
   toolOpen?: boolean
   onToolOpenChange?: (open: boolean) => void
+  onToolBackground?: (input: { sessionID: string; callID: string }) => Promise<void> | void
   deferToolContent?: boolean
   virtualizeDiff?: boolean
   onContentRendered?: () => void
@@ -1463,6 +1464,7 @@ export function Part(props: MessagePartProps) {
         defaultOpen={props.defaultOpen}
         toolOpen={props.toolOpen}
         onToolOpenChange={props.onToolOpenChange}
+        onToolBackground={props.onToolBackground}
         deferToolContent={props.deferToolContent}
         virtualizeDiff={props.virtualizeDiff}
         onContentRendered={props.onContentRendered}
@@ -1485,6 +1487,7 @@ export interface ToolProps {
   defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  onBackground?: () => Promise<void> | void
   deferContent?: boolean
   virtualizeDiff?: boolean
   onContentRendered?: () => void
@@ -1632,6 +1635,11 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
               defaultOpen={props.defaultOpen}
               open={controlledOpen()}
               onOpenChange={props.onToolOpenChange ? handleToolOpenChange : undefined}
+              onBackground={
+                props.onToolBackground
+                  ? () => props.onToolBackground?.({ sessionID: part().sessionID, callID: part().callID })
+                  : undefined
+              }
               deferContent={props.deferToolContent}
               virtualizeDiff={props.virtualizeDiff}
               onContentRendered={props.onContentRendered}
@@ -2170,6 +2178,7 @@ ToolRegistry.register({
       return `$ ${cmd}${out ? "\n\n" + out : ""}`
     })
     const [copied, setCopied] = createSignal(false)
+    const [backgrounding, setBackgrounding] = createSignal(false)
 
     const handleCopy = async () => {
       const content = text()
@@ -2178,6 +2187,17 @@ ToolRegistry.register({
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }
+    }
+
+    const handleBackground = () => {
+      if (!props.onBackground || backgrounding()) return
+      setBackgrounding(true)
+      void Promise.resolve()
+        .then(() => props.onBackground?.())
+        .then(
+          () => setBackgrounding(false),
+          () => setBackgrounding(false),
+        )
     }
 
     return (
@@ -2200,6 +2220,27 @@ ToolRegistry.register({
       >
         <div data-component="bash-output">
           <div data-slot="bash-copy">
+            <Show when={pending() && props.onBackground}>
+              <TooltipV2 value={i18n.t("ui.messagePart.shell.background")} placement="top">
+                <IconButtonV2
+                  data-slot="bash-background"
+                  icon={<IconV2 name="collapse" size="small" />}
+                  size="normal"
+                  variant="ghost-muted"
+                  disabled={backgrounding()}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    handleBackground()
+                  }}
+                  aria-label={i18n.t("ui.messagePart.shell.background")}
+                />
+              </TooltipV2>
+            </Show>
             <TooltipV2 value={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")} placement="top">
               <IconButtonV2
                 icon={<IconV2 name={copied() ? "check" : "outline-copy"} size="small" />}

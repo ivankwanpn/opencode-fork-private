@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
+import { CancelledError } from "@tanstack/solid-query"
 import type { SessionNotFoundError } from "@opencode-ai/sdk/v2/client"
 import type { ConfigInvalidError, ProviderModelNotFoundError } from "./server-errors"
-import { formatServerError, isSessionNotFoundError, parseReadableConfigInvalidError } from "./server-errors"
+import {
+  formatServerError,
+  isRequestCancelled,
+  isSessionNotFoundError,
+  parseReadableConfigInvalidError,
+} from "./server-errors"
 
 function fill(text: string, vars?: Record<string, string | number>) {
   if (!vars) return text
@@ -155,6 +161,19 @@ describe("formatServerError", () => {
     const wrapped = new Error("ConfigInvalidError", { cause: { body, status: 400 } })
 
     expect(formatServerError(wrapped, language.t)).toBe("Arquivo de config em config invalido: Missing host")
+  })
+})
+
+describe("isRequestCancelled", () => {
+  test("recognizes query cancellation, aborts, and wrapped cancellation", () => {
+    expect(isRequestCancelled(new CancelledError())).toBe(true)
+    expect(isRequestCancelled(new DOMException("Aborted", "AbortError"))).toBe(true)
+    expect(isRequestCancelled(new Error("request failed", { cause: new CancelledError() }))).toBe(true)
+  })
+
+  test("preserves genuine reload failures", () => {
+    expect(isRequestCancelled(new Error("Network connection failed"))).toBe(false)
+    expect(isRequestCancelled({ name: "ServerTimeoutError", message: "Cancelled by the server" })).toBe(false)
   })
 })
 

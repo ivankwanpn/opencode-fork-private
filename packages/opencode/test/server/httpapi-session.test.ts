@@ -31,6 +31,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { BackgroundJob as InstanceBackgroundJob } from "../../src/background/job"
+import { InstanceRef } from "../../src/effect/instance-ref"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { Prompt } from "@opencode-ai/core/session/prompt"
@@ -2043,6 +2044,81 @@ describe("session HttpApi", () => {
         ).toBe(true)
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+  )
+
+  it.instance(
+    "backgrounds a selected shell call without promoting other foreground jobs",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory }
+        const session = yield* createSession({ title: "selective shell background" })
+        const background = yield* BackgroundJob.Service
+        yield* Effect.gen(function* () {
+          yield* Effect.all([
+            background.start({
+              id: "job_http_shell_1",
+              type: "shell",
+              metadata: { sessionID: session.id, callID: "call_shell_1" },
+              run: Effect.never,
+            }),
+            background.start({
+              id: "job_http_shell_2",
+              type: "shell",
+              metadata: { sessionID: session.id, callID: "call_shell_2" },
+              run: Effect.never,
+            }),
+            background.start({
+              id: "job_http_task",
+              type: "task",
+              metadata: { parentSessionId: session.id },
+              run: Effect.never,
+            }),
+          ])
+
+          expect(
+            yield* requestJson<boolean>(`/api/session/${session.id}/background?callID=call_missing`, {
+              method: "POST",
+              headers,
+            }),
+          ).toBe(false)
+          expect((yield* background.list()).map((job) => job.metadata?.background)).toEqual([
+            undefined,
+            undefined,
+            undefined,
+          ])
+
+          expect(
+            yield* requestJson<boolean>(`/api/session/${session.id}/background?callID=call_shell_1`, {
+              method: "POST",
+              headers,
+            }),
+          ).toBe(true)
+          expect(yield* background.get("job_http_shell_1")).toMatchObject({
+            metadata: { background: true, backgroundReason: "manual" },
+          })
+          expect((yield* background.get("job_http_shell_2"))?.metadata?.background).toBeUndefined()
+          expect((yield* background.get("job_http_task"))?.metadata?.background).toBeUndefined()
+
+          expect(
+            yield* requestJson<boolean>(`/api/session/${session.id}/background`, {
+              method: "POST",
+              headers,
+            }),
+          ).toBe(true)
+          expect(yield* background.get("job_http_shell_2")).toMatchObject({
+            metadata: { background: true, backgroundReason: "manual" },
+          })
+          expect(yield* background.get("job_http_task")).toMatchObject({ metadata: { background: true } })
+
+          yield* Effect.all([
+            background.cancel("job_http_shell_1"),
+            background.cancel("job_http_shell_2"),
+            background.cancel("job_http_task"),
+          ])
+        }).pipe(Effect.provideService(InstanceRef, undefined))
+      }),
+    30_000,
   )
 
   it.instance(

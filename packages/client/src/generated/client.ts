@@ -704,6 +704,7 @@ export function make(options: ClientOptions) {
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/background`,
+            query: { callID: input["callID"] },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
             empty: false,

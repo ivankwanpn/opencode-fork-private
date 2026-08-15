@@ -360,7 +360,7 @@ export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "
   readonly session: OpenCodeClient["session"] &
     Pick<
       CurrentClient["sessions"],
-      "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel" | "todo"
+      "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel" | "background" | "todo"
     >
   readonly location: CompatibleLocationApi
   readonly mcp: CompatibleMcpApi

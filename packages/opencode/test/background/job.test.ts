@@ -7,6 +7,16 @@ import { testEffect } from "../lib/effect"
 const it = testEffect(LayerNode.compile(BackgroundJob.node))
 
 describe("background.job", () => {
+  it.live("uses a process registry without a legacy instance context", () =>
+    Effect.gen(function* () {
+      const jobs = yield* BackgroundJob.Service
+      const job = yield* jobs.start({ type: "test", run: Effect.never })
+
+      expect(yield* jobs.get(job.id)).toMatchObject({ id: job.id, status: "running" })
+      expect((yield* jobs.cancel(job.id))?.status).toBe("cancelled")
+    }),
+  )
+
   it.instance("tracks started jobs through completion", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service

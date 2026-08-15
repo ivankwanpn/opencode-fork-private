@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog 與 provider-neutral search；durable discovery 與 provider-native adapters 尚未實作
+> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、durable discovery 與 generic cross-drain fallback；provider-native adapters 尚未實作
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`
@@ -9,9 +9,9 @@
 
 ## 1. 文件目的
 
-目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，同一 drain 內以 ToolKey/definitionHash 累積選擇，generic 下一輪仍以普通 definitions 注入。但 discovery 仍只保存在 runner 記憶體裡，因此尚不足以支撐程序重啟、compaction、provider 切換與原生 OpenAI／Anthropic 協議。
+目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain 與 compaction 邊界後都能恢復仍有效的普通 definitions。完整 OS process restart 整合尚未直接執行回歸，OpenAI／Anthropic 原生協議也仍待後續 phase。
 
-本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0 與 Phase 1；後續工作必須另以 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md` 規劃 durable discovery，再依序實作 generic 與 provider-native adapters。
+本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery 與 generic cross-drain fallback；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`。後續工作應依序補 process-restart 整合回歸、provider-native adapters 與 capability negotiation。
 
 核心決策是：
 
@@ -46,15 +46,18 @@
 - 搜索支援驗證後的 exact `select:`、ToolKey/callable exact match、nested schema BM25、穩定排序與 revision cache，輸出 canonical structured loadable specs。
 - 同一 drain 內的選擇以 ToolKey/definitionHash 單調累積；schema 或來源替換會使舊選擇失效。
 - MCP 與 Plugin 工具以 scoped contribution 發布明確來源；Plugin 設定頁的 tools readiness 直接讀 ToolRegistry source state，不再固定為 `pending`。
+- `SessionEvent.ToolDiscovery.Completed` 只保存最小身份資料，兩張 SQLite projection 在 durable append 的同一 transaction 內投影 invocation 與 unioned selection。
+- exact retry 不重跑搜索；query/limit 衝突、stale definition hash、empty result、permission override 與 durable commit failure 都 fail closed。
+- Session runner 每個 logical turn 從 projection 恢復選擇，因此後續新 drain 與 compaction 後的第一個 provider request 已可 materialize 仍有效的 generic definitions。
 
-2026-08-15 的最終回歸證據為 Core `192 pass / 0 fail`、OpenCode `71 pass / 0 fail`，以及 Core、OpenCode、App、Server `bun typecheck` 全部通過。
+2026-08-15 durable tranche 的新鮮回歸證據為 Schema `29 pass / 0 fail`、Core `1600 pass / 7 skip / 0 fail`、Client `21 pass / 0 fail`、App reducer `11 pass / 0 fail`、TUI data `8 pass / 0 fail`、OpenCode event/bridge `11 pass / 0 fail`；Schema、Core、Client、Protocol、Server、App、TUI、OpenCode 的 `bun typecheck` 與 Client `check:generated` 全部通過。
 
 仍未完成且不得提前宣稱完成：
 
-- 跨新 drain、程序重啟、retry 與 compaction 的 durable discovery record/projection；
-- 由 durable state 恢復 generic definitions 的完整 fallback；
+- 完整 OS process restart 的端到端整合回歸；
 - OpenAI Responses 原生 `tool_search`／`tool_search_output` adapter；
 - Anthropic Messages 原生 `tool_reference`／`defer_loading` adapter；
+- provider-native history reconstruction 與 capability negotiation／downgrade；
 - MCP reconnect/late-load 與 subagent grant intersection 的後續 hardening。
 
 ## 1.3 方案比較與選擇
@@ -88,7 +91,7 @@
 
 ## 3. Phase 1 前 P5 的問題與目前邊界
 
-以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足與無 revision cache 已在 `888.0.18` 修正；process-local discovery、durable replay、compaction 與 provider-native wire 問題仍存在。
+以下清單保留 Phase 1 開始時的基線，便於解釋 canonical tranche 修正了什麼。普通文字結果、名稱 identity、replacement Set、搜尋欄位不足、revision cache、process-local discovery、durable replay 與 compaction 已在 `888.0.18` 修正；provider-native wire 與完整 process-restart 整合回歸仍未完成。
 
 - `packages/core/src/tool/tool-search.ts`
   - `Output` 是 `Schema.String`；
@@ -683,18 +686,20 @@ Generic：
 
 ### Phase 2：Durable discovery
 
-- [ ] 新增 Schema event；
-- [ ] event manifest；
-- [ ] publish／project／replay；
-- [ ] 把目前的 in-drain union 擴充為 durable union projection；
-- [ ] 完成 restart、compaction、retry regression。
+- [x] 新增 Schema event；
+- [x] event manifest；
+- [x] publish／project／replay；
+- [x] 把目前的 in-drain union 擴充為 durable union projection；
+- [x] 完成新 drain、compaction、exact retry／replay regression；
+- [ ] 補完整 OS process restart 的端到端整合 regression。
 
 ### Phase 3：Generic fallback
 
 - [x] 把現有 P5 改為 canonical structured output；
-- [ ] 下一輪 definitions 由 durable active discovery materialize；
+- [x] 下一輪 definitions 由 durable active discovery materialize；
 - [x] 加入 stale／未搜索直接調用提示；
-- [ ] 以 restart/compaction regression 證明非原生 provider 行為穩定。
+- [x] 以新 drain／compaction regression 證明非原生 provider 行為穩定；
+- [ ] 以完整 OS process restart regression 補足端到端證據。
 
 ### Phase 4：OpenAI Responses native adapter
 
@@ -717,7 +722,7 @@ Generic：
 - [ ] 驗證 Plugin readiness 和 Tool Search source lifecycle 在 reconnect／late load／source replacement 時保持一致；
 - [ ] capability grant intersection；
 - [ ] observability；
-- [ ] durable projection 完成後刪除過時 process-local discovery state。
+- [x] durable projection 完成後刪除過時 process-local discovery 真實來源；runner 只保留每 turn 的可重建快取。
 
 ## 17. 驗收標準
 

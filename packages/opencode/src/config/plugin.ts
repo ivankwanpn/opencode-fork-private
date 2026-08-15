@@ -13,6 +13,8 @@ export type Origin = {
   spec: ConfigPluginV1.Spec
   source: string
   scope: Scope
+  // Host-managed plugins use a stable runtime identity without persisting internal metadata in user config.
+  runtimeID?: string
 }
 
 export async function load(dir: string) {

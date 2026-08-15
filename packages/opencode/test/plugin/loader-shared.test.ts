@@ -3,7 +3,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import type { LocationServices } from "@opencode-ai/core/location-services"
 import { PluginV2 } from "@opencode-ai/core/plugin"
-import { Effect, Layer, LayerMap } from "effect"
+import { Cause, Effect, Exit, Layer, LayerMap } from "effect"
 import fs from "fs/promises"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -26,6 +26,7 @@ const { readPackageThemes } = await import("../../src/plugin/shared")
 const { Npm } = await import("@opencode-ai/core/npm")
 const { TestConfig } = await import("../fixture/config")
 const { RuntimeFlags } = await import("../../src/effect/runtime-flags")
+const { MarketplacePluginRuntime } = await import("../../src/plugin/marketplace-runtime")
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -35,11 +36,16 @@ const it = testEffect(
   Layer.mergeAll(LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node, FSUtil.node])), testInstanceStoreLayer),
 )
 
-function recordingLocationServiceMap(added: string[], removed: string[]) {
+function recordingLocationServiceMap(
+  added: string[],
+  removed: string[],
+  effects: Array<Parameters<PluginV2.Interface["add"]>[1]> = [],
+) {
   const plugins = PluginV2.Service.of({
-    add: (id) =>
+    add: (id, effect) =>
       Effect.sync(() => {
         added.push(id)
+        effects.push(effect)
       }),
     remove: (id) =>
       Effect.sync(() => {
@@ -50,10 +56,9 @@ function recordingLocationServiceMap(added: string[], removed: string[]) {
   })
   return Layer.effect(
     LocationServiceMap.Service,
-    LayerMap.make(
-      () => Layer.succeed(PluginV2.Service, plugins) as unknown as Layer.Layer<LocationServices>,
-      { idleTimeToLive: "1 minute" },
-    ),
+    LayerMap.make(() => Layer.succeed(PluginV2.Service, plugins) as unknown as Layer.Layer<LocationServices>, {
+      idleTimeToLive: "1 minute",
+    }),
   )
 }
 
@@ -72,6 +77,7 @@ function load(
   dir: string,
   flags?: Parameters<typeof RuntimeFlags.layer>[0],
   locations: Layer.Layer<LocationServiceMap.Service> = locationServiceMapLayer,
+  marketplaceSources: ReadonlyArray<{ runtimeID: string; spec: string }> = [],
 ) {
   const source = path.join(dir, "opencode.json")
   return Effect.gen(function* () {
@@ -98,6 +104,15 @@ function load(
           ],
           [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true, ...flags })],
           [LocationServiceMap.node, locations],
+          [
+            MarketplacePluginRuntime.node,
+            Layer.succeed(
+              MarketplacePluginRuntime.Service,
+              MarketplacePluginRuntime.Service.of({
+                sources: () => Effect.succeed(marketplaceSources),
+              }),
+            ),
+          ],
         ]),
       ),
       provideInstance(dir),
@@ -106,6 +121,79 @@ function load(
 }
 
 describe("plugin.loader.shared", () => {
+  it.live("loads a host-managed Marketplace plugin under its stable runtime identity", () =>
+    withTmp(
+      async (dir) => {
+        const plugin = path.join(dir, "marketplace-plugin")
+        const entry = path.join(plugin, "server.js")
+        const marker = path.join(dir, "called.txt")
+        await fs.mkdir(plugin, { recursive: true })
+        await Bun.write(
+          path.join(plugin, "package.json"),
+          JSON.stringify({ name: "marketplace-demo", type: "module", main: "server.js" }),
+        )
+        await Bun.write(
+          entry,
+          [
+            "export const MarketplacePlugin = async () => {",
+            `  await Bun.write(${JSON.stringify(marker)}, "called")`,
+            "  return {}",
+            "}",
+            "",
+          ].join("\n"),
+        )
+        await Bun.write(path.join(dir, "opencode.json"), "{}\n")
+        return { marker, spec: pathToFileURL(plugin).href }
+      },
+      (tmp) =>
+        Effect.gen(function* () {
+          const added: string[] = []
+          const removed: string[] = []
+          const runtimeID = "claude-marketplace/official/marketplace-demo"
+          yield* load(tmp.path, undefined, recordingLocationServiceMap(added, removed), [
+            { runtimeID, spec: tmp.extra.spec },
+          ])
+
+          expect(yield* Effect.promise(() => Bun.file(tmp.extra.marker).text())).toBe("called")
+          expect(added).toEqual([runtimeID])
+        }),
+    ),
+  )
+
+  it.live("projects host-managed Marketplace initialization failures into PluginV2", () =>
+    withTmp(
+      async (dir) => {
+        const plugin = path.join(dir, "broken-marketplace-plugin")
+        await fs.mkdir(plugin, { recursive: true })
+        await Bun.write(
+          path.join(plugin, "package.json"),
+          JSON.stringify({ name: "broken-marketplace-demo", type: "module", main: "server.js" }),
+        )
+        await Bun.write(
+          path.join(plugin, "server.js"),
+          'export const BrokenPlugin = async () => { throw new Error("managed init failed") }\n',
+        )
+        await Bun.write(path.join(dir, "opencode.json"), "{}\n")
+        return { spec: pathToFileURL(plugin).href }
+      },
+      (tmp) =>
+        Effect.gen(function* () {
+          const added: string[] = []
+          const removed: string[] = []
+          const effects: Array<Parameters<PluginV2.Interface["add"]>[1]> = []
+          const runtimeID = "claude-marketplace/official/broken-marketplace-demo"
+          yield* load(tmp.path, undefined, recordingLocationServiceMap(added, removed, effects), [
+            { runtimeID, spec: tmp.extra.spec },
+          ])
+
+          expect(added).toEqual([runtimeID])
+          const failure = yield* Effect.exit(effects[0]!(undefined as never))
+          expect(Exit.isFailure(failure)).toBe(true)
+          if (Exit.isFailure(failure)) expect(Cause.pretty(failure.cause)).toContain("managed init failed")
+        }),
+    ),
+  )
+
   it.live("loads a file:// plugin function export", () =>
     withTmp(
       async (dir) => {

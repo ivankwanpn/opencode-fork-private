@@ -20,6 +20,7 @@ import { ConfigCommand } from "../config/command"
 import { ClaudeMarketplaceManager, type MarketplacePaths } from "./claude-marketplace"
 import { NativeClaudeMarketplace } from "./native-claude-marketplace"
 import { Process } from "../util/process"
+import { Service } from "."
 
 let temporaryDirectory: string
 
@@ -175,9 +176,75 @@ describe("ClaudeMarketplaceManager", () => {
 
     const installed = await manager.install("demo@local-marketplace")
     expect(installed.plugins.find((item) => item.id === "demo@local-marketplace")?.installed).toBe(true)
+    expect(installed.plugins.find((item) => item.id === "demo@local-marketplace")?.capabilities).toEqual(["skills"])
+    expect(await manager.enabledPluginSources()).toEqual([])
     expect(
       await fsNode.stat(path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo", "demo", "SKILL.md")),
     ).toBeTruthy()
+  })
+
+  test("projects an installed OpenCode server entrypoint as a managed runtime source", async () => {
+    const repository = path.join(temporaryDirectory, "repository")
+    const plugin = path.join(repository, "plugins", "demo")
+    await fsNode.mkdir(path.join(plugin, ".opencode", "plugins"), { recursive: true })
+    await fsNode.mkdir(path.join(plugin, "skills", "demo"), { recursive: true })
+    await fsNode.writeFile(
+      path.join(plugin, "package.json"),
+      JSON.stringify({ name: "demo", type: "module", main: ".opencode/plugins/demo.js" }),
+    )
+    await fsNode.writeFile(
+      path.join(plugin, ".opencode", "plugins", "demo.js"),
+      "export const DemoPlugin = async () => ({})\n",
+    )
+    await fsNode.writeFile(
+      path.join(plugin, "skills", "demo", "SKILL.md"),
+      "---\nname: demo\ndescription: demo skill\n---\nUse the demo skill.",
+    )
+    await git(repository, ["init"])
+    await git(repository, ["config", "user.email", "test@example.com"])
+    await git(repository, ["config", "user.name", "Marketplace Test"])
+    await git(repository, ["add", "."])
+    await git(repository, ["commit", "-m", "initial"])
+
+    const marketplace = path.join(temporaryDirectory, "git-marketplace")
+    await writeMarketplace(marketplace, {
+      source: "git-subdir",
+      url: pathToFileURL(repository).href,
+      path: "plugins/demo",
+    })
+    const manager = new ClaudeMarketplaceManager(testPaths())
+
+    await manager.addMarketplace(marketplace)
+    const installed = await manager.install("demo@local-marketplace")
+
+    expect(installed.plugins[0]?.capabilities).toEqual(["skills", "plugin"])
+    expect(await manager.enabledPluginSources()).toEqual([
+      {
+        runtimeID: "claude-marketplace/local-marketplace/demo",
+        spec: pathToFileURL(path.join(testPaths().pluginDirectory, "local-marketplace__demo")).href,
+      },
+    ])
+
+    await manager.disable("demo@local-marketplace")
+    expect(await manager.enabledPluginSources()).toEqual([])
+  })
+
+  test("does not treat Claude hooks as an OpenCode code plugin", async () => {
+    const marketplace = path.join(temporaryDirectory, "source")
+    await writeMarketplace(marketplace, "./plugins/demo")
+    const plugin = path.join(marketplace, "plugins", "demo")
+    await fsNode.rm(path.join(plugin, "skills"), { recursive: true, force: true })
+    await fsNode.rm(path.join(plugin, "commands"), { recursive: true, force: true })
+    await fsNode.rm(path.join(plugin, ".mcp.json"), { force: true })
+    await fsNode.mkdir(path.join(plugin, "hooks"), { recursive: true })
+    await fsNode.writeFile(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ hooks: {} }))
+    const manager = new ClaudeMarketplaceManager(testPaths())
+
+    await manager.addMarketplace(marketplace)
+    const installed = await manager.install("demo@local-marketplace")
+
+    expect(installed.plugins[0]?.capabilities).toEqual([])
+    expect(await manager.enabledPluginSources()).toEqual([])
   })
 })
 
@@ -188,6 +255,7 @@ describe("NativeClaudeMarketplace", () => {
     const manager = new ClaudeMarketplaceManager(testPaths())
     await manager.addMarketplace(marketplace)
     await manager.install("demo@local-marketplace")
+    let initialized = 0
 
     const config = Layer.mock(Config.Service, {})
     const locations = Layer.effect(
@@ -201,7 +269,19 @@ describe("NativeClaudeMarketplace", () => {
     )
     const events = Layer.mock(EventV2.Service, {})
     const capability = NativeClaudeMarketplace.layerWith(manager).pipe(
-      Layer.provide(Layer.mergeAll(config, locations, events)),
+      Layer.provide(
+        Layer.mergeAll(
+          config,
+          locations,
+          events,
+          Layer.mock(Service, {
+            init: () =>
+              Effect.sync(() => {
+                initialized += 1
+              }),
+          }),
+        ),
+      ),
     )
     const observations = Layer.mergeAll(
       Layer.mock(SkillV2.Service, {
@@ -217,8 +297,7 @@ describe("NativeClaudeMarketplace", () => {
           ]),
       }),
       Layer.mock(CommandV2.Service, {
-        list: () =>
-          Effect.succeed([{ name: "claude/local-marketplace__demo/demo", template: "Demo command" }]),
+        list: () => Effect.succeed([{ name: "claude/local-marketplace__demo/demo", template: "Demo command" }]),
       }),
       Layer.mock(MCP.Service, {
         status: () => Effect.succeed({ "claude:local-marketplace:demo:demo": { status: "connected" } }),
@@ -234,6 +313,7 @@ describe("NativeClaudeMarketplace", () => {
       ),
     )
 
+    expect(initialized).toBe(1)
     expect(result.plugins).toEqual([
       {
         id: Plugin.ID.make("demo@local-marketplace"),
@@ -289,7 +369,16 @@ describe("NativeClaudeMarketplace", () => {
         }),
     })
     const runtime = NativeClaudeMarketplace.layerWith(manager).pipe(
-      Layer.provide(Layer.mergeAll(config, locations, events)),
+      Layer.provide(
+        Layer.mergeAll(
+          config,
+          locations,
+          events,
+          Layer.mock(Service, {
+            init: () => Effect.void,
+          }),
+        ),
+      ),
     )
 
     await Effect.runPromise(

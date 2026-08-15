@@ -97,6 +97,49 @@ describe("plugin runtime readiness", () => {
     })
   })
 
+  test("reports a multi-export managed plugin ready from its stable runtime prefix", () => {
+    const runtime = descriptor({
+      capabilities: ["plugin"],
+      pluginRuntimeID: "claude-marketplace/marketplace/demo",
+    })
+    const result = runtimeSnapshot(
+      [runtime],
+      observations({
+        plugins: {
+          "claude-marketplace/marketplace/demo#0": { state: "ready" },
+          "claude-marketplace/marketplace/demo#1": { state: "ready" },
+        },
+      }),
+    )
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "ready",
+      capabilities: [{ name: "plugin", state: "ready" }],
+    })
+  })
+
+  test("reports managed plugin loader failures instead of waiting forever", () => {
+    const runtime = descriptor({
+      capabilities: ["plugin"],
+      pluginRuntimeID: "claude-marketplace/marketplace/demo",
+    })
+    const result = runtimeSnapshot(
+      [runtime],
+      observations({
+        plugins: {
+          "claude-marketplace/marketplace/demo": { state: "failed", message: "entrypoint import failed" },
+        },
+      }),
+    )
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "failed",
+      capabilities: [{ name: "plugin", state: "failed", message: "entrypoint import failed" }],
+    })
+  })
+
   test("reports degraded when one contribution is ready and another has terminal failure", () => {
     const result = runtimeSnapshot(
       [descriptor({ capabilities: ["skills", "mcp"] })],

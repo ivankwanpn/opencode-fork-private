@@ -59,10 +59,18 @@ function capability(
       if (!descriptor.pluginRuntimeID) {
         return { name, state: "failed", message: "Plugin runtime identity is unavailable" }
       }
-      const status = observations.plugins[descriptor.pluginRuntimeID]
-      if (!status || status.state === "initializing") return { name, state: "pending" }
-      if (status.state === "ready") return { name, state: "ready" }
-      return { name, state: "failed", ...(status.message ? { message: status.message } : {}) }
+      const exact = observations.plugins[descriptor.pluginRuntimeID]
+      const statuses = exact
+        ? [exact]
+        : Object.entries(observations.plugins).flatMap(([id, status]) =>
+            id.startsWith(`${descriptor.pluginRuntimeID}#`) ? [status] : [],
+          )
+      if (statuses.length === 0 || statuses.some((status) => status.state === "initializing")) {
+        return { name, state: "pending" }
+      }
+      if (statuses.every((status) => status.state === "ready")) return { name, state: "ready" }
+      const failed = statuses.find((status) => status.state === "failed")
+      return { name, state: "failed", ...(failed?.message ? { message: failed.message } : {}) }
     }
     case "tools":
       return toolCapability(descriptor, observations)

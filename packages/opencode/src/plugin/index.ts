@@ -12,6 +12,7 @@ import type {
   WorkspaceAdapter as PluginWorkspaceAdapter,
 } from "@opencode-ai/plugin"
 import { Config } from "@/config/config"
+import { ConfigPlugin } from "@/config/plugin"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { ServerAuth } from "@/server/auth"
 import { CodexAuthPlugin } from "./openai/codex"
@@ -37,10 +38,15 @@ import type { WorkspaceAdapter } from "@/control-plane/types"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
+import { MarketplacePluginRuntime } from "./marketplace-runtime"
 
 export type Entry = {
   readonly id: string
   readonly hooks: Hooks
+}
+
+type LoadedEntry = Entry & {
+  readonly runtimeID?: string
 }
 
 type State = {
@@ -122,23 +128,33 @@ function getLegacyPlugins(mod: Record<string, unknown>) {
   return result
 }
 
-async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput): Promise<Entry[]> {
+async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput, runtimeID?: string): Promise<LoadedEntry[]> {
   const plugin = readV1Plugin(load.mod, load.spec, "server", "detect")
   if (plugin) {
-    const id = await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg)
-    return [{ id, hooks: await (plugin as PluginModule).server(input, load.options) }]
+    const id =
+      runtimeID ??
+      (await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg))
+    return [
+      {
+        id,
+        hooks: await (plugin as PluginModule).server(input, load.options),
+        ...(runtimeID ? { runtimeID } : {}),
+      },
+    ]
   }
 
   const baseID =
-    load.source === "file"
+    runtimeID ??
+    (load.source === "file"
       ? `legacy:${load.spec}`
-      : await resolvePluginId(load.source, load.spec, load.target, undefined, load.pkg)
-  const result: Entry[] = []
+      : await resolvePluginId(load.source, load.spec, load.target, undefined, load.pkg))
+  const result: LoadedEntry[] = []
   const legacy = getLegacyPlugins(load.mod)
   for (let index = 0; index < legacy.length; index++) {
     result.push({
-      id: `${baseID}#${index}`,
+      id: runtimeID && legacy.length === 1 ? runtimeID : `${baseID}#${index}`,
       hooks: await legacy[index]!(input, load.options),
+      ...(runtimeID ? { runtimeID } : {}),
     })
   }
   return result
@@ -151,10 +167,12 @@ const layer = Layer.effect(
     const config = yield* Config.Service
     const flags = yield* RuntimeFlags.Service
     const locations = yield* LocationServiceMap.Service
+    const marketplace = yield* MarketplacePluginRuntime.Service
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Plugin.state")(function* (ctx) {
-        const loadedHooks: Entry[] = []
+        const loadedHooks: LoadedEntry[] = []
+        const failures = new Map<string, string>()
         const bridge = yield* EffectBridge.make()
         const workspaceID = yield* InstanceState.workspaceID
         const location = locations
@@ -168,6 +186,10 @@ const layer = Layer.effect(
 
         function publishPluginError(message: string) {
           bridge.fork(events.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
+        }
+
+        function recordRuntimeFailure(runtimeID: string | undefined, message: string) {
+          if (runtimeID) failures.set(runtimeID, message)
         }
 
         const { Server } = yield* Effect.promise(() => import("../server/server"))
@@ -208,7 +230,18 @@ const layer = Layer.effect(
           if (init._tag === "Some") loadedHooks.push({ id: internal.id, hooks: init.value })
         }
 
-        const plugins = flags.pure ? [] : (cfg.plugin_origins ?? [])
+        const managed = flags.pure ? [] : yield* marketplace.sources()
+        const plugins = flags.pure
+          ? []
+          : ConfigPlugin.deduplicatePluginOrigins([
+              ...(cfg.plugin_origins ?? []),
+              ...managed.map((source) => ({
+                spec: source.spec,
+                source: "claude-marketplace",
+                scope: "global" as const,
+                runtimeID: source.runtimeID,
+              })),
+            ])
         if (flags.pure && cfg.plugin_origins?.length) {
         }
         if (plugins.length) yield* config.waitForDependencies()
@@ -217,13 +250,20 @@ const layer = Layer.effect(
           PluginLoader.loadExternal({
             items: plugins,
             kind: "server",
+            finish: async (load, origin) => {
+              if (origin.runtimeID) failures.delete(origin.runtimeID)
+              return { load, runtimeID: origin.runtimeID }
+            },
             report: {
-              start(candidate) {},
-              missing(candidate, _retry, message) {},
-              error(candidate, _retry, stage, error, resolved) {
+              start(_candidate) {},
+              missing(candidate, _retry, message) {
+                recordRuntimeFailure(candidate.origin.runtimeID, message)
+              },
+              error(candidate, _retry, stage, error, _resolved) {
                 const spec = candidate.plan.spec
                 const cause = error instanceof Error ? (error.cause ?? error) : error
                 const message = stage === "load" ? errorMessage(error) : errorMessage(cause)
+                recordRuntimeFailure(candidate.origin.runtimeID, message)
 
                 if (stage === "install") {
                   const parsed = parsePluginSpecifier(spec)
@@ -246,16 +286,18 @@ const layer = Layer.effect(
             },
           }),
         )
-        for (const load of loaded) {
-          if (!load) continue
-
+        for (const item of loaded) {
           // Keep plugin execution sequential so hook registration and execution
           // order remains deterministic across plugin runs.
           const init = yield* Effect.tryPromise({
-            try: () => applyPlugin(load, input),
+            try: () => applyPlugin(item.load, input, item.runtimeID),
             catch: (err) => errorMessage(err),
           }).pipe(
-            Effect.tapError((error) => Effect.logError("failed to load plugin", { path: load.spec, error })),
+            Effect.tapError((error) =>
+              Effect.sync(() => recordRuntimeFailure(item.runtimeID, error)).pipe(
+                Effect.andThen(Effect.logError("failed to load plugin", { path: item.load.spec, error })),
+              ),
+            ),
             Effect.option,
           )
           if (init._tag === "Some") loadedHooks.push(...init.value)
@@ -263,18 +305,32 @@ const layer = Layer.effect(
 
         // Notify plugins of current config before exposing their runtime hooks.
         for (const loaded of loadedHooks) {
-          yield* Effect.tryPromise({
+          const init = yield* Effect.tryPromise({
             try: () => Promise.resolve((loaded.hooks as any).config?.(cfg)),
             catch: errorMessage,
           }).pipe(
-            Effect.tapError((error) => Effect.logError("plugin config hook failed", { id: loaded.id, error })),
-            Effect.ignore,
+            Effect.tapError((error) =>
+              Effect.sync(() => recordRuntimeFailure(loaded.runtimeID, error)).pipe(
+                Effect.andThen(Effect.logError("plugin config hook failed", { id: loaded.id, error })),
+              ),
+            ),
+            Effect.option,
           )
+          if (init._tag === "None" && loaded.runtimeID && !failures.has(loaded.runtimeID)) {
+            recordRuntimeFailure(loaded.runtimeID, `Plugin config hook failed: ${loaded.id}`)
+          }
         }
+
+        const readyHooks = loadedHooks.filter((loaded) => !loaded.runtimeID || !failures.has(loaded.runtimeID))
 
         yield* Effect.gen(function* () {
           const plugins = yield* PluginV2.Service
-          for (const loaded of loadedHooks) {
+          for (const [runtimeID, message] of failures) {
+            const id = PluginV2.ID.make(runtimeID)
+            yield* Effect.exit(plugins.add(id, () => Effect.die(new Error(message))))
+            yield* Effect.addFinalizer(() => plugins.remove(id))
+          }
+          for (const loaded of readyHooks) {
             const id = PluginV2.ID.make(loaded.id)
             const adapted = PluginV1Compat.fromHooks(loaded.id, loaded.hooks)
             yield* plugins.add(id, adapted.effect)
@@ -284,7 +340,7 @@ const layer = Layer.effect(
 
         const active: Entry[] = []
         const positions = new Map<string, number>()
-        for (const loaded of loadedHooks) {
+        for (const loaded of readyHooks) {
           const index = positions.get(loaded.id)
           if (index === undefined) {
             positions.set(loaded.id, active.length)
@@ -296,6 +352,7 @@ const layer = Layer.effect(
 
         return { entries: active }
       }),
+      { group: "plugins" },
     )
 
     const trigger = Effect.fn("Plugin.trigger")(function* <
@@ -333,7 +390,7 @@ const layer = Layer.effect(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [EventV2Bridge.node, Config.node, RuntimeFlags.node, LocationServiceMap.node],
+  deps: [EventV2Bridge.node, Config.node, RuntimeFlags.node, LocationServiceMap.node, MarketplacePluginRuntime.node],
 })
 
 export * as Plugin from "."

@@ -1,6 +1,6 @@
 import fsNode from "node:fs/promises"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import type { Marketplace, Plugin } from "@opencode-ai/protocol/groups/plugin"
 import { Global } from "@opencode-ai/core/global"
 import { Plugin as PluginSchema } from "@opencode-ai/schema/plugin"
@@ -94,6 +94,11 @@ export type RuntimeDescriptor = {
   readonly mcpServers: readonly string[]
   readonly toolSourceIDs: readonly string[]
   readonly pluginRuntimeID?: string
+}
+
+export type ManagedPluginSource = {
+  readonly runtimeID: string
+  readonly spec: string
 }
 
 const defaultPaths: MarketplacePaths = {
@@ -417,6 +422,27 @@ async function copyDirectory(source: string, destination: string) {
   return true
 }
 
+function exportPath(input: unknown): string | undefined {
+  if (typeof input === "string" && input.trim()) return input.trim()
+  if (!isRecord(input)) return undefined
+  return stringValue(input.import) ?? stringValue(input.default)
+}
+
+async function installedCapabilities(root: string): Promise<PluginSchema.RuntimeCapabilityName[]> {
+  const capabilities: PluginSchema.RuntimeCapabilityName[] = []
+  if (await isDirectory(path.join(root, "skills"))) capabilities.push("skills")
+  if (await isDirectory(path.join(root, "commands"))) capabilities.push("commands")
+  if (await isFile(path.join(root, ".mcp.json"))) capabilities.push("mcp")
+
+  const manifest = path.join(root, "package.json")
+  if (!(await isFile(manifest))) return capabilities
+  const pkg = await readJson(manifest)
+  if (!isRecord(pkg)) return capabilities
+  const server = isRecord(pkg.exports) ? exportPath(pkg.exports["./server"]) : undefined
+  if (server ?? stringValue(pkg.main)) capabilities.push("plugin")
+  return capabilities
+}
+
 export class ClaudeMarketplaceManager {
   private readonly paths: MarketplacePaths
 
@@ -449,7 +475,9 @@ export class ClaudeMarketplaceManager {
             ...(entry.version ? { version: entry.version } : {}),
             ...(entry.category ? { category: entry.category } : {}),
             tags: entry.tags,
-            capabilities: await this.capabilities(marketplace.cachePath, entry).catch(() => ["plugin"]),
+            capabilities: await this.capabilities(marketplace.cachePath, entry, installed?.installPath).catch(() => [
+              "plugin",
+            ]),
             mcpServers: Object.keys(installed?.mcp ?? {}).toSorted(),
             installed: installed?.installed === true,
             enabled: installed?.enabled === true,
@@ -588,6 +616,24 @@ export class ClaudeMarketplaceManager {
     return Object.fromEntries(Object.values(state.plugins).flatMap((plugin) => Object.entries(plugin.mcp)))
   }
 
+  async enabledPluginSources(): Promise<ManagedPluginSource[]> {
+    const state = await this.loadState()
+    const sources = await Promise.all(
+      Object.values(state.plugins)
+        .filter((plugin) => plugin.installed && plugin.enabled)
+        .toSorted((left, right) => left.id.localeCompare(right.id))
+        .map(async (plugin): Promise<ManagedPluginSource | undefined> => {
+          const capabilities = await installedCapabilities(plugin.installPath).catch(() => ["plugin"] as const)
+          if (!capabilities.includes("plugin")) return undefined
+          return {
+            runtimeID: `claude-marketplace/${plugin.marketplace}/${plugin.name}`,
+            spec: pathToFileURL(plugin.installPath).href,
+          }
+        }),
+    )
+    return sources.filter((source): source is ManagedPluginSource => source !== undefined)
+  }
+
   async runtimeDescriptors(): Promise<RuntimeDescriptor[]> {
     const state = await this.loadState()
     const catalog = await this.list()
@@ -640,19 +686,14 @@ export class ClaudeMarketplaceManager {
     const files = await Array.fromAsync(
       new Bun.Glob("**/*.md").scan({ cwd: directory, absolute: true, onlyFiles: true }),
     )
-    return files
-      .map((file) => path.relative(root, file).replaceAll("\\", "/").replace(/\.md$/, ""))
-      .toSorted()
+    return files.map((file) => path.relative(root, file).replaceAll("\\", "/").replace(/\.md$/, "")).toSorted()
   }
 
-  private async capabilities(root: string, entry: MarketplacePlugin) {
+  private async capabilities(root: string, entry: MarketplacePlugin, installedRoot?: string) {
+    if (installedRoot && (await isDirectory(installedRoot))) return installedCapabilities(installedRoot)
     const source = pluginSource(entry.source, root)
     if (source.kind === "git") return ["plugin"]
-    const capabilities = []
-    if (await isDirectory(path.join(source.source, "skills"))) capabilities.push("skills")
-    if (await isDirectory(path.join(source.source, "commands"))) capabilities.push("commands")
-    if (await isFile(path.join(source.source, ".mcp.json"))) capabilities.push("mcp")
-    return capabilities.length ? capabilities : ["plugin"]
+    return installedCapabilities(source.source)
   }
 
   private async installPluginFiles(plugin: PluginState, marketplaceRoot: string, entry?: MarketplacePlugin) {

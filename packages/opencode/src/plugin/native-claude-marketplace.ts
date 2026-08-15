@@ -14,6 +14,7 @@ import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import { ClaudeMarketplaceManager, type ManagedMcpServer } from "./claude-marketplace"
 import { runtimeSnapshot } from "./runtime-readiness"
+import { Plugin } from "."
 
 function unavailable(action: string, error: unknown) {
   return new ServiceUnavailableError({
@@ -29,6 +30,7 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
       const config = yield* Config.Service
       const locations = yield* LocationServiceMap.Service
       const events = yield* EventV2.Service
+      const legacyPlugins = yield* Plugin.Service
 
       const run = <A>(action: string, task: () => Promise<A>) =>
         Effect.tryPromise({
@@ -77,6 +79,7 @@ export const layerWith = (manager: ClaudeMarketplaceManager) =>
             const mcp = yield* MCP.Service
             const plugins = yield* PluginV2.Service
             const tools = yield* ToolRegistry.Service
+            yield* legacyPlugins.init()
             const descriptors = yield* run("Reading plugin runtime descriptors", () => manager.runtimeDescriptors())
             return runtimeSnapshot(descriptors, {
               skills: yield* skills.list(),

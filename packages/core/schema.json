@@ -1,9 +1,9 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "81b3d7a4-5ec6-4d3c-95e8-49d0fda22d66",
+  "id": "e875c553-fe89-4f40-8f97-1fc723ca4a74",
   "prevIds": [
-    "daaf4547-a5d1-49d3-bb73-8bf49f6c5140"
+    "81b3d7a4-5ec6-4d3c-95e8-49d0fda22d66"
   ],
   "ddl": [
     {
@@ -72,6 +72,14 @@
     },
     {
       "name": "session",
+      "entityType": "tables"
+    },
+    {
+      "name": "session_tool_discovery_call",
+      "entityType": "tables"
+    },
+    {
+      "name": "session_tool_discovery",
       "entityType": "tables"
     },
     {
@@ -1464,6 +1472,176 @@
     },
     {
       "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "assistant_message_id",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tool_call_id",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "query",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "limit",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "catalog_revision",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "matches",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "pending_sources",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "seq",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_completed",
+      "entityType": "columns",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tool_key",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "definition_hash",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "callable_name",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "discovered_seq",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_discovered",
+      "entityType": "columns",
+      "table": "session_tool_discovery"
+    },
+    {
+      "type": "text",
       "notNull": false,
       "autoincrement": false,
       "default": null,
@@ -2248,6 +2426,36 @@
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
+      "name": "fk_session_tool_discovery_call_session_id_session_id_fk",
+      "entityType": "fks",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "columns": [
+        "session_id"
+      ],
+      "tableTo": "session",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_session_tool_discovery_session_id_session_id_fk",
+      "entityType": "fks",
+      "table": "session_tool_discovery"
+    },
+    {
+      "columns": [
+        "session_id"
+      ],
+      "tableTo": "session",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
       "name": "fk_session_turn_session_id_session_id_fk",
       "entityType": "fks",
       "table": "session_turn"
@@ -2361,6 +2569,27 @@
       "name": "project_directory_pk",
       "entityType": "pks",
       "table": "project_directory"
+    },
+    {
+      "columns": [
+        "session_id",
+        "assistant_message_id",
+        "tool_call_id"
+      ],
+      "nameExplicit": false,
+      "name": "session_tool_discovery_call_pk",
+      "entityType": "pks",
+      "table": "session_tool_discovery_call"
+    },
+    {
+      "columns": [
+        "session_id",
+        "tool_key"
+      ],
+      "nameExplicit": false,
+      "name": "session_tool_discovery_pk",
+      "entityType": "pks",
+      "table": "session_tool_discovery"
     },
     {
       "columns": [
@@ -2821,6 +3050,24 @@
       "name": "session_parent_idx",
       "entityType": "indexes",
       "table": "session"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        },
+        {
+          "value": "discovered_seq",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "session_tool_discovery_session_seq_idx",
+      "entityType": "indexes",
+      "table": "session_tool_discovery"
     },
     {
       "columns": [

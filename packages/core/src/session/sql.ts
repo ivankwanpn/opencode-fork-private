@@ -13,7 +13,7 @@ import type { SystemContext } from "../system-context/index"
 import { AgentV2 } from "../agent"
 import type { Revert } from "@opencode-ai/schema/revert"
 import type { ID as EventID } from "@opencode-ai/schema/event"
-import type { RetryError } from "@opencode-ai/schema/session-event"
+import type { RetryError, SessionEvent } from "@opencode-ai/schema/session-event"
 import type { Intent as SessionInputIntent } from "@opencode-ai/schema/session-input"
 import { ModelV2 } from "../model"
 
@@ -281,3 +281,43 @@ export const SessionContextEpochTable = sqliteTable("session_context_epoch", {
   snapshot: text({ mode: "json" }).notNull().$type<SystemContext.Snapshot>(),
   baseline_seq: integer().notNull(),
 })
+
+export const SessionToolDiscoveryCallTable = sqliteTable(
+  "session_tool_discovery_call",
+  {
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    assistant_message_id: text().$type<SessionMessage.ID>().notNull(),
+    tool_call_id: text().notNull(),
+    query: text().notNull(),
+    limit: integer().notNull(),
+    catalog_revision: text().notNull(),
+    matches: text({ mode: "json" }).$type<ReadonlyArray<SessionEvent.ToolDiscovery.Match>>().notNull(),
+    pending_sources: text({ mode: "json" }).$type<ReadonlyArray<SessionEvent.ToolDiscovery.Source>>().notNull(),
+    seq: integer().notNull(),
+    time_completed: integer().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.session_id, table.assistant_message_id, table.tool_call_id] })],
+)
+
+export const SessionToolDiscoveryTable = sqliteTable(
+  "session_tool_discovery",
+  {
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    tool_key: text().$type<SessionEvent.ToolDiscovery.Key>().notNull(),
+    definition_hash: text().notNull(),
+    callable_name: text().notNull(),
+    source: text({ mode: "json" }).$type<SessionEvent.ToolDiscovery.Source>().notNull(),
+    discovered_seq: integer().notNull(),
+    time_discovered: integer().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.session_id, table.tool_key] }),
+    index("session_tool_discovery_session_seq_idx").on(table.session_id, table.discovered_seq),
+  ],
+)

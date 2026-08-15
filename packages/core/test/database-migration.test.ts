@@ -93,6 +93,43 @@ describe("DatabaseMigration", () => {
         ).toEqual({ name: "session_cancellation" })
         expect(
           yield* db.all<{ name: string }>(
+            sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_tool_discovery', 'session_tool_discovery_call') ORDER BY name`,
+          ),
+        ).toEqual([{ name: "session_tool_discovery" }, { name: "session_tool_discovery_call" }])
+        expect(
+          yield* db.all<{ name: string; pk: number }>(
+            sql`SELECT name, pk FROM pragma_table_info('session_tool_discovery_call') WHERE pk > 0 ORDER BY pk`,
+          ),
+        ).toEqual([
+          { name: "session_id", pk: 1 },
+          { name: "assistant_message_id", pk: 2 },
+          { name: "tool_call_id", pk: 3 },
+        ])
+        expect(
+          yield* db.all<{ name: string; pk: number }>(
+            sql`SELECT name, pk FROM pragma_table_info('session_tool_discovery') WHERE pk > 0 ORDER BY pk`,
+          ),
+        ).toEqual([
+          { name: "session_id", pk: 1 },
+          { name: "tool_key", pk: 2 },
+        ])
+        expect(
+          yield* db.all<{ table: string; from: string; to: string; on_delete: string }>(
+            sql`SELECT "table", "from", "to", on_delete FROM pragma_foreign_key_list('session_tool_discovery_call')`,
+          ),
+        ).toEqual([{ table: "session", from: "session_id", to: "id", on_delete: "CASCADE" }])
+        expect(
+          yield* db.all<{ table: string; from: string; to: string; on_delete: string }>(
+            sql`SELECT "table", "from", "to", on_delete FROM pragma_foreign_key_list('session_tool_discovery')`,
+          ),
+        ).toEqual([{ table: "session", from: "session_id", to: "id", on_delete: "CASCADE" }])
+        expect(
+          yield* db.all<{ name: string }>(
+            sql`SELECT name FROM pragma_index_list('session_tool_discovery') WHERE name = 'session_tool_discovery_session_seq_idx'`,
+          ),
+        ).toEqual([{ name: "session_tool_discovery_session_seq_idx" }])
+        expect(
+          yield* db.all<{ name: string }>(
             sql`SELECT name FROM pragma_table_info('session_input') WHERE name IN ('terminal_outcome', 'terminal_message_id', 'terminal_error', 'terminal_time', 'terminal_seq') ORDER BY name`,
           ),
         ).toEqual([

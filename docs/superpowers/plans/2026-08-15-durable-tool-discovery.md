@@ -632,6 +632,6 @@
 - TUI data projection: `8 pass / 0 fail`; TUI `bun typecheck` passed.
 - OpenCode event/bridge: `11 pass / 0 fail`; OpenCode `bun typecheck` passed.
 - Protocol and Server `bun typecheck` passed.
-- New regressions executed for separate drains, compaction, permission overrides, exact retry, stale definition hashes, empty results, event replay, and failed durable completion. A full OS process restart end-to-end regression remains a separate follow-up and is not claimed here.
+- New regressions executed for separate drains, compaction, permission overrides, exact retry, stale definition hashes, empty results, event replay, failed durable completion, and closing/rebuilding independent runtime scopes against the same persistent SQLite database. A full child-OS-process runner regression remains a separate follow-up and is not claimed here.
 - Generated public types contain only invocation identity, normalized query/limit, catalog revision, ToolKey/callable name/definition hash/source, and pending source identities; they contain no full tool input/output schemas.
 - `docs/superpowers/handoffs/` remained untouched, untracked, and unstaged.

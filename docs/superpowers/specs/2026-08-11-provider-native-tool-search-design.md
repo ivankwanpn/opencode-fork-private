@@ -9,9 +9,9 @@
 
 ## 1. 文件目的
 
-目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain 與 compaction 邊界後都能恢復仍有效的普通 definitions。完整 OS process restart 整合尚未直接執行回歸，OpenAI／Anthropic 原生協議也仍待後續 phase。
+目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。完整 child-OS-process runner 整合尚未直接執行回歸，OpenAI／Anthropic 原生協議也仍待後續 phase。
 
-本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery 與 generic cross-drain fallback；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`。後續工作應依序補 process-restart 整合回歸、provider-native adapters 與 capability negotiation。
+本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery 與 generic cross-drain fallback，並以關閉及重建獨立 runtime scope 的方式驗證 SQLite 持久狀態；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`。後續工作應依序補完整 child-OS-process runner 回歸、provider-native adapters 與 capability negotiation。
 
 核心決策是：
 
@@ -54,7 +54,7 @@
 
 仍未完成且不得提前宣稱完成：
 
-- 完整 OS process restart 的端到端整合回歸；
+- 完整 child-OS-process runner 的端到端整合回歸（獨立 runtime scope + persistent SQLite 已覆蓋）；
 - OpenAI Responses 原生 `tool_search`／`tool_search_output` adapter；
 - Anthropic Messages 原生 `tool_reference`／`defer_loading` adapter；
 - provider-native history reconstruction 與 capability negotiation／downgrade；

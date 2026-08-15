@@ -1,6 +1,7 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { asc, eq } from "drizzle-orm"
-import { DateTime, Effect, Exit } from "effect"
+import { DateTime, Effect, Exit, Layer } from "effect"
+import path from "node:path"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -20,6 +21,7 @@ import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { ToolSearch } from "@opencode-ai/core/tool/tool-search"
 import { ToolDefinition } from "@opencode-ai/llm"
 import { testEffect } from "./lib/effect"
+import { tmpdir } from "./fixture/tmpdir"
 
 const it = testEffect(AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node])))
 const sessionID = SessionV2.ID.make("ses_tool_discovery_test")
@@ -211,6 +213,47 @@ describe("Session tool discovery projection", () => {
       )
     }),
   )
+
+  test("restores selections after closing and rebuilding the runtime", async () => {
+    await using tmp = await tmpdir()
+    const filename = path.join(tmp.path, "tool-discovery.sqlite")
+    const runtime = () =>
+      AppNodeBuilder.build(
+        LayerNode.group([Database.node, EventV2.node, SessionProjector.node]),
+        [[Database.node, Database.layerFromPath(filename)]],
+      )
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* setup
+        const events = yield* EventV2.Service
+        yield* events.publish(
+          SessionEvent.ToolDiscovery.Completed,
+          completed({
+            callID: "call-before-restart",
+            query: "calendar events",
+            matches: [
+              {
+                key: calendarKey,
+                callableName: "calendar_create",
+                definitionHash: "calendar-v1",
+                source: { type: "plugin", id: "calendar" },
+              },
+            ],
+          }),
+        )
+      }).pipe(Effect.provide(Layer.fresh(runtime())), Effect.scoped),
+    )
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const db = (yield* Database.Service).db
+        expect(yield* SessionToolDiscovery.selections(db, sessionID)).toEqual(
+          new Map([[calendarKey, "calendar-v1"]]),
+        )
+      }).pipe(Effect.provide(Layer.fresh(runtime())), Effect.scoped),
+    )
+  })
 
   it.effect("rejects a conflicting fresh invocation and preserves the first projection", () =>
     Effect.gen(function* () {

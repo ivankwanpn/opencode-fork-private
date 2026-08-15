@@ -1,6 +1,6 @@
 # Provider-native Tool Search 與 V2 durable discovery 設計
 
-> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、durable discovery、generic cross-drain fallback，以及 OpenAI Responses 原生 Tool Search；Anthropic native 與其餘 hardening 尚未完成
+> 狀態：`888.0.18` 已完成並驗證 Plugin runtime readiness、canonical Tool Catalog、provider-neutral search、durable discovery、generic cross-drain fallback、OpenAI Responses 原生 Tool Search，以及跨 OS process restart recovery；Anthropic native 與其餘 hardening 尚未完成
 > 日期：2026-08-11（2026-08-15 依 `999.0.17` 基線修訂）
 > 目標工作樹：`D:\agent-complete\opencode-fork-private-999.0.15`
 > 參考實作：`D:\agent-complete\codex-rust-v0.146.0`、`D:\opencode-bugfix\cc-custom`
@@ -9,9 +9,9 @@
 
 ## 1. 文件目的
 
-目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。OpenAI OAuth 經 ChatGPT Codex endpoint 解析出的 Responses route 已能使用原生 `tool_search`／`tool_search_output`，並由三輪 V2 Session regression 驗證不會把已發現工具重新注入普通 definitions。完整 child-OS-process runner 整合與 Anthropic 原生協議仍待後續 phase。
+目前 OpenCode 已把原本的 P5 proof of concept 擴充為 provider-neutral canonical search：結果是結構化 loadable specs，搜索結果以 ToolKey/definitionHash 寫入 V2 durable event 與可重建 projection，generic provider 在同一 drain、後續新 drain、獨立 runtime 重建與 compaction 邊界後都能恢復仍有效的普通 definitions。OpenAI OAuth 經 ChatGPT Codex endpoint 解析出的 Responses route 已能使用原生 `tool_search`／`tool_search_output`，並由三輪 V2 Session regression 驗證不會把已發現工具重新注入普通 definitions。另有兩個完全獨立的 Bun OS processes 共用同一 SQLite 檔案：第一個完成搜索並退出，第二個建立全新 V2 runtime 後恢復相同 `tool_search_call`／`tool_search_output` 配對與 discovered spec。Anthropic 原生協議仍待後續 phase。
 
-本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery、generic cross-drain fallback 與 OpenAI Responses native adapter，並以關閉及重建獨立 runtime scope 的方式驗證 SQLite 持久狀態；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md` 與 `docs/superpowers/plans/2026-08-15-openai-responses-native-tool-search.md`。後續工作應依序補完整 child-OS-process runner 回歸、Anthropic native adapter、自動 capability downgrade 持久化，以及 MCP／subagent hardening。
+本文件定義完整 Tool Search 的目標架構。`888.0.18` 已完成 Phase 0、Phase 1、durable discovery、generic cross-drain fallback、OpenAI Responses native adapter 與 child-OS-process runner 回歸；落地證據記錄於 `docs/superpowers/plans/2026-08-15-durable-tool-discovery.md`、`docs/superpowers/plans/2026-08-15-openai-responses-native-tool-search.md` 與 `docs/superpowers/plans/2026-08-15-native-tool-search-process-restart.md`。後續工作應依序補 Anthropic native adapter、自動 capability downgrade 持久化，以及 MCP／subagent hardening。
 
 核心決策是：
 
@@ -54,9 +54,10 @@
 
 2026-08-15 OpenAI Responses native tranche 新增 explicit provider-neutral discovery semantics、durable native history rebuild、fail-closed model capability、native request lowering/parser，以及真實 adapter 的三輪 V2 Session regression。Post-implementation review 進一步把 durable carrier 與 native history correlation 收斂為完整 `(assistantMessageID, callID)` invocation identity，修復 partial pair reconstruction、native discovery token estimate、client-only stream dispatch、anonymous search tool choice 與 canonical `ToolDefinition.kind`。新鮮證據為 LLM `334 pass / 30 skip / 0 fail`、Core `1605 pass / 7 skip / 0 fail`、Plugin loading/runtime UI `14 pass / 0 fail`；LLM、Core、Schema、Protocol、Client、Server、OpenCode、App、TUI package typecheck 全部通過。
 
+2026-08-15 process-restart tranche 以 parent regression 依序啟動兩個獨立 Bun OS processes，兩者只共用同一個臨時 SQLite 檔案與 Session ID。第一個 process 經真實 V2 runner 完成 native search 後退出；第二個 process 建立全新的 Database、EventV2、Projector、SessionStore、ToolRegistry、SessionRunner 與 SessionExecution runtime，並驗證恢復出的 call/output 都保留 `process-search`、仍包含 `deferred_echo` loadable spec，且不把它重新廣告成普通 function definition。新鮮證據為 process regression `1 pass / 0 fail / 16 assertions`、Core affected suite `142 pass / 0 fail`、LLM full suite `334 pass / 30 skip / 0 fail`，Core 與 LLM typecheck 均通過。
+
 仍未完成且不得提前宣稱完成：
 
-- 完整 child-OS-process runner 的端到端整合回歸（獨立 runtime scope + persistent SQLite 已覆蓋）；
 - Anthropic Messages 原生 `tool_reference`／`defer_loading` adapter；
 - Anthropic provider-native history reconstruction，以及 capability negotiation 的自動 downgrade 持久化；
 - MCP reconnect/late-load 與 subagent grant intersection 的後續 hardening。
@@ -667,7 +668,7 @@ Generic：
 - [x] publish／project／replay；
 - [x] 把目前的 in-drain union 擴充為 durable union projection；
 - [x] 完成新 drain、compaction、exact retry／replay regression；
-- [ ] 補完整 OS process restart 的端到端整合 regression。
+- [x] 補完整 OS process restart 的端到端整合 regression。
 
 ### Phase 3：Generic fallback
 
@@ -675,7 +676,7 @@ Generic：
 - [x] 下一輪 definitions 由 durable active discovery materialize；
 - [x] 加入 stale／未搜索直接調用提示；
 - [x] 以新 drain／compaction regression 證明非原生 provider 行為穩定；
-- [ ] 以完整 OS process restart regression 補足端到端證據。
+- [x] 以完整 OS process restart regression 補足端到端證據。
 
 ### Phase 4：OpenAI Responses native adapter
 

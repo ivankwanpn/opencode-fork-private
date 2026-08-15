@@ -147,7 +147,7 @@ bun typecheck
 
 Expected: one process-restart test passes and Core typecheck exits zero.
 
-- [ ] **Step 6: Commit the independent E2E tranche**
+- [x] **Step 6: Commit the independent E2E tranche**
 
 ```powershell
 git add packages/core/test/fixture/native-tool-search-process.ts packages/core/test/session-runner-native-tool-search-process.test.ts docs/superpowers/plans/2026-08-15-native-tool-search-process-restart.md
@@ -190,7 +190,7 @@ automatic capability downgrade persistence
 MCP reconnect/late-load and subagent grant hardening
 ```
 
-- [ ] **Step 3: Verify repository hygiene**
+- [x] **Step 3: Verify repository hygiene**
 
 ```powershell
 git diff --check
@@ -199,7 +199,7 @@ git status --short --branch
 
 Confirm the two intended test files and tracked plan/design edits are the only changes, and `docs/superpowers/handoffs/` remains untracked and unstaged.
 
-- [ ] **Step 4: Commit documentation evidence**
+- [x] **Step 4: Commit documentation evidence**
 
 ```powershell
 git add docs/superpowers/specs/2026-08-11-provider-native-tool-search-design.md docs/superpowers/plans/2026-08-15-native-tool-search-process-restart.md

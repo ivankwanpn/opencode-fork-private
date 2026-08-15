@@ -43,6 +43,7 @@ const eventLayer = Layer.effect(
   EventV2.Service,
   Effect.gen(function* () {
     const events = yield* PubSub.unbounded<any>()
+    const listeners: EventV2.Subscriber[] = []
     return EventV2.Service.of({
       publish: ((definition: any, data: any, options?: any) =>
         Effect.gen(function* () {
@@ -52,6 +53,7 @@ const eventLayer = Layer.effect(
             ...(options?.location ? { location: options.location } : {}),
             data,
           }
+          yield* Effect.forEach(listeners, (listener) => listener(event), { discard: true })
           yield* PubSub.publish(events, event)
           return event
         })) as EventV2.Interface["publish"],
@@ -61,7 +63,14 @@ const eventLayer = Layer.effect(
         )) as EventV2.Interface["subscribe"],
       all: () => Stream.fromPubSub(events),
       durable: () => Stream.empty,
-      listen: () => Effect.die("unused"),
+      listen: (listener) =>
+        Effect.sync(() => {
+          listeners.push(listener)
+          return Effect.sync(() => {
+            const index = listeners.indexOf(listener)
+            if (index >= 0) listeners.splice(index, 1)
+          })
+        }),
       project: () => Effect.die("unused"),
       replay: () => Effect.die("unused"),
       replayAll: () => Effect.die("unused"),
@@ -320,6 +329,49 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
       (names) => names.includes("demo_server_echo") && resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not registered",
     )
+    const initialCatalog = yield* registry.materialize()
+    const initialEcho = initialCatalog.catalog.tools.find((tool) => tool.callableName === "demo_server_echo")
+    expect(initialEcho).toMatchObject({
+      source: { type: "mcp", id: "demo server", displayName: "demo server" },
+      sourceLocalID: "echo",
+      callableName: "demo_server_echo",
+      namespace: "demo server",
+    })
+    for (const name of resourceHelpers)
+      expect(initialCatalog.catalog.tools.find((tool) => tool.callableName === name)?.source).toEqual({
+        type: "builtin",
+        id: "opencode",
+        displayName: "OpenCode",
+      })
+    expect(initialCatalog.catalog.sources).toContainEqual({
+      source: { type: "mcp", id: "demo server", displayName: "demo server" },
+      state: "ready",
+    })
+
+    remote.tools.splice(0, remote.tools.length, {
+      name: "echo",
+      description: "Updated echo tool",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+    })
+    yield* Effect.promise(remote.changed)
+    const updatedCatalog = yield* waitFor(
+      registry.materialize(),
+      (materialized) => {
+        const current = materialized.catalog.tools.find((tool) => tool.callableName === "demo_server_echo")
+        return current?.definitionHash !== initialEcho?.definitionHash
+      },
+      "MCP catalog identity did not refresh after tools/list changed",
+    )
+    const updatedEcho = updatedCatalog.catalog.tools.find((tool) => tool.callableName === "demo_server_echo")
+    expect(updatedCatalog.catalog.revision).not.toBe(initialCatalog.catalog.revision)
+    expect(updatedEcho?.key).toBe(initialEcho?.key)
+    expect(updatedEcho?.definitionHash).not.toBe(initialEcho?.definitionHash)
+    expect(updatedEcho?.source).toEqual(initialEcho?.source)
+
     // Deferred MCP tools require one exact catalog selection before they become callable.
     let selected = new Map<ToolCatalog.Key, string>()
     const searchable = yield* registry.materialize(undefined, undefined, {
@@ -371,6 +423,14 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
         resourceHelpers.every((name) => !names.includes(name)),
       "MCP tools or resource helpers remained after disconnect",
     )
+    yield* waitFor(
+      registry.sources(),
+      (sources) =>
+        sources.some(
+          (source) => source.source.type === "mcp" && source.source.id === "demo server" && source.state === "disabled",
+        ),
+      "MCP disabled source state did not replace the ready contribution",
+    )
 
     yield* Effect.promise(remote.restart)
     yield* mcp.connect("demo server")
@@ -413,6 +473,7 @@ it.live("keeps disabled servers offline", () =>
   Effect.gen(function* () {
     const remote = yield* server
     const mcp = yield* MCP.Service
+    const registry = yield* ToolRegistry.Service
 
     expect(
       yield* mcp.add(
@@ -427,18 +488,35 @@ it.live("keeps disabled servers offline", () =>
     expect(remote.requests).toHaveLength(0)
     expect(yield* mcp.clients()).toEqual({})
     expect(yield* mcp.tools()).toEqual({})
+    expect(yield* registry.sources()).toContainEqual({
+      source: { type: "mcp", id: "disabled", displayName: "disabled" },
+      state: "disabled",
+    })
   }),
 )
 
 it.live("returns typed missing-server errors and stable failed statuses", () =>
   Effect.gen(function* () {
     const mcp = yield* MCP.Service
+    const registry = yield* ToolRegistry.Service
     expect(yield* Effect.flip(mcp.connect("missing"))).toEqual(new MCP.NotFoundError({ name: "missing" }))
     expect(yield* Effect.flip(mcp.disconnect("missing"))).toEqual(new MCP.NotFoundError({ name: "missing" }))
 
     const result = yield* mcp.add("invalid", new ConfigMCP.Remote({ type: "remote", url: "not a URL", oauth: false }))
     expect(result.status.invalid).toEqual({ status: "failed", error: 'Invalid MCP URL for "invalid"' })
     expect(yield* mcp.clients()).toEqual({})
+    yield* waitFor(
+      registry.sources(),
+      (sources) =>
+        sources.some(
+          (source) =>
+            source.source.type === "mcp" &&
+            source.source.id === "invalid" &&
+            source.state === "failed" &&
+            source.message === 'Invalid MCP URL for "invalid"',
+        ),
+      "MCP failed source state was not published",
+    )
   }),
 )
 

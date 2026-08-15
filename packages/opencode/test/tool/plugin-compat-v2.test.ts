@@ -10,16 +10,19 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import type { LocationServices } from "@opencode-ai/core/location-services"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { PermissionSaved } from "@opencode-ai/core/permission/saved"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { ProjectV2 } from "@opencode-ai/core/project"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { Tool } from "@opencode-ai/core/tool/tool"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { ToolProgress } from "@opencode-ai/core/tool/progress"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { Tools } from "@opencode-ai/core/tool/tools"
@@ -53,6 +56,7 @@ type BoundRecord = Parameters<ToolOutputStore.Interface["bound"]>[0]
 
 type HarnessOptions = {
   readonly hooks?: ReadonlyArray<Hooks>
+  readonly entries?: ReadonlyArray<Plugin.Entry>
   readonly permissions?: PermissionV2.Ruleset
   readonly progress?: ProgressRecord[]
   readonly progressPublish?: ToolProgress.Interface["publish"]
@@ -66,14 +70,15 @@ const configLayer = TestConfig.layer({
   directories: () => InstanceState.directory.pipe(Effect.map((directory) => [path.join(directory, ".opencode")])),
 })
 
-function pluginLayer(hooks: ReadonlyArray<Hooks>) {
+function pluginLayer(entries: ReadonlyArray<Plugin.Entry>) {
   return Layer.succeed(
     Plugin.Service,
     Plugin.Service.of({
       init: () => Effect.void,
       trigger: ((_name: unknown, _input: unknown, output: unknown) =>
         Effect.succeed(output)) as Plugin.Interface["trigger"],
-      list: () => Effect.succeed([...hooks]),
+      list: () => Effect.succeed(entries.map((entry) => entry.hooks)),
+      entries: () => Effect.succeed([...entries]),
     }),
   )
 }
@@ -124,6 +129,7 @@ function focusedLocationLayer(
         Layer.mock(SessionStore.Service, {
           get: () => Effect.succeed({ agent: agentID } as SessionSchema.Info),
           latestPrompt: () => Effect.succeed(undefined),
+          permissions: () => Effect.succeed([]),
         }),
       ],
       [
@@ -181,7 +187,12 @@ function harness(options: HarnessOptions = {}) {
   return testEffect(
     LayerNode.compile(LayerNode.group([PluginToolCompat.node, PluginToolCompatV2.node, LocationServiceMap.node]), [
       [Config.node, configLayer],
-      [Plugin.node, pluginLayer(options.hooks ?? [])],
+      [
+        Plugin.node,
+        pluginLayer(
+          options.entries ?? (options.hooks ?? []).map((hooks, index) => ({ id: `fixture:${index}`, hooks })),
+        ),
+      ],
       [LocationServiceMap.node, locationServiceMapLayer(saved, options.permissions ?? [], options.bounds ?? [])],
       [ToolProgress.node, progressLayer(progress, options.progressPublish)],
     ]),
@@ -233,15 +244,29 @@ function call(name: string, input: unknown = {}, id = `call-${name}`): ToolRegis
 }
 
 function settle(registry: ToolRegistry.Interface, name: string, input: unknown = {}, id?: string) {
-  return registry.materialize().pipe(Effect.flatMap((materialized) => materialized.settle(call(name, input, id))))
+  return materializeSelected(registry).pipe(
+    Effect.flatMap((materialized) => materialized.settle(call(name, input, id))),
+  )
+}
+
+function materializeSelected(registry: ToolRegistry.Interface) {
+  return Effect.gen(function* () {
+    const initial = yield* registry.materialize()
+    const selected = new Map(
+      initial.catalog.tools
+        .filter((tool) => tool.exposure === "deferred")
+        .map((tool) => [tool.key, tool.definitionHash] as const),
+    )
+    return yield* registry.materialize(undefined, undefined, {
+      model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+      selected,
+    })
+  })
 }
 
 // Plugin tools are deferred (P4), so they land in `materialized.deferred`
 // rather than `definitions`. Look in both when a test asserts on a tool.
-function findMaterialized(
-  materialized: ToolRegistry.Materialization,
-  name: string,
-) {
+function findMaterialized(materialized: ToolRegistry.Materialization, name: string) {
   return (
     materialized.definitions.find((item) => item.name === name) ??
     materialized.deferred.find((item) => item.name === name)
@@ -563,8 +588,17 @@ describe("plugin tool compatibility v2", () => {
       expect(materialized.definitions.map((item) => item.name)).not.toContain("deferred")
       // tool_search itself is advertised whenever deferred tools exist.
       expect(materialized.definitions.map((item) => item.name)).toContain("tool_search")
-      // Settlement still works for a deferred plugin tool.
-      expect((yield* materialized.settle(call("deferred"))).result).toEqual({ type: "text", value: "ok" })
+      const entry = materialized.catalog.tools.find((tool) => tool.callableName === "deferred")
+      expect(entry?.source.type).toBe("plugin")
+      expect(entry?.source.id).toStartWith("file-tools:")
+      expect(entry?.source.id).not.toContain(test.directory)
+      expect(entry?.source.displayName).toBe("deferred.ts")
+      expect(entry?.sourceLocalID).toBe("default")
+      const selected = yield* withLocation(
+        test.directory,
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
+      )
+      expect((yield* selected.settle(call("deferred"))).result).toEqual({ type: "text", value: "ok" })
     }),
   )
 
@@ -598,7 +632,7 @@ describe("plugin tool compatibility v2", () => {
 
       const materialized = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
       )
       const names = ["plural", "plural_named", "singular", "singular_named"]
       expect(
@@ -661,7 +695,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           for (const name of ["noargs", "noargs_nullable"]) {
             expect(findMaterialized(materialized, name)?.inputSchema).toMatchObject({
               type: "object",
@@ -700,7 +734,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           expect(findMaterialized(materialized, "broken")).toBeUndefined()
           expect(findMaterialized(materialized, "healthy")?.description).toBe("healthy")
           expect((yield* materialized.settle(call("healthy"))).result).toEqual({ type: "text", value: "ready" })
@@ -736,7 +770,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           expect(findMaterialized(materialized, "query")?.inputSchema).toMatchObject({
             type: "object",
             properties: {
@@ -793,7 +827,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           const inputSchema = findMaterialized(materialized, "recursive")?.inputSchema
           if (!isRecord(inputSchema)) throw new Error("recursive input schema was not advertised")
           const definitions = inputSchema.definitions
@@ -851,7 +885,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           expect(
             (yield* materialized.settle(call("conditional", { payload: { kind: "long", value: "no" } }))).result,
           ).toMatchObject({
@@ -896,7 +930,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           expect((yield* materialized.settle(call("schemaid_first", { value: "Alpha" }))).result).toEqual({
             type: "text",
             value: "Alpha",
@@ -940,7 +974,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           expect(findMaterialized(materialized, "legacy")?.inputSchema).toEqual({
             type: "object",
             properties: {
@@ -997,7 +1031,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           const inputSchema = findMaterialized(materialized, "mixed")?.inputSchema
           expect(inputSchema).toMatchObject({
             type: "object",
@@ -1106,8 +1140,10 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
-          expect([...materialized.definitions, ...materialized.deferred].filter((item) => item.name === "collision")).toHaveLength(1)
+          const materialized = yield* materializeSelected(registry)
+          expect(
+            [...materialized.definitions, ...materialized.deferred].filter((item) => item.name === "collision"),
+          ).toHaveLength(1)
           expect(findMaterialized(materialized, "collision")?.description).toBe("plural config")
           expect((yield* materialized.settle(call("collision"))).result).toEqual({
             type: "text",
@@ -1133,12 +1169,29 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
-          expect(findMaterialized(materialized, "plugin_only")?.description).toBe(
-            "plugin hook tool",
+          const compatibility = yield* PluginToolCompat.Service
+          const overrideContributions = (yield* compatibility.list()).filter(
+            (item) => item.id === "override" && item.source.id.startsWith("fixture:"),
           )
-          expect([...materialized.definitions, ...materialized.deferred].filter((item) => item.name === "override")).toHaveLength(1)
+          expect(overrideContributions.map((item) => item.source.id)).toEqual(["fixture:0", "fixture:1"])
+          const keys = overrideContributions.map((item) => ToolCatalog.key(item.source, item.sourceLocalID))
+          expect(keys.every((key) => key.startsWith("tool_"))).toBe(true)
+          expect(new Set(keys).size).toBe(2)
+          const materialized = yield* materializeSelected(registry)
+          expect(findMaterialized(materialized, "plugin_only")?.description).toBe("plugin hook tool")
+          expect(
+            [...materialized.definitions, ...materialized.deferred].filter((item) => item.name === "override"),
+          ).toHaveLength(1)
           expect(findMaterialized(materialized, "override")?.description).toBe("second plugin")
+          expect(materialized.catalog.tools.find((tool) => tool.callableName === "override")?.source.id).toBe(
+            "fixture:1",
+          )
+          expect(yield* registry.sources()).toEqual(
+            expect.arrayContaining([
+              { source: { type: "plugin", id: "fixture:0", displayName: "fixture:0" }, state: "ready" },
+              { source: { type: "plugin", id: "fixture:1", displayName: "fixture:1" }, state: "ready" },
+            ]),
+          )
           expect((yield* materialized.settle(call("override"))).result).toEqual({
             type: "text",
             value: "second plugin",
@@ -1452,7 +1505,7 @@ describe("plugin tool compatibility v2", () => {
         test.directory,
         Effect.gen(function* () {
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           const plain = yield* materialized.settle(call("plain_result"))
           const rich = yield* materialized.settle(call("rich_result"))
 
@@ -1573,30 +1626,26 @@ describe("plugin tool compatibility v2", () => {
       yield* initialize(workspaceB)
       const advertisedA = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
         workspaceA,
       )
       const advertisedB = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
         workspaceB,
       )
-      expect(findMaterialized(advertisedA, "layered")?.description).toBe(
-        "compatibility registration",
-      )
-      expect(findMaterialized(advertisedB, "layered")?.description).toBe(
-        "compatibility registration",
-      )
+      expect(findMaterialized(advertisedA, "layered")?.description).toBe("compatibility registration")
+      expect(findMaterialized(advertisedB, "layered")?.description).toBe("compatibility registration")
 
       yield* store.dispose(instance)
       const cleanedA = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
         workspaceA,
       )
       const cleanedB = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
         workspaceB,
       )
       expect(findMaterialized(cleanedA, "layered")).toBeUndefined()
@@ -1613,19 +1662,17 @@ describe("plugin tool compatibility v2", () => {
       yield* initialize(workspaceB)
       const refreshedB = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
         workspaceB,
       )
-      expect(findMaterialized(refreshedB, "layered")?.description).toBe(
-        "compatibility registration",
-      )
+      expect(findMaterialized(refreshedB, "layered")?.description).toBe("compatibility registration")
       expect((yield* advertisedB.settle(call("layered"))).result).toEqual({
         type: "error",
         value: "Stale tool call: layered",
       })
       const stillCleanA = yield* withLocation(
         test.directory,
-        ToolRegistry.Service.use((registry) => registry.materialize()),
+        ToolRegistry.Service.use((registry) => materializeSelected(registry)),
         workspaceA,
       )
       expect(findMaterialized(stillCleanA, "layered")).toBeUndefined()
@@ -1659,16 +1706,16 @@ describe("plugin tool compatibility v2", () => {
             .pipe(Scope.provide(previousScope))
 
           yield* compatibility.init()
-          const advertised = yield* registry.materialize()
-          expect(findMaterialized(advertised, "layered")?.description).toBe(
-            "compatibility registration",
-          )
+          const advertised = yield* materializeSelected(registry)
+          expect(findMaterialized(advertised, "layered")?.description).toBe("compatibility registration")
+          expect(advertised.catalog.tools.find((tool) => tool.callableName === "layered")?.source.id).toBe("fixture:0")
+          expect((yield* registry.sources()).some((source) => source.source.id === "fixture:0")).toBe(true)
 
           yield* store.dispose(instance)
-          const revealed = yield* registry.materialize()
-          expect(findMaterialized(revealed, "layered")?.description).toBe(
-            "previous registration",
-          )
+          const revealed = yield* materializeSelected(registry)
+          expect(findMaterialized(revealed, "layered")?.description).toBe("previous registration")
+          expect((yield* registry.sources()).some((source) => source.source.id === "fixture:0")).toBe(false)
+          expect((yield* registry.sources()).some((source) => source.source.id === "opencode")).toBe(true)
           expect((yield* advertised.settle(call("layered"))).result).toEqual({
             type: "error",
             value: "Stale tool call: layered",
@@ -1682,7 +1729,7 @@ describe("plugin tool compatibility v2", () => {
     }),
   )
 
-  hooks.instance("runs Core definition, before, and after hooks exactly once", () =>
+  hooks.instance("runs Core hooks once per materialization or settlement", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance
       yield* initialize()
@@ -1703,12 +1750,12 @@ describe("plugin tool compatibility v2", () => {
           })
 
           const registry = yield* ToolRegistry.Service
-          const materialized = yield* registry.materialize()
+          const materialized = yield* materializeSelected(registry)
           expect((yield* materialized.settle(call("hooked"))).result).toEqual({
             type: "text",
             value: "once",
           })
-          expect(counts).toEqual({ definition: 1, before: 1, after: 1 })
+          expect(counts).toEqual({ definition: 2, before: 1, after: 1 })
         }),
       )
     }),

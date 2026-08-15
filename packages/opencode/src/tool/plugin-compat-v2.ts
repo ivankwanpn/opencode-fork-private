@@ -3,6 +3,7 @@ import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { Tool } from "@opencode-ai/core/tool/tool"
 import { ToolProgress } from "@opencode-ai/core/tool/progress"
 import { Tools } from "@opencode-ai/core/tool/tools"
@@ -73,19 +74,35 @@ const layer = Layer.effect(
               const location = yield* Location.Service
               const bridge = yield* EffectBridge.make()
               const contributions = yield* pluginTools.list()
-              const tools = Object.fromEntries(
-                contributions.map((contribution) => [
-                  contribution.id,
-                  makeTool(contribution, {
-                    bridge,
-                    permission,
-                    progress,
-                    directory: location.directory,
-                    worktree: instance.worktree,
-                  }),
-                ]),
-              )
-              yield* registry.register(tools).pipe(Effect.orDie)
+              const groups = Map.groupBy(contributions, (contribution) => ToolCatalog.sourceKey(contribution.source))
+              for (const entries of groups.values()) {
+                const source = entries[0]!.source
+                yield* registry
+                  .contribute({
+                    source,
+                    state: "ready",
+                    tools: Object.fromEntries(
+                      entries.map((contribution) => [
+                        contribution.id,
+                        Tool.withCatalog(
+                          makeTool(contribution, {
+                            bridge,
+                            permission,
+                            progress,
+                            directory: location.directory,
+                            worktree: instance.worktree,
+                          }),
+                          {
+                            source,
+                            sourceLocalID: contribution.sourceLocalID,
+                            ...(contribution.namespace === undefined ? {} : { namespace: contribution.namespace }),
+                          },
+                        ),
+                      ]),
+                    ),
+                  })
+                  .pipe(Effect.orDie)
+              }
             }).pipe(Effect.provide(locationLayer))
           },
         })
@@ -114,10 +131,7 @@ function makeTool(
     readonly worktree: string
   },
 ) {
-  const execute = contribution.definition.execute as (
-    input: unknown,
-    context: PluginToolContext,
-  ) => Promise<unknown>
+  const execute = contribution.definition.execute as (input: unknown, context: PluginToolContext) => Promise<unknown>
 
   const tool = Tool.make({
     description: contribution.description,
@@ -128,21 +142,21 @@ function makeTool(
     toStructuredOutput: ({ output }) => ({
       ...(output.metadata ?? {}),
       ...(output.title === undefined ? {} : { title: output.title }),
-      }),
-      toModelOutput: ({ output }) => [
-        { type: "text", text: output.output },
-        ...(output.attachments ?? []).map((attachment) => ({
-          type: "file" as const,
-          uri: attachment.url,
-          mime: attachment.mime,
-          name: attachment.filename,
-        })),
-      ],
-      execute: (input, context) => {
-        return Effect.callback<unknown, Tool.Failure>((resume, signal) => {
-          const result = Promise.resolve().then(() => {
-            const pluginContext: RuntimePluginToolContext = {
-              sessionID: context.sessionID,
+    }),
+    toModelOutput: ({ output }) => [
+      { type: "text", text: output.output },
+      ...(output.attachments ?? []).map((attachment) => ({
+        type: "file" as const,
+        uri: attachment.url,
+        mime: attachment.mime,
+        name: attachment.filename,
+      })),
+    ],
+    execute: (input, context) => {
+      return Effect.callback<unknown, Tool.Failure>((resume, signal) => {
+        const result = Promise.resolve().then(() => {
+          const pluginContext: RuntimePluginToolContext = {
+            sessionID: context.sessionID,
             messageID: context.assistantMessageID,
             callID: context.toolCallID,
             agent: context.agent,
@@ -202,7 +216,12 @@ function makeTool(
                 : Effect.fail(new Tool.Failure({ message: errorMessage(error) })),
             ),
         )
-        return Effect.promise(() => result.then(() => undefined, () => undefined))
+        return Effect.promise(() =>
+          result.then(
+            () => undefined,
+            () => undefined,
+          ),
+        )
       }).pipe(
         Effect.flatMap((result) =>
           Effect.try({
@@ -228,8 +247,7 @@ function makeTool(
 
 function permissionFailure(error: unknown, action: string) {
   if (error instanceof PermissionV2.CorrectedError) return new Tool.Failure({ message: error.feedback })
-  if (error instanceof PermissionV2.BlockedError)
-    return new Tool.Failure({ message: `Permission denied: ${action}` })
+  if (error instanceof PermissionV2.BlockedError) return new Tool.Failure({ message: `Permission denied: ${action}` })
   return new Tool.Failure({ message: errorMessage(error) })
 }
 

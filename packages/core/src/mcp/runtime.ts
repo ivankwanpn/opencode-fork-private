@@ -478,8 +478,8 @@ const layer = Layer.effect(
     ) {
       state.status.set(name, result.status)
       if (!result.client) {
-        const changed = yield* removeClient(name)
-        if (notify && changed) yield* publishChanged(name)
+        yield* removeClient(name)
+        if (notify) yield* publishChanged(name)
         return result.status
       }
       yield* store(name, result.client, result.definitions ?? [], result.instructions, requestTimeout(server), notify)
@@ -619,9 +619,9 @@ const layer = Layer.effect(
 
     const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
       yield* requireServer(name)
-      const changed = yield* removeClient(name)
+      yield* removeClient(name)
       state.status.set(name, { status: "disabled" })
-      if (changed) yield* publishChanged(name)
+      yield* publishChanged(name)
     })
 
     const withClient = Effect.fnUntraced(function* <A>(
@@ -883,6 +883,7 @@ const toolsLayer = Layer.effectDiscard(
     const tools = yield* Tools.Service
     const events = yield* EventV2.Service
     const location = yield* Location.Service
+    const captured = yield* Effect.context<Service | PermissionV2.Service>()
     const parent = yield* Scope.make()
     yield* Effect.addFinalizer((exit) => Scope.close(parent, exit).pipe(Effect.ignore))
     const lock = Semaphore.makeUnsafe(1)
@@ -892,20 +893,44 @@ const toolsLayer = Layer.effectDiscard(
     const sync = lock.withPermit(
       Effect.gen(function* () {
         const child = yield* Scope.fork(parent)
-        const catalog = {
-          ...Object.fromEntries(
-            Object.entries(yield* mcp.tools())
-              .filter(([, entry]) => !McpCatalog.isBlockedTool(entry.def.name, resolved.blockedTools))
-              .filter(([, entry]) => McpCatalog.isModelVisible(entry.def))
-              .map(([name, entry]) => {
-                const coreTool = McpCatalog.toCoreTool(entry)
-                const exposure = resolved.directTools.has(name) ? "direct" : "deferred"
-                return [name, Tool.withExposure(coreTool, exposure)]
-              }),
-          ),
-          ...(yield* McpResourceTools.catalog()),
-        }
-        const registered = yield* tools.register(catalog).pipe(Scope.provide(child), Effect.orDie, Effect.exit)
+        const statuses = yield* mcp.status()
+        const grouped = Object.groupBy(
+          Object.entries(yield* mcp.tools())
+            .filter(([, entry]) => !McpCatalog.isBlockedTool(entry.def.name, resolved.blockedTools))
+            .filter(([, entry]) => McpCatalog.isModelVisible(entry.def)),
+          ([, entry]) => entry.clientName,
+        )
+        const registered = yield* Effect.gen(function* () {
+          for (const [name, status] of Object.entries(statuses).toSorted(([left], [right]) =>
+            left.localeCompare(right),
+          )) {
+            const source = { type: "mcp" as const, id: name, displayName: name }
+            const state = sourceStatus(status)
+            yield* tools.contribute({
+              source,
+              state: state.state,
+              ...(state.message === undefined ? {} : { message: state.message }),
+              permissions: [`${mcpToolPrefix(name)}*`],
+              tools: Object.fromEntries(
+                (grouped[name] ?? []).map(([callableName, entry]) => {
+                  const exposed = Tool.withExposure(
+                    McpCatalog.toCoreTool(entry),
+                    resolved.directTools.has(callableName) ? "direct" : "deferred",
+                  )
+                  return [
+                    callableName,
+                    Tool.withCatalog(exposed, {
+                      source,
+                      sourceLocalID: entry.def.name,
+                      namespace: entry.clientName,
+                    }),
+                  ]
+                }),
+              ),
+            })
+          }
+          yield* tools.register(yield* McpResourceTools.catalog())
+        }).pipe(Scope.provide(child), Effect.orDie, Effect.exit)
         if (Exit.isFailure(registered)) {
           yield* Scope.close(child, registered).pipe(Effect.ignore)
           return yield* registered
@@ -917,14 +942,13 @@ const toolsLayer = Layer.effectDiscard(
     )
 
     yield* sync
-    yield* events.subscribe(McpEvent.ToolsChanged).pipe(
-      Stream.filter(
-        (event) =>
-          event.location?.directory === location.directory && event.location.workspaceID === location.workspaceID,
-      ),
-      Stream.runForEach(() => sync),
-      Effect.forkScoped,
-    )
+    const unsubscribe = yield* events.listen((event) => {
+      if (event.type !== McpEvent.ToolsChanged.type) return Effect.void
+      if (event.location?.directory !== location.directory || event.location.workspaceID !== location.workspaceID)
+        return Effect.void
+      return sync.pipe(Effect.provide(captured))
+    })
+    yield* Effect.addFinalizer(() => unsubscribe)
   }),
 )
 
@@ -939,12 +963,23 @@ function resolveConfig(entries: ReadonlyArray<Config.Entry>): ResolvedConfig {
   return {
     timeout: Object.assign(new ConfigMCP.Timeout({}), ...configured.map((info) => info.timeout ?? {})),
     servers: Object.assign({}, ...configured.map((info) => info.servers ?? {})),
-    blockedTools: new Set([
-      ...DEFAULT_BLOCKED_TOOLS,
-      ...configured.flatMap((info) => info.blockedTools ?? []),
-    ]),
+    blockedTools: new Set([...DEFAULT_BLOCKED_TOOLS, ...configured.flatMap((info) => info.blockedTools ?? [])]),
     directTools: new Set(configured.flatMap((info) => info.directTools ?? [])),
   }
+}
+
+function sourceStatus(status: Status): { readonly state: "ready" | "disabled" | "failed"; readonly message?: string } {
+  if (status.status === "connected") return { state: "ready" }
+  if (status.status === "disabled") return { state: "disabled" }
+  return {
+    state: "failed",
+    ...("error" in status ? { message: status.error } : {}),
+  }
+}
+
+function mcpToolPrefix(name: string) {
+  const prefix = McpCatalog.toolName(name, "")
+  return prefix.endsWith("_") ? prefix : `${prefix}_`
 }
 
 function createClient(directory: string) {

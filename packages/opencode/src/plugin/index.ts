@@ -38,13 +38,13 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
 
-type LoadedHook = {
-  id: string
-  hooks: Hooks
+export type Entry = {
+  readonly id: string
+  readonly hooks: Hooks
 }
 
 type State = {
-  hooks: Hooks[]
+  readonly entries: ReadonlyArray<Entry>
 }
 
 // Hook names that follow the (input, output) => Promise<void> trigger pattern
@@ -63,6 +63,7 @@ export interface Interface {
     output: Output,
   ) => Effect.Effect<Output>
   readonly list: () => Effect.Effect<Hooks[]>
+  readonly entries: () => Effect.Effect<ReadonlyArray<Entry>>
   readonly init: () => Effect.Effect<void>
 }
 
@@ -121,7 +122,7 @@ function getLegacyPlugins(mod: Record<string, unknown>) {
   return result
 }
 
-async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput): Promise<LoadedHook[]> {
+async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput): Promise<Entry[]> {
   const plugin = readV1Plugin(load.mod, load.spec, "server", "detect")
   if (plugin) {
     const id = await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg)
@@ -132,7 +133,7 @@ async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput): Promi
     load.source === "file"
       ? `legacy:${load.spec}`
       : await resolvePluginId(load.source, load.spec, load.target, undefined, load.pkg)
-  const result: LoadedHook[] = []
+  const result: Entry[] = []
   const legacy = getLegacyPlugins(load.mod)
   for (let index = 0; index < legacy.length; index++) {
     result.push({
@@ -153,7 +154,7 @@ const layer = Layer.effect(
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Plugin.state")(function* (ctx) {
-        const loadedHooks: LoadedHook[] = []
+        const loadedHooks: Entry[] = []
         const bridge = yield* EffectBridge.make()
         const workspaceID = yield* InstanceState.workspaceID
         const location = locations
@@ -201,9 +202,7 @@ const layer = Layer.effect(
             try: () => internal.plugin(input),
             catch: errorMessage,
           }).pipe(
-            Effect.tapError((error) =>
-              Effect.logError("failed to load internal plugin", { name: internal.id, error }),
-            ),
+            Effect.tapError((error) => Effect.logError("failed to load internal plugin", { name: internal.id, error })),
             Effect.option,
           )
           if (init._tag === "Some") loadedHooks.push({ id: internal.id, hooks: init.value })
@@ -283,7 +282,7 @@ const layer = Layer.effect(
           }
         }).pipe(Effect.provide(location))
 
-        const active: LoadedHook[] = []
+        const active: Entry[] = []
         const positions = new Map<string, number>()
         for (const loaded of loadedHooks) {
           const index = positions.get(loaded.id)
@@ -295,7 +294,7 @@ const layer = Layer.effect(
           active[index] = loaded
         }
 
-        return { hooks: active.map((loaded) => loaded.hooks) }
+        return { entries: active }
       }),
     )
 
@@ -306,24 +305,28 @@ const layer = Layer.effect(
     >(name: Name, input: Input, output: Output) {
       if (!name) return output
       const s = yield* InstanceState.get(state)
-      for (const hook of s.hooks) {
-        const fn = hook[name] as any
+      for (const entry of s.entries) {
+        const fn = entry.hooks[name] as any
         if (!fn) continue
         yield* Effect.promise(async () => fn(input, output))
       }
       return output
     })
 
-    const list = Effect.fn("Plugin.list")(function* () {
+    const entries = Effect.fn("Plugin.entries")(function* () {
       const s = yield* InstanceState.get(state)
-      return s.hooks
+      return s.entries
+    })
+
+    const list = Effect.fn("Plugin.list")(function* () {
+      return (yield* entries()).map((entry) => entry.hooks)
     })
 
     const init = Effect.fn("Plugin.init")(function* () {
       yield* InstanceState.get(state)
     })
 
-    return Service.of({ trigger, list, init })
+    return Service.of({ trigger, list, entries, init })
   }),
 )
 

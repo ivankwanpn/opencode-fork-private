@@ -4,6 +4,7 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import type { ToolDefinition } from "@opencode-ai/plugin"
 import { Glob } from "@opencode-ai/core/util/glob"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { Context, Effect, Layer, Option, Schema, SchemaIssue } from "effect"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -19,6 +20,9 @@ export type Definition = Omit<ToolDefinition, "args"> & {
 
 export interface Contribution {
   readonly id: string
+  readonly source: ToolCatalog.SourceRef
+  readonly sourceLocalID: string
+  readonly namespace?: string
   readonly description: string
   readonly parameters: Schema.Codec<unknown, unknown, never, never>
   readonly jsonSchema: JSONSchema7
@@ -46,12 +50,23 @@ const discover = Effect.fn("PluginToolCompat.discover")(function* (config: Confi
   if (matches.length > 0) yield* config.waitForDependencies()
   for (const match of matches) {
     const namespace = path.basename(match, path.extname(match))
+    const source = {
+      type: "plugin" as const,
+      id: `file-tools:${new Bun.CryptoHasher("sha256").update(pathToFileURL(match).href).digest("hex")}`,
+      displayName: path.basename(match),
+    }
     const loaded = yield* Effect.tryPromise({
       try: async () => {
         const module = await import(pathToFileURL(match).href)
         return Object.entries(module).flatMap(([name, definition]) =>
           isPluginTool(definition)
-            ? [compile(name === "default" ? namespace : `${namespace}_${name}`, definition)]
+            ? [
+                compile(name === "default" ? namespace : `${namespace}_${name}`, definition, {
+                  source,
+                  sourceLocalID: name,
+                  namespace,
+                }),
+              ]
             : [],
         )
       },
@@ -66,8 +81,10 @@ const discover = Effect.fn("PluginToolCompat.discover")(function* (config: Confi
     contributions.push(...loaded.value)
   }
 
-  for (const hooks of yield* plugin.list()) {
-    for (const [id, definition] of Object.entries(hooks.tool ?? {})) contributions.push(compile(id, definition))
+  for (const entry of yield* plugin.entries()) {
+    const source = { type: "plugin" as const, id: entry.id, displayName: entry.id }
+    for (const [id, definition] of Object.entries(entry.hooks.tool ?? {}))
+      contributions.push(compile(id, definition, { source, sourceLocalID: id, namespace: entry.id }))
   }
 
   return contributions
@@ -83,7 +100,15 @@ const layer = Layer.effect(
   }),
 )
 
-export function compile(id: string, definition: Definition): Contribution {
+export function compile(
+  id: string,
+  definition: Definition,
+  metadata: {
+    readonly source: ToolCatalog.SourceRef
+    readonly sourceLocalID: string
+    readonly namespace?: string
+  },
+): Contribution {
   const args = isRecord(definition.args) ? definition.args : {}
   const entries = Object.entries(args)
   const zodParams = isZodRawShape(args) ? z.object(args) : undefined
@@ -94,6 +119,7 @@ export function compile(id: string, definition: Definition): Contribution {
   const runtimeJsonSchema = mixedZodParams ? mixedRuntimeJsonSchema(entries) : jsonSchema
   return {
     id,
+    ...metadata,
     description: definition.description,
     parameters: zodParams ? zodParameters(zodParams) : jsonSchemaParameters(runtimeJsonSchema, mixedZodParams),
     jsonSchema,

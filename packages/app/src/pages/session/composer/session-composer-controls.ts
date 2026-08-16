@@ -8,7 +8,7 @@ import { useDirectoryPicker } from "@/components/directory-picker"
 import { useGlobal } from "@/context/global"
 import { useLayout } from "@/context/layout"
 import { useLocal, type ModelSelection } from "@/context/local"
-import type { QueryOptionsApi } from "@/context/server-sync"
+import { useServerSync, type QueryOptionsApi } from "@/context/server-sync"
 import { useServerSDK } from "@/context/server-sdk"
 import { serverName, ServerConnection, useServer } from "@/context/server"
 import { useSDK } from "@/context/sdk"
@@ -16,6 +16,10 @@ import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
 import { useProviders } from "@/hooks/use-providers"
 import { pathKey } from "@/utils/path-key"
+import { useModels } from "@/context/models"
+import { useLanguage } from "@/context/language"
+import { showToast } from "@/utils/toast"
+import { createPrimaryAgentModelSelection } from "./primary-agent-model-selection"
 
 export function createPromptInputController(input: {
   sessionKey: Accessor<string>
@@ -26,12 +30,30 @@ export function createPromptInputController(input: {
   const layout = useLayout()
   const local = useLocal()
   const providers = useProviders()
+  const models = useModels()
+  const language = useLanguage()
+  const serverSync = useServerSync()
   const sync = useSync()
   const sdk = useSDK()
   const view = layout.view(input.sessionKey)
   const agentsQuery = createQuery(() => input.queryOptions.agents(pathKey(sdk().directory)))
   const globalProvidersQuery = createQuery(() => input.queryOptions.providers(null))
   const providersQuery = createQuery(() => input.queryOptions.providers(pathKey(sdk().directory)))
+  const model = createPrimaryAgentModelSelection({
+    selection: () => input.model ?? local.model,
+    agent: () => local.agent.current(),
+    protocolFor: models.protocol.get,
+    update: (agent, patch) =>
+      serverSync()
+        .agents.update(agent, patch)
+        .catch((error) => {
+          showToast({
+            title: language.t("common.requestFailed"),
+            description: error instanceof Error ? error.message : String(error),
+          })
+          throw error
+        }),
+  })
 
   return createMemo<PromptInputControls>(() => ({
     agents: {
@@ -43,7 +65,7 @@ export function createPromptInputController(input: {
       select: local.agent.set,
     },
     model: {
-      selection: input.model ?? local.model,
+      selection: model,
       paid: providers.paid().length > 0,
       loading:
         (local.agent.visible() && agentsQuery.isLoading) || providersQuery.isLoading || globalProvidersQuery.isLoading,

@@ -1,12 +1,12 @@
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
 import { For, createMemo, createSignal, type Component } from "solid-js"
-import type { Config } from "@opencode-ai/sdk/v2/client"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { useLanguage } from "@/context/language"
 import { useModels } from "@/context/models"
 import { useServerSync } from "@/context/server-sync"
 import { showToast } from "@/utils/toast"
 import { modelVariantsForProtocol } from "@/pages/session/composer/model-protocol-variants"
+import { agentOverride, type AgentOverride } from "@/context/agent-config"
 import {
   agentRoleMetadata,
   agentModelProtocols,
@@ -21,13 +21,6 @@ import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
 import "./settings-v2.css"
 
-type AgentOverride = {
-  model?: string | null
-  protocol?: CustomProvider.Protocol | null
-  variant?: string | null
-  [key: string]: unknown
-}
-
 type ModelItem = ReturnType<ReturnType<typeof useModels>["list"]>[number]
 type ModelChoice = {
   id: string
@@ -36,12 +29,6 @@ type ModelChoice = {
 }
 
 const DEFAULT_MODEL_ID = "__agent_default_model__"
-
-function agentOverride(config: Config, id: ConfigurableAgentID): AgentOverride {
-  const value = config.agent?.[id]
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return value as AgentOverride
-}
 
 const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
   const language = useLanguage()
@@ -107,25 +94,10 @@ const AgentSettingRow: Component<{ id: ConfigurableAgentID }> = (props) => {
   })
 
   const update = async (patch: AgentOverride) => {
-    const before = serverSync().data.config.agent?.[props.id]
-    const next = { ...agentOverride(serverSync().data.config, props.id), ...patch }
-    const localNext = {
-      ...next,
-      model: next.model ?? undefined,
-      protocol: next.protocol ?? undefined,
-      variant: next.variant ?? undefined,
-    }
     setSaving(true)
-    serverSync().set("config", "agent", props.id, localNext)
     try {
-      await serverSync().updateConfig(
-        {
-          agent: { [props.id]: next } as unknown as NonNullable<Config["agent"]>,
-        },
-        { refreshProviders: false },
-      )
+      await serverSync().agents.update(props.id, patch)
     } catch (error) {
-      serverSync().set("config", "agent", props.id, before)
       showToast({
         title: language.t("common.requestFailed"),
         description: error instanceof Error ? error.message : String(error),

@@ -46,10 +46,12 @@ export function applyGlobalEvent(input: {
   setGlobalProject: (next: Project[] | ((draft: Project[]) => Project[])) => void
   refresh: () => void
   refreshConfig?: () => void
+  refreshAgents?: () => void
 }) {
   if (input.event.type === "global.disposed") {
     if (isAgentConfigDisposal(input.event)) {
       input.refreshConfig?.()
+      input.refreshAgents?.()
       return
     }
     input.refresh()

@@ -59,6 +59,7 @@ import {
   notifySessionTabsRemoved,
   sessionTabsRemovedFromServerEvent,
 } from "@/components/titlebar-session-events"
+import { agentOverride, normalizedAgentOverride, type AgentOverride } from "./agent-config"
 
 type GlobalStore = {
   ready: boolean
@@ -494,6 +495,23 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     })
   }
 
+  const refreshAgents = async (directory?: string) => {
+    const directories = directory
+      ? [directoryKey(directory)]
+      : Object.keys(children.children)
+          .map(directoryKey)
+          .filter((item) => children.active(item))
+    await Promise.all(
+      directories.map(async (item) => {
+        const existing = children.children[item]
+        if (!existing) return
+        await queryClient.invalidateQueries(queryOptionsApi.agents(item))
+        const data = await queryClient.fetchQuery(queryOptionsApi.agents(item))
+        existing[1]("agent", reconcile(data, { key: "name" }))
+      }),
+    )
+  }
+
   async function loadSessions(directory: string, options?: { limit?: number }) {
     const key = directoryKey(directory)
     const pending = sessionLoads.get(key)
@@ -686,6 +704,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         refreshConfig: () => {
           void queryClient.invalidateQueries({ queryKey: [serverSDK.scope, "config"] })
         },
+        refreshAgents: () => {
+          void refreshAgents()
+        },
         setGlobalProject: setProjects,
       })
       if (
@@ -830,6 +851,22 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     return result
   }
 
+  const updateAgent = async (id: string, patch: AgentOverride) => {
+    const before = globalStore.config.agent?.[id]
+    const next = { ...agentOverride(globalStore.config, id), ...patch }
+    setGlobalStore("config", "agent", id, normalizedAgentOverride(next))
+    try {
+      await updateConfig(
+        { agent: { [id]: next } as unknown as NonNullable<Config["agent"]> },
+        { refreshProviders: false },
+      )
+      await refreshAgents()
+    } catch (error) {
+      setGlobalStore("config", "agent", id, before)
+      throw error
+    }
+  }
+
   const refreshMcp = async (directory: string) => {
     const key = directoryKey(directory)
     await Promise.all([
@@ -854,6 +891,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     // bootstrap,
     updateConfig,
     refreshProviders,
+    agents: {
+      update: updateAgent,
+      refresh: refreshAgents,
+    },
     project: projectApi,
     session,
     homeSessions,

@@ -2,6 +2,7 @@ export * as ToolCatalog from "./catalog"
 
 import type { ToolDefinition } from "@opencode-ai/llm"
 import { type JsonSchema, Schema } from "effect"
+import { Hash } from "../util/hash"
 
 export const Key = Schema.String.pipe(Schema.brand("ToolCatalog.Key"))
 export type Key = typeof Key.Type
@@ -101,7 +102,7 @@ export function snapshot(input: {
 }
 
 function hash(value: unknown) {
-  return new Bun.CryptoHasher("sha256").update(canonical(value)).digest("hex")
+  return Hash.sha256(canonical(value))
 }
 
 function canonical(value: unknown): string {

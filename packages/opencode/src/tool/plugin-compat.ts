@@ -3,6 +3,7 @@ import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv"
 import type { ToolDefinition } from "@opencode-ai/plugin"
 import { Glob } from "@opencode-ai/core/util/glob"
+import { Hash } from "@opencode-ai/core/util/hash"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { Context, Effect, Layer, Option, Schema, SchemaIssue } from "effect"
@@ -52,7 +53,7 @@ const discover = Effect.fn("PluginToolCompat.discover")(function* (config: Confi
     const namespace = path.basename(match, path.extname(match))
     const source = {
       type: "plugin" as const,
-      id: `file-tools:${new Bun.CryptoHasher("sha256").update(pathToFileURL(match).href).digest("hex")}`,
+      id: `file-tools:${Hash.sha256(pathToFileURL(match).href)}`,
       displayName: path.basename(match),
     }
     const loaded = yield* Effect.tryPromise({

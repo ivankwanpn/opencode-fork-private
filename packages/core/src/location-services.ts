@@ -1,6 +1,7 @@
 import { Effect, Layer, LayerMap, RcMap } from "effect"
 import { AgentV2 } from "./agent"
 import { AISDK } from "./aisdk"
+import { BackgroundJob } from "./background-job"
 import { Catalog } from "./catalog"
 import { CommandV2 } from "./command"
 import { Config } from "./config"
@@ -77,6 +78,7 @@ export const locationServices = LayerNode.group([
   FileMutation.node,
   PermissionV2.node,
   ToolOutputStore.node,
+  BackgroundJob.locationNode,
   ToolRegistry.node,
   ToolRegistry.toolsNode,
   MCP.node,

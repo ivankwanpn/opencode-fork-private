@@ -102,6 +102,7 @@ export const dict = {
   "ui.messagePart.context.list.other": "{{count}} قوائم",
   "ui.messagePart.diagnostic.error": "خطأ",
   "ui.messagePart.shell.background": "نقل إلى الخلفية",
+  "ui.messagePart.shell.backgroundUnavailable": "لم يتم العثور على مهمة shell أمامية مطابقة.",
   "ui.messagePart.title.edit": "تحرير",
   "ui.messagePart.title.write": "كتابة",
   "ui.messagePart.option.typeOwnAnswer": "اكتب إجابتك الخاصة",

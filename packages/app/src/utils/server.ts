@@ -238,6 +238,7 @@ export function createApiForServer(input: {
     agent: current.agents,
     session: {
       ...current.sessions,
+      backgroundSelected: current.sessions.background,
       rename,
       archive,
       prompt,
@@ -360,8 +361,8 @@ export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "
   readonly session: OpenCodeClient["session"] &
     Pick<
       CurrentClient["sessions"],
-      "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel" | "background" | "todo"
-    >
+      "share" | "unshare" | "inputList" | "inputGet" | "inputPromote" | "inputCancel" | "todo"
+    > & { readonly backgroundSelected: CurrentClient["sessions"]["background"] }
   readonly location: CompatibleLocationApi
   readonly mcp: CompatibleMcpApi
   readonly project: CompatibleProjectApi

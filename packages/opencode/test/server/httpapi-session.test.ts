@@ -29,6 +29,8 @@ import { Session } from "@/session/session"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
+import { Location } from "@opencode-ai/core/location"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { BackgroundJob } from "@opencode-ai/core/background-job"
 import { BackgroundJob as InstanceBackgroundJob } from "../../src/background/job"
 import { InstanceRef } from "../../src/effect/instance-ref"
@@ -72,6 +74,7 @@ const appLayer = AppNodeBuilder.build(
     SessionV2.node,
     Workspace.node,
     Database.node,
+    LocationServiceMap.node,
     Ripgrep.node,
     InstanceBackgroundJob.node,
     TaskSubmission.node,
@@ -2053,7 +2056,15 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory }
         const session = yield* createSession({ title: "selective shell background" })
-        const background = yield* BackgroundJob.Service
+        const background = yield* Effect.gen(function* () {
+          return yield* BackgroundJob.LocationService
+        }).pipe(
+          Effect.provide(
+            LocationServiceMap.Service.get(
+              Location.Ref.make({ directory: AbsolutePath.make(test.directory) }),
+            ),
+          ),
+        )
         yield* Effect.gen(function* () {
           yield* Effect.all([
             background.start({

@@ -578,7 +578,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.background",
         Effect.fn(function* (ctx) {
-          const background = yield* BackgroundJob.Service
+          const background = yield* BackgroundJob.LocationService
           const jobs = (yield* background.list()).filter(
             (job) => {
               if (job.status !== "running" || job.metadata?.background === true) return false

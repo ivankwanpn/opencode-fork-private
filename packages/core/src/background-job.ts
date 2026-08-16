@@ -2,7 +2,7 @@ export * as BackgroundJob from "./background-job"
 
 import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Scope, SynchronizedRef } from "effect"
 import { Identifier } from "./id/id"
-import { makeGlobalNode } from "./effect/app-node"
+import { makeGlobalNode, makeLocationNode } from "./effect/app-node"
 
 export type Status = "running" | "completed" | "error" | "cancelled"
 
@@ -464,3 +464,11 @@ export const make = Effect.gen(function* () {
 const layer = Layer.effect(Service, make)
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [] })
+
+export class LocationService extends Context.Service<LocationService, Interface>()(
+  "@opencode/BackgroundJob/Location",
+) {}
+
+const locationLayer = Layer.effect(LocationService, Effect.map(Service, LocationService.of))
+
+export const locationNode = makeLocationNode({ service: LocationService, layer: locationLayer, deps: [node] })

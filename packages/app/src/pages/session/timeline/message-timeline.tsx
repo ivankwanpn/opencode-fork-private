@@ -720,7 +720,10 @@ export function MessageTimeline(props: {
       sessionMutations: target.sessionMutations,
       sessionID: input.sessionID,
       apiForGeneration: target.apiForGeneration,
-      run: (api) => api.background(input),
+      run: async (api) => {
+        if (await api.backgroundSelected(input)) return
+        throw new Error(language.t("ui.messagePart.shell.backgroundUnavailable"))
+      },
     })
       .then(() => undefined)
       .catch((err) => {

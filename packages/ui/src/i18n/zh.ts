@@ -105,6 +105,7 @@ export const dict = {
   "ui.messagePart.context.list.other": "{{count}} 个列表",
   "ui.messagePart.diagnostic.error": "错误",
   "ui.messagePart.shell.background": "转到后台运行",
+  "ui.messagePart.shell.backgroundUnavailable": "找不到对应的前台 Shell 任务。",
   "ui.messagePart.title.edit": "编辑",
   "ui.messagePart.title.write": "写入",
   "ui.messagePart.option.typeOwnAnswer": "输入自己的答案",

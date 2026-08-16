@@ -80,3 +80,21 @@ describe("createApiForServer VCS adapter", () => {
     expect(calls[0]?.searchParams.get("mode")).toBe("git")
   })
 })
+
+describe("createApiForServer session adapter", () => {
+  test("preserves a failed background result and selected call ID", async () => {
+    const calls: URL[] = []
+    const api = createApiForServer({
+      server: { url: "https://server.example" },
+      fetch: testFetch(async (input) => {
+        calls.push(new URL(input.toString()))
+        return Response.json(false)
+      }),
+    })
+
+    await expect(api.session.backgroundSelected({ sessionID: "ses_test", callID: "call_shell" })).resolves.toBe(false)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.pathname).toBe("/api/session/ses_test/background")
+    expect(calls[0]?.searchParams.get("callID")).toBe("call_shell")
+  })
+})

@@ -37,7 +37,8 @@ function normalizeToolInput(name: string, input: Record<string, unknown>) {
   return { ...input, filePath: input.path }
 }
 
-function normalizeToolMetadata(name: string, metadata: Record<string, unknown>) {
+function normalizeToolMetadata(name: string, value: unknown) {
+  const metadata = record(value) ? value : {}
   const normalized =
     name === "task" && record(metadata.metadata) ? { ...metadata, ...metadata.metadata } : metadata
   if (name !== "edit" || !Array.isArray(normalized.files)) return normalized
@@ -369,7 +370,10 @@ function toolPart(sessionID: string, messageID: string, tool: SessionMessageAssi
       return {
         status: "running" as const,
         input: normalizeToolInput(tool.name, tool.state.input),
-        metadata: normalizeToolMetadata(tool.name, tool.state.structured),
+        metadata: normalizeToolMetadata(
+          tool.name,
+          tool.state.structured ?? ("metadata" in tool.state ? tool.state.metadata : undefined),
+        ),
         time: { start },
       }
     }
@@ -377,12 +381,20 @@ function toolPart(sessionID: string, messageID: string, tool: SessionMessageAssi
       return {
         status: "error" as const,
         input: normalizeToolInput(tool.name, tool.state.input),
-        error: tool.state.error.message,
-        metadata: normalizeToolMetadata(tool.name, tool.state.structured),
+        error: typeof tool.state.error === "string" ? tool.state.error : tool.state.error.message,
+        metadata: normalizeToolMetadata(
+          tool.name,
+          tool.state.structured ?? ("metadata" in tool.state ? tool.state.metadata : undefined),
+        ),
         time: { start, end: tool.time.completed ?? start },
       }
     }
-    const attachments = tool.state.content.flatMap((item, index): FilePart[] =>
+    const content = tool.state.content ?? []
+    const metadata = normalizeToolMetadata(
+      tool.name,
+      tool.state.structured ?? ("metadata" in tool.state ? tool.state.metadata : undefined),
+    )
+    const attachments = content.flatMap((item, index): FilePart[] =>
       item.type === "file"
         ? [
             {
@@ -400,9 +412,18 @@ function toolPart(sessionID: string, messageID: string, tool: SessionMessageAssi
     return {
       status: "completed" as const,
       input: normalizeToolInput(tool.name, tool.state.input),
-      output: tool.state.content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n"),
-      title: typeof tool.state.structured.title === "string" ? tool.state.structured.title : tool.name,
-      metadata: normalizeToolMetadata(tool.name, tool.state.structured),
+      output: tool.state.content
+        ? content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n")
+        : "output" in tool.state && typeof tool.state.output === "string"
+          ? tool.state.output
+          : "",
+      title:
+        typeof metadata.title === "string"
+          ? metadata.title
+          : "title" in tool.state && typeof tool.state.title === "string"
+            ? tool.state.title
+            : tool.name,
+      metadata,
       time: { start, end: tool.time.completed ?? start },
       attachments: attachments.length ? attachments : undefined,
     }

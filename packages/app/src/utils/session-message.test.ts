@@ -376,6 +376,50 @@ describe("normalizeSessionMessages", () => {
     ])
   })
 
+  test("projects completed tools retained with the legacy result shape", () => {
+    const source = [
+      { id: "msg_user", type: "user", text: "find a tool", time: { created: 1 } },
+      {
+        id: "msg_assistant",
+        type: "assistant",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+        content: [
+          {
+            type: "tool",
+            id: "call_search",
+            name: "tool_search",
+            state: {
+              status: "completed",
+              input: { query: "skills" },
+              output: "Unknown tool: tool_search",
+              title: "tool_search",
+              metadata: { source: "legacy" },
+              time: { start: 2, end: 3 },
+            },
+            time: { created: 2, ran: 2, completed: 3 },
+          },
+        ],
+        time: { created: 2, completed: 3 },
+      },
+    ] as unknown as SessionMessageInfo[]
+
+    expect(normalizeSessionMessages("ses_1", source).parts.get("msg_assistant")).toEqual([
+      expect.objectContaining({
+        type: "tool",
+        tool: "tool_search",
+        state: {
+          status: "completed",
+          input: { query: "skills" },
+          output: "Unknown tool: tool_search",
+          title: "tool_search",
+          metadata: { source: "legacy" },
+          time: { start: 2, end: 3 },
+        },
+      }),
+    ])
+  })
+
   test("adapts current read and task fields for legacy tool cards", () => {
     const source = [
       { id: "msg_user", type: "user", text: "inspect", time: { created: 1 } },

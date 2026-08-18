@@ -9,7 +9,7 @@ import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { decode64 } from "@/utils/base64"
-import { EventSessionError } from "@opencode-ai/sdk/v2"
+import type { EventSessionNextError } from "@opencode-ai/sdk/v2"
 import { Persist, persisted } from "@/utils/persist"
 import { playSoundById } from "@/utils/sound"
 import { useGlobal } from "./global"
@@ -32,7 +32,7 @@ type TurnCompleteNotification = NotificationBase & {
 
 type ErrorNotification = NotificationBase & {
   type: "error"
-  error: EventSessionError["properties"]["error"]
+  error: EventSessionNextError["properties"]["error"]
 }
 
 export type Notification = TurnCompleteNotification | ErrorNotification
@@ -360,7 +360,7 @@ function createServerNotificationState(input: {
 
   const handleSessionError = (
     directory: string,
-    event: { properties: { sessionID?: string; error?: EventSessionError["properties"]["error"] } },
+    event: { properties: EventSessionNextError["properties"] },
     time: number,
   ) => {
     const sessionID = event.properties.sessionID
@@ -372,7 +372,7 @@ function createServerNotificationState(input: {
         void playSoundById(settings.sounds.errors())
       }
 
-      const error = "error" in event.properties ? event.properties.error : undefined
+      const error = event.properties.error
       append({
         directory,
         time,
@@ -381,9 +381,7 @@ function createServerNotificationState(input: {
         session: sessionID ?? "global",
         error,
       })
-      const description =
-        session?.title ??
-        (typeof error === "string" ? error : language.t("notification.session.error.fallbackDescription"))
+      const description = session?.title ?? language.t("notification.session.error.fallbackDescription")
       const href = sessionID ? `/${base64Encode(directory)}/session/${sessionID}` : `/${base64Encode(directory)}`
       if (settings.notifications.errors()) {
         void platform.notify(language.t("notification.session.error.title"), description, href)
@@ -393,7 +391,7 @@ function createServerNotificationState(input: {
 
   const unsub = serverSDK().event.listen((e) => {
     const event = e.details
-    if (event.type !== "session.next.status" && event.type !== "session.error") return
+    if (event.type !== "session.next.status" && event.type !== "session.next.error") return
 
     const directory = e.name
     const time = Date.now()

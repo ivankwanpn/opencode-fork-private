@@ -169,10 +169,6 @@ export const {
           setStore("todo", event.properties.sessionID, event.properties.todos)
           break
 
-        case "session.diff":
-          setStore("session_diff", event.properties.sessionID, event.properties.diff)
-          break
-
         case "session.deleted": {
           const result = search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
@@ -225,6 +221,10 @@ export const {
 
     nativeEvent.on("session.next.status", (event) => {
       setStore("session_status", event.data.sessionID, event.data.status)
+    })
+
+    nativeEvent.on("session.next.diff", (event) => {
+      setStore("session_diff", event.data.sessionID, mutable<SnapshotFileDiff[]>(event.data.diff))
     })
 
     nativeEvent.on("permission.v2.replied", (event) => {

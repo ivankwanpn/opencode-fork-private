@@ -286,6 +286,30 @@ describe("applyDirectoryEvent", () => {
     expect(store.session_status.ses_1).toEqual({ type: "idle" })
   })
 
+  test("projects a canonical session diff into the passive directory store", () => {
+    const [store, setStore] = createStore(baseState())
+
+    applyDirectoryEvent({
+      event: {
+        type: "session.next.diff",
+        properties: {
+          timestamp: 1,
+          sessionID: "ses_1",
+          diff: [{ file: "src/index.ts", patch: "@@ -1 +1 @@", additions: 1, deletions: 1, status: "modified" }],
+        },
+      },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_diff.ses_1).toEqual([
+      { file: "src/index.ts", patch: "@@ -1 +1 @@", additions: 1, deletions: 1, status: "modified" },
+    ])
+  })
+
   test("ignores an archived session absent from a passive directory store", () => {
     const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
 

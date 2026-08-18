@@ -157,11 +157,21 @@ describe("useEvent", () => {
     }
   })
 
-  test("does not project native session status into the compatibility stream", async () => {
-    const { app, emit, seen } = await mount()
+  test("does not project canonical session status, diff, or error into the compatibility stream", async () => {
+    const { app, emit, emitNative, seen } = await mount()
 
     try {
       emit(event(status(), { directory, project: projectID }))
+      emitNative({
+        id: "evt_diff",
+        type: "session.next.diff",
+        data: { timestamp: 1, sessionID: "ses_test", diff: [] },
+      } as OpenCodeEvent)
+      emitNative({
+        id: "evt_error",
+        type: "session.next.error",
+        data: { timestamp: 1, sessionID: "ses_test", error: { name: "UnknownError", data: {} } },
+      } as OpenCodeEvent)
       await Bun.sleep(30)
 
       expect(seen).toEqual([])

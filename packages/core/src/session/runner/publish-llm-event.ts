@@ -213,13 +213,19 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
     if (assistantFailed) return
     yield* flush()
     const assistantMessageID = yield* startAssistant()
+    const failedAt = yield* timestamp
     assistantActive = false
     assistantFailed = true
     yield* events.publish(SessionEvent.Step.Failed, {
       sessionID: input.sessionID,
-      timestamp: yield* timestamp,
+      timestamp: failedAt,
       assistantMessageID,
       error: { type: "unknown", message: AssistantErrorCodec.encode(message, kind) },
+    })
+    yield* events.publish(SessionEvent.Error, {
+      timestamp: failedAt,
+      sessionID: input.sessionID,
+      error: { name: "UnknownError", data: { message } },
     })
   })
 

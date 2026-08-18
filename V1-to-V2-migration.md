@@ -79,6 +79,14 @@ pending shape，但發布邊界已切到`PermissionV2.Event`並投影`action/res
 104降至99，durable map維持47。V1 permission rules/config/errors暫留給尚未遷移的legacy工具執行面，
 不再是public event producer。
 
+**999.0.19 Session diff/error live hard cut**：CLI、ACP、TUI native plugin bus與App state/notifications改為直接
+消費`session.next.diff/error`；EventV2Bridge不再投影`session.diff/error`，Step.Failed只保留legacy assistant
+message projection。Provider/model/structured-output失敗在`failAssistant()`以同一timestamp發布durable
+Step.Failed與live Error，避免錯誤通知依賴compatibility bridge；outer runner defect仍由ExecutionLocal發布。
+public manifest的SessionV1 live集合現只保留`message.part.delta`，event inventory由99降至97，durable維持47。
+仍公開的7個V1 durable wire definitions改為明確列舉，避免`Array.filter`未縮窄型別而讓已退役diff/error
+繼續污染Client declaration union；tracked Client declarations以排除既有`.d.ts`輸入的乾淨emit重生。
+
 ---
 
 ## 1. 各区域现状总表

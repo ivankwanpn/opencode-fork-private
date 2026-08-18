@@ -994,9 +994,9 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     }
   })
 
-  event.on("session.error", (evt, { workspace }) => {
-    if (workspace !== project.workspace.current()) return
-    const error = evt.properties.error
+  nativeEvent.on("session.next.error", (evt, location) => {
+    if (location?.workspaceID !== project.workspace.current()) return
+    const error = evt.data.error
     if (error && typeof error === "object" && error.name === "MessageAbortedError") return
     const message = errorMessage(error)
 

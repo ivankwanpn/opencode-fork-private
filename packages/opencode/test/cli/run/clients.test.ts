@@ -32,6 +32,44 @@ describe("run attach clients", () => {
     })
   })
 
+  test("preserves canonical session error and diff events", async () => {
+    const source = [
+      {
+        id: "evt-error",
+        type: "session.next.error",
+        data: {
+          timestamp: 1,
+          sessionID: "ses-1",
+          error: { name: "UnknownError", data: { message: "provider failed" } },
+        },
+      },
+      {
+        id: "evt-diff",
+        type: "session.next.diff",
+        data: {
+          timestamp: 2,
+          sessionID: "ses-1",
+          diff: [],
+        },
+      },
+    ] as const
+    const clients = createAttachClients({
+      baseUrl: "https://opencode.test",
+      fetch: (async () =>
+        new Response(source.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+          headers: { "content-type": "text/event-stream" },
+        })) as unknown as typeof globalThis.fetch,
+    })
+
+    const events = await clients.sdk.event.subscribe()
+    const actual = [(await events.stream.next()).value, (await events.stream.next()).value]
+
+    expect(actual).toEqual([
+      { id: source[0].id, type: source[0].type, properties: source[0].data },
+      { id: source[1].id, type: source[1].type, properties: { ...source[1].data, diff: [...source[1].data.diff] } },
+    ])
+  })
+
   test("preserves canonical permission and question events", async () => {
     const source = [
       {

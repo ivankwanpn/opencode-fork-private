@@ -26,8 +26,16 @@ import { VcsEvent } from "./vcs-event"
 import { WorkspaceEvent } from "./workspace-event"
 import { WorktreeEvent } from "./worktree-event"
 
-const sessionV1DurableDefinitions = SessionV1.Event.Definitions.filter((definition) => definition.durable !== undefined)
-const sessionV1LiveDefinitions = SessionV1.Event.Definitions.filter((definition) => definition.durable === undefined)
+const sessionV1DurableDefinitions = Event.inventory(
+  SessionV1.Event.Created,
+  SessionV1.Event.Updated,
+  SessionV1.Event.Deleted,
+  SessionV1.Event.MessageUpdated,
+  SessionV1.Event.MessageRemoved,
+  SessionV1.Event.PartUpdated,
+  SessionV1.Event.PartRemoved,
+)
+const sessionV1LiveDefinitions = Event.inventory(SessionV1.Event.PartDelta)
 
 const coreDefinitions = Event.inventory(...sessionV1DurableDefinitions, ...SessionEvent.Definitions)
 

@@ -27,6 +27,7 @@ type Endpoint4_0Input = {
     readonly limit?: Endpoint4_0Request["query"]["limit"];
     readonly order?: Endpoint4_0Request["query"]["order"];
     readonly search?: Endpoint4_0Request["query"]["search"];
+    readonly parentID?: Endpoint4_0Request["query"]["parentID"];
     readonly directory?: Endpoint4_0Request["query"]["directory"];
     readonly project?: Endpoint4_0Request["query"]["project"];
     readonly subpath?: Endpoint4_0Request["query"]["subpath"];
@@ -91,6 +92,8 @@ type Endpoint4_13Input = {
     readonly prompt: Endpoint4_13Request["payload"]["prompt"];
     readonly model?: Endpoint4_13Request["payload"]["model"];
     readonly delivery?: Endpoint4_13Request["payload"]["delivery"];
+    readonly intent?: Endpoint4_13Request["payload"]["intent"];
+    readonly expectedActiveAttemptID?: Endpoint4_13Request["payload"]["expectedActiveAttemptID"];
     readonly resume?: Endpoint4_13Request["payload"]["resume"];
 };
 type Endpoint4_14Request = Parameters<RawClient["server.session"]["session.diff"]>[0];
@@ -121,6 +124,7 @@ type Endpoint4_18Input = {
 type Endpoint4_19Request = Parameters<RawClient["server.session"]["session.background"]>[0];
 type Endpoint4_19Input = {
     readonly sessionID: Endpoint4_19Request["params"]["sessionID"];
+    readonly callID?: Endpoint4_19Request["query"]["callID"];
 };
 type Endpoint4_20Request = Parameters<RawClient["server.session"]["session.command"]>[0];
 type Endpoint4_20Input = {
@@ -132,6 +136,8 @@ type Endpoint4_20Input = {
     readonly model?: Endpoint4_20Request["payload"]["model"];
     readonly files?: Endpoint4_20Request["payload"]["files"];
     readonly delivery?: Endpoint4_20Request["payload"]["delivery"];
+    readonly intent?: Endpoint4_20Request["payload"]["intent"];
+    readonly expectedActiveAttemptID?: Endpoint4_20Request["payload"]["expectedActiveAttemptID"];
     readonly resume?: Endpoint4_20Request["payload"]["resume"];
     readonly commit?: Endpoint4_20Request["payload"]["commit"];
 };
@@ -215,25 +221,40 @@ type Endpoint7_2Input = {
     readonly providerID: Endpoint7_2Request["params"]["providerID"];
     readonly location?: Endpoint7_2Request["query"]["location"];
 };
-type Endpoint7_3Request = Parameters<RawClient["server.provider"]["provider.custom.discover"]>[0];
+type Endpoint7_3Request = Parameters<RawClient["server.provider"]["provider.models.discover"]>[0];
 type Endpoint7_3Input = {
+    readonly providerID: Endpoint7_3Request["params"]["providerID"];
     readonly location?: Endpoint7_3Request["query"]["location"];
-    readonly protocol?: Endpoint7_3Request["payload"]["protocol"];
-    readonly baseURL: Endpoint7_3Request["payload"]["baseURL"];
-    readonly apiKey?: Endpoint7_3Request["payload"]["apiKey"];
-    readonly headers: Endpoint7_3Request["payload"]["headers"];
 };
-type Endpoint7_4Request = Parameters<RawClient["server.provider"]["provider.custom.configure"]>[0];
+type Endpoint7_4Request = Parameters<RawClient["server.provider"]["provider.disconnect"]>[0];
 type Endpoint7_4Input = {
+    readonly providerID: Endpoint7_4Request["params"]["providerID"];
     readonly location?: Endpoint7_4Request["query"]["location"];
-    readonly providerID: Endpoint7_4Request["payload"]["providerID"];
-    readonly name: Endpoint7_4Request["payload"]["name"];
-    readonly protocol?: Endpoint7_4Request["payload"]["protocol"];
-    readonly update?: Endpoint7_4Request["payload"]["update"];
-    readonly baseURL: Endpoint7_4Request["payload"]["baseURL"];
-    readonly apiKey?: Endpoint7_4Request["payload"]["apiKey"];
-    readonly headers: Endpoint7_4Request["payload"]["headers"];
-    readonly models: Endpoint7_4Request["payload"]["models"];
+};
+type Endpoint7_5Request = Parameters<RawClient["server.provider"]["provider.custom.discover"]>[0];
+type Endpoint7_5Input = {
+    readonly location?: Endpoint7_5Request["query"]["location"];
+    readonly protocol?: Endpoint7_5Request["payload"]["protocol"];
+    readonly baseURL: Endpoint7_5Request["payload"]["baseURL"];
+    readonly apiKey?: Endpoint7_5Request["payload"]["apiKey"];
+    readonly headers: Endpoint7_5Request["payload"]["headers"];
+};
+type Endpoint7_6Request = Parameters<RawClient["server.provider"]["provider.custom.configure"]>[0];
+type Endpoint7_6Input = {
+    readonly location?: Endpoint7_6Request["query"]["location"];
+    readonly providerID: Endpoint7_6Request["payload"]["providerID"];
+    readonly name: Endpoint7_6Request["payload"]["name"];
+    readonly protocol?: Endpoint7_6Request["payload"]["protocol"];
+    readonly update?: Endpoint7_6Request["payload"]["update"];
+    readonly baseURL: Endpoint7_6Request["payload"]["baseURL"];
+    readonly apiKey?: Endpoint7_6Request["payload"]["apiKey"];
+    readonly headers: Endpoint7_6Request["payload"]["headers"];
+    readonly models: Endpoint7_6Request["payload"]["models"];
+};
+type Endpoint7_7Request = Parameters<RawClient["server.provider"]["provider.custom.disconnect"]>[0];
+type Endpoint7_7Input = {
+    readonly providerID: Endpoint7_7Request["params"]["providerID"];
+    readonly location?: Endpoint7_7Request["query"]["location"];
 };
 type Endpoint8_0Request = Parameters<RawClient["server.integration"]["integration.list"]>[0];
 type Endpoint8_0Input = {
@@ -368,6 +389,11 @@ type Endpoint14_3Input = {
     readonly name: Endpoint14_3Request["params"]["name"];
     readonly location?: Endpoint14_3Request["query"]["location"];
 };
+type Endpoint14_4Request = Parameters<RawClient["server.mcp"]["mcp.authenticate"]>[0];
+type Endpoint14_4Input = {
+    readonly name: Endpoint14_4Request["params"]["name"];
+    readonly location?: Endpoint14_4Request["query"]["location"];
+};
 type Endpoint15_0Request = Parameters<RawClient["server.lsp"]["lsp.status"]>[0];
 type Endpoint15_0Input = {
     readonly location?: Endpoint15_0Request["query"]["location"];
@@ -494,88 +520,159 @@ type Endpoint24_0Input = {
     readonly destination: Endpoint24_0Request["payload"]["destination"];
     readonly moveChanges?: Endpoint24_0Request["payload"]["moveChanges"];
 };
-type Endpoint26_0Request = Parameters<RawClient["server.pty"]["pty.shells"]>[0];
-type Endpoint26_0Input = {
-    readonly location?: Endpoint26_0Request["query"]["location"];
+type Endpoint25_0Request = Parameters<RawClient["server.plugins"]["plugins.runtime"]>[0];
+type Endpoint25_0Input = {
+    readonly location?: Endpoint25_0Request["query"]["location"];
 };
-type Endpoint26_1Request = Parameters<RawClient["server.pty"]["pty.list"]>[0];
-type Endpoint26_1Input = {
-    readonly location?: Endpoint26_1Request["query"]["location"];
+type Endpoint25_2Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.add"]>[0];
+type Endpoint25_2Input = {
+    readonly source: Endpoint25_2Request["payload"]["source"];
 };
-type Endpoint26_2Request = Parameters<RawClient["server.pty"]["pty.create"]>[0];
-type Endpoint26_2Input = {
-    readonly location?: Endpoint26_2Request["query"]["location"];
-    readonly command?: Endpoint26_2Request["payload"]["command"];
-    readonly args?: Endpoint26_2Request["payload"]["args"];
-    readonly cwd?: Endpoint26_2Request["payload"]["cwd"];
-    readonly title?: Endpoint26_2Request["payload"]["title"];
-    readonly env?: Endpoint26_2Request["payload"]["env"];
+type Endpoint25_3Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.refresh"]>[0];
+type Endpoint25_3Input = {
+    readonly name: Endpoint25_3Request["payload"]["name"];
 };
-type Endpoint26_3Request = Parameters<RawClient["server.pty"]["pty.get"]>[0];
-type Endpoint26_3Input = {
-    readonly ptyID: Endpoint26_3Request["params"]["ptyID"];
-    readonly location?: Endpoint26_3Request["query"]["location"];
+type Endpoint25_4Request = Parameters<RawClient["server.plugins"]["plugins.marketplace.remove"]>[0];
+type Endpoint25_4Input = {
+    readonly name: Endpoint25_4Request["payload"]["name"];
 };
-type Endpoint26_4Request = Parameters<RawClient["server.pty"]["pty.update"]>[0];
-type Endpoint26_4Input = {
-    readonly ptyID: Endpoint26_4Request["params"]["ptyID"];
-    readonly location?: Endpoint26_4Request["query"]["location"];
-    readonly title?: Endpoint26_4Request["payload"]["title"];
-    readonly size?: Endpoint26_4Request["payload"]["size"];
+type Endpoint25_5Request = Parameters<RawClient["server.plugins"]["plugins.install"]>[0];
+type Endpoint25_5Input = {
+    readonly id: Endpoint25_5Request["payload"]["id"];
 };
-type Endpoint26_5Request = Parameters<RawClient["server.pty"]["pty.remove"]>[0];
-type Endpoint26_5Input = {
-    readonly ptyID: Endpoint26_5Request["params"]["ptyID"];
-    readonly location?: Endpoint26_5Request["query"]["location"];
+type Endpoint25_6Request = Parameters<RawClient["server.plugins"]["plugins.uninstall"]>[0];
+type Endpoint25_6Input = {
+    readonly id: Endpoint25_6Request["payload"]["id"];
 };
-type Endpoint27_0Request = Parameters<RawClient["server.question"]["question.request.list"]>[0];
+type Endpoint25_7Request = Parameters<RawClient["server.plugins"]["plugins.enable"]>[0];
+type Endpoint25_7Input = {
+    readonly id: Endpoint25_7Request["payload"]["id"];
+};
+type Endpoint25_8Request = Parameters<RawClient["server.plugins"]["plugins.disable"]>[0];
+type Endpoint25_8Input = {
+    readonly id: Endpoint25_8Request["payload"]["id"];
+};
+type Endpoint25_9Request = Parameters<RawClient["server.plugins"]["plugins.direct.inspect"]>[0];
+type Endpoint25_9Input = {
+    readonly source: Endpoint25_9Request["payload"]["source"];
+};
+type Endpoint25_10Request = Parameters<RawClient["server.plugins"]["plugins.direct.install"]>[0];
+type Endpoint25_10Input = {
+    readonly source: Endpoint25_10Request["payload"]["source"];
+    readonly trusted: Endpoint25_10Request["payload"]["trusted"];
+    readonly approvedCapabilities: Endpoint25_10Request["payload"]["approvedCapabilities"];
+};
+type Endpoint25_11Request = Parameters<RawClient["server.plugins"]["plugins.direct.uninstall"]>[0];
+type Endpoint25_11Input = {
+    readonly id: Endpoint25_11Request["payload"]["id"];
+};
+type Endpoint25_12Request = Parameters<RawClient["server.plugins"]["plugins.direct.enable"]>[0];
+type Endpoint25_12Input = {
+    readonly id: Endpoint25_12Request["payload"]["id"];
+};
+type Endpoint25_13Request = Parameters<RawClient["server.plugins"]["plugins.direct.disable"]>[0];
+type Endpoint25_13Input = {
+    readonly id: Endpoint25_13Request["payload"]["id"];
+};
+type Endpoint25_14Request = Parameters<RawClient["server.plugins"]["plugins.mcp.install"]>[0];
+type Endpoint25_14Input = {
+    readonly name: Endpoint25_14Request["payload"]["name"];
+    readonly config: Endpoint25_14Request["payload"]["config"];
+};
+type Endpoint25_15Request = Parameters<RawClient["server.plugins"]["plugins.mcp.remove"]>[0];
+type Endpoint25_15Input = {
+    readonly name: Endpoint25_15Request["payload"]["name"];
+};
+type Endpoint25_16Request = Parameters<RawClient["server.plugins"]["plugins.mcp.enable"]>[0];
+type Endpoint25_16Input = {
+    readonly name: Endpoint25_16Request["payload"]["name"];
+};
+type Endpoint25_17Request = Parameters<RawClient["server.plugins"]["plugins.mcp.disable"]>[0];
+type Endpoint25_17Input = {
+    readonly name: Endpoint25_17Request["payload"]["name"];
+};
+type Endpoint27_0Request = Parameters<RawClient["server.pty"]["pty.shells"]>[0];
 type Endpoint27_0Input = {
     readonly location?: Endpoint27_0Request["query"]["location"];
 };
-type Endpoint27_1Request = Parameters<RawClient["server.question"]["session.question.list"]>[0];
+type Endpoint27_1Request = Parameters<RawClient["server.pty"]["pty.list"]>[0];
 type Endpoint27_1Input = {
-    readonly sessionID: Endpoint27_1Request["params"]["sessionID"];
+    readonly location?: Endpoint27_1Request["query"]["location"];
 };
-type Endpoint27_2Request = Parameters<RawClient["server.question"]["session.question.reply"]>[0];
+type Endpoint27_2Request = Parameters<RawClient["server.pty"]["pty.create"]>[0];
 type Endpoint27_2Input = {
-    readonly sessionID: Endpoint27_2Request["params"]["sessionID"];
-    readonly requestID: Endpoint27_2Request["params"]["requestID"];
-    readonly answers: Endpoint27_2Request["payload"]["answers"];
+    readonly location?: Endpoint27_2Request["query"]["location"];
+    readonly command?: Endpoint27_2Request["payload"]["command"];
+    readonly args?: Endpoint27_2Request["payload"]["args"];
+    readonly cwd?: Endpoint27_2Request["payload"]["cwd"];
+    readonly title?: Endpoint27_2Request["payload"]["title"];
+    readonly env?: Endpoint27_2Request["payload"]["env"];
 };
-type Endpoint27_3Request = Parameters<RawClient["server.question"]["session.question.reject"]>[0];
+type Endpoint27_3Request = Parameters<RawClient["server.pty"]["pty.get"]>[0];
 type Endpoint27_3Input = {
-    readonly sessionID: Endpoint27_3Request["params"]["sessionID"];
-    readonly requestID: Endpoint27_3Request["params"]["requestID"];
+    readonly ptyID: Endpoint27_3Request["params"]["ptyID"];
+    readonly location?: Endpoint27_3Request["query"]["location"];
 };
-type Endpoint28_0Request = Parameters<RawClient["server.reference"]["reference.list"]>[0];
+type Endpoint27_4Request = Parameters<RawClient["server.pty"]["pty.update"]>[0];
+type Endpoint27_4Input = {
+    readonly ptyID: Endpoint27_4Request["params"]["ptyID"];
+    readonly location?: Endpoint27_4Request["query"]["location"];
+    readonly title?: Endpoint27_4Request["payload"]["title"];
+    readonly size?: Endpoint27_4Request["payload"]["size"];
+};
+type Endpoint27_5Request = Parameters<RawClient["server.pty"]["pty.remove"]>[0];
+type Endpoint27_5Input = {
+    readonly ptyID: Endpoint27_5Request["params"]["ptyID"];
+    readonly location?: Endpoint27_5Request["query"]["location"];
+};
+type Endpoint28_0Request = Parameters<RawClient["server.question"]["question.request.list"]>[0];
 type Endpoint28_0Input = {
     readonly location?: Endpoint28_0Request["query"]["location"];
 };
-type Endpoint29_0Request = Parameters<RawClient["server.projectCopy"]["projectCopy.generateName"]>[0];
+type Endpoint28_1Request = Parameters<RawClient["server.question"]["session.question.list"]>[0];
+type Endpoint28_1Input = {
+    readonly sessionID: Endpoint28_1Request["params"]["sessionID"];
+};
+type Endpoint28_2Request = Parameters<RawClient["server.question"]["session.question.reply"]>[0];
+type Endpoint28_2Input = {
+    readonly sessionID: Endpoint28_2Request["params"]["sessionID"];
+    readonly requestID: Endpoint28_2Request["params"]["requestID"];
+    readonly answers: Endpoint28_2Request["payload"]["answers"];
+};
+type Endpoint28_3Request = Parameters<RawClient["server.question"]["session.question.reject"]>[0];
+type Endpoint28_3Input = {
+    readonly sessionID: Endpoint28_3Request["params"]["sessionID"];
+    readonly requestID: Endpoint28_3Request["params"]["requestID"];
+};
+type Endpoint29_0Request = Parameters<RawClient["server.reference"]["reference.list"]>[0];
 type Endpoint29_0Input = {
-    readonly projectID: Endpoint29_0Request["params"]["projectID"];
     readonly location?: Endpoint29_0Request["query"]["location"];
-    readonly context?: Endpoint29_0Request["payload"]["context"];
 };
-type Endpoint29_1Request = Parameters<RawClient["server.projectCopy"]["projectCopy.create"]>[0];
-type Endpoint29_1Input = {
-    readonly projectID: Endpoint29_1Request["params"]["projectID"];
-    readonly location?: Endpoint29_1Request["query"]["location"];
-    readonly strategy: Endpoint29_1Request["payload"]["strategy"];
-    readonly directory: Endpoint29_1Request["payload"]["directory"];
-    readonly name?: Endpoint29_1Request["payload"]["name"];
+type Endpoint30_0Request = Parameters<RawClient["server.projectCopy"]["projectCopy.generateName"]>[0];
+type Endpoint30_0Input = {
+    readonly projectID: Endpoint30_0Request["params"]["projectID"];
+    readonly location?: Endpoint30_0Request["query"]["location"];
+    readonly context?: Endpoint30_0Request["payload"]["context"];
 };
-type Endpoint29_2Request = Parameters<RawClient["server.projectCopy"]["projectCopy.remove"]>[0];
-type Endpoint29_2Input = {
-    readonly projectID: Endpoint29_2Request["params"]["projectID"];
-    readonly location?: Endpoint29_2Request["query"]["location"];
-    readonly directory: Endpoint29_2Request["payload"]["directory"];
-    readonly force: Endpoint29_2Request["payload"]["force"];
+type Endpoint30_1Request = Parameters<RawClient["server.projectCopy"]["projectCopy.create"]>[0];
+type Endpoint30_1Input = {
+    readonly projectID: Endpoint30_1Request["params"]["projectID"];
+    readonly location?: Endpoint30_1Request["query"]["location"];
+    readonly strategy: Endpoint30_1Request["payload"]["strategy"];
+    readonly directory: Endpoint30_1Request["payload"]["directory"];
+    readonly name?: Endpoint30_1Request["payload"]["name"];
 };
-type Endpoint29_3Request = Parameters<RawClient["server.projectCopy"]["projectCopy.refresh"]>[0];
-type Endpoint29_3Input = {
-    readonly projectID: Endpoint29_3Request["params"]["projectID"];
-    readonly location?: Endpoint29_3Request["query"]["location"];
+type Endpoint30_2Request = Parameters<RawClient["server.projectCopy"]["projectCopy.remove"]>[0];
+type Endpoint30_2Input = {
+    readonly projectID: Endpoint30_2Request["params"]["projectID"];
+    readonly location?: Endpoint30_2Request["query"]["location"];
+    readonly directory: Endpoint30_2Request["payload"]["directory"];
+    readonly force: Endpoint30_2Request["payload"]["force"];
+};
+type Endpoint30_3Request = Parameters<RawClient["server.projectCopy"]["projectCopy.refresh"]>[0];
+type Endpoint30_3Input = {
+    readonly projectID: Endpoint30_3Request["params"]["projectID"];
+    readonly location?: Endpoint30_3Request["query"]["location"];
 };
 export declare const make: (options?: {
     readonly baseUrl?: string | URL | undefined;
@@ -662,6 +759,9 @@ export declare const make: (options?: {
                     readonly archived?: import("effect/DateTime").Utc | undefined;
                 };
                 readonly title: string;
+                readonly metadata?: {
+                    readonly [x: string]: Schema.Json;
+                } | undefined;
                 readonly share?: {
                     readonly url: string;
                 } | undefined;
@@ -673,6 +773,8 @@ export declare const make: (options?: {
                 readonly revert?: {
                     readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                     readonly partID?: string | undefined;
+                    readonly contentIndex?: number | undefined;
+                    readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                     readonly snapshot?: string | undefined;
                     readonly diff?: string | undefined;
                     readonly files?: readonly {
@@ -717,6 +819,9 @@ export declare const make: (options?: {
                 readonly archived?: import("effect/DateTime").Utc | undefined;
             };
             readonly title: string;
+            readonly metadata?: {
+                readonly [x: string]: Schema.Json;
+            } | undefined;
             readonly share?: {
                 readonly url: string;
             } | undefined;
@@ -728,6 +833,8 @@ export declare const make: (options?: {
             readonly revert?: {
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                 readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                 readonly snapshot?: string | undefined;
                 readonly diff?: string | undefined;
                 readonly files?: readonly {
@@ -742,6 +849,9 @@ export declare const make: (options?: {
         active: () => Effect.Effect<{
             readonly [x: string & import("effect/Brand").Brand<"SessionID">]: {
                 readonly type: "running";
+                readonly turnID?: (string & import("effect/Brand").Brand<"Session.Message.ID">) | undefined;
+                readonly phase?: "active" | "pending" | undefined;
+                readonly activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user" | undefined;
             };
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         get: (input: Endpoint4_3Input) => Effect.Effect<{
@@ -772,6 +882,9 @@ export declare const make: (options?: {
                 readonly archived?: import("effect/DateTime").Utc | undefined;
             };
             readonly title: string;
+            readonly metadata?: {
+                readonly [x: string]: Schema.Json;
+            } | undefined;
             readonly share?: {
                 readonly url: string;
             } | undefined;
@@ -783,6 +896,8 @@ export declare const make: (options?: {
             readonly revert?: {
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                 readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                 readonly snapshot?: string | undefined;
                 readonly diff?: string | undefined;
                 readonly files?: readonly {
@@ -822,6 +937,9 @@ export declare const make: (options?: {
                 readonly archived?: import("effect/DateTime").Utc | undefined;
             };
             readonly title: string;
+            readonly metadata?: {
+                readonly [x: string]: Schema.Json;
+            } | undefined;
             readonly share?: {
                 readonly url: string;
             } | undefined;
@@ -833,6 +951,8 @@ export declare const make: (options?: {
             readonly revert?: {
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                 readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                 readonly snapshot?: string | undefined;
                 readonly diff?: string | undefined;
                 readonly files?: readonly {
@@ -877,6 +997,9 @@ export declare const make: (options?: {
                 readonly archived?: import("effect/DateTime").Utc | undefined;
             };
             readonly title: string;
+            readonly metadata?: {
+                readonly [x: string]: Schema.Json;
+            } | undefined;
             readonly share?: {
                 readonly url: string;
             } | undefined;
@@ -888,6 +1011,8 @@ export declare const make: (options?: {
             readonly revert?: {
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                 readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                 readonly snapshot?: string | undefined;
                 readonly diff?: string | undefined;
                 readonly files?: readonly {
@@ -927,6 +1052,9 @@ export declare const make: (options?: {
                 readonly archived?: import("effect/DateTime").Utc | undefined;
             };
             readonly title: string;
+            readonly metadata?: {
+                readonly [x: string]: Schema.Json;
+            } | undefined;
             readonly share?: {
                 readonly url: string;
             } | undefined;
@@ -938,6 +1066,8 @@ export declare const make: (options?: {
             readonly revert?: {
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                 readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                 readonly snapshot?: string | undefined;
                 readonly diff?: string | undefined;
                 readonly files?: readonly {
@@ -1020,11 +1150,20 @@ export declare const make: (options?: {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "session" | "turn" | undefined;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: import("effect/DateTime").Utc;
             readonly promotedSeq?: number | undefined;
-        }, ClientError | import("@opencode-ai/protocol/errors").ConflictError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        }, ClientError | import("@opencode-ai/protocol/errors").ConflictError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").SessionTurnConflictError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         diff: (input: Endpoint4_14Input) => Effect.Effect<readonly {
             readonly file?: string | undefined;
             readonly patch?: string | undefined;
@@ -1096,8 +1235,17 @@ export declare const make: (options?: {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "session" | "turn" | undefined;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: import("effect/DateTime").Utc;
             readonly promotedSeq?: number | undefined;
         }[], ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
@@ -1165,8 +1313,17 @@ export declare const make: (options?: {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "session" | "turn" | undefined;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: import("effect/DateTime").Utc;
             readonly promotedSeq?: number | undefined;
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionInputNotFoundError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
@@ -1234,8 +1391,17 @@ export declare const make: (options?: {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "session" | "turn" | undefined;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: import("effect/DateTime").Utc;
             readonly promotedSeq?: number | undefined;
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionInputConflictError | import("@opencode-ai/protocol/errors").SessionInputNotFoundError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
@@ -1305,17 +1471,28 @@ export declare const make: (options?: {
             };
             readonly synthetic?: {
                 readonly description: string;
+                readonly scope?: "session" | "turn" | undefined;
             } | undefined;
             readonly delivery: "queue" | "steer";
+            readonly intent?: {
+                readonly type: "start";
+            } | {
+                readonly type: "steer";
+                readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            } | {
+                readonly type: "queue";
+            } | undefined;
             readonly timeCreated: import("effect/DateTime").Utc;
             readonly promotedSeq?: number | undefined;
-        }, ClientError | import("@opencode-ai/protocol/errors").ConflictError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        }, ClientError | import("@opencode-ai/protocol/errors").ConflictError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").SessionTurnConflictError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         shell: (input: Endpoint4_21Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         compact: (input: Endpoint4_22Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         wait: (input: Endpoint4_23Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         stage: (input: Endpoint4_24Input) => Effect.Effect<{
             readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
             readonly partID?: string | undefined;
+            readonly contentIndex?: number | undefined;
+            readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
             readonly snapshot?: string | undefined;
             readonly diff?: string | undefined;
             readonly files?: readonly {
@@ -1698,6 +1875,13 @@ export declare const make: (options?: {
                 readonly start?: string | undefined;
                 readonly end?: string | undefined;
                 readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                readonly patch?: readonly {
+                    readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                    readonly status: "added" | "deleted" | "modified";
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly patch: string;
+                }[] | undefined;
             } | undefined;
             readonly finish?: string | undefined;
             readonly structured?: unknown;
@@ -1734,6 +1918,312 @@ export declare const make: (options?: {
         })[], ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError | import("@opencode-ai/protocol/errors").UnknownError, never>;
         history: (input: Endpoint4_28Input) => Effect.Effect<{
             readonly data: readonly ({
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.created";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly info: {
+                        readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                        readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                        readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                        readonly slug: string;
+                        readonly version: string;
+                        readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                        readonly model?: {
+                            readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                            readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                            readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                            readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                        } | undefined;
+                        readonly cost: number;
+                        readonly tokens: {
+                            readonly input: number;
+                            readonly output: number;
+                            readonly reasoning: number;
+                            readonly cache: {
+                                readonly read: number;
+                                readonly write: number;
+                            };
+                        };
+                        readonly time: {
+                            readonly created: import("effect/DateTime").Utc;
+                            readonly updated: import("effect/DateTime").Utc;
+                            readonly compacting?: import("effect/DateTime").Utc | undefined;
+                            readonly archived?: import("effect/DateTime").Utc | undefined;
+                        };
+                        readonly title: string;
+                        readonly metadata?: {
+                            readonly [x: string]: Schema.Json;
+                        } | undefined;
+                        readonly share?: {
+                            readonly url: string;
+                        } | undefined;
+                        readonly permission?: readonly {
+                            readonly action: string;
+                            readonly resource: string;
+                            readonly effect: "allow" | "ask" | "deny";
+                        }[] | undefined;
+                        readonly location: {
+                            readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                            readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                        };
+                        readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                        readonly revert?: {
+                            readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                            readonly partID?: string | undefined;
+                            readonly contentIndex?: number | undefined;
+                            readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                            readonly snapshot?: string | undefined;
+                            readonly diff?: string | undefined;
+                            readonly files?: readonly {
+                                readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                                readonly status: "added" | "deleted" | "modified";
+                                readonly additions: number;
+                                readonly deletions: number;
+                                readonly patch: string;
+                            }[] | undefined;
+                        } | undefined;
+                    };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.updated";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly info: {
+                        readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                        readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                        readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                        readonly slug: string;
+                        readonly version: string;
+                        readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                        readonly model?: {
+                            readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                            readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                            readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                            readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                        } | undefined;
+                        readonly cost: number;
+                        readonly tokens: {
+                            readonly input: number;
+                            readonly output: number;
+                            readonly reasoning: number;
+                            readonly cache: {
+                                readonly read: number;
+                                readonly write: number;
+                            };
+                        };
+                        readonly time: {
+                            readonly created: import("effect/DateTime").Utc;
+                            readonly updated: import("effect/DateTime").Utc;
+                            readonly compacting?: import("effect/DateTime").Utc | undefined;
+                            readonly archived?: import("effect/DateTime").Utc | undefined;
+                        };
+                        readonly title: string;
+                        readonly metadata?: {
+                            readonly [x: string]: Schema.Json;
+                        } | undefined;
+                        readonly share?: {
+                            readonly url: string;
+                        } | undefined;
+                        readonly permission?: readonly {
+                            readonly action: string;
+                            readonly resource: string;
+                            readonly effect: "allow" | "ask" | "deny";
+                        }[] | undefined;
+                        readonly location: {
+                            readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                            readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                        };
+                        readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                        readonly revert?: {
+                            readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                            readonly partID?: string | undefined;
+                            readonly contentIndex?: number | undefined;
+                            readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                            readonly snapshot?: string | undefined;
+                            readonly diff?: string | undefined;
+                            readonly files?: readonly {
+                                readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                                readonly status: "added" | "deleted" | "modified";
+                                readonly additions: number;
+                                readonly deletions: number;
+                                readonly patch: string;
+                            }[] | undefined;
+                        } | undefined;
+                    };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.deleted";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly info: {
+                        readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                        readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                        readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                        readonly slug: string;
+                        readonly version: string;
+                        readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                        readonly model?: {
+                            readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                            readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                            readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                            readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                        } | undefined;
+                        readonly cost: number;
+                        readonly tokens: {
+                            readonly input: number;
+                            readonly output: number;
+                            readonly reasoning: number;
+                            readonly cache: {
+                                readonly read: number;
+                                readonly write: number;
+                            };
+                        };
+                        readonly time: {
+                            readonly created: import("effect/DateTime").Utc;
+                            readonly updated: import("effect/DateTime").Utc;
+                            readonly compacting?: import("effect/DateTime").Utc | undefined;
+                            readonly archived?: import("effect/DateTime").Utc | undefined;
+                        };
+                        readonly title: string;
+                        readonly metadata?: {
+                            readonly [x: string]: Schema.Json;
+                        } | undefined;
+                        readonly share?: {
+                            readonly url: string;
+                        } | undefined;
+                        readonly permission?: readonly {
+                            readonly action: string;
+                            readonly resource: string;
+                            readonly effect: "allow" | "ask" | "deny";
+                        }[] | undefined;
+                        readonly location: {
+                            readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                            readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                        };
+                        readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                        readonly revert?: {
+                            readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                            readonly partID?: string | undefined;
+                            readonly contentIndex?: number | undefined;
+                            readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                            readonly snapshot?: string | undefined;
+                            readonly diff?: string | undefined;
+                            readonly files?: readonly {
+                                readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                                readonly status: "added" | "deleted" | "modified";
+                                readonly additions: number;
+                                readonly deletions: number;
+                                readonly patch: string;
+                            }[] | undefined;
+                        } | undefined;
+                    };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.status";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly status: {
+                        readonly type: "idle";
+                    } | {
+                        readonly type: "retry";
+                        readonly attempt: number;
+                        readonly message: string;
+                        readonly action?: {
+                            readonly reason: string;
+                            readonly provider: string;
+                            readonly title: string;
+                            readonly message: string;
+                            readonly label: string;
+                            readonly link?: string | undefined;
+                        } | undefined;
+                        readonly next: number;
+                    } | {
+                        readonly type: "busy";
+                    };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.diff";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly diff: readonly {
+                        readonly file?: string | undefined;
+                        readonly patch?: string | undefined;
+                        readonly additions: number;
+                        readonly deletions: number;
+                        readonly status?: "added" | "deleted" | "modified" | undefined;
+                    }[];
+                };
+            } | {
                 readonly id: string & import("effect/Brand").Brand<"Event.ID">;
                 readonly metadata?: {
                     readonly [x: string]: unknown;
@@ -2192,6 +2682,13 @@ export declare const make: (options?: {
                             readonly start?: string | undefined;
                             readonly end?: string | undefined;
                             readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                            readonly patch?: readonly {
+                                readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                                readonly status: "added" | "deleted" | "modified";
+                                readonly additions: number;
+                                readonly deletions: number;
+                                readonly patch: string;
+                            }[] | undefined;
                         } | undefined;
                         readonly finish?: string | undefined;
                         readonly structured?: unknown;
@@ -2226,6 +2723,339 @@ export declare const make: (options?: {
                         readonly summary: string;
                         readonly recent: string;
                     };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.transcript.message.removed";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.transcript.user-text.updated";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly partID: string;
+                    readonly text: string;
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.transcript.user-text.removed";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly partID: string;
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.transcript.content.updated";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly contentIndex: number;
+                    readonly partID: string;
+                    readonly content: {
+                        readonly type: "text";
+                        readonly id: string;
+                        readonly text: string;
+                    } | {
+                        readonly type: "reasoning";
+                        readonly id: string;
+                        readonly text: string;
+                        readonly providerMetadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                        readonly time?: {
+                            readonly created: import("effect/DateTime").Utc;
+                            readonly completed?: import("effect/DateTime").Utc | undefined;
+                        } | undefined;
+                    } | {
+                        readonly type: "tool";
+                        readonly id: string;
+                        readonly name: string;
+                        readonly provider?: {
+                            readonly executed: boolean;
+                            readonly metadata?: {
+                                readonly [x: string]: {
+                                    readonly [x: string]: unknown;
+                                };
+                            } | undefined;
+                            readonly resultMetadata?: {
+                                readonly [x: string]: {
+                                    readonly [x: string]: unknown;
+                                };
+                            } | undefined;
+                        } | undefined;
+                        readonly state: {
+                            readonly status: "pending";
+                            readonly input: string;
+                        } | {
+                            readonly status: "running";
+                            readonly input: {
+                                readonly [x: string]: unknown;
+                            };
+                            readonly structured: {
+                                readonly [x: string]: unknown;
+                            };
+                            readonly content: readonly ({
+                                readonly type: "text";
+                                readonly text: string;
+                                readonly provenance?: {
+                                    readonly type: "mcp";
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                    readonly kind: "resource" | "resource_link";
+                                    readonly mime?: string | undefined;
+                                    readonly name?: string | undefined;
+                                    readonly description?: string | undefined;
+                                    readonly size?: number | undefined;
+                                    readonly annotations?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                    readonly meta?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                } | undefined;
+                            } | {
+                                readonly type: "file";
+                                readonly uri: string;
+                                readonly mime: string;
+                                readonly name?: string | undefined;
+                                readonly provenance?: {
+                                    readonly type: "mcp";
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                    readonly kind: "resource" | "resource_link";
+                                    readonly mime?: string | undefined;
+                                    readonly name?: string | undefined;
+                                    readonly description?: string | undefined;
+                                    readonly size?: number | undefined;
+                                    readonly annotations?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                    readonly meta?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                } | undefined;
+                            })[];
+                        } | {
+                            readonly status: "completed";
+                            readonly input: {
+                                readonly [x: string]: unknown;
+                            };
+                            readonly attachments?: readonly {
+                                readonly uri: string;
+                                readonly mime: string;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly source?: {
+                                    readonly start: number;
+                                    readonly end: number;
+                                    readonly text: string;
+                                } | undefined;
+                                readonly resource?: {
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                } | undefined;
+                                readonly materialized?: readonly ({
+                                    readonly type: "text";
+                                    readonly text: string;
+                                } | {
+                                    readonly type: "file";
+                                    readonly uri: string;
+                                    readonly mime: string;
+                                    readonly name?: string | undefined;
+                                } | {
+                                    readonly type: "error";
+                                    readonly message: string;
+                                })[] | undefined;
+                            }[] | undefined;
+                            readonly content: readonly ({
+                                readonly type: "text";
+                                readonly text: string;
+                                readonly provenance?: {
+                                    readonly type: "mcp";
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                    readonly kind: "resource" | "resource_link";
+                                    readonly mime?: string | undefined;
+                                    readonly name?: string | undefined;
+                                    readonly description?: string | undefined;
+                                    readonly size?: number | undefined;
+                                    readonly annotations?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                    readonly meta?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                } | undefined;
+                            } | {
+                                readonly type: "file";
+                                readonly uri: string;
+                                readonly mime: string;
+                                readonly name?: string | undefined;
+                                readonly provenance?: {
+                                    readonly type: "mcp";
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                    readonly kind: "resource" | "resource_link";
+                                    readonly mime?: string | undefined;
+                                    readonly name?: string | undefined;
+                                    readonly description?: string | undefined;
+                                    readonly size?: number | undefined;
+                                    readonly annotations?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                    readonly meta?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                } | undefined;
+                            })[];
+                            readonly outputPaths?: readonly string[] | undefined;
+                            readonly structured: {
+                                readonly [x: string]: unknown;
+                            };
+                            readonly result?: unknown;
+                        } | {
+                            readonly status: "error";
+                            readonly input: {
+                                readonly [x: string]: unknown;
+                            };
+                            readonly content: readonly ({
+                                readonly type: "text";
+                                readonly text: string;
+                                readonly provenance?: {
+                                    readonly type: "mcp";
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                    readonly kind: "resource" | "resource_link";
+                                    readonly mime?: string | undefined;
+                                    readonly name?: string | undefined;
+                                    readonly description?: string | undefined;
+                                    readonly size?: number | undefined;
+                                    readonly annotations?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                    readonly meta?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                } | undefined;
+                            } | {
+                                readonly type: "file";
+                                readonly uri: string;
+                                readonly mime: string;
+                                readonly name?: string | undefined;
+                                readonly provenance?: {
+                                    readonly type: "mcp";
+                                    readonly clientName: string;
+                                    readonly uri: string;
+                                    readonly kind: "resource" | "resource_link";
+                                    readonly mime?: string | undefined;
+                                    readonly name?: string | undefined;
+                                    readonly description?: string | undefined;
+                                    readonly size?: number | undefined;
+                                    readonly annotations?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                    readonly meta?: {
+                                        readonly [x: string]: unknown;
+                                    } | undefined;
+                                } | undefined;
+                            })[];
+                            readonly structured: {
+                                readonly [x: string]: unknown;
+                            };
+                            readonly error: {
+                                readonly type: "unknown";
+                                readonly message: string;
+                            };
+                            readonly result?: unknown;
+                        };
+                        readonly time: {
+                            readonly created: import("effect/DateTime").Utc;
+                            readonly ran?: import("effect/DateTime").Utc | undefined;
+                            readonly completed?: import("effect/DateTime").Utc | undefined;
+                            readonly pruned?: import("effect/DateTime").Utc | undefined;
+                        };
+                    };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.transcript.content.removed";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly contentIndex: number;
+                    readonly partID: string;
                 };
             } | {
                 readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -2306,8 +3136,17 @@ export declare const make: (options?: {
                     };
                     readonly synthetic?: {
                         readonly description: string;
+                        readonly scope?: "session" | "turn" | undefined;
                     } | undefined;
                     readonly delivery: "queue" | "steer";
+                    readonly intent?: {
+                        readonly type: "start";
+                    } | {
+                        readonly type: "steer";
+                        readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    } | {
+                        readonly type: "queue";
+                    } | undefined;
                 };
             } | {
                 readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -2388,8 +3227,58 @@ export declare const make: (options?: {
                     };
                     readonly synthetic?: {
                         readonly description: string;
+                        readonly scope?: "session" | "turn" | undefined;
                     } | undefined;
                     readonly delivery: "queue" | "steer";
+                    readonly intent?: {
+                        readonly type: "start";
+                    } | {
+                        readonly type: "steer";
+                        readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    } | {
+                        readonly type: "queue";
+                    } | undefined;
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.turn.started";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly turnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly type: "session.next.turn.ended";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly turnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly outcome?: "abandoned" | "completed" | "failed" | "interrupted" | undefined;
                 };
             } | {
                 readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -2538,6 +3427,13 @@ export declare const make: (options?: {
                     };
                     readonly snapshot?: string | undefined;
                     readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                    readonly patch?: readonly {
+                        readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                        readonly status: "added" | "deleted" | "modified";
+                        readonly additions: number;
+                        readonly deletions: number;
+                        readonly patch: string;
+                    }[] | undefined;
                 };
             } | {
                 readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -2915,6 +3811,45 @@ export declare const make: (options?: {
                 readonly metadata?: {
                     readonly [x: string]: unknown;
                 } | undefined;
+                readonly type: "session.next.tool-discovery.completed";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly callID: string;
+                    readonly query: string;
+                    readonly limit: number;
+                    readonly catalogRevision: string;
+                    readonly matches: readonly {
+                        readonly key: string & import("effect/Brand").Brand<"ToolCatalog.Key">;
+                        readonly callableName: string;
+                        readonly definitionHash: string;
+                        readonly source: {
+                            readonly type: "app" | "builtin" | "mcp" | "plugin";
+                            readonly id: string;
+                            readonly displayName?: string | undefined;
+                        };
+                    }[];
+                    readonly pendingSources: readonly {
+                        readonly type: "app" | "builtin" | "mcp" | "plugin";
+                        readonly id: string;
+                        readonly displayName?: string | undefined;
+                    }[];
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
                 readonly type: "session.next.provider.attempt.started";
                 readonly durable?: {
                     readonly aggregateID: string;
@@ -3084,6 +4019,31 @@ export declare const make: (options?: {
                 readonly metadata?: {
                     readonly [x: string]: unknown;
                 } | undefined;
+                readonly type: "session.next.compaction.failed";
+                readonly durable?: {
+                    readonly aggregateID: string;
+                    readonly seq: number;
+                    readonly version: number;
+                } | undefined;
+                readonly location?: {
+                    readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                    readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                } | undefined;
+                readonly data: {
+                    readonly timestamp: import("effect/DateTime").Utc;
+                    readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly reason: "auto" | "manual";
+                    readonly error: {
+                        readonly type: "unknown";
+                        readonly message: string;
+                    };
+                };
+            } | {
+                readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
                 readonly type: "session.next.revert.cleared";
                 readonly durable?: {
                     readonly aggregateID: string;
@@ -3117,6 +4077,9 @@ export declare const make: (options?: {
                     readonly timestamp: import("effect/DateTime").Utc;
                     readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
                     readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                    readonly partID?: string | undefined;
+                    readonly contentIndex?: number | undefined;
+                    readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                 };
             } | {
                 readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -3139,6 +4102,8 @@ export declare const make: (options?: {
                     readonly revert: {
                         readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                         readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                         readonly snapshot?: string | undefined;
                         readonly diff?: string | undefined;
                         readonly files?: readonly {
@@ -3154,6 +4119,312 @@ export declare const make: (options?: {
             readonly hasMore: boolean;
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         events: (input: Endpoint4_29Input) => Stream.Stream<{
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.created";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly info: {
+                    readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                    readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                    readonly model?: {
+                        readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                        readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                        readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly updated: import("effect/DateTime").Utc;
+                        readonly compacting?: import("effect/DateTime").Utc | undefined;
+                        readonly archived?: import("effect/DateTime").Utc | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: Schema.Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                        readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                    };
+                    readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                    readonly revert?: {
+                        readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly info: {
+                    readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                    readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                    readonly model?: {
+                        readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                        readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                        readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly updated: import("effect/DateTime").Utc;
+                        readonly compacting?: import("effect/DateTime").Utc | undefined;
+                        readonly archived?: import("effect/DateTime").Utc | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: Schema.Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                        readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                    };
+                    readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                    readonly revert?: {
+                        readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.deleted";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly info: {
+                    readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                    readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                    readonly model?: {
+                        readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                        readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                        readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly updated: import("effect/DateTime").Utc;
+                        readonly compacting?: import("effect/DateTime").Utc | undefined;
+                        readonly archived?: import("effect/DateTime").Utc | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: Schema.Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                        readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                    };
+                    readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                    readonly revert?: {
+                        readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly status: {
+                    readonly type: "idle";
+                } | {
+                    readonly type: "retry";
+                    readonly attempt: number;
+                    readonly message: string;
+                    readonly action?: {
+                        readonly reason: string;
+                        readonly provider: string;
+                        readonly title: string;
+                        readonly message: string;
+                        readonly label: string;
+                        readonly link?: string | undefined;
+                    } | undefined;
+                    readonly next: number;
+                } | {
+                    readonly type: "busy";
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.diff";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly diff: readonly {
+                    readonly file?: string | undefined;
+                    readonly patch?: string | undefined;
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly status?: "added" | "deleted" | "modified" | undefined;
+                }[];
+            };
+        } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
             readonly metadata?: {
                 readonly [x: string]: unknown;
@@ -3612,6 +4883,13 @@ export declare const make: (options?: {
                         readonly start?: string | undefined;
                         readonly end?: string | undefined;
                         readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                        readonly patch?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
                     } | undefined;
                     readonly finish?: string | undefined;
                     readonly structured?: unknown;
@@ -3646,6 +4924,339 @@ export declare const make: (options?: {
                     readonly summary: string;
                     readonly recent: string;
                 };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.message.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.user-text.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly partID: string;
+                readonly text: string;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.user-text.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly partID: string;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.content.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly contentIndex: number;
+                readonly partID: string;
+                readonly content: {
+                    readonly type: "text";
+                    readonly id: string;
+                    readonly text: string;
+                } | {
+                    readonly type: "reasoning";
+                    readonly id: string;
+                    readonly text: string;
+                    readonly providerMetadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: unknown;
+                        };
+                    } | undefined;
+                    readonly time?: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly completed?: import("effect/DateTime").Utc | undefined;
+                    } | undefined;
+                } | {
+                    readonly type: "tool";
+                    readonly id: string;
+                    readonly name: string;
+                    readonly provider?: {
+                        readonly executed: boolean;
+                        readonly metadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                        readonly resultMetadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                    } | undefined;
+                    readonly state: {
+                        readonly status: "pending";
+                        readonly input: string;
+                    } | {
+                        readonly status: "running";
+                        readonly input: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly structured: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly content: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        })[];
+                    } | {
+                        readonly status: "completed";
+                        readonly input: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly attachments?: readonly {
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly description?: string | undefined;
+                            readonly source?: {
+                                readonly start: number;
+                                readonly end: number;
+                                readonly text: string;
+                            } | undefined;
+                            readonly resource?: {
+                                readonly clientName: string;
+                                readonly uri: string;
+                            } | undefined;
+                            readonly materialized?: readonly ({
+                                readonly type: "text";
+                                readonly text: string;
+                            } | {
+                                readonly type: "file";
+                                readonly uri: string;
+                                readonly mime: string;
+                                readonly name?: string | undefined;
+                            } | {
+                                readonly type: "error";
+                                readonly message: string;
+                            })[] | undefined;
+                        }[] | undefined;
+                        readonly content: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        })[];
+                        readonly outputPaths?: readonly string[] | undefined;
+                        readonly structured: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly result?: unknown;
+                    } | {
+                        readonly status: "error";
+                        readonly input: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly content: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        })[];
+                        readonly structured: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly error: {
+                            readonly type: "unknown";
+                            readonly message: string;
+                        };
+                        readonly result?: unknown;
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly ran?: import("effect/DateTime").Utc | undefined;
+                        readonly completed?: import("effect/DateTime").Utc | undefined;
+                        readonly pruned?: import("effect/DateTime").Utc | undefined;
+                    };
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.content.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly contentIndex: number;
+                readonly partID: string;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -3726,8 +5337,17 @@ export declare const make: (options?: {
                 };
                 readonly synthetic?: {
                     readonly description: string;
+                    readonly scope?: "session" | "turn" | undefined;
                 } | undefined;
                 readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -3808,8 +5428,58 @@ export declare const make: (options?: {
                 };
                 readonly synthetic?: {
                     readonly description: string;
+                    readonly scope?: "session" | "turn" | undefined;
                 } | undefined;
                 readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.turn.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly turnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.turn.ended";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly turnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly outcome?: "abandoned" | "completed" | "failed" | "interrupted" | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -3958,6 +5628,13 @@ export declare const make: (options?: {
                 };
                 readonly snapshot?: string | undefined;
                 readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                readonly patch?: readonly {
+                    readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                    readonly status: "added" | "deleted" | "modified";
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly patch: string;
+                }[] | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -4335,6 +6012,45 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "session.next.tool-discovery.completed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly callID: string;
+                readonly query: string;
+                readonly limit: number;
+                readonly catalogRevision: string;
+                readonly matches: readonly {
+                    readonly key: string & import("effect/Brand").Brand<"ToolCatalog.Key">;
+                    readonly callableName: string;
+                    readonly definitionHash: string;
+                    readonly source: {
+                        readonly type: "app" | "builtin" | "mcp" | "plugin";
+                        readonly id: string;
+                        readonly displayName?: string | undefined;
+                    };
+                }[];
+                readonly pendingSources: readonly {
+                    readonly type: "app" | "builtin" | "mcp" | "plugin";
+                    readonly id: string;
+                    readonly displayName?: string | undefined;
+                }[];
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.provider.attempt.started";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4504,6 +6220,31 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "session.next.compaction.failed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly reason: "auto" | "manual";
+                readonly error: {
+                    readonly type: "unknown";
+                    readonly message: string;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.revert.cleared";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4537,6 +6278,9 @@ export declare const make: (options?: {
                 readonly timestamp: import("effect/DateTime").Utc;
                 readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -4559,6 +6303,8 @@ export declare const make: (options?: {
                 readonly revert: {
                     readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                     readonly partID?: string | undefined;
+                    readonly contentIndex?: number | undefined;
+                    readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                     readonly snapshot?: string | undefined;
                     readonly diff?: string | undefined;
                     readonly files?: readonly {
@@ -4942,6 +6688,13 @@ export declare const make: (options?: {
                 readonly start?: string | undefined;
                 readonly end?: string | undefined;
                 readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                readonly patch?: readonly {
+                    readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                    readonly status: "added" | "deleted" | "modified";
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly patch: string;
+                }[] | undefined;
             } | undefined;
             readonly finish?: string | undefined;
             readonly structured?: unknown;
@@ -5349,6 +7102,13 @@ export declare const make: (options?: {
                     readonly start?: string | undefined;
                     readonly end?: string | undefined;
                     readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                    readonly patch?: readonly {
+                        readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                        readonly status: "added" | "deleted" | "modified";
+                        readonly additions: number;
+                        readonly deletions: number;
+                        readonly patch: string;
+                    }[] | undefined;
                 } | undefined;
                 readonly finish?: string | undefined;
                 readonly structured?: unknown;
@@ -5387,6 +7147,7 @@ export declare const make: (options?: {
                 readonly previous?: string | undefined;
                 readonly next?: string | undefined;
             };
+            readonly watermark?: number | undefined;
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidCursorError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError | import("@opencode-ai/protocol/errors").UnknownError, never>;
     };
     models: {
@@ -5442,7 +7203,7 @@ export declare const make: (options?: {
                     };
                     readonly id: string & import("effect/Brand").Brand<"VariantID">;
                 }[];
-                readonly protocols?: ("anthropic-messages" | "openai-compatible" | "openai-responses")[] | undefined;
+                readonly protocols?: readonly ("anthropic-messages" | "openai-compatible" | "openai-responses")[] | undefined;
                 readonly time: {
                     readonly released: number;
                 };
@@ -5555,7 +7316,7 @@ export declare const make: (options?: {
                         };
                         readonly id: string & import("effect/Brand").Brand<"VariantID">;
                     }[];
-                    readonly protocols?: ("anthropic-messages" | "openai-compatible" | "openai-responses")[] | undefined;
+                    readonly protocols?: readonly ("anthropic-messages" | "openai-compatible" | "openai-responses")[] | undefined;
                     readonly time: {
                         readonly released: number;
                     };
@@ -5647,7 +7408,25 @@ export declare const make: (options?: {
                 };
             };
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").ProviderNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        discoverCustom: (input: Endpoint7_3Input) => Effect.Effect<{
+        discoverModels: (input: Endpoint7_3Input) => Effect.Effect<{
+            readonly location: import("@opencode-ai/schema/location").Info;
+            readonly data: {
+                readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                readonly source: "compatible" | "oauth" | "provider";
+                readonly models: readonly {
+                    readonly id: string;
+                    readonly name?: string | undefined;
+                    readonly context?: number | undefined;
+                    readonly input?: number | undefined;
+                    readonly output?: number | undefined;
+                }[];
+            };
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").ProviderModelDiscoveryError | import("@opencode-ai/protocol/errors").ProviderNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        disconnect: (input: Endpoint7_4Input) => Effect.Effect<{
+            readonly location: import("@opencode-ai/schema/location").Info;
+            readonly data: boolean;
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        discoverCustom: (input: Endpoint7_5Input) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: {
                 readonly endpoint: string;
@@ -5660,7 +7439,7 @@ export declare const make: (options?: {
                 }[];
             };
         }, ClientError | import("@opencode-ai/schema/custom-provider").DiscoveryError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError | import("@opencode-ai/schema/custom-provider").ValidationError, never>;
-        configureCustom: (input: Endpoint7_4Input) => Effect.Effect<{
+        configureCustom: (input: Endpoint7_6Input) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: {
                 readonly providerID: string;
@@ -5669,6 +7448,10 @@ export declare const make: (options?: {
                 readonly models: readonly string[];
             };
         }, ClientError | import("@opencode-ai/schema/custom-provider").ConfigureError | import("@opencode-ai/schema/custom-provider").ConflictError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError | import("@opencode-ai/schema/custom-provider").ValidationError, never>;
+        disconnectCustom: (input: Endpoint7_7Input) => Effect.Effect<{
+            readonly location: import("@opencode-ai/schema/location").Info;
+            readonly data: boolean;
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
     integrations: {
         list: (input?: Endpoint8_0Input | undefined) => Effect.Effect<{
@@ -5871,6 +7654,22 @@ export declare const make: (options?: {
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         connect: (input: Endpoint14_2Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").McpNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
         disconnect: (input: Endpoint14_3Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").McpNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        authenticate: (input: Endpoint14_4Input) => Effect.Effect<{
+            readonly location: import("@opencode-ai/schema/location").Info;
+            readonly data: {
+                readonly status: "connected";
+            } | {
+                readonly status: "disabled";
+            } | {
+                readonly status: "failed";
+                readonly error: string;
+            } | {
+                readonly status: "needs_auth";
+            } | {
+                readonly status: "needs_client_registration";
+                readonly error: string;
+            };
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").McpNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
     lsp: {
         status: (input?: Endpoint15_0Input | undefined) => Effect.Effect<{
@@ -6096,8 +7895,1088 @@ export declare const make: (options?: {
     controlPlane: {
         moveSession: (input: Endpoint24_0Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
+    "server.plugins": {
+        runtime: (input?: Endpoint25_0Input | undefined) => Effect.Effect<{
+            readonly location: import("@opencode-ai/schema/location").Info;
+            readonly data: {
+                readonly plugins: readonly {
+                    readonly id: string & import("effect/Brand").Brand<"Plugin.ID">;
+                    readonly state: "degraded" | "disabled" | "failed" | "initializing" | "ready";
+                    readonly capabilities: readonly {
+                        readonly name: "commands" | "mcp" | "plugin" | "skills" | "tools";
+                        readonly state: "disabled" | "failed" | "pending" | "ready";
+                        readonly message?: string | undefined;
+                    }[];
+                }[];
+            };
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        list: () => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        add: (input: Endpoint25_2Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        refresh: (input: Endpoint25_3Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        remove: (input: Endpoint25_4Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        install: (input: Endpoint25_5Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        uninstall: (input: Endpoint25_6Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        enable: (input: Endpoint25_7Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        disable: (input: Endpoint25_8Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        inspectDirect: (input: Endpoint25_9Input) => Effect.Effect<{
+            readonly source: string;
+            readonly name: string;
+            readonly description?: string | undefined;
+            readonly version?: string | undefined;
+            readonly api?: string | undefined;
+            readonly targets: readonly ("server" | "tui")[];
+            readonly requestedCapabilities: readonly {
+                readonly name: string;
+                readonly tier: "declarative" | "runtime" | "trusted-runtime";
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        installDirect: (input: Endpoint25_10Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        uninstallDirect: (input: Endpoint25_11Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        enableDirect: (input: Endpoint25_12Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        disableDirect: (input: Endpoint25_13Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        installMcp: (input: Endpoint25_14Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        removeMcp: (input: Endpoint25_15Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        enableMcp: (input: Endpoint25_16Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        disableMcp: (input: Endpoint25_17Input) => Effect.Effect<{
+            readonly marketplaces: readonly {
+                readonly name: string;
+                readonly source: string;
+                readonly lastUpdated: string;
+                readonly pluginCount: number;
+                readonly error?: string | undefined;
+            }[];
+            readonly plugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly marketplace: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly category?: string | undefined;
+                readonly tags: readonly string[];
+                readonly capabilities: readonly string[];
+                readonly mcpServers: readonly string[];
+                readonly installed: boolean;
+                readonly enabled: boolean;
+            }[];
+            readonly directPlugins: readonly {
+                readonly id: string;
+                readonly name: string;
+                readonly source: string;
+                readonly description?: string | undefined;
+                readonly version?: string | undefined;
+                readonly api?: string | undefined;
+                readonly targets: readonly ("server" | "tui")[];
+                readonly requestedCapabilities: readonly {
+                    readonly name: string;
+                    readonly tier: "declarative" | "runtime" | "trusted-runtime";
+                }[];
+                readonly approvedCapabilities: readonly string[];
+                readonly enabled: boolean;
+                readonly installedAt: string;
+            }[];
+            readonly mcpServers: readonly {
+                readonly name: string;
+                readonly type: "local" | "remote";
+                readonly enabled: boolean;
+            }[];
+        }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").ServiceUnavailableError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+    };
     events: {
         subscribe: () => Stream.Stream<{
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "project.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly id: string & import("effect/Brand").Brand<"Project.ID">;
+                readonly worktree: string;
+                readonly vcs?: "git" | undefined;
+                readonly name?: string | undefined;
+                readonly icon?: {
+                    readonly url?: string | undefined;
+                    readonly override?: string | undefined;
+                    readonly color?: string | undefined;
+                } | undefined;
+                readonly commands?: {
+                    readonly start?: string | undefined;
+                } | undefined;
+                readonly time: {
+                    readonly created: number;
+                    readonly updated: number;
+                    readonly initialized?: number | undefined;
+                };
+                readonly sandboxes: readonly string[];
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.created";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly info: {
+                    readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                    readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                    readonly model?: {
+                        readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                        readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                        readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly updated: import("effect/DateTime").Utc;
+                        readonly compacting?: import("effect/DateTime").Utc | undefined;
+                        readonly archived?: import("effect/DateTime").Utc | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: Schema.Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                        readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                    };
+                    readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                    readonly revert?: {
+                        readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly info: {
+                    readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                    readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                    readonly model?: {
+                        readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                        readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                        readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly updated: import("effect/DateTime").Utc;
+                        readonly compacting?: import("effect/DateTime").Utc | undefined;
+                        readonly archived?: import("effect/DateTime").Utc | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: Schema.Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                        readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                    };
+                    readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                    readonly revert?: {
+                        readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.deleted";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly info: {
+                    readonly id: string & import("effect/Brand").Brand<"SessionID">;
+                    readonly parentID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                    readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: (string & import("effect/Brand").Brand<"AgentV2.ID">) | undefined;
+                    readonly model?: {
+                        readonly id: string & import("effect/Brand").Brand<"ModelV2.ID">;
+                        readonly providerID: string & import("effect/Brand").Brand<"ProviderV2.ID">;
+                        readonly variant?: (string & import("effect/Brand").Brand<"VariantID">) | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly updated: import("effect/DateTime").Utc;
+                        readonly compacting?: import("effect/DateTime").Utc | undefined;
+                        readonly archived?: import("effect/DateTime").Utc | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: Schema.Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                        readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+                    };
+                    readonly subpath?: (string & import("effect/Brand").Brand<"RelativePath">) | undefined;
+                    readonly revert?: {
+                        readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly status: {
+                    readonly type: "idle";
+                } | {
+                    readonly type: "retry";
+                    readonly attempt: number;
+                    readonly message: string;
+                    readonly action?: {
+                        readonly reason: string;
+                        readonly provider: string;
+                        readonly title: string;
+                        readonly message: string;
+                        readonly label: string;
+                        readonly link?: string | undefined;
+                    } | undefined;
+                    readonly next: number;
+                } | {
+                    readonly type: "busy";
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.diff";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly diff: readonly {
+                    readonly file?: string | undefined;
+                    readonly patch?: string | undefined;
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly status?: "added" | "deleted" | "modified" | undefined;
+                }[];
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.error";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
+                readonly error: {
+                    readonly name: string;
+                    readonly data: unknown;
+                };
+            };
+        } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
             readonly metadata?: {
                 readonly [x: string]: unknown;
@@ -6556,6 +9435,13 @@ export declare const make: (options?: {
                         readonly start?: string | undefined;
                         readonly end?: string | undefined;
                         readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                        readonly patch?: readonly {
+                            readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
                     } | undefined;
                     readonly finish?: string | undefined;
                     readonly structured?: unknown;
@@ -6590,6 +9476,339 @@ export declare const make: (options?: {
                     readonly summary: string;
                     readonly recent: string;
                 };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.message.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.user-text.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly partID: string;
+                readonly text: string;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.user-text.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly partID: string;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.content.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly contentIndex: number;
+                readonly partID: string;
+                readonly content: {
+                    readonly type: "text";
+                    readonly id: string;
+                    readonly text: string;
+                } | {
+                    readonly type: "reasoning";
+                    readonly id: string;
+                    readonly text: string;
+                    readonly providerMetadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: unknown;
+                        };
+                    } | undefined;
+                    readonly time?: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly completed?: import("effect/DateTime").Utc | undefined;
+                    } | undefined;
+                } | {
+                    readonly type: "tool";
+                    readonly id: string;
+                    readonly name: string;
+                    readonly provider?: {
+                        readonly executed: boolean;
+                        readonly metadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                        readonly resultMetadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                    } | undefined;
+                    readonly state: {
+                        readonly status: "pending";
+                        readonly input: string;
+                    } | {
+                        readonly status: "running";
+                        readonly input: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly structured: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly content: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        })[];
+                    } | {
+                        readonly status: "completed";
+                        readonly input: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly attachments?: readonly {
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly description?: string | undefined;
+                            readonly source?: {
+                                readonly start: number;
+                                readonly end: number;
+                                readonly text: string;
+                            } | undefined;
+                            readonly resource?: {
+                                readonly clientName: string;
+                                readonly uri: string;
+                            } | undefined;
+                            readonly materialized?: readonly ({
+                                readonly type: "text";
+                                readonly text: string;
+                            } | {
+                                readonly type: "file";
+                                readonly uri: string;
+                                readonly mime: string;
+                                readonly name?: string | undefined;
+                            } | {
+                                readonly type: "error";
+                                readonly message: string;
+                            })[] | undefined;
+                        }[] | undefined;
+                        readonly content: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        })[];
+                        readonly outputPaths?: readonly string[] | undefined;
+                        readonly structured: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly result?: unknown;
+                    } | {
+                        readonly status: "error";
+                        readonly input: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly content: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                            readonly provenance?: {
+                                readonly type: "mcp";
+                                readonly clientName: string;
+                                readonly uri: string;
+                                readonly kind: "resource" | "resource_link";
+                                readonly mime?: string | undefined;
+                                readonly name?: string | undefined;
+                                readonly description?: string | undefined;
+                                readonly size?: number | undefined;
+                                readonly annotations?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                                readonly meta?: {
+                                    readonly [x: string]: unknown;
+                                } | undefined;
+                            } | undefined;
+                        })[];
+                        readonly structured: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly error: {
+                            readonly type: "unknown";
+                            readonly message: string;
+                        };
+                        readonly result?: unknown;
+                    };
+                    readonly time: {
+                        readonly created: import("effect/DateTime").Utc;
+                        readonly ran?: import("effect/DateTime").Utc | undefined;
+                        readonly completed?: import("effect/DateTime").Utc | undefined;
+                        readonly pruned?: import("effect/DateTime").Utc | undefined;
+                    };
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.content.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly contentIndex: number;
+                readonly partID: string;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -6670,8 +9889,17 @@ export declare const make: (options?: {
                 };
                 readonly synthetic?: {
                     readonly description: string;
+                    readonly scope?: "session" | "turn" | undefined;
                 } | undefined;
                 readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -6752,8 +9980,58 @@ export declare const make: (options?: {
                 };
                 readonly synthetic?: {
                     readonly description: string;
+                    readonly scope?: "session" | "turn" | undefined;
                 } | undefined;
                 readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.turn.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly turnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.turn.ended";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly turnID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly outcome?: "abandoned" | "completed" | "failed" | "interrupted" | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -6923,6 +10201,13 @@ export declare const make: (options?: {
                 };
                 readonly snapshot?: string | undefined;
                 readonly files?: readonly (string & import("effect/Brand").Brand<"RelativePath">)[] | undefined;
+                readonly patch?: readonly {
+                    readonly path: string & import("effect/Brand").Brand<"RelativePath">;
+                    readonly status: "added" | "deleted" | "modified";
+                    readonly additions: number;
+                    readonly deletions: number;
+                    readonly patch: string;
+                }[] | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -7366,6 +10651,45 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "session.next.tool-discovery.completed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly assistantMessageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly callID: string;
+                readonly query: string;
+                readonly limit: number;
+                readonly catalogRevision: string;
+                readonly matches: readonly {
+                    readonly key: string & import("effect/Brand").Brand<"ToolCatalog.Key">;
+                    readonly callableName: string;
+                    readonly definitionHash: string;
+                    readonly source: {
+                        readonly type: "app" | "builtin" | "mcp" | "plugin";
+                        readonly id: string;
+                        readonly displayName?: string | undefined;
+                    };
+                }[];
+                readonly pendingSources: readonly {
+                    readonly type: "app" | "builtin" | "mcp" | "plugin";
+                    readonly id: string;
+                    readonly displayName?: string | undefined;
+                }[];
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.provider.attempt.started";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -7556,6 +10880,31 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "session.next.compaction.failed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: import("effect/DateTime").Utc;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly reason: "auto" | "manual";
+                readonly error: {
+                    readonly type: "unknown";
+                    readonly message: string;
+                };
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.revert.cleared";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -7589,6 +10938,9 @@ export declare const make: (options?: {
                 readonly timestamp: import("effect/DateTime").Utc;
                 readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
                 readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
+                readonly partID?: string | undefined;
+                readonly contentIndex?: number | undefined;
+                readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -7611,6 +10963,8 @@ export declare const make: (options?: {
                 readonly revert: {
                     readonly messageID: string & import("effect/Brand").Brand<"Session.Message.ID">;
                     readonly partID?: string | undefined;
+                    readonly contentIndex?: number | undefined;
+                    readonly removedMessageIDs?: readonly (string & import("effect/Brand").Brand<"Session.Message.ID">)[] | undefined;
                     readonly snapshot?: string | undefined;
                     readonly diff?: string | undefined;
                     readonly files?: readonly {
@@ -7627,7 +10981,7 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "workspace.failed";
+            readonly type: "lsp.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -7637,15 +10991,13 @@ export declare const make: (options?: {
                 readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
                 readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
             } | undefined;
-            readonly data: {
-                readonly message: string;
-            };
+            readonly data: {};
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "workspace.ready";
+            readonly type: "project.directories.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -7656,98 +11008,7 @@ export declare const make: (options?: {
                 readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
             } | undefined;
             readonly data: {
-                readonly name: string;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly workspaceID: string & import("effect/Brand").Brand<"WorkspaceV2.ID">;
-                readonly status: "connected" | "connecting" | "disconnected" | "error";
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.v2.asked";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string & import("effect/Brand").Brand<"QuestionV2.ID">;
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly questions: readonly {
-                    readonly question: string;
-                    readonly header: string;
-                    readonly options: readonly {
-                        readonly label: string;
-                        readonly description: string;
-                    }[];
-                    readonly multiple?: boolean | undefined;
-                    readonly custom?: boolean | undefined;
-                }[];
-                readonly tool?: {
-                    readonly messageID: string;
-                    readonly callID: string;
-                } | undefined;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.v2.rejected";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly requestID: string & import("effect/Brand").Brand<"QuestionV2.ID">;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.v2.replied";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly requestID: string & import("effect/Brand").Brand<"QuestionV2.ID">;
-                readonly answers: readonly (readonly string[])[];
+                readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -7764,7 +11025,9 @@ export declare const make: (options?: {
                 readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
                 readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
             } | undefined;
-            readonly data: {};
+            readonly data: {
+                readonly reason?: "agent-config" | undefined;
+            };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
             readonly metadata?: {
@@ -7786,7 +11049,7 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "vcs.branch.updated";
+            readonly type: "worktree.failed";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -7797,6 +11060,25 @@ export declare const make: (options?: {
                 readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
             } | undefined;
             readonly data: {
+                readonly message: string;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "worktree.ready";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly name: string;
                 readonly branch?: string | undefined;
             };
         } | {
@@ -7865,6 +11147,24 @@ export declare const make: (options?: {
                 readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
             } | undefined;
             readonly data: {};
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "vcs.branch.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly branch?: string | undefined;
+            };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
             readonly metadata?: {
@@ -8517,101 +11817,6 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.diff";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly diff: readonly {
-                    readonly file?: string | undefined;
-                    readonly patch?: string | undefined;
-                    readonly additions: number;
-                    readonly deletions: number;
-                    readonly status?: "added" | "deleted" | "modified" | undefined;
-                }[];
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.error";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID?: (string & import("effect/Brand").Brand<"SessionID">) | undefined;
-                readonly error?: {
-                    readonly name: "ProviderAuthError";
-                    readonly data: {
-                        readonly providerID: string;
-                        readonly message: string;
-                    };
-                } | {
-                    readonly name: "UnknownError";
-                    readonly data: {
-                        readonly message: string;
-                        readonly ref?: string | undefined;
-                    };
-                } | {
-                    readonly name: "MessageOutputLengthError";
-                    readonly data: {};
-                } | {
-                    readonly name: "MessageAbortedError";
-                    readonly data: {
-                        readonly message: string;
-                    };
-                } | {
-                    readonly name: "StructuredOutputError";
-                    readonly data: {
-                        readonly message: string;
-                        readonly retries: number;
-                    };
-                } | {
-                    readonly name: "ContextOverflowError";
-                    readonly data: {
-                        readonly message: string;
-                        readonly responseBody?: string | undefined;
-                    };
-                } | {
-                    readonly name: "ContentFilterError";
-                    readonly data: {
-                        readonly message: string;
-                    };
-                } | {
-                    readonly name: "APIError";
-                    readonly data: {
-                        readonly message: string;
-                        readonly statusCode?: number | undefined;
-                        readonly isRetryable: boolean;
-                        readonly responseHeaders?: {
-                            readonly [x: string]: string;
-                        } | undefined;
-                        readonly responseBody?: string | undefined;
-                        readonly metadata?: {
-                            readonly [x: string]: string;
-                        } | undefined;
-                    };
-                } | undefined;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "session.updated";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -8795,24 +12000,6 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "project.directories.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly projectID: string & import("effect/Brand").Brand<"Project.ID">;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "file.watcher.updated";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -8923,6 +12110,78 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "question.v2.asked";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly id: string & import("effect/Brand").Brand<"QuestionV2.ID">;
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly questions: readonly {
+                    readonly question: string;
+                    readonly header: string;
+                    readonly options: readonly {
+                        readonly label: string;
+                        readonly description: string;
+                    }[];
+                    readonly multiple?: boolean | undefined;
+                    readonly custom?: boolean | undefined;
+                }[];
+                readonly tool?: {
+                    readonly messageID: string;
+                    readonly callID: string;
+                } | undefined;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "question.v2.rejected";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly requestID: string & import("effect/Brand").Brand<"QuestionV2.ID">;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "question.v2.replied";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
+                readonly requestID: string & import("effect/Brand").Brand<"QuestionV2.ID">;
+                readonly answers: readonly (readonly string[])[];
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "todo.updated";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -8940,71 +12199,6 @@ export declare const make: (options?: {
                     readonly status: string;
                     readonly priority: string;
                 }[];
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "lsp.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "permission.asked";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string & import("effect/Brand").Brand<"PermissionID">;
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly permission: string;
-                readonly patterns: readonly string[];
-                readonly metadata: {
-                    readonly [x: string]: unknown;
-                };
-                readonly always: readonly string[];
-                readonly tool?: {
-                    readonly messageID: string;
-                    readonly callID: string;
-                } | undefined;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "permission.replied";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly requestID: string & import("effect/Brand").Brand<"PermissionID">;
-                readonly reply: "always" | "once" | "reject";
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -9144,186 +12338,7 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "project.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string & import("effect/Brand").Brand<"Project.ID">;
-                readonly worktree: string;
-                readonly vcs?: "git" | undefined;
-                readonly name?: string | undefined;
-                readonly icon?: {
-                    readonly url?: string | undefined;
-                    readonly override?: string | undefined;
-                    readonly color?: string | undefined;
-                } | undefined;
-                readonly commands?: {
-                    readonly start?: string | undefined;
-                } | undefined;
-                readonly time: {
-                    readonly created: number;
-                    readonly updated: number;
-                    readonly initialized?: number | undefined;
-                };
-                readonly sandboxes: readonly string[];
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.idle";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly status: {
-                    readonly type: "idle";
-                } | {
-                    readonly type: "retry";
-                    readonly attempt: number;
-                    readonly message: string;
-                    readonly action?: {
-                        readonly reason: string;
-                        readonly provider: string;
-                        readonly title: string;
-                        readonly message: string;
-                        readonly label: string;
-                        readonly link?: string | undefined;
-                    } | undefined;
-                    readonly next: number;
-                } | {
-                    readonly type: "busy";
-                };
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.asked";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string & import("effect/Brand").Brand<"QuestionID">;
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly questions: readonly {
-                    readonly question: string;
-                    readonly header: string;
-                    readonly options: readonly {
-                        readonly label: string;
-                        readonly description: string;
-                    }[];
-                    readonly multiple?: boolean | undefined;
-                    readonly custom?: boolean | undefined;
-                }[];
-                readonly tool?: {
-                    readonly messageID: string & import("effect/Brand").Brand<"MessageID">;
-                    readonly callID: string;
-                } | undefined;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.rejected";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly requestID: string & import("effect/Brand").Brand<"QuestionID">;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.replied";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly requestID: string & import("effect/Brand").Brand<"QuestionID">;
-                readonly answers: readonly (readonly string[])[];
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.compacted";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "worktree.failed";
+            readonly type: "workspace.failed";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -9341,7 +12356,7 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "worktree.ready";
+            readonly type: "workspace.ready";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -9353,7 +12368,25 @@ export declare const make: (options?: {
             } | undefined;
             readonly data: {
                 readonly name: string;
-                readonly branch?: string | undefined;
+            };
+        } | {
+            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
+                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
+            } | undefined;
+            readonly data: {
+                readonly workspaceID: string & import("effect/Brand").Brand<"WorkspaceV2.ID">;
+                readonly status: "connected" | "connecting" | "disconnected" | "error";
             };
         } | {
             readonly id: string & import("effect/Brand").Brand<"Event.ID">;
@@ -9374,7 +12407,7 @@ export declare const make: (options?: {
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Sse.Retry | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
     ptys: {
-        shells: (input?: Endpoint26_0Input | undefined) => Effect.Effect<{
+        shells: (input?: Endpoint27_0Input | undefined) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: readonly {
                 readonly path: string;
@@ -9382,7 +12415,7 @@ export declare const make: (options?: {
                 readonly acceptable: boolean;
             }[];
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        list: (input?: Endpoint26_1Input | undefined) => Effect.Effect<{
+        list: (input?: Endpoint27_1Input | undefined) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: readonly {
                 readonly id: string & import("effect/Brand").Brand<"PtyID">;
@@ -9395,7 +12428,7 @@ export declare const make: (options?: {
                 readonly exitCode?: number | undefined;
             }[];
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        create: (input?: Endpoint26_2Input | undefined) => Effect.Effect<{
+        create: (input?: Endpoint27_2Input | undefined) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: {
                 readonly id: string & import("effect/Brand").Brand<"PtyID">;
@@ -9408,7 +12441,7 @@ export declare const make: (options?: {
                 readonly exitCode?: number | undefined;
             };
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        get: (input: Endpoint26_3Input) => Effect.Effect<{
+        get: (input: Endpoint27_3Input) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: {
                 readonly id: string & import("effect/Brand").Brand<"PtyID">;
@@ -9421,7 +12454,7 @@ export declare const make: (options?: {
                 readonly exitCode?: number | undefined;
             };
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").PtyNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        update: (input: Endpoint26_4Input) => Effect.Effect<{
+        update: (input: Endpoint27_4Input) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: {
                 readonly id: string & import("effect/Brand").Brand<"PtyID">;
@@ -9434,10 +12467,10 @@ export declare const make: (options?: {
                 readonly exitCode?: number | undefined;
             };
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").PtyNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        remove: (input: Endpoint26_5Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").PtyNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        remove: (input: Endpoint27_5Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").PtyNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
     questions: {
-        listRequests: (input?: Endpoint27_0Input | undefined) => Effect.Effect<{
+        listRequests: (input?: Endpoint28_0Input | undefined) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: readonly {
                 readonly id: string & import("effect/Brand").Brand<"QuestionV2.ID">;
@@ -9458,7 +12491,7 @@ export declare const make: (options?: {
                 } | undefined;
             }[];
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        list: (input: Endpoint27_1Input) => Effect.Effect<readonly {
+        list: (input: Endpoint28_1Input) => Effect.Effect<readonly {
             readonly id: string & import("effect/Brand").Brand<"QuestionV2.ID">;
             readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
             readonly questions: readonly {
@@ -9476,24 +12509,24 @@ export declare const make: (options?: {
                 readonly callID: string;
             } | undefined;
         }[], ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        reply: (input: Endpoint27_2Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").QuestionNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        reject: (input: Endpoint27_3Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").QuestionNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        reply: (input: Endpoint28_2Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").QuestionNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        reject: (input: Endpoint28_3Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/errors").QuestionNotFoundError | Schema.SchemaError | import("@opencode-ai/protocol/errors").SessionNotFoundError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
     references: {
-        list: (input?: Endpoint28_0Input | undefined) => Effect.Effect<{
+        list: (input?: Endpoint29_0Input | undefined) => Effect.Effect<{
             readonly location: import("@opencode-ai/schema/location").Info;
             readonly data: readonly import("@opencode-ai/schema/reference").Info[];
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
     projectCopies: {
-        generateName: (input: Endpoint29_0Input) => Effect.Effect<{
+        generateName: (input: Endpoint30_0Input) => Effect.Effect<{
             readonly name: string;
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        create: (input: Endpoint29_1Input) => Effect.Effect<{
+        create: (input: Endpoint30_1Input) => Effect.Effect<{
             readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
         }, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/groups/project-copy").ProjectCopyError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        remove: (input: Endpoint29_2Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/groups/project-copy").ProjectCopyError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
-        refresh: (input: Endpoint29_3Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/groups/project-copy").ProjectCopyError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        remove: (input: Endpoint30_2Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/groups/project-copy").ProjectCopyError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
+        refresh: (input: Endpoint30_3Input) => Effect.Effect<void, ClientError | HttpClientError.HttpClientError | import("@opencode-ai/protocol/errors").InvalidRequestError | import("@opencode-ai/protocol/groups/project-copy").ProjectCopyError | Schema.SchemaError | import("@opencode-ai/protocol/errors").UnauthorizedError, never>;
     };
 }, never, import("effect/unstable/http/HttpClient").HttpClient>;
 export {};

@@ -338,17 +338,12 @@ describe("legacy event projection", () => {
         timestamp: 300,
       }),
     )
-    expect(failed.map((event) => event.type)).toEqual(["message.updated", "session.error"])
+    expect(failed.map((event) => event.type)).toEqual(["message.updated"])
     expect(failed[0]?.properties.info).toMatchObject({
       finish: "error",
       error: { name: "UnknownError", data: { message: "provider failed" } },
       time: { created: 100, completed: 300 },
     })
-    expect(failed[1]?.properties).toMatchObject({
-      sessionID: "ses_test",
-      error: { name: "UnknownError", data: { message: "provider failed" } },
-    })
-
   })
 
   test("keeps permission and question lifecycles canonical", () => {
@@ -431,17 +426,20 @@ describe("legacy event projection", () => {
     })
   })
 
-  test("projects direct V2 Session errors with optional Session identity", () => {
+  test("keeps Session errors and diffs canonical", () => {
     const project = legacyEventProjection()
     const error = { name: "UnknownError", data: { message: "failed" } }
+    const sources = [
+      canonicalEvent("session.next.error", { timestamp: 1, sessionID: "ses_test", error }),
+      canonicalEvent("session.next.error", { timestamp: 2, error }),
+      canonicalEvent("session.next.diff", { timestamp: 3, sessionID: "ses_test", diff: [] }),
+    ]
 
-    expect(
-      project(canonicalEvent("session.next.error", { timestamp: 1, sessionID: "ses_test", error })),
-    ).toEqual([
-      expect.objectContaining({ type: "session.error", properties: { sessionID: "ses_test", error } }),
-    ])
-    expect(project(canonicalEvent("session.next.error", { timestamp: 2, error }))).toEqual([
-      expect.objectContaining({ type: "session.error", properties: { error } }),
+    expect(sources.flatMap(project)).toEqual([])
+    expect(sources.flatMap((source) => legacyEventPayloads(project, source)).map((event) => event.type)).toEqual([
+      "session.next.error",
+      "session.next.error",
+      "session.next.diff",
     ])
   })
 

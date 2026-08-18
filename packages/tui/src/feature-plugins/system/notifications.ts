@@ -1,10 +1,9 @@
-import type { Event } from "@opencode-ai/sdk/v2"
-import type { TuiAttentionSoundName, TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
+import type { TuiAttentionSoundName, TuiNativeEvent, TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 
 const id = "internal:notifications"
 
-type SessionError = Extract<Event, { type: "session.error" }>["properties"]["error"]
+type SessionError = Extract<TuiNativeEvent, { type: "session.next.error" }>["data"]["error"]
 
 function notify(api: TuiPluginApi, sessionID: string | undefined, message: string, sound: TuiAttentionSoundName) {
   const session = sessionID ? api.state.session.get(sessionID) : undefined
@@ -77,12 +76,12 @@ const tui: TuiPlugin = async (api) => {
     notify(api, sessionID, "Session done", session?.parentID ? "subagent_done" : "done")
   })
 
-  api.event.on("session.error", (event) => {
-    const sessionID = event.properties.sessionID
+  api.nativeEvent.on("session.next.error", (event) => {
+    const sessionID = event.data.sessionID
     if (!sessionID) return
     if (!active.has(sessionID)) return
     errored.add(sessionID)
-    notify(api, sessionID, sessionErrorMessage(event.properties.error), "error")
+    notify(api, sessionID, sessionErrorMessage(event.data.error), "error")
   })
 }
 

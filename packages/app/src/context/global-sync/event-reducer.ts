@@ -10,6 +10,7 @@ import type {
   SessionNextStatusInfo,
   Todo,
 } from "@opencode-ai/sdk/v2/client"
+import type { EventSessionNextDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { State, VcsCache } from "./types"
 import { trimSessions } from "./session-trim"
@@ -18,7 +19,7 @@ import { diffs as list, message as clean } from "@/utils/diffs"
 
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const SESSION_CONTENT_EVENTS = new Set([
-  "session.diff",
+  "session.next.diff",
   "todo.updated",
   "session.next.status",
   "message.updated",
@@ -270,8 +271,8 @@ export function applyDirectoryEvent(input: {
       if (!info?.parentID) input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
       break
     }
-    case "session.diff": {
-      const props = event.properties as { sessionID: string; diff: FileDiffInfo[] }
+    case "session.next.diff": {
+      const props = event.properties as EventSessionNextDiff["properties"]
       input.setStore("session_diff", props.sessionID, reconcile(list(props.diff) as FileDiffInfo[], { key: "file" }))
       break
     }

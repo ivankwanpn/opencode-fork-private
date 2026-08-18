@@ -26,8 +26,6 @@ const compatibilityEventTypes = new Set<string>([
   "session.updated",
   "session.deleted",
   "session.next.moved",
-  "session.diff",
-  "session.error",
   "file.watcher.updated",
   "vcs.branch.updated",
   "tui.prompt.append",
@@ -52,7 +50,6 @@ export function useEvent() {
     ["session.next.created", "session.created"],
     ["session.next.updated", "session.updated"],
     ["session.next.deleted", "session.deleted"],
-    ["session.next.diff", "session.diff"],
   ])
 
   function subscribe(handler: (event: Event, metadata: EventMetadata) => void) {

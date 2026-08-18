@@ -568,9 +568,10 @@ function failTool(state: State, ref: Ref, error: string): void {
 
 function emitError(state: State, text: string): void {
   const event = {
-    id: `session.error:${state.id}:${Date.now()}`,
-    type: "session.error",
+    id: `session.next.error:${state.id}:${Date.now()}`,
+    type: "session.next.error",
     properties: {
+      timestamp: Date.now(),
       sessionID: state.id,
       error: {
         name: "UnknownError",

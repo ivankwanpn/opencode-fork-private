@@ -56,8 +56,10 @@ export declare const groupNames: {
     readonly "server.controlPlane": "controlPlane";
 };
 export declare const endpointNames: {
+    readonly "provider.models.discover": "discoverModels";
     readonly "provider.custom.discover": "discoverCustom";
     readonly "provider.custom.configure": "configureCustom";
+    readonly "provider.custom.disconnect": "disconnectCustom";
     readonly "session.messages": "list";
     readonly "session.input.list": "inputList";
     readonly "session.input.get": "inputGet";
@@ -76,6 +78,15 @@ export declare const endpointNames: {
     readonly "console.org.switch": "switchOrg";
     readonly "workspace.adapter.list": "listAdapters";
     readonly "workspace.syncList": "syncList";
+    readonly "plugins.direct.inspect": "inspectDirect";
+    readonly "plugins.direct.install": "installDirect";
+    readonly "plugins.direct.uninstall": "uninstallDirect";
+    readonly "plugins.direct.enable": "enableDirect";
+    readonly "plugins.direct.disable": "disableDirect";
+    readonly "plugins.mcp.install": "installMcp";
+    readonly "plugins.mcp.remove": "removeMcp";
+    readonly "plugins.mcp.enable": "enableMcp";
+    readonly "plugins.mcp.disable": "disableMcp";
 };
 export declare const omitEndpoints: Set<string>;
 export {};

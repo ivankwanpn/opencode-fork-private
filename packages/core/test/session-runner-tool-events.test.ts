@@ -148,4 +148,19 @@ test("provider errors identify the selected custom protocol and model", async ()
         "upstream_error: Upstream request failed\nProtocol: openai-responses\nModel: provider/model",
     },
   })
+  expect(published.filter((event) => event.type === "session.next.error")).toEqual([
+    expect.objectContaining({
+      data: {
+        timestamp: expect.anything(),
+        sessionID,
+        error: {
+          name: "UnknownError",
+          data: {
+            message:
+              "upstream_error: Upstream request failed\nProtocol: openai-responses\nModel: provider/model",
+          },
+        },
+      },
+    }),
+  ])
 })

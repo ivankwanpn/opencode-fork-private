@@ -999,6 +999,11 @@ describe("ACP client EventV2 boundary", () => {
           error: { type: "unknown", message: "provider failed" },
           timestamp: 21,
         }),
+        canonicalEvent("session.next.error", {
+          timestamp: 21,
+          sessionID: "ses_events",
+          error: { name: "UnknownError", data: { message: "provider failed" } },
+        }),
       ])
     })
 
@@ -1191,8 +1196,9 @@ describe("ACP client EventV2 boundary", () => {
         save: ["*.txt"],
       },
     ])
-    expect(events.filter((event) => event.type === "session.error").map((event) => event.properties)).toEqual([
+    expect(events.filter((event) => event.type === "session.next.error").map((event) => event.properties)).toEqual([
       {
+        timestamp: 21,
         sessionID: "ses_events",
         error: {
           name: "UnknownError",

@@ -10,7 +10,7 @@ describe("public event manifest", () => {
     expect(EventManifest.Definitions).toBe(SchemaEventManifest.Definitions)
     expect(EventManifest.Latest).toBe(SchemaEventManifest.Latest)
     expect(EventManifest.Durable).toBe(SchemaEventManifest.Durable)
-    expect(EventManifest.Latest.size).toBe(99)
+    expect(EventManifest.Latest.size).toBe(97)
     expect(EventManifest.Durable.size).toBe(47)
     expect(EventManifest.Latest.get("mcp.browser.open.failed")).toBe(McpEvent.BrowserOpenFailed)
     expect(EventManifest.Latest.get("session.next.step.ended")).toBe(SessionEvent.Step.Ended)
@@ -21,6 +21,8 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.has("session.idle")).toBe(false)
     expect(EventManifest.Latest.has("session.compacted")).toBe(false)
     expect(EventManifest.Latest.has("session.status")).toBe(false)
+    expect(EventManifest.Latest.has("session.diff")).toBe(false)
+    expect(EventManifest.Latest.has("session.error")).toBe(false)
     for (const type of [
       "permission.asked",
       "permission.replied",

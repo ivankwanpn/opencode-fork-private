@@ -485,6 +485,33 @@ describe("run subagent data", () => {
     ])
   })
 
+  test("routes canonical session errors to the matching child inspector", () => {
+    const data = createSubagentData()
+
+    bootstrapSubagentData({
+      data,
+      messages: [taskMessage("child-1", "completed")],
+      children: [{ id: "child-1" }],
+      permissions: [],
+      questions: [],
+    })
+
+    expect(
+      reduce(data, {
+        type: "session.next.error",
+        properties: {
+          timestamp: 1,
+          sessionID: "child-1",
+          error: {
+            name: "UnknownError",
+            data: { message: "provider failed" },
+          },
+        },
+      }),
+    ).toBe(true)
+    expect(visible(snapshotSubagentData(data).details["child-1"]?.commits ?? [])).toEqual(["provider failed"])
+  })
+
   test("marks a running tab cancelled when the child session aborts", () => {
     const data = createSubagentData()
 

@@ -10,7 +10,7 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(99)
+    expect(EventManifest.ServerDefinitions.length).toBe(97)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
@@ -59,9 +59,9 @@ describe("public event manifest", () => {
     expect(SessionV1.Event.PartDelta.type).toBe("message.part.delta")
     expect(EventManifest.Latest.get("message.part.delta")).toBe(SessionV1.Event.PartDelta)
     expect(SessionV1.Event.Diff.type).toBe("session.diff")
-    expect(EventManifest.Latest.get("session.diff")).toBe(SessionV1.Event.Diff)
+    expect(EventManifest.Latest.has("session.diff")).toBe(false)
     expect(SessionV1.Event.Error.type).toBe("session.error")
-    expect(EventManifest.Latest.get("session.error")).toBe(SessionV1.Event.Error)
+    expect(EventManifest.Latest.has("session.error")).toBe(false)
     expect(EventManifest.Latest.get("session.next.created")).toBe(SessionEvent.Created)
     expect(EventManifest.Latest.get("session.next.updated")).toBe(SessionEvent.Updated)
     expect(EventManifest.Latest.get("session.next.deleted")).toBe(SessionEvent.Deleted)

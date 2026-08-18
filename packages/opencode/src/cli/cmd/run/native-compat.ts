@@ -116,7 +116,9 @@ function commandFiles(parts: unknown) {
 
 function cliEventPayloads(projectLegacy: ReturnType<typeof legacyEventProjection>, source: NativeEvent) {
   if (
+    source.type === "session.next.error" ||
     source.type === "session.next.status" ||
+    source.type === "session.next.diff" ||
     source.type === "permission.v2.asked" ||
     source.type === "permission.v2.replied" ||
     source.type === "question.v2.asked" ||

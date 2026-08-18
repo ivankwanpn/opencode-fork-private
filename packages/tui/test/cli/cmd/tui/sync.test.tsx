@@ -150,6 +150,31 @@ describe("tui sync", () => {
     }
   })
 
+  test("native session diff updates the synchronized session state", async () => {
+    await using tmp = await tmpdir()
+    await Bun.write(`${tmp.path}/kv.json`, "{}")
+    const { app, emitNative, sync } = await mount(undefined, tmp.path)
+
+    try {
+      emitNative({
+        id: "evt_diff",
+        type: "session.next.diff",
+        data: {
+          timestamp: 1,
+          sessionID: "ses_test",
+          diff: [{ file: "src/index.ts", additions: 3, deletions: 1, status: "modified" }],
+        },
+      })
+      await wait(() => sync.data.session_diff.ses_test?.length === 1)
+
+      expect(sync.data.session_diff.ses_test).toEqual([
+        { file: "src/index.ts", additions: 3, deletions: 1, status: "modified" },
+      ])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
   test("canonical question and permission events update synchronized requests", async () => {
     await using tmp = await tmpdir()
     await Bun.write(`${tmp.path}/kv.json`, "{}")

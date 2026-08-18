@@ -163,12 +163,11 @@ function formatUsage(
 export function formatError(error: {
   name?: string
   message?: string
-  data?: {
-    message?: string
-  }
+  data?: unknown
 }): string {
-  if (error.data?.message) {
-    return error.data.message
+  if (error.data && typeof error.data === "object") {
+    const message = Reflect.get(error.data, "message")
+    if (typeof message === "string" && message) return message
   }
 
   if (error.message) {
@@ -773,7 +772,7 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
 //   message.part.updated → handle text/reasoning/tool state transitions
 //   permission.*         → manage the permission queue, drive footer view
 //   question.*           → manage the question queue, drive footer view
-//   session.error        → emit error scrollback entry
+//   session.next.error   → emit error scrollback entry
 export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
   const commits: SessionCommit[] = []
   const data = input.data
@@ -1099,8 +1098,8 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return queueOut(data, commits)
   }
 
-  if (event.type === "session.error") {
-    if (event.properties.sessionID !== input.sessionID || !event.properties.error) {
+  if (event.type === "session.next.error") {
+    if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }
 

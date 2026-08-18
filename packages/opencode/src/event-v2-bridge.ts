@@ -207,24 +207,7 @@ export function legacyEventProjection() {
   return (source: EventV2.Payload): ReadonlyArray<LegacyEvent> => {
     const data = source.data as Record<string, any>
     const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
-    if (source.type === SessionEvent.Error.type) {
-      return [
-        event("session.error", {
-          ...(sessionID === undefined ? {} : { sessionID: SessionID.make(sessionID) }),
-          error: data.error,
-        }),
-      ]
-    }
     if (!sessionID) return []
-
-    if (source.type === "session.next.diff") {
-      return [
-        event("session.diff", {
-          sessionID: SessionID.make(sessionID),
-          diff: data.diff,
-        }),
-      ]
-    }
 
     if (source.type === "session.next.transcript.message.removed") {
       return [
@@ -510,13 +493,7 @@ export function legacyEventProjection() {
       state.finish = "error"
       state.error = { name: "UnknownError", data: { message } }
       assistants.delete(key(sessionID, assistantMessageID))
-      return [
-        updated(state),
-        event("session.error", {
-          sessionID: SessionID.make(sessionID),
-          error: state.error,
-        }),
-      ]
+      return [updated(state)]
     }
     return []
   }

@@ -572,8 +572,9 @@ describe("run session data", () => {
 
   test("surfaces session errors as error commits", () => {
     const out = reduce(createSessionData(), {
-      type: "session.error",
+      type: "session.next.error",
       properties: {
+        timestamp: 1,
         sessionID: "session-1",
         error: {
           name: "UnknownError",
@@ -590,5 +591,22 @@ describe("run session data", () => {
         text: "permission denied",
       }),
     ])
+  })
+
+  test("ignores unscoped session errors", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.next.error",
+      properties: {
+        timestamp: 1,
+        error: {
+          name: "UnknownError",
+          data: {
+            message: "plugin initialization failed",
+          },
+        },
+      },
+    })
+
+    expect(out.commits).toEqual([])
   })
 })

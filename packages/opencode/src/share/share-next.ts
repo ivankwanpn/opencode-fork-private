@@ -8,8 +8,9 @@ import { Account } from "@/account/account"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { Provider } from "@/provider/provider"
+import { legacySessionFromV2 } from "@/compat/native-v1-session"
+import { MessageV2 } from "@/session/message-v2"
 
-import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { and, eq, inArray, sql } from "drizzle-orm"
@@ -19,6 +20,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionEvent } from "@opencode-ai/core/session/event"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 
 const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
@@ -126,7 +128,7 @@ const layer = Layer.effect(
     const http = yield* HttpClient.HttpClient
     const httpOk = HttpClient.filterStatusOk(http)
     const provider = yield* Provider.Service
-    const session = yield* Session.Service
+    const session = yield* SessionV2.Service
 
     function sync(sessionID: SessionID, data: Data[]) {
       return Effect.gen(function* () {
@@ -185,7 +187,9 @@ const layer = Layer.effect(
     ])
 
     const syncTranscript = Effect.fn("ShareNext.syncTranscript")(function* (sessionID: SessionID) {
-      const messages = yield* session.messages({ sessionID })
+      const info = yield* session.get(SessionV2.ID.make(sessionID))
+      const canonical = yield* session.messages({ sessionID: info.id, order: "asc" })
+      const messages = MessageV2.toLegacy(info, canonical)
       yield* sync(sessionID, [
         ...messages.map((message) => ({ type: "message" as const, data: message.info })),
         ...messages.flatMap((message) => message.parts.map((part) => ({ type: "part" as const, data: part }))),
@@ -240,10 +244,12 @@ const layer = Layer.effect(
             )
           })
 
-        yield* watch(Session.Event.Updated, (data) =>
+        yield* watch(SessionEvent.Updated, (data) =>
           Effect.gen(function* () {
-            const info = data.info
-            yield* sync(info.id, [{ type: "session", data: structuredClone(info) as SDK.Session }])
+            const info = yield* session.get(data.sessionID)
+            yield* sync(SessionID.make(info.id), [
+              { type: "session", data: structuredClone(legacySessionFromV2(info)) as SDK.Session },
+            ])
           }),
         )
         yield* events.listen((event) => {
@@ -256,11 +262,20 @@ const layer = Layer.effect(
             ),
           )
         })
-        yield* watch(Session.Event.Diff, (data) =>
-          sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
+        yield* watch(SessionEvent.Diff, (data) =>
+          sync(SessionID.make(data.sessionID), [
+            { type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] },
+          ]),
         )
-        yield* watch(Session.Event.Deleted, (data) => remove(data.sessionID))
-        yield* watch(SessionEvent.Deleted, (data) => revokePending({ sessionIDs: [SessionID.make(data.sessionID)] }))
+        yield* watch(SessionEvent.Deleted, (data) =>
+          Effect.gen(function* () {
+            const sessionID = SessionID.make(data.sessionID)
+            const current = yield* InstanceState.get(state)
+            current.shared.delete(sessionID)
+            current.queue.delete(sessionID)
+            yield* revokePending({ sessionIDs: [sessionID] })
+          }),
+        )
 
         return cache
       }),
@@ -582,9 +597,11 @@ const layer = Layer.effect(
 
     const full = Effect.fn("ShareNext.full")(function* (sessionID: SessionID) {
       yield* Effect.logInfo("full sync", { sessionID: sessionID })
-      const info = yield* session.get(sessionID)
-      const diffs = yield* session.diff(sessionID)
-      const messages = yield* session.messages({ sessionID })
+      const current = yield* session.get(SessionV2.ID.make(sessionID))
+      const canonical = yield* session.messages({ sessionID: current.id, order: "asc" })
+      const info = legacySessionFromV2(current)
+      const diffs: SDK.SnapshotFileDiff[] = []
+      const messages = MessageV2.toLegacy(current, canonical)
       const models = yield* Effect.forEach(
         Array.from(
           new Map(
@@ -776,7 +793,7 @@ const layer = Layer.effect(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Account.node, EventV2Bridge.node, Config.node, Database.node, httpClient, Provider.node, Session.node],
+  deps: [Account.node, EventV2Bridge.node, Config.node, Database.node, httpClient, Provider.node, SessionV2.node],
 })
 
 export * as ShareNext from "./share-next"

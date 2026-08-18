@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { CodeModeTool, describeCatalog } from "@/tool/code-mode"
 import { McpCatalog } from "@opencode-ai/core/mcp"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { Agent } from "@/agent/agent"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { Plugin } from "@/plugin"
-import { Session } from "@/session/session"
 import { Tool } from "@/tool/tool"
 import * as Truncate from "@/tool/truncate"
 import { MessageID, SessionID } from "@/session/schema"
@@ -151,7 +151,22 @@ async function buildTool() {
       output: (text: string) => Effect.succeed({ content: text, truncated: false as const }),
     }),
     Layer.mock(Agent.Service, { get: () => Effect.succeed({ name: "build", permission: [] } as any) }),
-    Layer.mock(Session.Service, { get: () => Effect.succeed({ permission: [] } as any) }),
+    Layer.mock(SessionV2.Service)({
+      permissions: () => Effect.succeed([]),
+      transcript: {
+        importMessage: () => Effect.die("unused"),
+        removeMessage: () => Effect.die("unused"),
+        updateUserText: () => Effect.die("unused"),
+        removeUserText: () => Effect.die("unused"),
+        updateContent: () => Effect.die("unused"),
+        removeContent: () => Effect.die("unused"),
+      },
+      revert: {
+        stage: () => Effect.die("unused"),
+        clear: () => Effect.die("unused"),
+        commit: () => Effect.die("unused"),
+      },
+    }),
     Layer.mock(MCP.Service, {
       tools: () => Effect.succeed(mcpTools),
       clients: () => Effect.succeed({ [SERVER]: {} as any }),

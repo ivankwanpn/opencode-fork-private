@@ -447,7 +447,8 @@ describe("ShareNext", () => {
             .run()
             .pipe(Effect.orDie)
 
-          yield* events.publish(Session.Event.Diff, {
+          yield* events.publish(SessionEvent.Diff, {
+            timestamp: yield* DateTime.now,
             sessionID: info.id,
             diff: [
               {
@@ -460,7 +461,8 @@ describe("ShareNext", () => {
               },
             ],
           })
-          yield* events.publish(Session.Event.Diff, {
+          yield* events.publish(SessionEvent.Diff, {
+            timestamp: yield* DateTime.now,
             sessionID: info.id,
             diff: [
               {

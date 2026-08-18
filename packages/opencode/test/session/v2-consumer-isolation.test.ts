@@ -1,0 +1,51 @@
+import { expect, test } from "bun:test"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+
+const migrated = [
+  "cli/cmd/session.ts",
+  "cli/cmd/stats.ts",
+  "cli/cmd/github.handler.ts",
+  "control-plane/workspace.ts",
+  "server/routes/instance/httpapi/handlers/experimental.ts",
+  "server/routes/instance/httpapi/handlers/tui.ts",
+  "server/routes/instance/httpapi/handlers/sync.ts",
+  "share/share-next.ts",
+  "share/session.ts",
+  "session/legacy-session-execution.ts",
+  "tool/code-mode.ts",
+  "tool/task.ts",
+]
+
+test("migrated Session consumers do not import the legacy Session service", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const offenders = (
+    await Promise.all(
+      migrated.map(async (file) => ({
+        file,
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter((entry) => entry.source.includes('from "@/session/session"') || entry.source.includes("Session.Service"))
+    .map((entry) => entry.file)
+
+  expect(offenders).toEqual([])
+})
+
+test("production runtime does not resolve or mount the legacy Session service", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter((entry) => /\bSession\.(?:Service|node)\b/.test(entry.source))
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(offenders).toEqual([])
+})

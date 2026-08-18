@@ -1,7 +1,7 @@
 # V1 → V2 迁移清单
 
-> 分支：`999.0.17`
-> 调研日期：2026-08-10
+> 分支：`999.0.19`
+> 调研日期：2026-08-10；最近核对：2026-08-18
 > 调研方式：三个并行只读研究子代理分别分析 `packages/opencode`、`packages/core`、`packages/tui` 的 V1/V2 边界，本文是汇总。
 
 ## 总体结论
@@ -13,12 +13,20 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 - V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor` + V1 `ToolRegistry`）已从生产 layer 图与源码删除；仍保留的 legacy 工具定义只服务兼容出口。
 - V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
 
-当前已推进到**批次 8 的删除前置条件收口**。V2 已是唯一模型执行路径，transcript storage hard cut
+当前已推进到**批次 8 的 Session consumer hard cut 收口**。V2 已是唯一模型执行路径，transcript storage hard cut
 也已完成：运行时读取、mutation/revert 与 CLI import/export 全部只使用 canonical V2 transcript；retained
 legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
-`session_message_tombstone` 已从当前 schema 删除并生成 drop migration。下一阻塞点是广泛迁移仍依赖
-`Session.Service` 的 CRUD、stats/share、middleware、TUI/sync 与 legacy execution consumer，而不再是
-retained transcript storage。整个 V1 → V2 迁移尚未完成，不能以 transcript hard cut 代替最终完成状态。
+`session_message_tombstone` 已从當前 schema 刪除並生成 drop migration。`Session.Service` production consumer
+也已在 999.0.19 清零；下一阻塞點是拆除仍混在 legacy Session 模組中的 wire schema/helpers、死 service source
+與 Core V1 lifecycle projector。整個 V1 → V2 遷移尚未完成，不能以 transcript 或 consumer hard cut 代替最終完成狀態。
+
+**999.0.19 進度**：production runtime 已無 `Session.Service` / `Session.node` consumer。CLI session/stats/GitHub、
+workspace/sync、share、TUI validation、legacy execution adapter、legacy task/code-mode 與 experimental global list
+均改讀寫 `SessionV2`；新增 source gate 阻止 production graph 重新掛載舊 Session service。`SessionV2.list` 補齊
+archived 與 updated-time reporting filter，`SessionV2.move` 以 canonical `SessionEvent.Moved` 處理 workspace
+placement，share subscriber 改消費 V2 Updated/Diff/Deleted。舊 `session/session.ts` 暫時仍承載 legacy HTTP schema、
+BusyError、event alias、usage/background helpers，以及已不可達的舊 service source；Core projector 也仍保留 V1
+lifecycle replay branch。下一步是拆出仍需的純相容資產後刪除這些不可達實作與 V1 lifecycle projector。
 
 ---
 
@@ -26,8 +34,8 @@ retained transcript storage。整个 V1 → V2 迁移尚未完成，不能以 tr
 
 | 区域 | 现状 | 判定 |
 |---|---|---|
-| Session 执行（prompt/command/shell/init） | `LegacySessionExecution`（V1 壳）内部全部委托 V2 `SessionV2`；V1 `SessionPrompt.loop` 已删除 | **V2 主路径，V1 壳待收** |
-| Session CRUD（list/get/create/fork/title/metadata） | experimental httpapi 与 native server 已走 `SessionV2`；stats/share/部分 middleware 與 legacy consumer 仍讀 V1 `Session.Service` | **V2 主路径，V1 consumer 待迁移** |
+| Session 执行（prompt/command/shell/init） | `LegacySessionExecution` 仅保留外部请求/响应形状，内部选择、权限、admission 与执行全部走 V2；V1 `SessionPrompt.loop` 已删除 | **V2-only 执行，wire 壳待收** |
+| Session CRUD（list/get/create/fork/title/metadata） | production consumer 已全部走 `SessionV2`；舊 service source 不再掛載，待拆除 schema/helper 後刪檔 | **V2-only runtime，死碼待刪** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
 | Tool registry | V1 `ToolRegistry`（opencode 包）死代码；V2 `ToolRegistry`（core）完整（direct/deferred/hidden + settlement） | **V2 已接管** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
@@ -299,6 +307,14 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 
 > 🔄 **已改为「删除前置条件审计」（999.0.17）**：批次 8 的删除门槛是「没有 runtime import、没有新 V1 写入、没有直接 V1 consumer、旧资料与旧设定有明确升级路径、完整测试与 typecheck 通过」。当前审计结论：
 >
+> **999.0.19 Session consumer hard cut** ✅：
+> - production `packages/opencode/src` 已零 `Session.Service` / `Session.node` 引用，source gate 同時檢查指定 migrated consumer 與全域 runtime graph。
+> - CLI session delete 走 `SessionRemoval`，保留 descendant background cancellation 與 durable share revocation；list/stats 走 V2 list/messages 與 keyset pagination。
+> - workspace warp/sync steal 走 `SessionV2.move` + `SessionEvent.Moved`；同目錄 workspace 設定/清除不再經 V1 full-snapshot update。projector 對省略 subpath 寫 SQL NULL，避免 Drizzle 忽略 clear。
+> - share state 走 `SessionV2.update` 的 value/null 語義；share transcript 從 canonical messages 純投影到既有 remote wire；subscriber 改聽 V2 Updated/Diff/Deleted。
+> - legacy task/code-mode 從 V2 permissions/get/create 取得 Session 狀態；GitHub Action 建立 Session 不再發布 V1 Created。
+> - HttpApi Exerciser 的 seed/get/messages helpers 已改 V2，因此 runtime graph 移除 `Session.node` 後不靠測試專用 fallback。
+>
 > **前置条件 ① TUI consumer 边界** ✅：`useEvent` 是明确的 V1/V2 边界 adapter（V2 原生流 → V1 词汇投影），满足产品决策「迁移到 V2 词汇或明确的边界 adapter」。强制 consumer 改用 V2 会破坏 6 个调用方的 Event 类型联合，边界 adapter 是正确选择。
 >
 > **前置条件 ② compatibilityDefinitions 缩减** ⏸️：producer 已切 V2（session.status/question/session.diff），`SessionSummary.diff` 也已改读 canonical assistant `snapshot.patch`，不再发布或依赖 V1 diff。V1 definition 仍被 `share-next.ts`、CLI/TUI compatibility projection 等 consumer 依赖；需先迁移这些 consumer，才能逐项移除 definition。
@@ -321,14 +337,14 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - `PermissionV2.configured` 与 CodeMode 执行期 catalog 过滤统一为 agent → Session → prompt overrides 三源合并（`evaluate` 的 last-match-wins 不变）；Session 级规则可通过 `setPermissions` 生效。
 >
 > **仍阻止实际删表/删目录的依赖** ⏸️：
-> - `Session.Service` 仍被 CRUD、stats、share、legacy execution、middleware、TUI/sync handler 与部分 legacy tool 路径使用。
+> - `Session.Service` 已不可達，但 `session/session.ts` 仍混合 legacy HTTP schema、BusyError、event alias、usage/background helper 與舊 service implementation；需先拆出仍活躍資產再刪除死 service source。
 > - Core projector 仍消费部分 V1 session lifecycle/event 形状，以维持尚未迁移的旧 API 与兼容事件投影。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
-> **批次 8 下一步**：Session mutation surface 已 canonical（见上「canonical mutation closeout」）。接下来迁移
-> `Session.Service` 的 CRUD/stats/share/middleware/TUI/sync 等 runtime consumer 到 V2（list/get 等 read contract
-> 扩展随 consumer 需求进行），再移除对应 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部
+> **批次 8 下一步**：Session mutation surface 與 production consumer 已 canonical。接下来拆分
+> `session/session.ts` 中仍需的 legacy wire schema、BusyError 與通用 helpers，刪除不可達的 service/layer 與 V1
+> Created/Updated/Deleted 發布點，再移除 Core 對應 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
 >

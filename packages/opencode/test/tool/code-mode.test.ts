@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { CODE_MODE_TOOL, CodeModeTool, Parameters, describeCatalog } from "@/tool/code-mode"
 import type { Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
 import type { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { PermissionV2 } from "@opencode-ai/core/permission"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { Agent } from "@/agent/agent"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
-import { Session } from "@/session/session"
 import { Tool } from "@/tool/tool"
 import * as Truncate from "@/tool/truncate"
 import { MessageID, SessionID } from "@/session/schema"
@@ -42,6 +43,7 @@ function harness(input: {
   mcpTools: Record<string, MCP.McpTool>
   servers: string[]
   permission?: PermissionV1.Rule[]
+  sessionPermission?: PermissionV2.Rule[]
   trigger?: Plugin.Interface["trigger"]
 }) {
   return Layer.mergeAll(
@@ -54,8 +56,21 @@ function harness(input: {
     Layer.mock(Agent.Service, {
       get: () => Effect.succeed({ name: "build", permission: input.permission ?? [] } as any),
     }),
-    Layer.mock(Session.Service, {
-      get: () => Effect.succeed({ permission: [] } as any),
+    Layer.mock(SessionV2.Service)({
+      permissions: () => Effect.succeed(input.sessionPermission ?? []),
+      transcript: {
+        importMessage: () => Effect.die("unused"),
+        removeMessage: () => Effect.die("unused"),
+        updateUserText: () => Effect.die("unused"),
+        removeUserText: () => Effect.die("unused"),
+        updateContent: () => Effect.die("unused"),
+        removeContent: () => Effect.die("unused"),
+      },
+      revert: {
+        stage: () => Effect.die("unused"),
+        clear: () => Effect.die("unused"),
+        commit: () => Effect.die("unused"),
+      },
     }),
     Layer.mock(MCP.Service, {
       tools: () => Effect.succeed(input.mcpTools),
@@ -86,13 +101,14 @@ function build(
   servers?: string[],
   permission?: PermissionV1.Rule[],
   trigger?: Plugin.Interface["trigger"],
+  sessionPermission?: PermissionV2.Rule[],
 ) {
   const names = serverNames(mcpTools, servers)
   const normalized = withClientNames(mcpTools, names)
   return Effect.runPromise(
     CodeModeTool.pipe(
       Effect.flatMap(Tool.init),
-      Effect.provide(harness({ mcpTools: normalized, servers: names, permission, trigger })),
+      Effect.provide(harness({ mcpTools: normalized, servers: names, permission, trigger, sessionPermission })),
     ),
   )
 }
@@ -685,6 +701,30 @@ describe("code mode execute", () => {
 describe("code mode permission visibility", () => {
   const deny = (permission: string): PermissionV1.Rule => ({ permission, pattern: "*", action: "deny" })
   const askRule = (permission: string): PermissionV1.Rule => ({ permission, pattern: "*", action: "ask" })
+
+  test("applies canonical Session permissions when filtering the execution catalog", async () => {
+    const tool = await build(
+      {
+        github_create_issue: mcpTool("create_issue", () => ({
+          content: [{ type: "text", text: "created" }],
+        })),
+        github_list_issues: mcpTool("list_issues", () => ({
+          content: [{ type: "text", text: "listed" }],
+        })),
+      },
+      ["github"],
+      [],
+      undefined,
+      [{ action: "github_create_issue", resource: "*", effect: "deny" }],
+    )
+
+    const denied = await failure(tool.execute({ code: "return await tools.github.create_issue({})" }, ctx))
+    expect(denied.message).toContain("Unknown tool 'github.create_issue'")
+    const allowed = await Effect.runPromise(
+      tool.execute({ code: "return await tools.github.list_issues({})" }, ctx),
+    )
+    expect(allowed.output).toBe("listed")
+  })
   const ok = () => ({ content: [{ type: "text", text: "ok" }] })
 
   test("a hard-denied tool never enters the catalog or its search index", () => {

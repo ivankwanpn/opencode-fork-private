@@ -7,6 +7,7 @@ import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { Session } from "@/session/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { Database } from "@opencode-ai/core/database/database"
 import { AccountV2 } from "@opencode-ai/core/account"
@@ -19,7 +20,10 @@ import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(LayerNode.group([Session.node, Database.node]), [[SessionExecution.node, SessionExecution.noopLayer]]),
+    LayerNode.compile(LayerNode.group([Session.node, Database.node]), [
+      [LocationServiceMap.node, locationServiceMapV2Layer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ]),
     httpApiLayer,
   ),
 )

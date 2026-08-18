@@ -17,7 +17,7 @@ import { PermissionV2 } from "@opencode-ai/core/permission"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { AbsolutePath } from "@opencode-ai/core/schema"
+import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Prompt } from "@opencode-ai/core/session/prompt"
@@ -317,6 +317,55 @@ describe("SessionV2.create", () => {
 
       expect((yield* session.list({ parentID: null })).map((item) => item.id)).toEqual([sibling.id, root.id])
       expect((yield* session.list({ parentID: root.id })).map((item) => item.id)).toEqual([child.id])
+    }),
+  )
+
+  it.effect("filters archived Sessions and updated-time cursors for global reporting", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const { db } = yield* Database.Service
+      const older = yield* session.create({ location, title: "older" })
+      const archived = yield* session.create({ location, title: "archived" })
+      yield* db.update(SessionTable).set({ time_updated: 10 }).where(eq(SessionTable.id, older.id)).run().pipe(Effect.orDie)
+      yield* db
+        .update(SessionTable)
+        .set({ time_updated: 20, time_archived: 20 })
+        .where(eq(SessionTable.id, archived.id))
+        .run()
+        .pipe(Effect.orDie)
+
+      expect((yield* session.list({ orderBy: "updated", excludeArchived: true })).map((item) => item.id)).toEqual([
+        older.id,
+      ])
+      expect((yield* session.list({ orderBy: "updated", updatedBefore: 20 })).map((item) => item.id)).toEqual([
+        older.id,
+      ])
+      expect((yield* session.list({ orderBy: "updated" })).map((item) => item.id)).toEqual([
+        archived.id,
+        older.id,
+      ])
+    }),
+  )
+
+  it.effect("moves canonical Session placement through the V2 moved event", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const created = yield* session.create({ location })
+      const workspaceID = WorkspaceV2.ID.make("wrk_moved")
+      const moved = yield* session.move({
+        sessionID: created.id,
+        location: Location.Ref.make({ directory: created.location.directory, workspaceID }),
+        subpath: RelativePath.make("packages/core"),
+      })
+
+      expect(moved.location).toEqual({ directory: created.location.directory, workspaceID })
+      expect(String(moved.subpath)).toBe("packages/core")
+      const cleared = yield* session.move({
+        sessionID: created.id,
+        location: Location.Ref.make({ directory: created.location.directory }),
+      })
+      expect(cleared.location.workspaceID).toBeUndefined()
+      expect(cleared.subpath).toBeUndefined()
     }),
   )
 

@@ -1,6 +1,7 @@
 import { Workspace } from "@/control-plane/workspace"
 import * as InstanceState from "@/effect/instance-state"
-import { Session } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { Location } from "@opencode-ai/core/location"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -19,7 +20,7 @@ import { HistoryPayload, ReplayPayload, SessionPayload } from "../groups/sync"
 export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handlers) =>
   Effect.gen(function* () {
     const workspace = yield* Workspace.Service
-    const session = yield* Session.Service
+    const session = yield* SessionV2.Service
     const scope = yield* Scope.Scope
     const events = yield* EventV2Bridge.Service
     const { db } = yield* Database.Service
@@ -62,7 +63,17 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handl
       const workspaceID = yield* InstanceState.workspaceID
       if (!workspaceID) return yield* new HttpApiError.BadRequest({})
 
-      yield* session.setWorkspace({ sessionID: ctx.payload.sessionID, workspaceID })
+      const sessionID = SessionV2.ID.make(ctx.payload.sessionID)
+      const current = yield* session
+        .get(sessionID)
+        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
+      yield* session
+        .move({
+          sessionID,
+          location: Location.Ref.make({ directory: current.location.directory, workspaceID }),
+          subpath: current.subpath,
+        })
+        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
 
       yield* Effect.logInfo("sync session stolen", { sessionID: ctx.payload.sessionID, workspaceID })
 

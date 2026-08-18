@@ -31,7 +31,6 @@ import { Question } from "@/question"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
 import { SessionRunState } from "@/session/run-state"
-import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
@@ -265,7 +264,6 @@ const hostNodes = [
   PermissionSaved.node,
   Todo.node,
   SessionTodoV2.node,
-  Session.node,
   SessionProjector.node,
   SessionStatus.node,
   BackgroundJob.node,

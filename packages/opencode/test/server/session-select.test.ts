@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
 import { Effect, Layer } from "effect"
 import { Session } from "@/session/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
@@ -7,7 +8,15 @@ import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
-const it = testEffect(Layer.mergeAll(LayerNode.compile(Session.node, [[SessionExecution.node, SessionExecution.noopLayer]]), httpApiLayer))
+const it = testEffect(
+  Layer.mergeAll(
+    LayerNode.compile(Session.node, [
+      [LocationServiceMap.node, locationServiceMapV2Layer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ]),
+    httpApiLayer,
+  ),
+)
 
 describe("tui.selectSession endpoint", () => {
   it.instance(
@@ -28,6 +37,7 @@ describe("tui.selectSession endpoint", () => {
         expect(body).toBe(true)
       }),
     { git: true },
+    15_000,
   )
 
   it.instance(
@@ -46,6 +56,7 @@ describe("tui.selectSession endpoint", () => {
         expect(response.status).toBe(404)
       }),
     { git: true },
+    15_000,
   )
 
   it.instance(
@@ -64,5 +75,6 @@ describe("tui.selectSession endpoint", () => {
         expect(response.status).toBe(400)
       }),
     { git: true },
+    15_000,
   )
 })

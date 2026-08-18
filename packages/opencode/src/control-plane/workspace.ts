@@ -21,13 +21,12 @@ import { WorkspaceTable } from "@opencode-ai/core/control-plane/workspace.sql"
 import { getAdapter, registeredAdapters } from "./adapters"
 import { type Target, type WorkspaceInfo, WorkspaceInfo as WorkspaceInfoSchema } from "./types"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
-import { Session } from "@/session/session"
 import { SessionRunState } from "@/session/run-state"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionID } from "@/session/schema"
-import { NotFoundError } from "@/storage/storage"
+import { SessionRemoval } from "@/session/removal"
 import { errorData } from "@/util/error"
 import { waitEvent } from "./util"
 import { WorkspaceRef } from "@/effect/instance-ref"
@@ -36,6 +35,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { WorkspaceAdapterRuntime } from "./workspace-adapter-runtime"
 import { WorkspaceEvent } from "@opencode-ai/schema/workspace-event"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { Location } from "@opencode-ai/core/location"
 
 export const Info = Schema.Struct({
   ...WorkspaceInfoSchema.fields,
@@ -122,6 +122,7 @@ export class SyncAbortedError extends Schema.TaggedErrorClass<SyncAbortedError>(
 
 type CreateError = Auth.AuthError
 type SessionWarpError =
+  | SessionV2.NotFoundError
   | WorkspaceNotFoundError
   | SessionEventsNotFoundError
   | SessionWarpHttpError
@@ -156,7 +157,8 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const auth = yield* Auth.Service
-    const session = yield* Session.Service
+    const session = yield* SessionV2.Service
+    const removal = yield* SessionRemoval.Service
     const runState = yield* SessionRunState.Service
     const execution = yield* SessionExecution.Service
     const instanceStore = yield* InstanceStore.Service
@@ -559,15 +561,10 @@ const layer = Layer.effect(
 
     const sessionWarp = Effect.fn("Workspace.sessionWarp")(function* (input: SessionWarpInput) {
       return yield* Effect.gen(function* () {
-        const current = yield* db
-          .select({ workspaceID: SessionTable.workspace_id })
-          .from(SessionTable)
-          .where(eq(SessionTable.id, input.sessionID))
-          .get()
-          .pipe(Effect.orDie)
+        const current = yield* session.get(SessionV2.ID.make(input.sessionID))
 
-        if (current?.workspaceID) {
-          const previous = yield* get(current.workspaceID)
+        if (current.location.workspaceID) {
+          const previous = yield* get(current.location.workspaceID)
           if (previous) {
             const target = yield* WorkspaceAdapterRuntime.target(previous)
 
@@ -593,9 +590,9 @@ const layer = Layer.effect(
         }
 
         const sourcePatch =
-          input.copyChanges && current?.workspaceID
+          input.copyChanges && current.location.workspaceID
             ? yield* runInWorkspace({
-                workspaceID: current?.workspaceID ?? undefined,
+                workspaceID: current.location.workspaceID,
                 local: () => vcs.diffRaw(),
                 remote: ({ target }) =>
                   HttpClientRequest.get(route(target.url, "/vcs/diff/raw"), {
@@ -623,7 +620,11 @@ const layer = Layer.effect(
         }
 
         if (input.workspaceID === null) {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: undefined })
+          yield* session.move({
+            sessionID: current.id,
+            location: Location.Ref.make({ directory: current.location.directory }),
+            subpath: current.subpath,
+          })
 
           return
         }
@@ -639,7 +640,11 @@ const layer = Layer.effect(
         const target = yield* WorkspaceAdapterRuntime.target(space)
 
         if (target.type === "local") {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
+          yield* session.move({
+            sessionID: current.id,
+            location: Location.Ref.make({ directory: current.location.directory, workspaceID: input.workspaceID }),
+            subpath: current.subpath,
+          })
 
           return
         }
@@ -711,7 +716,11 @@ const layer = Layer.effect(
           })
         }
 
-        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
+        yield* session.move({
+          sessionID: current.id,
+          location: Location.Ref.make({ directory: current.location.directory, workspaceID: input.workspaceID }),
+          subpath: current.subpath,
+        })
       })
     })
 
@@ -795,7 +804,9 @@ const layer = Layer.effect(
       yield* Effect.forEach(
         sessions.filter((sessionInfo) => !sessionInfo.parentID || !sessionIDs.has(sessionInfo.parentID)),
         (sessionInfo) =>
-          session.remove(sessionInfo.id).pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.void)),
+          removal
+            .remove(SessionV2.ID.make(sessionInfo.id))
+            .pipe(Effect.catchTag("Session.NotFoundError", () => Effect.void)),
         { discard: true },
       )
 
@@ -948,7 +959,8 @@ export const node = LayerNode.make({
   layer: layer,
   deps: [
     Auth.node,
-    Session.node,
+    SessionV2.node,
+    SessionRemoval.node,
     SessionRunState.node,
     SessionExecution.node,
     InstanceStore.node,

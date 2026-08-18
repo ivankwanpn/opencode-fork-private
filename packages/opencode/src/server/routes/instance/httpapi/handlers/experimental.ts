@@ -5,15 +5,16 @@ import { InstanceState } from "@/effect/instance-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { Project } from "@/project/project"
-import { Session } from "@/session/session"
+import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import type { SessionID } from "@/session/schema"
 import { Worktree } from "@/worktree"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
-import { Effect, Option } from "effect"
+import { DateTime, Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
@@ -33,7 +34,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const project = yield* Project.Service
     const locations = yield* LocationServiceMap.Service
     const worktreeSvc = yield* Worktree.Service
-    const sessions = yield* Session.Service
+    const sessions = yield* SessionV2.Service
     const background = yield* BackgroundJob.Service
     const flags = yield* RuntimeFlags.Service
 
@@ -166,20 +167,38 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const session = Effect.fn("ExperimentalHttpApi.session")(function* (ctx: { query: typeof SessionListQuery.Type }) {
       const limit = ctx.query.limit ?? 100
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
-      const all = yield* sessions.listGlobal({
-        directory,
-        roots: ctx.query.roots,
+      const all = yield* sessions.list({
+        ...(directory === undefined ? {} : { directory: AbsolutePath.make(directory) }),
+        parentID: ctx.query.roots ? null : undefined,
+        orderBy: "updated",
         start: ctx.query.start,
-        cursor: ctx.query.cursor,
+        updatedBefore: ctx.query.cursor,
         search: ctx.query.search,
         limit: limit + 1,
-        archived: ctx.query.archived,
+        excludeArchived: ctx.query.archived !== true,
       })
-      const list = all.length > limit ? all.slice(0, limit) : all
+      const projects = new Map(
+        (
+          yield* Effect.forEach(
+            [...new Set(all.map((info) => info.projectID))],
+            (id) => project.get(id),
+            { concurrency: "unbounded" },
+          )
+        )
+          .filter((info) => info !== undefined)
+          .map((info) => [info.id, info]),
+      )
+      const list = (all.length > limit ? all.slice(0, limit) : all).map((info) => {
+        const item = projects.get(info.projectID)
+        return {
+          ...legacySessionFromV2(info),
+          project: item ? { id: item.id, name: item.name, worktree: item.worktree } : null,
+        }
+      })
       return HttpServerResponse.jsonUnsafe(list, {
         headers:
           all.length > limit && list.length > 0
-            ? { "x-next-cursor": String(list[list.length - 1].time.updated) }
+            ? { "x-next-cursor": String(DateTime.toEpochMillis(all[limit - 1].time.updated)) }
             : undefined,
       })
     })

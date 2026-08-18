@@ -4,8 +4,9 @@ import { Cause, Effect, Schema } from "effect"
 import { CodeMode, Tool as SandboxTool, toolError } from "@opencode-ai/codemode"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { McpCatalog } from "@opencode-ai/core/mcp"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { toV1Rules } from "@opencode-ai/core/session/info"
 import { Agent } from "@/agent/agent"
-import { Session } from "@/session/session"
 import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
 
@@ -231,7 +232,7 @@ export const CodeModeTool = Tool.define(
   Effect.gen(function* () {
     const mcp = yield* MCP.Service
     const agents = yield* Agent.Service
-    const sessions = yield* Session.Service
+    const sessions = yield* SessionV2.Service
     const plugin = yield* Plugin.Service
 
     const init: Tool.DefWithoutID<typeof Parameters, Metadata> = {
@@ -246,8 +247,8 @@ export const CodeModeTool = Tool.define(
           } satisfies Tool.ExecuteResult<Metadata>
         }
         const agent = yield* agents.get(ctx.agent)
-        const session = yield* sessions.get(ctx.sessionID).pipe(Effect.orDie)
-        const ruleset = Permission.merge(agent.permission, session.permission ?? [])
+        const sessionPermissions = yield* sessions.permissions(SessionV2.ID.make(ctx.sessionID)).pipe(Effect.orDie)
+        const ruleset = Permission.merge(agent.permission, toV1Rules(sessionPermissions))
         const mcpTools = Permission.visibleTools(yield* mcp.tools(), ruleset)
         const catalog = [...groupByServer(mcpTools).values()].flat()
 

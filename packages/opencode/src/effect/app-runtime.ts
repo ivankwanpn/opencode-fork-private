@@ -22,7 +22,6 @@ import { Discovery } from "@/skill/discovery"
 import { Question } from "@/question"
 import { Permission } from "@/permission"
 import { Todo } from "@/session/todo"
-import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { SessionRunState } from "@/session/run-state"
 import { SessionSummary } from "@/session/summary"
@@ -83,7 +82,6 @@ export const AppLayer = AppNodeBuilderV1.build(
     Question.node,
     Permission.node,
     Todo.node,
-    Session.node,
     SessionProjector.node,
     TaskSubmission.node,
     TaskNotification.node,

@@ -20,7 +20,6 @@ import { UI } from "../ui"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { InstanceRef } from "@/effect/instance-ref"
 import { SessionShare } from "@/share/session"
-import { Session } from "@/session/session"
 import type { SessionID } from "../../session/schema"
 import { Provider } from "@/provider/provider"
 import { MessageV2 } from "../../session/message-v2"
@@ -37,6 +36,9 @@ import { Process } from "@/util/process"
 import { parseGitHubRemote } from "@/util/repository"
 import { Effect } from "effect"
 import { extractResponseText, formatPromptTooLargeError } from "./github.shared"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { Location } from "@opencode-ai/core/location"
+import { InstallationVersion } from "@opencode-ai/core/installation/version"
 
 type GitHubAuthor = {
   login: string
@@ -380,7 +382,6 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
   const ctx = yield* InstanceRef
   if (!ctx) return yield* Effect.die("InstanceRef not provided")
   const gitSvc = yield* Git.Service
-  const sessionSvc = yield* Session.Service
   const sessionShare = yield* SessionShare.Service
   const sessionV2 = yield* SessionV2.Service
   const events = yield* EventV2Bridge.Service
@@ -499,17 +500,13 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
 
       // Setup opencode session
       const repoData = await fetchRepo()
-      session = await runLocalEffect(
-        sessionSvc.create({
-          permission: [
-            {
-              permission: "question",
-              action: "deny",
-              pattern: "*",
-            },
-          ],
+      const created = await runLocalEffect(
+        sessionV2.create({
+          location: Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }),
+          permissions: [{ action: "question", effect: "deny", resource: "*" }],
         }),
       )
+      session = { id: created.id as SessionID, title: created.title, version: InstallationVersion }
       await subscribeSessionEvents()
       shareId = await (async () => {
         if (share === false) return

@@ -1,15 +1,15 @@
 import type { Argv } from "yargs"
-import { Effect } from "effect"
+import { DateTime, Effect } from "effect"
 import { cmd } from "./cmd"
 import { effectCmd, fail } from "../effect-cmd"
-import { Session } from "@/session/session"
-import { SessionID } from "../../session/schema"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { InstanceState } from "@/effect/instance-state"
+import { SessionRemoval } from "@/session/removal"
 import { UI } from "../ui"
 import { Locale } from "@/util/locale"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
-import { NotFoundError } from "@/storage/storage"
 import { EOL } from "os"
 import path from "path"
 import { which } from "@opencode-ai/core/util/which"
@@ -58,11 +58,10 @@ export const SessionDeleteCommand = effectCmd({
       demandOption: true,
     }),
   handler: Effect.fn("Cli.session.delete")(function* (args) {
-    const svc = yield* Session.Service
-    const sessionID = SessionID.make(args.sessionID)
-    yield* svc
-      .remove(sessionID)
-      .pipe(Effect.catchIf(NotFoundError.isInstance, () => fail(`Session not found: ${args.sessionID}`)))
+    const removal = yield* SessionRemoval.Service
+    yield* removal
+      .remove(SessionV2.ID.make(args.sessionID))
+      .pipe(Effect.catchTag("Session.NotFoundError", () => fail(`Session not found: ${args.sessionID}`)))
     UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Session ${args.sessionID} deleted` + UI.Style.TEXT_NORMAL)
   }),
 })
@@ -84,7 +83,14 @@ export const SessionListCommand = effectCmd({
         default: "table",
       }),
   handler: Effect.fn("Cli.session.list")(function* (args) {
-    const sessions = yield* Session.Service.use((svc) => svc.list({ roots: true, limit: args.maxCount }))
+    const session = yield* SessionV2.Service
+    const instance = yield* InstanceState.context
+    const sessions = yield* session.list({
+      project: instance.project.id,
+      parentID: null,
+      orderBy: "updated",
+      limit: args.maxCount,
+    })
 
     if (sessions.length === 0) return
 
@@ -115,7 +121,7 @@ export const SessionListCommand = effectCmd({
   }),
 })
 
-function formatSessionTable(sessions: Session.Info[]): string {
+function formatSessionTable(sessions: SessionV2.Info[]): string {
   const lines: string[] = []
 
   const maxIdWidth = Math.max(20, ...sessions.map((s) => s.id.length))
@@ -126,7 +132,7 @@ function formatSessionTable(sessions: Session.Info[]): string {
   lines.push("─".repeat(header.length))
   for (const session of sessions) {
     const truncatedTitle = Locale.truncate(session.title, maxTitleWidth)
-    const timeStr = Locale.todayTimeOrDateTime(session.time.updated)
+    const timeStr = Locale.todayTimeOrDateTime(DateTime.toEpochMillis(session.time.updated))
     const line = `${session.id.padEnd(maxIdWidth)}  ${truncatedTitle.padEnd(maxTitleWidth)}  ${timeStr}`
     lines.push(line)
   }
@@ -134,14 +140,14 @@ function formatSessionTable(sessions: Session.Info[]): string {
   return lines.join(EOL)
 }
 
-function formatSessionJSON(sessions: Session.Info[]): string {
+function formatSessionJSON(sessions: SessionV2.Info[]): string {
   const jsonData = sessions.map((session) => ({
     id: session.id,
     title: session.title,
-    updated: session.time.updated,
-    created: session.time.created,
+    updated: DateTime.toEpochMillis(session.time.updated),
+    created: DateTime.toEpochMillis(session.time.created),
     projectId: session.projectID,
-    directory: session.directory,
+    directory: session.location.directory,
   }))
   return JSON.stringify(jsonData, null, 2)
 }

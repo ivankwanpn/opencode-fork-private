@@ -3,7 +3,6 @@ import DESCRIPTION from "./task.txt"
 import { ToolJsonSchema } from "./json-schema"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
-import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
@@ -23,6 +22,8 @@ import { TaskNotification } from "@opencode-ai/core/session/task-notification"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { SessionCommand } from "@opencode-ai/core/session/command"
+import { AgentV2 } from "@opencode-ai/core/agent"
+import { toV1Rules, toV2Rules } from "@opencode-ai/core/session/info"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -120,8 +121,7 @@ export const TaskTool = Tool.define(
     const agent = yield* Agent.Service
     const background = yield* BackgroundJob.Service
     const config = yield* Config.Service
-    const sessions = yield* Session.Service
-    const canonical = yield* SessionV2.Service
+    const sessions = yield* SessionV2.Service
     const flags = yield* RuntimeFlags.Service
     const notifications = yield* TaskNotification.Service
     const cancellation = yield* TaskCancellation.Service
@@ -141,7 +141,8 @@ export const TaskTool = Tool.define(
         )
       }
 
-      const parent = yield* sessions.get(ctx.sessionID)
+      const parent = yield* sessions.get(SessionV2.ID.make(ctx.sessionID))
+      const parentPermission = toV1Rules(yield* sessions.permissions(parent.id))
       let current = parent
       let depth = 0
       while (current.parentID) {
@@ -177,10 +178,12 @@ export const TaskTool = Tool.define(
       }
 
       const session = params.task_id
-        ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        ? yield* sessions
+            .get(SessionV2.ID.make(params.task_id))
+            .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
       const childPermission = deriveSubagentSessionPermission({
-        parentSessionPermission: parent.permission ?? [],
+        parentSessionPermission: parentPermission,
         subagent: next,
         grants: params.permission,
         blocked: new Set(DEFAULT_BLOCKED_TOOLS),
@@ -201,10 +204,11 @@ export const TaskTool = Tool.define(
       const nextSession =
         session ??
         (yield* sessions.create({
-          parentID: ctx.sessionID,
+          parentID: parent.id,
           title: params.description + ` (@${next.name} subagent)`,
-          agent: next.name,
-          permission: [
+          agent: AgentV2.ID.make(next.name),
+          location: parent.location,
+          permissions: toV2Rules([
             ...childPermission,
             ...childToolDenies.filter(
               (deny) =>
@@ -213,10 +217,10 @@ export const TaskTool = Tool.define(
                     rule.permission === deny.permission && rule.pattern === deny.pattern && rule.action === deny.action,
                 ),
             ),
-          ],
+          ]),
         }))
 
-      const message = yield* canonical.message({
+      const message = yield* sessions.message({
         sessionID: SessionV2.ID.make(ctx.sessionID),
         messageID: SessionMessage.ID.make(ctx.messageID),
       })
@@ -259,7 +263,7 @@ export const TaskTool = Tool.define(
       const admitNotification = (input: TaskNotification.Admission) =>
         Effect.gen(function* () {
           yield* commands.admitSynthetic(input)
-          const currentParent = yield* sessions.get(ctx.sessionID)
+          const currentParent = yield* sessions.get(SessionV2.ID.make(ctx.sessionID))
           const model =
             promptModel(ctx.extra?.model) ??
             (currentParent.model

@@ -5,14 +5,15 @@ import { Cause, DateTime, Duration, Effect, Layer, Scope } from "effect"
 import { TestLLMServer } from "../../lib/llm-server"
 import type { Config } from "../../../src/config/config"
 
-import type { MessageV2 } from "../../../src/session/message-v2"
-import { MessageID, PartID } from "../../../src/session/schema"
+import { MessageID, PartID, SessionID } from "../../../src/session/schema"
 import { call, callAuthProbe, disposeApps } from "./backend"
 import { original } from "./environment"
 import { runtime } from "./runtime"
 import type { ActiveScenario, Options, ProjectOptions, Result, Scenario, ScenarioContext, SeededContext } from "./types"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { Location } from "@opencode-ai/core/location"
 
 export function runScenario(options: Options) {
   return (scenario: Scenario) => {
@@ -134,9 +135,28 @@ function withContext<A, E>(
               return Bun.write(`${directory()}/${name}`, content)
             }).pipe(Effect.asVoid),
           session: (input) =>
-            run(modules.Session.Service.use((svc) => svc.create({ title: input?.title, parentID: input?.parentID }))),
+            run(
+              modules.SessionV2.Service.use((svc) =>
+                svc.create({
+                  title: input?.title,
+                  parentID: input?.parentID ? modules.SessionV2.ID.make(input.parentID) : undefined,
+                  location: Location.Ref.make({ directory: AbsolutePath.make(directory()) }),
+                }),
+              ),
+            ).pipe(
+              Effect.map((info) => ({
+                id: SessionID.make(info.id),
+                title: info.title,
+                parentID: info.parentID ? SessionID.make(info.parentID) : undefined,
+              })),
+            ),
           sessionGet: (sessionID) =>
-            run(modules.Session.Service.use((svc) => svc.get(sessionID))).pipe(
+            run(modules.SessionV2.Service.use((svc) => svc.get(modules.SessionV2.ID.make(sessionID)))).pipe(
+              Effect.map((info) => ({
+                id: SessionID.make(info.id),
+                title: info.title,
+                parentID: info.parentID ? SessionID.make(info.parentID) : undefined,
+              })),
               Effect.catchCause(() => Effect.succeed(undefined)),
             ),
           project: () =>
@@ -181,7 +201,17 @@ function withContext<A, E>(
               return { info, part }
             }),
           messages: (sessionID) =>
-            run(modules.Session.Service.use((svc) => svc.messages({ sessionID }).pipe(Effect.orDie))),
+            run(
+              modules.SessionV2.Service.use((svc) =>
+                Effect.gen(function* () {
+                  const info = yield* svc.get(modules.SessionV2.ID.make(sessionID))
+                  const messages = yield* svc
+                    .messages({ sessionID: info.id, order: "asc" })
+                    .pipe(Effect.catchTag("Session.MessageDecodeError", Effect.die))
+                  return modules.MessageV2.toLegacy(info, messages)
+                }).pipe(Effect.orDie),
+              ),
+            ),
           todos: (sessionID, todos) => run(modules.Todo.Service.use((svc) => svc.update({ sessionID, todos }))),
           worktree: (input) => run(modules.Worktree.Service.use((svc) => svc.create(input).pipe(Effect.orDie))),
           worktreeRemove: (directory) =>

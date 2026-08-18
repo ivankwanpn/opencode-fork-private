@@ -5,9 +5,9 @@ export type Runtime = {
   memoMap: import("effect").Layer.MemoMap
   InstanceRef: (typeof import("../../../src/effect/instance-ref"))["InstanceRef"]
   InstanceStore: (typeof import("../../../src/project/instance-store"))["InstanceStore"]
-  Session: (typeof import("../../../src/session/session"))["Session"]
   SessionV2: (typeof import("@opencode-ai/core/session"))["SessionV2"]
   SessionMessage: typeof import("@opencode-ai/core/session/message")
+  MessageV2: (typeof import("../../../src/session/message-v2"))["MessageV2"]
   Todo: (typeof import("../../../src/session/todo"))["Todo"]
   Worktree: (typeof import("../../../src/worktree"))["Worktree"]
   Project: (typeof import("../../../src/project/project"))["Project"]
@@ -27,9 +27,9 @@ export function runtime() {
     const { Layer } = await import("effect")
     const instanceRef = await import("../../../src/effect/instance-ref")
     const instanceStore = await import("../../../src/project/instance-store")
-    const session = await import("../../../src/session/session")
     const { SessionV2 } = await import("@opencode-ai/core/session")
     const sessionMessage = await import("@opencode-ai/core/session/message")
+    const { MessageV2 } = await import("../../../src/session/message-v2")
     const todo = await import("../../../src/session/todo")
     const worktree = await import("../../../src/worktree")
     const project = await import("../../../src/project/project")
@@ -43,9 +43,9 @@ export function runtime() {
       memoMap: Layer.makeMemoMapUnsafe(),
       InstanceRef: instanceRef.InstanceRef,
       InstanceStore: instanceStore.InstanceStore,
-      Session: session.Session,
       SessionV2,
       SessionMessage: sessionMessage,
+      MessageV2,
       Todo: todo.Todo,
       Worktree: worktree.Worktree,
       Project: project.Project,

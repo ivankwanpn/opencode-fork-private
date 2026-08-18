@@ -1,9 +1,6 @@
-import { Effect } from "effect"
+import { DateTime, Effect } from "effect"
 import { effectCmd } from "../effect-cmd"
-import { Session } from "@/session/session"
-import { NotFoundError } from "@/storage/storage"
-import { Database } from "@opencode-ai/core/database/database"
-import { SessionTable } from "@opencode-ai/core/session/sql"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { Project } from "@/project/project"
 import { InstanceRef } from "@/effect/instance-ref"
 
@@ -81,8 +78,23 @@ export const StatsCommand = effectCmd({
 })
 
 const getAllSessions = Effect.fnUntraced(function* () {
-  const { db } = yield* Database.Service
-  return (yield* db.select().from(SessionTable).all().pipe(Effect.orDie)).map((row) => Session.fromRow(row))
+  const sessions = yield* SessionV2.Service
+  const page: (anchor?: SessionV2.ListAnchor) => Effect.Effect<SessionV2.Info[]> = Effect.fnUntraced(function* (
+    anchor?: SessionV2.ListAnchor,
+  ) {
+    const items = yield* sessions.list({ limit: 1000, order: "desc", orderBy: "updated", anchor })
+    const last = items.at(-1)
+    if (items.length < 1000 || !last) return items
+    return [
+      ...items,
+      ...(yield* page({
+        id: last.id,
+        time: DateTime.toEpochMillis(last.time.updated),
+        direction: "next",
+      })),
+    ]
+  })
+  return yield* page()
 })
 
 const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
@@ -90,7 +102,7 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
   projectFilter?: string,
   currentProject?: Project.Info,
 ) {
-  const svc = yield* Session.Service
+  const svc = yield* SessionV2.Service
   const sessions = yield* getAllSessions()
   const MS_IN_DAY = 24 * 60 * 60 * 1000
 
@@ -110,7 +122,10 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
     return days
   })()
 
-  let filteredSessions = cutoffTime > 0 ? sessions.filter((session) => session.time.updated >= cutoffTime) : sessions
+  let filteredSessions =
+    cutoffTime > 0
+      ? sessions.filter((session) => DateTime.toEpochMillis(session.time.updated) >= cutoffTime)
+      : sessions
 
   if (projectFilter !== undefined) {
     if (projectFilter === "") {
@@ -165,11 +180,14 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
     (session) =>
       Effect.gen(function* () {
         const messages = yield* svc
-          .messages({ sessionID: session.id })
-          .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed([])))
+          .messages({ sessionID: session.id, order: "asc" })
+          .pipe(
+            Effect.catchTag("Session.NotFoundError", () => Effect.succeed([])),
+            Effect.catchTag("Session.MessageDecodeError", Effect.die),
+          )
 
-        const sessionCost = session.cost ?? 0
-        const sessionTokens = session.tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        const sessionCost = session.cost
+        const sessionTokens = session.tokens
         let sessionToolUsage: Record<string, number> = {}
         let sessionModelUsage: Record<
           string,
@@ -181,8 +199,8 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
         > = {}
 
         for (const message of messages) {
-          if (message.info.role === "assistant") {
-            const modelKey = `${message.info.providerID}/${message.info.modelID}`
+          if (message.type === "assistant") {
+            const modelKey = `${message.model.providerID}/${message.model.id}`
             if (!sessionModelUsage[modelKey]) {
               sessionModelUsage[modelKey] = {
                 messages: 0,
@@ -191,20 +209,19 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
               }
             }
             sessionModelUsage[modelKey].messages++
-            sessionModelUsage[modelKey].cost += message.info.cost || 0
+            sessionModelUsage[modelKey].cost += message.cost || 0
 
-            if (message.info.tokens) {
-              sessionModelUsage[modelKey].tokens.input += message.info.tokens.input || 0
+            if (message.tokens) {
+              sessionModelUsage[modelKey].tokens.input += message.tokens.input || 0
               sessionModelUsage[modelKey].tokens.output +=
-                (message.info.tokens.output || 0) + (message.info.tokens.reasoning || 0)
-              sessionModelUsage[modelKey].tokens.cache.read += message.info.tokens.cache?.read || 0
-              sessionModelUsage[modelKey].tokens.cache.write += message.info.tokens.cache?.write || 0
+                (message.tokens.output || 0) + (message.tokens.reasoning || 0)
+              sessionModelUsage[modelKey].tokens.cache.read += message.tokens.cache.read || 0
+              sessionModelUsage[modelKey].tokens.cache.write += message.tokens.cache.write || 0
             }
-          }
-
-          for (const part of message.parts) {
-            if (part.type === "tool" && part.tool) {
-              sessionToolUsage[part.tool] = (sessionToolUsage[part.tool] || 0) + 1
+            for (const content of message.content) {
+              if (content.type === "tool") {
+                sessionToolUsage[content.name] = (sessionToolUsage[content.name] || 0) + 1
+              }
             }
           }
         }
@@ -221,8 +238,8 @@ const aggregateSessionStats = Effect.fn("Cli.stats.aggregate")(function* (
             sessionTokens.cache.write,
           sessionToolUsage,
           sessionModelUsage,
-          earliestTime: cutoffTime > 0 ? session.time.updated : session.time.created,
-          latestTime: session.time.updated,
+          earliestTime: DateTime.toEpochMillis(cutoffTime > 0 ? session.time.updated : session.time.created),
+          latestTime: DateTime.toEpochMillis(session.time.updated),
         }
       }),
     { concurrency: 20 },

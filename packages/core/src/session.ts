@@ -25,6 +25,7 @@ import { SessionExecution } from "./session/execution"
 import { SessionShell } from "./session/shell"
 import { makeGlobalNode } from "./effect/app-node"
 import { LocationServiceMap } from "./location-service-map"
+import { Location } from "./location"
 import { MessageDecodeError } from "./session/error"
 import { SessionEvent } from "./session/event"
 import { SessionInput } from "./session/input"
@@ -67,6 +68,8 @@ const ListInputBase = {
   order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
   orderBy: Schema.Literals(["created", "updated"]).pipe(Schema.optional),
   start: Schema.Finite.pipe(Schema.optional),
+  updatedBefore: Schema.Finite.pipe(Schema.optional),
+  excludeArchived: Schema.Boolean.pipe(Schema.optional),
   parentID: Schema.NullOr(SessionSchema.ID).pipe(Schema.optional),
   anchor: ListAnchor.pipe(Schema.optional),
 }
@@ -201,6 +204,11 @@ export interface Interface {
     archived?: DateTime.Utc | null
     metadata?: NonNullable<SessionSchema.Info["metadata"]> | null
     share?: NonNullable<SessionSchema.Info["share"]> | null
+  }) => Effect.Effect<SessionSchema.Info, NotFoundError>
+  readonly move: (input: {
+    sessionID: SessionSchema.ID
+    location: Location.Ref
+    subpath?: RelativePath
   }) => Effect.Effect<SessionSchema.Info, NotFoundError>
   readonly permissions: (sessionID: SessionSchema.ID) => Effect.Effect<PermissionV2.Ruleset, NotFoundError>
   readonly setPermissions: (input: {
@@ -482,6 +490,20 @@ const layer = Layer.effect(
           }),
         )
       }),
+      move: Effect.fn("V2Session.move")(function* (input) {
+        yield* result.get(input.sessionID)
+        yield* events.publish(
+          SessionEvent.Moved,
+          {
+            sessionID: input.sessionID,
+            location: input.location,
+            subdirectory: input.subpath,
+            timestamp: yield* DateTime.now,
+          },
+          { location: input.location },
+        )
+        return yield* result.get(input.sessionID)
+      }),
       permissions: Effect.fn("V2Session.permissions")(function* (sessionID) {
         // Single query: a delete between an existence check and the permission read
         // would otherwise surface an empty ruleset instead of NotFoundError.
@@ -564,6 +586,8 @@ const layer = Layer.effect(
         if (input.parentID !== undefined && input.parentID !== null)
           conditions.push(eq(SessionTable.parent_id, input.parentID))
         if (input.start !== undefined) conditions.push(gte(SessionTable.time_updated, input.start))
+        if (input.updatedBefore !== undefined) conditions.push(lt(SessionTable.time_updated, input.updatedBefore))
+        if (input.excludeArchived) conditions.push(isNull(SessionTable.time_archived))
         if (input.anchor) {
           conditions.push(
             order === "asc"

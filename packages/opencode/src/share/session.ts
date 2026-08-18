@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Session } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionID } from "@/session/schema"
 import { Effect, Layer, Context } from "effect"
 import { Config } from "@/config/config"
@@ -17,20 +17,20 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const cfg = yield* Config.Service
-    const session = yield* Session.Service
+    const session = yield* SessionV2.Service
     const shareNext = yield* ShareNext.Service
 
     const share = Effect.fn("SessionShare.share")(function* (sessionID: SessionID) {
       const conf = yield* cfg.get()
       if (conf.share === "disabled") throw new Error("Sharing is disabled in configuration")
       const result = yield* shareNext.create(sessionID)
-      yield* session.setShare({ sessionID, share: { url: result.url } })
+      yield* session.update({ sessionID: SessionV2.ID.make(sessionID), share: { url: result.url } })
       return result
     })
 
     const unshare = Effect.fn("SessionShare.unshare")(function* (sessionID: SessionID) {
       yield* shareNext.remove(sessionID)
-      yield* session.setShare({ sessionID, share: undefined })
+      yield* session.update({ sessionID: SessionV2.ID.make(sessionID), share: null })
     })
 
     return Service.of({ share, unshare })
@@ -40,7 +40,7 @@ const layer = Layer.effect(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Config.node, Session.node, ShareNext.node, RuntimeFlags.node],
+  deps: [Config.node, SessionV2.node, ShareNext.node, RuntimeFlags.node],
 })
 
 export * as SessionShare from "./session"

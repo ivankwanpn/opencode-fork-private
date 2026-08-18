@@ -3,19 +3,24 @@ import { Command } from "@/command"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
+import { SessionV1 } from "@opencode-ai/schema/session-v1"
 import { Cause, Context, Effect, Layer, Schema, Scope } from "effect"
 import { MessageV2 } from "./message-v2"
 import { LegacySessionRead } from "./legacy-session-read"
 import { SessionRunState } from "./run-state"
-import { Session } from "./session"
 import { MessageID, SessionID } from "./schema"
 import { SessionStatus } from "./status"
+
+type InputSession = {
+  readonly id: SessionID
+  readonly revert?: { readonly messageID: MessageID }
+}
 
 export type Selection = {
   readonly agent?: string
@@ -29,14 +34,14 @@ export type Selection = {
 }
 
 export type InitInput = {
-  readonly session: Session.Info
+  readonly session: InputSession
   readonly messageID: SessionMessage.ID
   readonly providerID: ProviderV2.ID
   readonly modelID: ModelV2.ID
 }
 
 export type PromptExecutionInput = {
-  readonly session: Session.Info
+  readonly session: InputSession
   readonly id?: SessionMessage.ID
   readonly prompt: PromptInput.Prompt
   readonly selection: Selection
@@ -44,7 +49,7 @@ export type PromptExecutionInput = {
 }
 
 export type CommandExecutionInput = {
-  readonly session: Session.Info
+  readonly session: InputSession
   readonly id?: SessionMessage.ID
   readonly command: string
   readonly arguments: string
@@ -55,7 +60,7 @@ export type CommandExecutionInput = {
 }
 
 export type ShellExecutionInput = {
-  readonly session: Session.Info
+  readonly session: InputSession
   readonly userID?: SessionMessage.ID
   readonly command: string
   readonly selection: Selection
@@ -74,14 +79,13 @@ export class ResponseNotFoundError extends Schema.TaggedErrorClass<ResponseNotFo
 const make = Effect.gen(function* () {
   const agent = yield* Agent.Service
   const events = yield* EventV2Bridge.Service
-  const legacy = yield* Session.Service
   const read = yield* LegacySessionRead.Service
   const runState = yield* SessionRunState.Service
   const canonical = yield* SessionV2.Service
   const status = yield* SessionStatus.Service
   const scope = yield* Scope.Scope
 
-  const cleanupRevert = Effect.fn("LegacySessionExecution.cleanupRevert")(function* (session: Session.Info) {
+  const cleanupRevert = Effect.fn("LegacySessionExecution.cleanupRevert")(function* (session: InputSession) {
     if (!session.revert) return
     const sessionID = SessionV2.ID.make(session.id)
     const boundary = yield* canonical.message({
@@ -131,13 +135,13 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.andThen(read.get(sessionID)))
       : selected
-    const permissions: PermissionV1.Rule[] = Object.entries(input.tools ?? {}).map(([tool, enabled]) => ({
-      permission: tool,
-      action: enabled ? "allow" : "deny",
-      pattern: "*",
+    const permissions: PermissionV2.Rule[] = Object.entries(input.tools ?? {}).map(([tool, enabled]) => ({
+      action: tool,
+      effect: enabled ? "allow" : "deny",
+      resource: "*",
     }))
     if (permissions.length === 0) return modeled
-    yield* legacy.setPermission({ sessionID, permission: permissions })
+    yield* canonical.setPermissions({ sessionID: SessionV2.ID.make(sessionID), permissions })
     return yield* read.get(sessionID)
   })
 
@@ -174,7 +178,7 @@ const make = Effect.gen(function* () {
       resume: false,
       commit: input.noReply === true,
     })
-    yield* legacy.touch(input.session.id)
+    yield* canonical.update({ sessionID: current.id }).pipe(Effect.orDie)
     return { admitted, current }
   })
 
@@ -195,7 +199,7 @@ const make = Effect.gen(function* () {
       model: { providerID: input.providerID, id: input.modelID },
       resume: false,
     })
-    yield* legacy.touch(input.session.id)
+    yield* canonical.update({ sessionID: current.id }).pipe(Effect.orDie)
     yield* resume(input.session.id)
   })
 
@@ -229,7 +233,7 @@ const make = Effect.gen(function* () {
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
           yield* Effect.logError("prompt_async failed", { sessionID: input.session.id, cause })
-          yield* events.publish(Session.Event.Error, {
+          yield* events.publish(SessionV1.Event.Error, {
             sessionID: input.session.id,
             error: new NamedError.Unknown({ message: Cause.pretty(cause) }).toObject(),
           })
@@ -254,7 +258,7 @@ const make = Effect.gen(function* () {
       files: input.files,
       resume: false,
     })
-    yield* legacy.touch(input.session.id)
+    yield* canonical.update({ sessionID: current.id }).pipe(Effect.orDie)
     yield* resume(input.session.id)
     return yield* response(input.session.id, admitted.id)
   })

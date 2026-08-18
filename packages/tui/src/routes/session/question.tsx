@@ -3,7 +3,7 @@ import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-j
 import { useRenderer } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { selectedForeground, tint, useTheme } from "../../context/theme"
-import type { QuestionAnswer, QuestionV2Request } from "@opencode-ai/sdk/v2"
+import type { QuestionV2Answer, QuestionV2Request } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../ui/border"
 import { useTuiConfig } from "../../config"
@@ -24,7 +24,7 @@ export function QuestionPrompt(props: { request: QuestionV2Request; directory?: 
   const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
   const [store, setStore] = createStore({
     tab: 0,
-    answers: [] as QuestionAnswer[],
+    answers: [] as QuestionV2Answer[],
     custom: [] as string[],
     selected: 0,
     editing: false,

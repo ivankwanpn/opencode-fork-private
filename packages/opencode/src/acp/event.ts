@@ -53,7 +53,7 @@ export class Subscription {
 
   async handle(event: ACPClient.LegacyEvent) {
     switch (event.type) {
-      case "permission.asked":
+      case "permission.v2.asked":
         this.permission.handle(event)
         return
       case "message.part.updated":

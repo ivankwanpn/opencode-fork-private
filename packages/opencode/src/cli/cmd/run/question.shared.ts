@@ -13,7 +13,7 @@
 //
 // Custom answers: if a question has custom=true, an extra "Type your own
 // answer" option appears. Selecting it enters editing mode with a text field.
-import type { QuestionInfo, QuestionV2Request } from "@opencode-ai/sdk/v2"
+import type { QuestionV2Info, QuestionV2Request } from "@opencode-ai/sdk/v2"
 import type { QuestionReject, QuestionReply } from "./types"
 
 export type QuestionBodyState = {
@@ -63,7 +63,7 @@ export function questionConfirm(request: QuestionV2Request, state: QuestionBodyS
   return !questionSingle(request) && state.tab === request.questions.length
 }
 
-export function questionInfo(request: QuestionV2Request, state: QuestionBodyState): QuestionInfo | undefined {
+export function questionInfo(request: QuestionV2Request, state: QuestionBodyState): QuestionV2Info | undefined {
   return request.questions[state.tab]
 }
 

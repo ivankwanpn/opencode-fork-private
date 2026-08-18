@@ -132,8 +132,9 @@ test("restores the draft caret before typing after a request dock closes", async
   await transport.send({
     directory,
     payload: {
-      type: "question.asked",
-      properties: {
+      id: "event-question-caret-asked",
+      type: "question.v2.asked",
+      data: {
         id: "question-caret",
         sessionID,
         questions: [
@@ -153,7 +154,11 @@ test("restores the draft caret before typing after a request dock closes", async
 
   await transport.send({
     directory,
-    payload: { type: "question.rejected", properties: { sessionID, requestID: "question-caret" } },
+    payload: {
+      id: "event-question-caret-rejected",
+      type: "question.v2.rejected",
+      data: { sessionID, requestID: "question-caret" },
+    },
   })
   await expect(question).toHaveCount(0)
   await expect(editor).toBeVisible()

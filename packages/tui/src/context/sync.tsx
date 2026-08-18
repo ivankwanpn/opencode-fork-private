@@ -165,97 +165,6 @@ export const {
         case "server.instance.disposed":
           void bootstrap()
           break
-        case "permission.replied": {
-          const requests = store.permission[event.properties.sessionID]
-          if (!requests) break
-          const match = search(requests, event.properties.requestID, (r) => r.id)
-          if (!match.found) break
-          setStore(
-            "permission",
-            event.properties.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 1)
-            }),
-          )
-          break
-        }
-
-        case "permission.asked": {
-          const request: PermissionV2Request = {
-            id: event.properties.id,
-            sessionID: event.properties.sessionID,
-            action: event.properties.permission,
-            resources: event.properties.patterns,
-            metadata: event.properties.metadata,
-            save: event.properties.always,
-            ...(event.properties.tool ? { source: { type: "tool", ...event.properties.tool } } : {}),
-          }
-          if (permission.mode === "auto") {
-            void sdk.native.permissions.reply({
-              sessionID: request.sessionID,
-              requestID: request.id,
-              reply: "once",
-            })
-            break
-          }
-          const requests = store.permission[request.sessionID]
-          if (!requests) {
-            setStore("permission", request.sessionID, [request])
-            break
-          }
-          const match = search(requests, request.id, (r) => r.id)
-          if (match.found) {
-            setStore("permission", request.sessionID, match.index, reconcile(request))
-            break
-          }
-          setStore(
-            "permission",
-            request.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 0, request)
-            }),
-          )
-          break
-        }
-
-        case "question.replied":
-        case "question.rejected": {
-          const requests = store.question[event.properties.sessionID]
-          if (!requests) break
-          const match = search(requests, event.properties.requestID, (r) => r.id)
-          if (!match.found) break
-          setStore(
-            "question",
-            event.properties.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 1)
-            }),
-          )
-          break
-        }
-
-        case "question.asked": {
-          const request = event.properties
-          const requests = store.question[request.sessionID]
-          if (!requests) {
-            setStore("question", request.sessionID, [request])
-            break
-          }
-          const match = search(requests, request.id, (r) => r.id)
-          if (match.found) {
-            setStore("question", request.sessionID, match.index, reconcile(request))
-            break
-          }
-          setStore(
-            "question",
-            request.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 0, request)
-            }),
-          )
-          break
-        }
-
         case "todo.updated":
           setStore("todo", event.properties.sessionID, event.properties.todos)
           break
@@ -316,6 +225,86 @@ export const {
 
     nativeEvent.on("session.next.status", (event) => {
       setStore("session_status", event.data.sessionID, event.data.status)
+    })
+
+    nativeEvent.on("permission.v2.replied", (event) => {
+      const requests = store.permission[event.data.sessionID]
+      if (!requests) return
+      const match = search(requests, event.data.requestID, (request) => request.id)
+      if (!match.found) return
+      setStore(
+        "permission",
+        event.data.sessionID,
+        produce((draft) => {
+          draft.splice(match.index, 1)
+        }),
+      )
+    })
+
+    nativeEvent.on("permission.v2.asked", (event) => {
+      const request = mutable<PermissionV2Request>(event.data)
+      if (permission.mode === "auto") {
+        void sdk.native.permissions.reply({
+          sessionID: request.sessionID,
+          requestID: request.id,
+          reply: "once",
+        })
+        return
+      }
+      const requests = store.permission[request.sessionID]
+      if (!requests) {
+        setStore("permission", request.sessionID, [request])
+        return
+      }
+      const match = search(requests, request.id, (item) => item.id)
+      if (match.found) {
+        setStore("permission", request.sessionID, match.index, reconcile(request))
+        return
+      }
+      setStore(
+        "permission",
+        request.sessionID,
+        produce((draft) => {
+          draft.splice(match.index, 0, request)
+        }),
+      )
+    })
+
+    const resolveQuestion = (data: { readonly sessionID: string; readonly requestID: string }) => {
+      const requests = store.question[data.sessionID]
+      if (!requests) return
+      const match = search(requests, data.requestID, (request) => request.id)
+      if (!match.found) return
+      setStore(
+        "question",
+        data.sessionID,
+        produce((draft) => {
+          draft.splice(match.index, 1)
+        }),
+      )
+    }
+
+    nativeEvent.on("question.v2.replied", (event) => resolveQuestion(event.data))
+    nativeEvent.on("question.v2.rejected", (event) => resolveQuestion(event.data))
+    nativeEvent.on("question.v2.asked", (event) => {
+      const request = mutable<QuestionV2Request>(event.data)
+      const requests = store.question[request.sessionID]
+      if (!requests) {
+        setStore("question", request.sessionID, [request])
+        return
+      }
+      const match = search(requests, request.id, (item) => item.id)
+      if (match.found) {
+        setStore("question", request.sessionID, match.index, reconcile(request))
+        return
+      }
+      setStore(
+        "question",
+        request.sessionID,
+        produce((draft) => {
+          draft.splice(match.index, 0, request)
+        }),
+      )
     })
 
     const exit = useExit()

@@ -13,7 +13,7 @@ import { pendingToolCall, toLocations, type ToolInput } from "./tool"
 import { Effect } from "effect"
 import type { ACPClient } from "./client"
 
-type PermissionEvent = Extract<ACPClient.LegacyEvent, { type: "permission.asked" }>
+type PermissionEvent = Extract<ACPClient.LegacyEvent, { type: "permission.v2.asked" }>
 type Reply = "once" | "always" | "reject"
 type Connection = Partial<Pick<AgentSideConnection, "requestPermission" | "writeTextFile">>
 
@@ -62,9 +62,9 @@ export class Handler {
       .requestPermission({
         sessionId: permission.sessionID,
         toolCall: await permissionToolCall({
-          toolCallId: permission.tool?.callID ?? permission.id,
-          toolName: permission.permission,
-          input: permission.metadata,
+          toolCallId: permission.source?.callID ?? permission.id,
+          toolName: permission.action,
+          input: permission.metadata ?? {},
         }),
         options: permissionOptions,
       })
@@ -81,8 +81,8 @@ export class Handler {
       return
     }
 
-    if (permission.permission === "edit") {
-      await this.writeProposedEdit(session.id, permission.metadata).catch(() => {})
+    if (permission.action === "edit") {
+      await this.writeProposedEdit(session.id, permission.metadata ?? {}).catch(() => {})
     }
 
     await this.reply(permission.sessionID, permission.id, reply)

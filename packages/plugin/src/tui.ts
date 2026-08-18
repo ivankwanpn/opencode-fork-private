@@ -540,8 +540,13 @@ export type TuiSlots = {
   }
 }
 
+export type TuiCompatibilityEvent = Event
+
 export type TuiEventBus = {
-  on: <Type extends Event["type"]>(type: Type, handler: (event: Extract<Event, { type: Type }>) => void) => () => void
+  on: <Type extends TuiCompatibilityEvent["type"]>(
+    type: Type,
+    handler: (event: Extract<TuiCompatibilityEvent, { type: Type }>) => void,
+  ) => () => void
 }
 
 export type TuiNativeEvent = Frozen<V2Event>

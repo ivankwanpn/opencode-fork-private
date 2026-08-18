@@ -1623,7 +1623,7 @@ export function createServerSession(
         )
         return
       }
-      case "permission.asked": {
+      case "permission.v2.asked": {
         const permission = event.properties as PermissionV2Request
         const permissions = data.permission[permission.sessionID]
         if (!permissions) {
@@ -1640,7 +1640,7 @@ export function createServerSession(
           )
         return
       }
-      case "permission.replied": {
+      case "permission.v2.replied": {
         const props = event.properties as { sessionID: string; requestID: string }
         setData(
           "permission",
@@ -1653,7 +1653,7 @@ export function createServerSession(
         )
         return
       }
-      case "question.asked": {
+      case "question.v2.asked": {
         const question = event.properties as QuestionV2Request
         const questions = data.question[question.sessionID]
         if (!questions) {
@@ -1670,8 +1670,8 @@ export function createServerSession(
           )
         return
       }
-      case "question.replied":
-      case "question.rejected": {
+      case "question.v2.replied":
+      case "question.v2.rejected": {
         const props = event.properties as { sessionID: string; requestID: string }
         setData(
           "question",

@@ -16,7 +16,7 @@ describe("resumeStreamAfterPageShow", () => {
 })
 
 describe("adaptServerEvent", () => {
-  test("preserves V2 events while adapting permission requests for existing consumers", () => {
+  test("preserves canonical V2 permission requests", () => {
     const current = {
       id: "evt_1",
       created: 1,
@@ -25,13 +25,13 @@ describe("adaptServerEvent", () => {
     } as OpenCodeEvent
 
     expect(adaptServerEvent(current)).toMatchObject({
-      type: "permission.asked",
+      type: "permission.v2.asked",
       properties: { id: "perm_1", sessionID: "ses_1", action: "read", resources: ["src/**"] },
       current,
     })
   })
 
-  test("adapts the complete permission and question request lifecycle", () => {
+  test("preserves the canonical permission and question request lifecycle", () => {
     const permissionAsked = {
       id: "evt_permission_asked",
       created: 1,
@@ -77,7 +77,7 @@ describe("adaptServerEvent", () => {
     } as OpenCodeEvent
 
     expect(adaptServerEvent(permissionAsked)).toMatchObject({
-      type: "permission.asked",
+      type: "permission.v2.asked",
       properties: {
         id: "perm_1",
         sessionID: "ses_1",
@@ -89,11 +89,11 @@ describe("adaptServerEvent", () => {
       },
     })
     expect(adaptServerEvent(permissionReplied)).toMatchObject({
-      type: "permission.replied",
+      type: "permission.v2.replied",
       properties: { sessionID: "ses_1", requestID: "perm_1", reply: "once" },
     })
     expect(adaptServerEvent(questionAsked)).toMatchObject({
-      type: "question.asked",
+      type: "question.v2.asked",
       properties: {
         id: "que_1",
         sessionID: "ses_1",
@@ -101,11 +101,11 @@ describe("adaptServerEvent", () => {
       },
     })
     expect(adaptServerEvent(questionReplied)).toMatchObject({
-      type: "question.replied",
+      type: "question.v2.replied",
       properties: { sessionID: "ses_1", requestID: "que_1", answers: [["yes"]] },
     })
     expect(adaptServerEvent(questionRejected)).toMatchObject({
-      type: "question.rejected",
+      type: "question.v2.rejected",
       properties: { sessionID: "ses_1", requestID: "que_1" },
     })
   })

@@ -903,8 +903,7 @@ describe("ACP client EventV2 boundary", () => {
     const events = projected(await collectEvents(recording.client.events.subscribe()))
 
     expect(events.some((event) => event.type === "session.next.step.started")).toBe(false)
-    expect(events.some((event) => event.type === "permission.v2.asked")).toBe(false)
-    expect(events.filter((event) => event.type === "permission.asked")).toHaveLength(1)
+    expect(events.filter((event) => event.type === "permission.v2.asked")).toHaveLength(1)
   })
 
   test("text, reasoning, tool progress/completion, attachment, permission, and error project once", async () => {
@@ -1182,14 +1181,14 @@ describe("ACP client EventV2 boundary", () => {
         },
       },
     ])
-    expect(events.filter((event) => event.type === "permission.asked").map((event) => event.properties)).toEqual([
+    expect(events.filter((event) => event.type === "permission.v2.asked").map((event) => event.properties)).toEqual([
       {
         id: "per_test",
         sessionID: "ses_events",
-        permission: "read",
-        patterns: ["file.txt"],
+        action: "read",
+        resources: ["file.txt"],
         metadata: { reason: "test" },
-        always: ["*.txt"],
+        save: ["*.txt"],
       },
     ])
     expect(events.filter((event) => event.type === "session.error").map((event) => event.properties)).toEqual([

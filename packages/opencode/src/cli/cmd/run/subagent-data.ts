@@ -812,11 +812,11 @@ export function reduceSubagentData(input: {
   const sessionID =
     event.type === "message.updated" ||
     event.type === "message.part.delta" ||
-    event.type === "permission.asked" ||
-    event.type === "permission.replied" ||
-    event.type === "question.asked" ||
-    event.type === "question.replied" ||
-    event.type === "question.rejected" ||
+    event.type === "permission.v2.asked" ||
+    event.type === "permission.v2.replied" ||
+    event.type === "question.v2.asked" ||
+    event.type === "question.v2.replied" ||
+    event.type === "question.v2.rejected" ||
     event.type === "session.error" ||
     event.type === "session.next.status"
       ? event.properties.sessionID

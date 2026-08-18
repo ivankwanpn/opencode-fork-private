@@ -217,31 +217,6 @@ export function legacyEventProjection() {
     }
     if (!sessionID) return []
 
-    if (source.type === "permission.v2.asked") {
-      return [
-        event("permission.asked", {
-          id: data.id,
-          sessionID: SessionID.make(sessionID),
-          permission: String(data.action),
-          patterns: data.resources ?? [],
-          metadata: data.metadata ?? {},
-          always: data.save ?? [],
-          ...(data.source?.type === "tool"
-            ? { tool: { messageID: data.source.messageID, callID: data.source.callID } }
-            : {}),
-        }),
-      ]
-    }
-    if (source.type === "permission.v2.replied") {
-      return [
-        event("permission.replied", {
-          sessionID: SessionID.make(sessionID),
-          requestID: data.requestID,
-          reply: data.reply,
-        }),
-      ]
-    }
-
     if (source.type === "session.next.diff") {
       return [
         event("session.diff", {
@@ -321,34 +296,6 @@ export function legacyEventProjection() {
               : {}),
           },
           time: epochMillis(data.timestamp),
-        }),
-      ]
-    }
-
-    if (source.type === "question.v2.asked") {
-      return [
-        event("question.asked", {
-          id: data.id,
-          sessionID: SessionID.make(sessionID),
-          questions: data.questions,
-          ...(data.tool === undefined ? {} : { tool: data.tool }),
-        }),
-      ]
-    }
-    if (source.type === "question.v2.replied") {
-      return [
-        event("question.replied", {
-          sessionID: SessionID.make(sessionID),
-          requestID: data.requestID,
-          answers: data.answers,
-        }),
-      ]
-    }
-    if (source.type === "question.v2.rejected") {
-      return [
-        event("question.rejected", {
-          sessionID: SessionID.make(sessionID),
-          requestID: data.requestID,
         }),
       ]
     }

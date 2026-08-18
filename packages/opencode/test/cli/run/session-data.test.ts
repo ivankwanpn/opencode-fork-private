@@ -181,19 +181,19 @@ describe("run session data", () => {
   test("keeps permission precedence over queued questions", () => {
     let data = createSessionData()
     data = reduce(data, {
-      type: "permission.asked",
+      type: "permission.v2.asked",
       properties: {
         id: "perm-1",
         sessionID: "session-1",
-        permission: "read",
-        patterns: ["/tmp/file.txt"],
+        action: "read",
+        resources: ["/tmp/file.txt"],
         metadata: {},
-        always: [],
+        save: [],
       },
     }).data
 
     const ask = reduce(data, {
-      type: "question.asked",
+      type: "question.v2.asked",
       properties: {
         id: "question-1",
         sessionID: "session-1",
@@ -218,7 +218,7 @@ describe("run session data", () => {
 
     expect(
       reduce(ask.data, {
-        type: "permission.replied",
+        type: "permission.v2.replied",
         properties: {
           sessionID: "session-1",
           requestID: "perm-1",
@@ -236,15 +236,16 @@ describe("run session data", () => {
 
   test("refreshes the active permission view when tool input arrives later", () => {
     const data = reduce(createSessionData(), {
-      type: "permission.asked",
+      type: "permission.v2.asked",
       properties: {
         id: "perm-1",
         sessionID: "session-1",
-        permission: "bash",
-        patterns: ["src/**/*.ts"],
+        action: "bash",
+        resources: ["src/**/*.ts"],
         metadata: {},
-        always: [],
-        tool: {
+        save: [],
+        source: {
+          type: "tool",
           messageID: "msg-1",
           callID: "call-1",
         },

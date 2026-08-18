@@ -779,11 +779,11 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     if (!existing) return
     children.mark(key)
     if (
-      eventType === "permission.asked" ||
-      eventType === "permission.replied" ||
-      eventType === "question.asked" ||
-      eventType === "question.replied" ||
-      eventType === "question.rejected"
+      eventType === "permission.v2.asked" ||
+      eventType === "permission.v2.replied" ||
+      eventType === "question.v2.asked" ||
+      eventType === "question.v2.replied" ||
+      eventType === "question.v2.rejected"
     )
       bumpPendingRequestRevision(key, eventType)
     if (

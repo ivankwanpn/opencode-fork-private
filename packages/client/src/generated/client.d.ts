@@ -1730,7 +1730,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "permission.v2.asked";
+            readonly type: "catalog.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -1740,47 +1740,13 @@ export declare function make(options: ClientOptions): {
                 readonly directory: string;
                 readonly workspaceID?: string | undefined;
             } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly action: string;
-                readonly resources: readonly string[];
-                readonly save?: readonly string[] | undefined;
-                readonly metadata?: {
-                    readonly [x: string]: unknown;
-                } | undefined;
-                readonly source?: {
-                    readonly type: "tool";
-                    readonly messageID: string;
-                    readonly callID: string;
-                } | undefined;
-                readonly id: string;
-            };
+            readonly data: {};
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "permission.v2.replied";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly requestID: string;
-                readonly reply: "always" | "once" | "reject";
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.created";
+            readonly type: "session.next.agent.switched";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -1793,75 +1759,36 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly info: {
-                    readonly id: string;
-                    readonly parentID?: string | undefined;
-                    readonly projectID: string;
-                    readonly slug: string;
-                    readonly version: string;
-                    readonly agent?: string | undefined;
-                    readonly model?: {
-                        readonly id: string;
-                        readonly providerID: string;
-                        readonly variant?: string | undefined;
-                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
-                    } | undefined;
-                    readonly cost: number;
-                    readonly tokens: {
-                        readonly input: number;
-                        readonly output: number;
-                        readonly reasoning: number;
-                        readonly cache: {
-                            readonly read: number;
-                            readonly write: number;
-                        };
-                    };
-                    readonly time: {
-                        readonly created: number;
-                        readonly updated: number;
-                        readonly compacting?: number | undefined;
-                        readonly archived?: number | undefined;
-                    };
-                    readonly title: string;
-                    readonly metadata?: {
-                        readonly [x: string]: import("effect/Schema").Json;
-                    } | undefined;
-                    readonly share?: {
-                        readonly url: string;
-                    } | undefined;
-                    readonly permission?: readonly {
-                        readonly action: string;
-                        readonly resource: string;
-                        readonly effect: "allow" | "ask" | "deny";
-                    }[] | undefined;
-                    readonly location: {
-                        readonly directory: string;
-                        readonly workspaceID?: string | undefined;
-                    };
-                    readonly subpath?: string | undefined;
-                    readonly revert?: {
-                        readonly messageID: string;
-                        readonly partID?: string | undefined;
-                        readonly contentIndex?: number | undefined;
-                        readonly removedMessageIDs?: readonly string[] | undefined;
-                        readonly snapshot?: string | undefined;
-                        readonly diff?: string | undefined;
-                        readonly files?: readonly {
-                            readonly path: string;
-                            readonly status: "added" | "deleted" | "modified";
-                            readonly additions: number;
-                            readonly deletions: number;
-                            readonly patch: string;
-                        }[] | undefined;
-                    } | undefined;
-                };
+                readonly messageID: string;
+                readonly agent: string;
             };
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.updated";
+            readonly type: "session.next.context.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly messageID: string;
+                readonly text: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.created";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -2023,43 +1950,6 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly status: {
-                    readonly type: "idle";
-                } | {
-                    readonly type: "retry";
-                    readonly attempt: number;
-                    readonly message: string;
-                    readonly action?: {
-                        readonly reason: string;
-                        readonly provider: string;
-                        readonly title: string;
-                        readonly message: string;
-                        readonly label: string;
-                        readonly link?: string | undefined;
-                    } | undefined;
-                    readonly next: number;
-                } | {
-                    readonly type: "busy";
-                };
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "session.next.diff";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -2080,100 +1970,6 @@ export declare function make(options: ClientOptions): {
                     readonly deletions: number;
                     readonly status?: "added" | "deleted" | "modified" | undefined;
                 }[];
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.error";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID?: string | undefined;
-                readonly error: {
-                    readonly name: string;
-                    readonly data: unknown;
-                };
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.agent.switched";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly messageID: string;
-                readonly agent: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.model.switched";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly messageID: string;
-                readonly model: {
-                    readonly id: string;
-                    readonly providerID: string;
-                    readonly variant?: string | undefined;
-                    readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
-                };
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.moved";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly location: {
-                    readonly directory: string;
-                    readonly workspaceID?: string | undefined;
-                };
-                readonly subdirectory?: string | undefined;
             };
         } | {
             readonly id: string;
@@ -2334,23 +2130,6 @@ export declare function make(options: ClientOptions): {
                         readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
                     };
                     readonly content: readonly ({
-                        readonly type: "text";
-                        readonly id: string;
-                        readonly text: string;
-                    } | {
-                        readonly type: "reasoning";
-                        readonly id: string;
-                        readonly text: string;
-                        readonly providerMetadata?: {
-                            readonly [x: string]: {
-                                readonly [x: string]: unknown;
-                            };
-                        } | undefined;
-                        readonly time?: {
-                            readonly created: number;
-                            readonly completed?: number | undefined;
-                        } | undefined;
-                    } | {
                         readonly type: "tool";
                         readonly id: string;
                         readonly name: string;
@@ -2558,6 +2337,23 @@ export declare function make(options: ClientOptions): {
                             readonly completed?: number | undefined;
                             readonly pruned?: number | undefined;
                         };
+                    } | {
+                        readonly type: "text";
+                        readonly id: string;
+                        readonly text: string;
+                    } | {
+                        readonly type: "reasoning";
+                        readonly id: string;
+                        readonly text: string;
+                        readonly providerMetadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                        readonly time?: {
+                            readonly created: number;
+                            readonly completed?: number | undefined;
+                        } | undefined;
                     })[];
                     readonly snapshot?: {
                         readonly start?: string | undefined;
@@ -2610,7 +2406,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.transcript.message.removed";
+            readonly type: "session.next.model.switched";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -2624,13 +2420,19 @@ export declare function make(options: ClientOptions): {
                 readonly timestamp: number;
                 readonly sessionID: string;
                 readonly messageID: string;
+                readonly model: {
+                    readonly id: string;
+                    readonly providerID: string;
+                    readonly variant?: string | undefined;
+                    readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                };
             };
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.transcript.user-text.updated";
+            readonly type: "session.next.moved";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -2643,16 +2445,18 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly messageID: string;
-                readonly partID: string;
-                readonly text: string;
+                readonly location: {
+                    readonly directory: string;
+                    readonly workspaceID?: string | undefined;
+                };
+                readonly subdirectory?: string | undefined;
             };
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.transcript.user-text.removed";
+            readonly type: "session.next.prompt.admitted";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -2666,6 +2470,226 @@ export declare function make(options: ClientOptions): {
                 readonly timestamp: number;
                 readonly sessionID: string;
                 readonly messageID: string;
+                readonly prompt: {
+                    readonly text: string;
+                    readonly context?: readonly {
+                        readonly text: string;
+                        readonly metadata?: {
+                            readonly [x: string]: unknown;
+                        } | undefined;
+                    }[] | undefined;
+                    readonly files?: readonly {
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string | undefined;
+                        readonly description?: string | undefined;
+                        readonly source?: {
+                            readonly start: number;
+                            readonly end: number;
+                            readonly text: string;
+                        } | undefined;
+                        readonly resource?: {
+                            readonly clientName: string;
+                            readonly uri: string;
+                        } | undefined;
+                        readonly materialized?: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                        } | {
+                            readonly type: "error";
+                            readonly message: string;
+                        })[] | undefined;
+                    }[] | undefined;
+                    readonly agents?: readonly {
+                        readonly name: string;
+                        readonly source?: {
+                            readonly start: number;
+                            readonly end: number;
+                            readonly text: string;
+                        } | undefined;
+                        readonly guidance?: string | undefined;
+                    }[] | undefined;
+                    readonly system?: string | undefined;
+                    readonly tools?: {
+                        readonly [x: string]: boolean;
+                    } | undefined;
+                    readonly format?: {
+                        readonly type: "text";
+                    } | {
+                        readonly type: "json_schema";
+                        readonly schema: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly retryCount?: number | undefined;
+                    } | undefined;
+                };
+                readonly synthetic?: {
+                    readonly description: string;
+                    readonly scope?: "session" | "turn" | undefined;
+                } | undefined;
+                readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.prompted";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly messageID: string;
+                readonly prompt: {
+                    readonly text: string;
+                    readonly context?: readonly {
+                        readonly text: string;
+                        readonly metadata?: {
+                            readonly [x: string]: unknown;
+                        } | undefined;
+                    }[] | undefined;
+                    readonly files?: readonly {
+                        readonly uri: string;
+                        readonly mime: string;
+                        readonly name?: string | undefined;
+                        readonly description?: string | undefined;
+                        readonly source?: {
+                            readonly start: number;
+                            readonly end: number;
+                            readonly text: string;
+                        } | undefined;
+                        readonly resource?: {
+                            readonly clientName: string;
+                            readonly uri: string;
+                        } | undefined;
+                        readonly materialized?: readonly ({
+                            readonly type: "text";
+                            readonly text: string;
+                        } | {
+                            readonly type: "file";
+                            readonly uri: string;
+                            readonly mime: string;
+                            readonly name?: string | undefined;
+                        } | {
+                            readonly type: "error";
+                            readonly message: string;
+                        })[] | undefined;
+                    }[] | undefined;
+                    readonly agents?: readonly {
+                        readonly name: string;
+                        readonly source?: {
+                            readonly start: number;
+                            readonly end: number;
+                            readonly text: string;
+                        } | undefined;
+                        readonly guidance?: string | undefined;
+                    }[] | undefined;
+                    readonly system?: string | undefined;
+                    readonly tools?: {
+                        readonly [x: string]: boolean;
+                    } | undefined;
+                    readonly format?: {
+                        readonly type: "text";
+                    } | {
+                        readonly type: "json_schema";
+                        readonly schema: {
+                            readonly [x: string]: unknown;
+                        };
+                        readonly retryCount?: number | undefined;
+                    } | undefined;
+                };
+                readonly synthetic?: {
+                    readonly description: string;
+                    readonly scope?: "session" | "turn" | undefined;
+                } | undefined;
+                readonly delivery: "queue" | "steer";
+                readonly intent?: {
+                    readonly type: "start";
+                } | {
+                    readonly type: "steer";
+                    readonly expectedTurnID: string;
+                } | {
+                    readonly type: "queue";
+                } | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly status: {
+                    readonly type: "idle";
+                } | {
+                    readonly type: "retry";
+                    readonly attempt: number;
+                    readonly message: string;
+                    readonly action?: {
+                        readonly reason: string;
+                        readonly provider: string;
+                        readonly title: string;
+                        readonly message: string;
+                        readonly label: string;
+                        readonly link?: string | undefined;
+                    } | undefined;
+                    readonly next: number;
+                } | {
+                    readonly type: "busy";
+                };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.content.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly contentIndex: number;
                 readonly partID: string;
             };
         } | {
@@ -2690,23 +2714,6 @@ export declare function make(options: ClientOptions): {
                 readonly contentIndex: number;
                 readonly partID: string;
                 readonly content: {
-                    readonly type: "text";
-                    readonly id: string;
-                    readonly text: string;
-                } | {
-                    readonly type: "reasoning";
-                    readonly id: string;
-                    readonly text: string;
-                    readonly providerMetadata?: {
-                        readonly [x: string]: {
-                            readonly [x: string]: unknown;
-                        };
-                    } | undefined;
-                    readonly time?: {
-                        readonly created: number;
-                        readonly completed?: number | undefined;
-                    } | undefined;
-                } | {
                     readonly type: "tool";
                     readonly id: string;
                     readonly name: string;
@@ -2914,6 +2921,23 @@ export declare function make(options: ClientOptions): {
                         readonly completed?: number | undefined;
                         readonly pruned?: number | undefined;
                     };
+                } | {
+                    readonly type: "text";
+                    readonly id: string;
+                    readonly text: string;
+                } | {
+                    readonly type: "reasoning";
+                    readonly id: string;
+                    readonly text: string;
+                    readonly providerMetadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: unknown;
+                        };
+                    } | undefined;
+                    readonly time?: {
+                        readonly created: number;
+                        readonly completed?: number | undefined;
+                    } | undefined;
                 };
             };
         } | {
@@ -2921,7 +2945,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.transcript.content.removed";
+            readonly type: "session.next.transcript.message.removed";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -2934,8 +2958,27 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly contentIndex: number;
+                readonly messageID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.transcript.user-text.removed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly messageID: string;
                 readonly partID: string;
             };
         } | {
@@ -2943,7 +2986,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.prompted";
+            readonly type: "session.next.transcript.user-text.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -2957,188 +3000,8 @@ export declare function make(options: ClientOptions): {
                 readonly timestamp: number;
                 readonly sessionID: string;
                 readonly messageID: string;
-                readonly prompt: {
-                    readonly text: string;
-                    readonly context?: readonly {
-                        readonly text: string;
-                        readonly metadata?: {
-                            readonly [x: string]: unknown;
-                        } | undefined;
-                    }[] | undefined;
-                    readonly files?: readonly {
-                        readonly uri: string;
-                        readonly mime: string;
-                        readonly name?: string | undefined;
-                        readonly description?: string | undefined;
-                        readonly source?: {
-                            readonly start: number;
-                            readonly end: number;
-                            readonly text: string;
-                        } | undefined;
-                        readonly resource?: {
-                            readonly clientName: string;
-                            readonly uri: string;
-                        } | undefined;
-                        readonly materialized?: readonly ({
-                            readonly type: "text";
-                            readonly text: string;
-                        } | {
-                            readonly type: "file";
-                            readonly uri: string;
-                            readonly mime: string;
-                            readonly name?: string | undefined;
-                        } | {
-                            readonly type: "error";
-                            readonly message: string;
-                        })[] | undefined;
-                    }[] | undefined;
-                    readonly agents?: readonly {
-                        readonly name: string;
-                        readonly source?: {
-                            readonly start: number;
-                            readonly end: number;
-                            readonly text: string;
-                        } | undefined;
-                        readonly guidance?: string | undefined;
-                    }[] | undefined;
-                    readonly system?: string | undefined;
-                    readonly tools?: {
-                        readonly [x: string]: boolean;
-                    } | undefined;
-                    readonly format?: {
-                        readonly type: "text";
-                    } | {
-                        readonly type: "json_schema";
-                        readonly schema: {
-                            readonly [x: string]: unknown;
-                        };
-                        readonly retryCount?: number | undefined;
-                    } | undefined;
-                };
-                readonly synthetic?: {
-                    readonly description: string;
-                    readonly scope?: "session" | "turn" | undefined;
-                } | undefined;
-                readonly delivery: "queue" | "steer";
-                readonly intent?: {
-                    readonly type: "start";
-                } | {
-                    readonly type: "steer";
-                    readonly expectedTurnID: string;
-                } | {
-                    readonly type: "queue";
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.prompt.admitted";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly messageID: string;
-                readonly prompt: {
-                    readonly text: string;
-                    readonly context?: readonly {
-                        readonly text: string;
-                        readonly metadata?: {
-                            readonly [x: string]: unknown;
-                        } | undefined;
-                    }[] | undefined;
-                    readonly files?: readonly {
-                        readonly uri: string;
-                        readonly mime: string;
-                        readonly name?: string | undefined;
-                        readonly description?: string | undefined;
-                        readonly source?: {
-                            readonly start: number;
-                            readonly end: number;
-                            readonly text: string;
-                        } | undefined;
-                        readonly resource?: {
-                            readonly clientName: string;
-                            readonly uri: string;
-                        } | undefined;
-                        readonly materialized?: readonly ({
-                            readonly type: "text";
-                            readonly text: string;
-                        } | {
-                            readonly type: "file";
-                            readonly uri: string;
-                            readonly mime: string;
-                            readonly name?: string | undefined;
-                        } | {
-                            readonly type: "error";
-                            readonly message: string;
-                        })[] | undefined;
-                    }[] | undefined;
-                    readonly agents?: readonly {
-                        readonly name: string;
-                        readonly source?: {
-                            readonly start: number;
-                            readonly end: number;
-                            readonly text: string;
-                        } | undefined;
-                        readonly guidance?: string | undefined;
-                    }[] | undefined;
-                    readonly system?: string | undefined;
-                    readonly tools?: {
-                        readonly [x: string]: boolean;
-                    } | undefined;
-                    readonly format?: {
-                        readonly type: "text";
-                    } | {
-                        readonly type: "json_schema";
-                        readonly schema: {
-                            readonly [x: string]: unknown;
-                        };
-                        readonly retryCount?: number | undefined;
-                    } | undefined;
-                };
-                readonly synthetic?: {
-                    readonly description: string;
-                    readonly scope?: "session" | "turn" | undefined;
-                } | undefined;
-                readonly delivery: "queue" | "steer";
-                readonly intent?: {
-                    readonly type: "start";
-                } | {
-                    readonly type: "steer";
-                    readonly expectedTurnID: string;
-                } | {
-                    readonly type: "queue";
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.turn.started";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly turnID: string;
+                readonly partID: string;
+                readonly text: string;
             };
         } | {
             readonly id: string;
@@ -3166,7 +3029,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.context.updated";
+            readonly type: "session.next.turn.started";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -3179,15 +3042,14 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly messageID: string;
-                readonly text: string;
+                readonly turnID: string;
             };
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.synthetic";
+            readonly type: "session.next.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -3200,53 +3062,68 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly messageID: string;
-                readonly text: string;
-                readonly kind?: "build-switch" | "plan-approved" | "plan-mode" | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.shell.started";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly messageID: string;
-                readonly userID?: string | undefined;
-                readonly callID: string;
-                readonly command: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.shell.delta";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly callID: string;
-                readonly delta: string;
+                readonly info: {
+                    readonly id: string;
+                    readonly parentID?: string | undefined;
+                    readonly projectID: string;
+                    readonly slug: string;
+                    readonly version: string;
+                    readonly agent?: string | undefined;
+                    readonly model?: {
+                        readonly id: string;
+                        readonly providerID: string;
+                        readonly variant?: string | undefined;
+                        readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                    } | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: number;
+                        readonly updated: number;
+                        readonly compacting?: number | undefined;
+                        readonly archived?: number | undefined;
+                    };
+                    readonly title: string;
+                    readonly metadata?: {
+                        readonly [x: string]: import("effect/Schema").Json;
+                    } | undefined;
+                    readonly share?: {
+                        readonly url: string;
+                    } | undefined;
+                    readonly permission?: readonly {
+                        readonly action: string;
+                        readonly resource: string;
+                        readonly effect: "allow" | "ask" | "deny";
+                    }[] | undefined;
+                    readonly location: {
+                        readonly directory: string;
+                        readonly workspaceID?: string | undefined;
+                    };
+                    readonly subpath?: string | undefined;
+                    readonly revert?: {
+                        readonly messageID: string;
+                        readonly partID?: string | undefined;
+                        readonly contentIndex?: number | undefined;
+                        readonly removedMessageIDs?: readonly string[] | undefined;
+                        readonly snapshot?: string | undefined;
+                        readonly diff?: string | undefined;
+                        readonly files?: readonly {
+                            readonly path: string;
+                            readonly status: "added" | "deleted" | "modified";
+                            readonly additions: number;
+                            readonly deletions: number;
+                            readonly patch: string;
+                        }[] | undefined;
+                    } | undefined;
+                };
             };
         } | {
             readonly id: string;
@@ -3274,7 +3151,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.step.started";
+            readonly type: "session.next.shell.started";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -3287,15 +3164,10 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly agent: string;
-                readonly model: {
-                    readonly id: string;
-                    readonly providerID: string;
-                    readonly variant?: string | undefined;
-                    readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
-                };
-                readonly snapshot?: string | undefined;
+                readonly messageID: string;
+                readonly userID?: string | undefined;
+                readonly callID: string;
+                readonly command: string;
             };
         } | {
             readonly id: string;
@@ -3366,7 +3238,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.text.started";
+            readonly type: "session.next.step.started";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -3380,14 +3252,21 @@ export declare function make(options: ClientOptions): {
                 readonly timestamp: number;
                 readonly sessionID: string;
                 readonly assistantMessageID: string;
-                readonly textID: string;
+                readonly agent: string;
+                readonly model: {
+                    readonly id: string;
+                    readonly providerID: string;
+                    readonly variant?: string | undefined;
+                    readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
+                };
+                readonly snapshot?: string | undefined;
             };
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.text.delta";
+            readonly type: "session.next.synthetic";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -3400,9 +3279,9 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly timestamp: number;
                 readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly textID: string;
-                readonly delta: string;
+                readonly messageID: string;
+                readonly text: string;
+                readonly kind?: "build-switch" | "plan-approved" | "plan-mode" | undefined;
             };
         } | {
             readonly id: string;
@@ -3431,7 +3310,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.reasoning.started";
+            readonly type: "session.next.text.started";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -3445,127 +3324,46 @@ export declare function make(options: ClientOptions): {
                 readonly timestamp: number;
                 readonly sessionID: string;
                 readonly assistantMessageID: string;
-                readonly reasoningID: string;
-                readonly providerMetadata?: {
-                    readonly [x: string]: {
-                        readonly [x: string]: unknown;
+                readonly textID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.tool-discovery.completed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly callID: string;
+                readonly query: string;
+                readonly limit: number;
+                readonly catalogRevision: string;
+                readonly matches: readonly {
+                    readonly key: string;
+                    readonly callableName: string;
+                    readonly definitionHash: string;
+                    readonly source: {
+                        readonly type: "app" | "builtin" | "mcp" | "plugin";
+                        readonly id: string;
+                        readonly displayName?: string | undefined;
                     };
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.reasoning.delta";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly reasoningID: string;
-                readonly delta: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.reasoning.ended";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly reasoningID: string;
-                readonly text: string;
-                readonly providerMetadata?: {
-                    readonly [x: string]: {
-                        readonly [x: string]: unknown;
-                    };
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.tool.input.started";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly callID: string;
-                readonly name: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.tool.input.delta";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly callID: string;
-                readonly delta: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.tool.input.ended";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly callID: string;
-                readonly text: string;
+                }[];
+                readonly pendingSources: readonly {
+                    readonly type: "app" | "builtin" | "mcp" | "plugin";
+                    readonly id: string;
+                    readonly displayName?: string | undefined;
+                }[];
             };
         } | {
             readonly id: string;
@@ -3599,6 +3397,84 @@ export declare function make(options: ClientOptions): {
                         };
                     } | undefined;
                 };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.tool.failed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly callID: string;
+                readonly error: {
+                    readonly type: "unknown";
+                    readonly message: string;
+                };
+                readonly result?: unknown;
+                readonly provider: {
+                    readonly executed: boolean;
+                    readonly metadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: unknown;
+                        };
+                    } | undefined;
+                };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.tool.input.ended";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly callID: string;
+                readonly text: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.tool.input.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly callID: string;
+                readonly name: string;
             };
         } | {
             readonly id: string;
@@ -3745,204 +3621,6 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "session.next.tool.failed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly callID: string;
-                readonly error: {
-                    readonly type: "unknown";
-                    readonly message: string;
-                };
-                readonly result?: unknown;
-                readonly provider: {
-                    readonly executed: boolean;
-                    readonly metadata?: {
-                        readonly [x: string]: {
-                            readonly [x: string]: unknown;
-                        };
-                    } | undefined;
-                };
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.tool-discovery.completed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly assistantMessageID: string;
-                readonly callID: string;
-                readonly query: string;
-                readonly limit: number;
-                readonly catalogRevision: string;
-                readonly matches: readonly {
-                    readonly key: string;
-                    readonly callableName: string;
-                    readonly definitionHash: string;
-                    readonly source: {
-                        readonly type: "app" | "builtin" | "mcp" | "plugin";
-                        readonly id: string;
-                        readonly displayName?: string | undefined;
-                    };
-                }[];
-                readonly pendingSources: readonly {
-                    readonly type: "app" | "builtin" | "mcp" | "plugin";
-                    readonly id: string;
-                    readonly displayName?: string | undefined;
-                }[];
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.provider.attempt.started";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly attemptID: string;
-                readonly assistantMessageID: string;
-                readonly attempt: number;
-                readonly retryOf?: string | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.provider.attempt.response.started";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly attemptID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.provider.attempt.ended";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly attemptID: string;
-                readonly assistantMessageID: string;
-                readonly outcome: "abandoned" | "completed" | "failed" | "interrupted";
-                readonly continuation: boolean;
-                readonly error?: {
-                    readonly type: "unknown";
-                    readonly message: string;
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.provider.recovery.decided";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly attemptID: string;
-                readonly decision: "abandon" | "retry";
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.retried";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly attemptID: string;
-                readonly attempt: number;
-                readonly next: number;
-                readonly error: {
-                    readonly message: string;
-                    readonly statusCode?: number | undefined;
-                    readonly isRetryable: boolean;
-                    readonly responseHeaders?: {
-                        readonly [x: string]: string;
-                    } | undefined;
-                    readonly responseBody?: string | undefined;
-                    readonly metadata?: {
-                        readonly [x: string]: string;
-                    } | undefined;
-                };
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "session.next.compaction.started";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -3958,27 +3636,6 @@ export declare function make(options: ClientOptions): {
                 readonly sessionID: string;
                 readonly messageID: string;
                 readonly reason: "auto" | "manual";
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "session.next.compaction.delta";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly timestamp: number;
-                readonly sessionID: string;
-                readonly messageID: string;
-                readonly text: string;
             };
         } | {
             readonly id: string;
@@ -4026,6 +3683,184 @@ export declare function make(options: ClientOptions): {
                 readonly error: {
                     readonly type: "unknown";
                     readonly message: string;
+                };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.provider.attempt.ended";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly attemptID: string;
+                readonly assistantMessageID: string;
+                readonly outcome: "abandoned" | "completed" | "failed" | "interrupted";
+                readonly continuation: boolean;
+                readonly error?: {
+                    readonly type: "unknown";
+                    readonly message: string;
+                } | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.provider.attempt.response.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly attemptID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.provider.attempt.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly attemptID: string;
+                readonly assistantMessageID: string;
+                readonly attempt: number;
+                readonly retryOf?: string | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.provider.recovery.decided";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly attemptID: string;
+                readonly decision: "abandon" | "retry";
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.reasoning.ended";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly reasoningID: string;
+                readonly text: string;
+                readonly providerMetadata?: {
+                    readonly [x: string]: {
+                        readonly [x: string]: unknown;
+                    };
+                } | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.reasoning.started";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly reasoningID: string;
+                readonly providerMetadata?: {
+                    readonly [x: string]: {
+                        readonly [x: string]: unknown;
+                    };
+                } | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.retried";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly attemptID: string;
+                readonly attempt: number;
+                readonly next: number;
+                readonly error: {
+                    readonly message: string;
+                    readonly statusCode?: number | undefined;
+                    readonly isRetryable: boolean;
+                    readonly responseHeaders?: {
+                        readonly [x: string]: string;
+                    } | undefined;
+                    readonly responseBody?: string | undefined;
+                    readonly metadata?: {
+                        readonly [x: string]: string;
+                    } | undefined;
                 };
             };
         } | {
@@ -4109,323 +3944,6 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "permission.asked";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string;
-                readonly sessionID: string;
-                readonly permission: string;
-                readonly patterns: readonly string[];
-                readonly metadata: {
-                    readonly [x: string]: unknown;
-                };
-                readonly always: readonly string[];
-                readonly tool?: {
-                    readonly messageID: string;
-                    readonly callID: string;
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "permission.replied";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly requestID: string;
-                readonly reply: "always" | "once" | "reject";
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "lsp.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "plugin.added";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.asked";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly id: string;
-                readonly sessionID: string;
-                readonly questions: readonly {
-                    readonly question: string;
-                    readonly header: string;
-                    readonly options: readonly {
-                        readonly label: string;
-                        readonly description: string;
-                    }[];
-                    readonly multiple?: boolean | undefined;
-                    readonly custom?: boolean | undefined;
-                }[];
-                readonly tool?: {
-                    readonly messageID: string;
-                    readonly callID: string;
-                } | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.rejected";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly requestID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "question.replied";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly requestID: string;
-                readonly answers: readonly (readonly string[])[];
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "todo.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly todos: readonly {
-                    readonly content: string;
-                    readonly status: string;
-                    readonly priority: string;
-                }[];
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.failed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly message: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.ready";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly name: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly workspaceID: string;
-                readonly status: "connected" | "connecting" | "disconnected" | "error";
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "models-dev.refreshed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "integration.connection.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly integrationID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "integration.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "catalog.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "vcs.branch.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly branch?: string | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "message.part.delta";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4484,6 +4002,19 @@ export declare function make(options: ClientOptions): {
                     readonly id: string;
                     readonly sessionID: string;
                     readonly messageID: string;
+                    readonly type: "snapshot";
+                    readonly snapshot: string;
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "patch";
+                    readonly hash: string;
+                    readonly files: readonly string[];
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
                     readonly type: "text";
                     readonly text: string;
                     readonly synthetic?: boolean | undefined;
@@ -4495,19 +4026,6 @@ export declare function make(options: ClientOptions): {
                     readonly metadata?: {
                         readonly [x: string]: any;
                     } | undefined;
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "subtask";
-                    readonly prompt: string;
-                    readonly description: string;
-                    readonly agent: string;
-                    readonly model?: {
-                        readonly providerID: string;
-                        readonly modelID: string;
-                    } | undefined;
-                    readonly command?: string | undefined;
                 } | {
                     readonly id: string;
                     readonly sessionID: string;
@@ -4567,6 +4085,86 @@ export declare function make(options: ClientOptions): {
                         readonly clientName: string;
                         readonly uri: string;
                     } | undefined;
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "agent";
+                    readonly name: string;
+                    readonly source?: {
+                        readonly value: string;
+                        readonly start: number;
+                        readonly end: number;
+                    } | undefined;
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "compaction";
+                    readonly auto: boolean;
+                    readonly overflow?: boolean | undefined;
+                    readonly tail_start_id?: string | undefined;
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "subtask";
+                    readonly prompt: string;
+                    readonly description: string;
+                    readonly agent: string;
+                    readonly model?: {
+                        readonly providerID: string;
+                        readonly modelID: string;
+                    } | undefined;
+                    readonly command?: string | undefined;
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "retry";
+                    readonly attempt: number;
+                    readonly error: {
+                        readonly name: "APIError";
+                        readonly data: {
+                            readonly message: string;
+                            readonly statusCode?: number | undefined;
+                            readonly isRetryable: boolean;
+                            readonly responseHeaders?: {
+                                readonly [x: string]: string;
+                            } | undefined;
+                            readonly responseBody?: string | undefined;
+                            readonly metadata?: {
+                                readonly [x: string]: string;
+                            } | undefined;
+                        };
+                    };
+                    readonly time: {
+                        readonly created: number;
+                    };
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "step-start";
+                    readonly snapshot?: string | undefined;
+                } | {
+                    readonly id: string;
+                    readonly sessionID: string;
+                    readonly messageID: string;
+                    readonly type: "step-finish";
+                    readonly reason: string;
+                    readonly snapshot?: string | undefined;
+                    readonly cost: number;
+                    readonly tokens: {
+                        readonly total?: number | undefined;
+                        readonly input: number;
+                        readonly output: number;
+                        readonly reasoning: number;
+                        readonly cache: {
+                            readonly read: number;
+                            readonly write: number;
+                        };
+                    };
                 } | {
                     readonly id: string;
                     readonly sessionID: string;
@@ -4671,86 +4269,6 @@ export declare function make(options: ClientOptions): {
                     readonly metadata?: {
                         readonly [x: string]: any;
                     } | undefined;
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "step-start";
-                    readonly snapshot?: string | undefined;
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "step-finish";
-                    readonly reason: string;
-                    readonly snapshot?: string | undefined;
-                    readonly cost: number;
-                    readonly tokens: {
-                        readonly total?: number | undefined;
-                        readonly input: number;
-                        readonly output: number;
-                        readonly reasoning: number;
-                        readonly cache: {
-                            readonly read: number;
-                            readonly write: number;
-                        };
-                    };
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "snapshot";
-                    readonly snapshot: string;
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "patch";
-                    readonly hash: string;
-                    readonly files: readonly string[];
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "agent";
-                    readonly name: string;
-                    readonly source?: {
-                        readonly value: string;
-                        readonly start: number;
-                        readonly end: number;
-                    } | undefined;
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "retry";
-                    readonly attempt: number;
-                    readonly error: {
-                        readonly name: "APIError";
-                        readonly data: {
-                            readonly message: string;
-                            readonly statusCode?: number | undefined;
-                            readonly isRetryable: boolean;
-                            readonly responseHeaders?: {
-                                readonly [x: string]: string;
-                            } | undefined;
-                            readonly responseBody?: string | undefined;
-                            readonly metadata?: {
-                                readonly [x: string]: string;
-                            } | undefined;
-                        };
-                    };
-                    readonly time: {
-                        readonly created: number;
-                    };
-                } | {
-                    readonly id: string;
-                    readonly sessionID: string;
-                    readonly messageID: string;
-                    readonly type: "compaction";
-                    readonly auto: boolean;
-                    readonly overflow?: boolean | undefined;
-                    readonly tail_start_id?: string | undefined;
                 };
                 readonly time: number;
             };
@@ -4837,6 +4355,20 @@ export declare function make(options: ClientOptions): {
                         readonly completed?: number | undefined;
                     };
                     readonly error?: {
+                        readonly name: "APIError";
+                        readonly data: {
+                            readonly message: string;
+                            readonly statusCode?: number | undefined;
+                            readonly isRetryable: boolean;
+                            readonly responseHeaders?: {
+                                readonly [x: string]: string;
+                            } | undefined;
+                            readonly responseBody?: string | undefined;
+                            readonly metadata?: {
+                                readonly [x: string]: string;
+                            } | undefined;
+                        };
+                    } | {
                         readonly name: "ProviderAuthError";
                         readonly data: {
                             readonly providerID: string;
@@ -4872,20 +4404,6 @@ export declare function make(options: ClientOptions): {
                         readonly name: "ContentFilterError";
                         readonly data: {
                             readonly message: string;
-                        };
-                    } | {
-                        readonly name: "APIError";
-                        readonly data: {
-                            readonly message: string;
-                            readonly statusCode?: number | undefined;
-                            readonly isRetryable: boolean;
-                            readonly responseHeaders?: {
-                                readonly [x: string]: string;
-                            } | undefined;
-                            readonly responseBody?: string | undefined;
-                            readonly metadata?: {
-                                readonly [x: string]: string;
-                            } | undefined;
                         };
                     } | undefined;
                     readonly parentID: string;
@@ -5119,6 +4637,20 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly sessionID?: string | undefined;
                 readonly error?: {
+                    readonly name: "APIError";
+                    readonly data: {
+                        readonly message: string;
+                        readonly statusCode?: number | undefined;
+                        readonly isRetryable: boolean;
+                        readonly responseHeaders?: {
+                            readonly [x: string]: string;
+                        } | undefined;
+                        readonly responseBody?: string | undefined;
+                        readonly metadata?: {
+                            readonly [x: string]: string;
+                        } | undefined;
+                    };
+                } | {
                     readonly name: "ProviderAuthError";
                     readonly data: {
                         readonly providerID: string;
@@ -5154,20 +4686,6 @@ export declare function make(options: ClientOptions): {
                     readonly name: "ContentFilterError";
                     readonly data: {
                         readonly message: string;
-                    };
-                } | {
-                    readonly name: "APIError";
-                    readonly data: {
-                        readonly message: string;
-                        readonly statusCode?: number | undefined;
-                        readonly isRetryable: boolean;
-                        readonly responseHeaders?: {
-                            readonly [x: string]: string;
-                        } | undefined;
-                        readonly responseBody?: string | undefined;
-                        readonly metadata?: {
-                            readonly [x: string]: string;
-                        } | undefined;
                     };
                 } | undefined;
             };
@@ -5257,7 +4775,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "file.edited";
+            readonly type: "mcp.browser.open.failed";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -5268,30 +4786,15 @@ export declare function make(options: ClientOptions): {
                 readonly workspaceID?: string | undefined;
             } | undefined;
             readonly data: {
-                readonly file: string;
+                readonly mcpName: string;
+                readonly url: string;
             };
         } | {
             readonly id: string;
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "reference.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "project.directories.updated";
+            readonly type: "mcp.tools.changed";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -5302,26 +4805,7 @@ export declare function make(options: ClientOptions): {
                 readonly workspaceID?: string | undefined;
             } | undefined;
             readonly data: {
-                readonly projectID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "file.watcher.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly file: string;
-                readonly event: "add" | "change" | "unlink";
+                readonly server: string;
             };
         } | {
             readonly id: string;
@@ -5413,6 +4897,438 @@ export declare function make(options: ClientOptions): {
                     readonly pid: number;
                     readonly exitCode?: number | undefined;
                 };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "todo.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string;
+                readonly todos: readonly {
+                    readonly content: string;
+                    readonly status: string;
+                    readonly priority: string;
+                }[];
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.failed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly message: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.ready";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly name: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly workspaceID: string;
+                readonly status: "connected" | "connecting" | "disconnected" | "error";
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "models-dev.refreshed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "integration.connection.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly integrationID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "integration.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "lsp.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "vcs.branch.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly branch?: string | undefined;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.error";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID?: string | undefined;
+                readonly error: {
+                    readonly name: string;
+                    readonly data: unknown;
+                };
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.reasoning.delta";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly reasoningID: string;
+                readonly delta: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.shell.delta";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly callID: string;
+                readonly delta: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.text.delta";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly textID: string;
+                readonly delta: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.compaction.delta";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly messageID: string;
+                readonly text: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.tool.input.delta";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly callID: string;
+                readonly delta: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "file.edited";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly file: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "reference.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "permission.v2.asked";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string;
+                readonly action: string;
+                readonly resources: readonly string[];
+                readonly save?: readonly string[] | undefined;
+                readonly metadata?: {
+                    readonly [x: string]: unknown;
+                } | undefined;
+                readonly source?: {
+                    readonly type: "tool";
+                    readonly messageID: string;
+                    readonly callID: string;
+                } | undefined;
+                readonly id: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "permission.v2.replied";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string;
+                readonly requestID: string;
+                readonly reply: "always" | "once" | "reject";
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "plugin.added";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly id: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "project.directories.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly projectID: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "file.watcher.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly file: string;
+                readonly event: "add" | "change" | "unlink";
             };
         } | {
             readonly id: string;
@@ -5560,43 +5476,6 @@ export declare function make(options: ClientOptions): {
                 readonly message: string;
                 readonly variant: "error" | "info" | "success" | "warning";
                 readonly duration?: number | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "mcp.browser.open.failed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly mcpName: string;
-                readonly url: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "mcp.tools.changed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly server: string;
             };
         } | {
             readonly id: string;

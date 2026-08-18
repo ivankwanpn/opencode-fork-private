@@ -537,7 +537,7 @@ describe("applyDirectoryEvent", () => {
     )
 
     applyDirectoryEvent({
-      event: { type: "permission.asked", properties: permissionRequest("perm_2", sessionID) },
+      event: { type: "permission.v2.asked", properties: permissionRequest("perm_2", sessionID) },
       store,
       setStore,
       push() {},
@@ -547,7 +547,7 @@ describe("applyDirectoryEvent", () => {
     expect(store.permission[sessionID]?.map((x) => x.id)).toEqual(["perm_1", "perm_2", "perm_3"])
 
     applyDirectoryEvent({
-      event: { type: "permission.asked", properties: permissionRequest("perm_2", sessionID, "updated") },
+      event: { type: "permission.v2.asked", properties: permissionRequest("perm_2", sessionID, "updated") },
       store,
       setStore,
       push() {},
@@ -557,7 +557,7 @@ describe("applyDirectoryEvent", () => {
     expect(store.permission[sessionID]?.find((x) => x.id === "perm_2")?.action).toBe("updated")
 
     applyDirectoryEvent({
-      event: { type: "permission.replied", properties: { sessionID, requestID: "perm_2" } },
+      event: { type: "permission.v2.replied", properties: { sessionID, requestID: "perm_2" } },
       store,
       setStore,
       push() {},
@@ -567,7 +567,7 @@ describe("applyDirectoryEvent", () => {
     expect(store.permission[sessionID]?.map((x) => x.id)).toEqual(["perm_1", "perm_3"])
 
     applyDirectoryEvent({
-      event: { type: "question.asked", properties: questionRequest("q_2", sessionID) },
+      event: { type: "question.v2.asked", properties: questionRequest("q_2", sessionID) },
       store,
       setStore,
       push() {},
@@ -577,7 +577,7 @@ describe("applyDirectoryEvent", () => {
     expect(store.question[sessionID]?.map((x) => x.id)).toEqual(["q_1", "q_2", "q_3"])
 
     applyDirectoryEvent({
-      event: { type: "question.asked", properties: questionRequest("q_2", sessionID, "updated") },
+      event: { type: "question.v2.asked", properties: questionRequest("q_2", sessionID, "updated") },
       store,
       setStore,
       push() {},
@@ -587,7 +587,7 @@ describe("applyDirectoryEvent", () => {
     expect(store.question[sessionID]?.find((x) => x.id === "q_2")?.questions[0]?.header).toBe("updated")
 
     applyDirectoryEvent({
-      event: { type: "question.rejected", properties: { sessionID, requestID: "q_2" } },
+      event: { type: "question.v2.rejected", properties: { sessionID, requestID: "q_2" } },
       store,
       setStore,
       push() {},

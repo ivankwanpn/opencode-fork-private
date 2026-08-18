@@ -89,8 +89,6 @@ export type Event =
   | EventMessagePartDelta
   | EventSessionDiff
   | EventSessionError
-  | EventPermissionAsked
-  | EventPermissionReplied
   | EventTuiPromptAppend2
   | EventTuiCommandExecute2
   | EventTuiToastShow2
@@ -99,9 +97,6 @@ export type Event =
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
   | EventProjectUpdated
-  | EventQuestionAsked
-  | EventQuestionReplied
-  | EventQuestionRejected
   | EventWorkspaceReady
   | EventWorkspaceFailed
   | EventWorkspaceStatus
@@ -682,41 +677,6 @@ export type Todo = {
    */
   priority: string
 }
-
-export type QuestionOption = {
-  /**
-   * Display text (1-5 words, concise)
-   */
-  label: string
-  /**
-   * Explanation of choice
-   */
-  description: string
-}
-
-export type QuestionInfo = {
-  /**
-   * Complete question
-   */
-  question: string
-  /**
-   * Very short label (max 30 chars)
-   */
-  header: string
-  /**
-   * Available choices
-   */
-  options: Array<QuestionOption>
-  multiple?: boolean
-  custom?: boolean
-}
-
-export type QuestionTool = {
-  messageID: string
-  callID: string
-}
-
-export type QuestionAnswer = Array<string>
 
 export type GlobalEvent = {
   directory: string
@@ -1599,33 +1559,6 @@ export type GlobalEvent = {
       }
     | {
         id: string
-        type: "permission.asked"
-        properties: {
-          id: string
-          sessionID: string
-          permission: string
-          patterns: Array<string>
-          metadata: {
-            [key: string]: unknown
-          }
-          always: Array<string>
-          tool?: {
-            messageID: string
-            callID: string
-          }
-        }
-      }
-    | {
-        id: string
-        type: "permission.replied"
-        properties: {
-          sessionID: string
-          requestID: string
-          reply: "once" | "always" | "reject"
-        }
-      }
-    | {
-        id: string
         type: "tui.prompt.append"
         properties: {
           text: string
@@ -1712,36 +1645,6 @@ export type GlobalEvent = {
           commands?: ProjectCommands
           time: ProjectTime
           sandboxes: Array<string>
-        }
-      }
-    | {
-        id: string
-        type: "question.asked"
-        properties: {
-          id: string
-          sessionID: string
-          /**
-           * Questions to ask
-           */
-          questions: Array<QuestionInfo>
-          tool?: QuestionTool
-        }
-      }
-    | {
-        id: string
-        type: "question.replied"
-        properties: {
-          sessionID: string
-          requestID: string
-          answers: Array<QuestionAnswer>
-        }
-      }
-    | {
-        id: string
-        type: "question.rejected"
-        properties: {
-          sessionID: string
-          requestID: string
         }
       }
     | {
@@ -3275,8 +3178,6 @@ export type V2Event =
   | MessagePartDelta
   | SessionDiff
   | SessionError
-  | PermissionAsked
-  | PermissionReplied
   | TuiPromptAppend
   | TuiCommandExecute
   | TuiToastShow
@@ -3285,9 +3186,6 @@ export type V2Event =
   | McpBrowserOpenFailed
   | CommandExecuted
   | ProjectUpdated
-  | QuestionAsked
-  | QuestionReplied
-  | QuestionRejected
   | WorkspaceReady
   | WorkspaceFailed
   | WorkspaceStatus
@@ -7221,53 +7119,6 @@ export type SessionError = {
   }
 }
 
-export type PermissionAsked = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "permission.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    id: string
-    sessionID: string
-    permission: string
-    patterns: Array<string>
-    metadata: {
-      [key: string]: unknown
-    }
-    always: Array<string>
-    tool?: {
-      messageID: string
-      callID: string
-    }
-  }
-}
-
-export type PermissionReplied = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "permission.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    requestID: string
-    reply: "once" | "always" | "reject"
-  }
-}
-
 export type TuiPromptAppend = {
   id: string
   metadata?: {
@@ -7435,66 +7286,6 @@ export type ProjectUpdated = {
     commands?: ProjectCommands
     time: ProjectTime
     sandboxes: Array<string>
-  }
-}
-
-export type QuestionAsked = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "question.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    id: string
-    sessionID: string
-    /**
-     * Questions to ask
-     */
-    questions: Array<QuestionInfo>
-    tool?: QuestionTool
-  }
-}
-
-export type QuestionReplied = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "question.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    requestID: string
-    answers: Array<QuestionAnswer>
-  }
-}
-
-export type QuestionRejected = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "question.rejected"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    requestID: string
   }
 }
 
@@ -8647,35 +8438,6 @@ export type EventSessionError = {
   }
 }
 
-export type EventPermissionAsked = {
-  id: string
-  type: "permission.asked"
-  properties: {
-    id: string
-    sessionID: string
-    permission: string
-    patterns: Array<string>
-    metadata: {
-      [key: string]: unknown
-    }
-    always: Array<string>
-    tool?: {
-      messageID: string
-      callID: string
-    }
-  }
-}
-
-export type EventPermissionReplied = {
-  id: string
-  type: "permission.replied"
-  properties: {
-    sessionID: string
-    requestID: string
-    reply: "once" | "always" | "reject"
-  }
-}
-
 export type EventMcpToolsChanged = {
   id: string
   type: "mcp.tools.changed"
@@ -8716,39 +8478,6 @@ export type EventProjectUpdated = {
     commands?: ProjectCommands
     time: ProjectTime
     sandboxes: Array<string>
-  }
-}
-
-export type EventQuestionAsked = {
-  id: string
-  type: "question.asked"
-  properties: {
-    id: string
-    sessionID: string
-    /**
-     * Questions to ask
-     */
-    questions: Array<QuestionInfo>
-    tool?: QuestionTool
-  }
-}
-
-export type EventQuestionReplied = {
-  id: string
-  type: "question.replied"
-  properties: {
-    sessionID: string
-    requestID: string
-    answers: Array<QuestionAnswer>
-  }
-}
-
-export type EventQuestionRejected = {
-  id: string
-  type: "question.rejected"
-  properties: {
-    sessionID: string
-    requestID: string
   }
 }
 

@@ -1763,7 +1763,7 @@ describe("run stream transport", () => {
     }
   })
 
-  test("recovers pending questions from question.list when question.asked is missed", async () => {
+  test("recovers pending questions from question.list when question.v2.asked is missed", async () => {
     const src = eventFeed()
     const ui = footer()
     let questionCalls = 0

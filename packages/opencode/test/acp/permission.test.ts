@@ -16,7 +16,7 @@ import { ACPSession } from "@/acp/session"
 import type { ACPClient } from "@/acp/client"
 import { makeClient } from "./client-fixture"
 
-type PermissionEvent = Extract<ACPClient.LegacyEvent, { type: "permission.asked" }>
+type PermissionEvent = Extract<ACPClient.LegacyEvent, { type: "permission.v2.asked" }>
 type PermissionReplyParams = Parameters<ACPClient.Interface["permission"]["reply"]>[0]
 type SessionUpdateParams = Parameters<AgentSideConnection["sessionUpdate"]>[0]
 const cleanupDirs: string[] = []
@@ -113,15 +113,15 @@ function permissionAsked(
 ) {
   return {
     id: `evt_${id}`,
-    type: "permission.asked",
+    type: "permission.v2.asked",
     properties: {
       id,
       sessionID,
-      permission: input.permission ?? "bash",
-      patterns: ["*"],
+      action: input.permission ?? "bash",
+      resources: ["*"],
       metadata: input.metadata ?? { command: "printf hello" },
-      always: [],
-      ...(input.tool ? { tool: input.tool } : {}),
+      save: [],
+      ...(input.tool ? { source: { type: "tool" as const, ...input.tool } } : {}),
     },
   } as PermissionEvent
 }

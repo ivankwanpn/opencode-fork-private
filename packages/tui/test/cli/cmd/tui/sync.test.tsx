@@ -149,4 +149,63 @@ describe("tui sync", () => {
       app.renderer.destroy()
     }
   })
+
+  test("canonical question and permission events update synchronized requests", async () => {
+    await using tmp = await tmpdir()
+    await Bun.write(`${tmp.path}/kv.json`, "{}")
+    const { app, emitNative, sync } = await mount(undefined, tmp.path)
+
+    try {
+      emitNative({
+        id: "evt_question_asked",
+        type: "question.v2.asked",
+        data: {
+          id: "que_test",
+          sessionID: "ses_test",
+          questions: [{ header: "Continue", question: "Continue?", options: [] }],
+        },
+      })
+      emitNative({
+        id: "evt_permission_asked",
+        type: "permission.v2.asked",
+        data: {
+          id: "per_test",
+          sessionID: "ses_test",
+          action: "edit",
+          resources: ["src/index.ts"],
+          save: ["src/**"],
+          source: { type: "tool", messageID: "msg_test", callID: "call_test" },
+        },
+      })
+      await wait(() => sync.data.question.ses_test?.length === 1 && sync.data.permission.ses_test?.length === 1)
+
+      expect(sync.data.question.ses_test[0].id).toBe("que_test")
+      expect(sync.data.question.ses_test[0].questions[0].question).toBe("Continue?")
+      expect({ ...sync.data.permission.ses_test[0], resources: [...sync.data.permission.ses_test[0].resources] }).toEqual({
+        id: "per_test",
+        sessionID: "ses_test",
+        action: "edit",
+        resources: ["src/index.ts"],
+        save: ["src/**"],
+        source: { type: "tool", messageID: "msg_test", callID: "call_test" },
+      })
+
+      emitNative({
+        id: "evt_question_rejected",
+        type: "question.v2.rejected",
+        data: { sessionID: "ses_test", requestID: "que_test" },
+      })
+      emitNative({
+        id: "evt_permission_replied",
+        type: "permission.v2.replied",
+        data: { sessionID: "ses_test", requestID: "per_test", reply: "once" },
+      })
+      await wait(() => sync.data.question.ses_test?.length === 0 && sync.data.permission.ses_test?.length === 0)
+
+      expect(sync.data.question.ses_test).toEqual([])
+      expect(sync.data.permission.ses_test).toEqual([])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
 })

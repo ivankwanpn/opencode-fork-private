@@ -150,11 +150,11 @@ function sid(event: Event): string | undefined {
   if (
     event.type === "session.next.shell.started" ||
     event.type === "session.next.shell.ended" ||
-    event.type === "permission.asked" ||
-    event.type === "permission.replied" ||
-    event.type === "question.asked" ||
-    event.type === "question.replied" ||
-    event.type === "question.rejected" ||
+    event.type === "permission.v2.asked" ||
+    event.type === "permission.v2.replied" ||
+    event.type === "question.v2.asked" ||
+    event.type === "question.v2.replied" ||
+    event.type === "question.v2.rejected" ||
     event.type === "session.error" ||
     event.type === "session.next.status"
   ) {
@@ -480,7 +480,7 @@ function createLayer(input: StreamInput) {
         }
 
         const trackBlocker = (event: Event) => {
-          if (event.type !== "permission.asked" && event.type !== "question.asked") {
+          if (event.type !== "permission.v2.asked" && event.type !== "question.v2.asked") {
             return
           }
 
@@ -493,9 +493,9 @@ function createLayer(input: StreamInput) {
 
         const releaseBlocker = (event: Event) => {
           if (
-            event.type !== "permission.replied" &&
-            event.type !== "question.replied" &&
-            event.type !== "question.rejected"
+            event.type !== "permission.v2.replied" &&
+            event.type !== "question.v2.replied" &&
+            event.type !== "question.v2.rejected"
           ) {
             return
           }

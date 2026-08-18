@@ -28,8 +28,8 @@ import {
   ToolPart,
   UserMessage,
   Todo,
-  QuestionAnswer,
-  QuestionInfo,
+  QuestionV2Answer,
+  QuestionV2Info,
 } from "@opencode-ai/sdk/v2"
 import { useData } from "../context"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
@@ -2694,8 +2694,8 @@ ToolRegistry.register({
   name: "question",
   render(props) {
     const i18n = useI18n()
-    const questions = createMemo(() => (props.input.questions ?? []) as QuestionInfo[])
-    const answers = createMemo(() => (props.metadata.answers ?? []) as QuestionAnswer[])
+    const questions = createMemo(() => (props.input.questions ?? []) as QuestionV2Info[])
+    const answers = createMemo(() => (props.metadata.answers ?? []) as QuestionV2Answer[])
     const completed = createMemo(() => answers().length > 0)
 
     const subtitle = createMemo(() => {

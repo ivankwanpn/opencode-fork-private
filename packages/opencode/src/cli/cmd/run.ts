@@ -783,7 +783,7 @@ export const RunCommand = effectCmd({
               break
             }
 
-            if (event.type === "permission.asked") {
+            if (event.type === "permission.v2.asked") {
               const permission = event.properties
               if (permission.sessionID !== sessionID) continue
 
@@ -796,7 +796,7 @@ export const RunCommand = effectCmd({
                 UI.println(
                   UI.Style.TEXT_WARNING_BOLD + "!",
                   UI.Style.TEXT_NORMAL +
-                    `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
+                    `permission requested: ${permission.action} (${permission.resources.join(", ")}); auto-rejecting`,
                 )
                 await client.permission.reply({
                   requestID: permission.id,

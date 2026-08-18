@@ -26,11 +26,11 @@ const SESSION_CONTENT_EVENTS = new Set([
   "message.part.updated",
   "message.part.removed",
   "message.part.delta",
-  "permission.asked",
-  "permission.replied",
-  "question.asked",
-  "question.replied",
-  "question.rejected",
+  "permission.v2.asked",
+  "permission.v2.replied",
+  "question.v2.asked",
+  "question.v2.replied",
+  "question.v2.rejected",
 ])
 
 export function isAgentConfigDisposal(event: { type: string; properties?: unknown }) {
@@ -411,7 +411,7 @@ export function applyDirectoryEvent(input: {
       if (input.vcsCache) input.vcsCache.setStore("value", next)
       break
     }
-    case "permission.asked": {
+    case "permission.v2.asked": {
       const permission = event.properties as PermissionV2Request
       const permissions = input.store.permission[permission.sessionID]
       if (!permissions) {
@@ -432,7 +432,7 @@ export function applyDirectoryEvent(input: {
       )
       break
     }
-    case "permission.replied": {
+    case "permission.v2.replied": {
       const props = event.properties as { sessionID: string; requestID: string }
       const permissions = input.store.permission[props.sessionID]
       if (!permissions) break
@@ -447,7 +447,7 @@ export function applyDirectoryEvent(input: {
       )
       break
     }
-    case "question.asked": {
+    case "question.v2.asked": {
       const question = event.properties as QuestionV2Request
       const questions = input.store.question[question.sessionID]
       if (!questions) {
@@ -468,8 +468,8 @@ export function applyDirectoryEvent(input: {
       )
       break
     }
-    case "question.replied":
-    case "question.rejected": {
+    case "question.v2.replied":
+    case "question.v2.rejected": {
       const props = event.properties as { sessionID: string; requestID: string }
       const questions = input.store.question[props.sessionID]
       if (!questions) break

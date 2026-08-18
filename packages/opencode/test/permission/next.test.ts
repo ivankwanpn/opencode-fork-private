@@ -685,10 +685,10 @@ it.instance(
   () =>
     Effect.gen(function* () {
       const events = yield* EventV2Bridge.Service
-      const seen = yield* Deferred.make<PermissionV1.Request>()
+      const seen = yield* Deferred.make<PermissionV2.Request>()
       const unsub = yield* events.listen((event) => {
         if (event.type === Permission.Event.Asked.type)
-          Deferred.doneUnsafe(seen, Effect.succeed(event.data as PermissionV1.Request))
+          Deferred.doneUnsafe(seen, Effect.succeed(event.data as PermissionV2.Request))
         return Effect.void
       })
       yield* Effect.addFinalizer(() => unsub)
@@ -716,8 +716,8 @@ it.instance(
         ),
       ).toMatchObject({
         sessionID: SessionID.make("session_test"),
-        permission: "bash",
-        patterns: ["ls"],
+        action: "bash",
+        resources: ["ls"],
       })
 
       yield* rejectAll()
@@ -1024,8 +1024,8 @@ it.instance(
       const events = yield* EventV2Bridge.Service
       const seen = yield* Deferred.make<{
         sessionID: SessionID
-        requestID: PermissionV1.ID
-        reply: PermissionV1.Reply
+        requestID: PermissionV2.ID
+        reply: PermissionV2.Reply
       }>()
 
       const fiber = yield* ask({
@@ -1045,7 +1045,7 @@ it.instance(
           Deferred.doneUnsafe(
             seen,
             Effect.succeed(
-              event.data as { sessionID: SessionID; requestID: PermissionV1.ID; reply: PermissionV1.Reply },
+              event.data as { sessionID: SessionID; requestID: PermissionV2.ID; reply: PermissionV2.Reply },
             ),
           )
         return Effect.void
@@ -1063,7 +1063,7 @@ it.instance(
         ),
       ).toEqual({
         sessionID: SessionID.make("session_test"),
-        requestID: PermissionV1.ID.make("per_test7"),
+        requestID: PermissionV2.ID.create("per_test7"),
         reply: "once",
       })
     }),

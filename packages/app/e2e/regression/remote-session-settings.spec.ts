@@ -81,14 +81,14 @@ test("auto-accept responds for an unfocused server session", async ({ page }) =>
     directory: directoryA,
     payload: {
       id: "event-permission-background-a",
-      type: "permission.asked",
-      properties: {
+      type: "permission.v2.asked",
+      data: {
         id: "permission-background-a",
         sessionID: sessionA.id,
-        permission: "bash",
-        patterns: ["git status"],
+        action: "bash",
+        resources: ["git status"],
         metadata: {},
-        always: [],
+        save: [],
       },
     },
   })
@@ -109,14 +109,14 @@ test("auto-accept responds for an unfocused server session", async ({ page }) =>
     directory: directoryA,
     payload: {
       id: "event-permission-background-a-child",
-      type: "permission.asked",
-      properties: {
+      type: "permission.v2.asked",
+      data: {
         id: "permission-background-a-child",
         sessionID: childSessionA.id,
-        permission: "bash",
-        patterns: ["git diff"],
+        action: "bash",
+        resources: ["git diff"],
         metadata: {},
-        always: [],
+        save: [],
       },
     },
   })

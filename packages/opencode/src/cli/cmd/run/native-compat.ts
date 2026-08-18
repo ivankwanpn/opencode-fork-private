@@ -115,13 +115,20 @@ function commandFiles(parts: unknown) {
 }
 
 function cliEventPayloads(projectLegacy: ReturnType<typeof legacyEventProjection>, source: NativeEvent) {
-  if (source.type === "session.next.status") {
+  if (
+    source.type === "session.next.status" ||
+    source.type === "permission.v2.asked" ||
+    source.type === "permission.v2.replied" ||
+    source.type === "question.v2.asked" ||
+    source.type === "question.v2.replied" ||
+    source.type === "question.v2.rejected"
+  ) {
     return [
       {
         id: source.id,
         type: source.type,
         properties: source.data,
-      } satisfies Extract<Event, { type: "session.next.status" }>,
+      } as Event,
     ]
   }
 
@@ -139,10 +146,10 @@ export function createNativeCompatClient(input: { native: NativeClient; director
   const loc = (directory?: string) => location(directory ?? input.directory)
 
   const remember = (event: Event) => {
-    if (event.type === "permission.asked") permissionSessions.set(event.properties.id, event.properties.sessionID)
-    if (event.type === "permission.replied") permissionSessions.delete(event.properties.requestID)
-    if (event.type === "question.asked") questionSessions.set(event.properties.id, event.properties.sessionID)
-    if (event.type === "question.replied" || event.type === "question.rejected")
+    if (event.type === "permission.v2.asked") permissionSessions.set(event.properties.id, event.properties.sessionID)
+    if (event.type === "permission.v2.replied") permissionSessions.delete(event.properties.requestID)
+    if (event.type === "question.v2.asked") questionSessions.set(event.properties.id, event.properties.sessionID)
+    if (event.type === "question.v2.replied" || event.type === "question.v2.rejected")
       questionSessions.delete(event.properties.requestID)
     return event
   }

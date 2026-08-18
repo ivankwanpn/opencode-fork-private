@@ -71,6 +71,14 @@ plugin state 改用 `SessionNextStatusInfo`、`PermissionV2Request`、`QuestionV
 `action/resources/save/source`。V2 Session snapshot 的 unknown metadata 在唯一 UI projection boundary 安全
 正規化為 JSON，非 JSON object 欄位丟棄、array 位置以 `null` 保留，並防止循環引用。
 
+**999.0.19 request lifecycle event hard cut**：OpenCode legacy Permission service保留V1 ruleset/error/internal
+pending shape，但發布邊界已切到`PermissionV2.Event`並投影`action/resources/save/source`；Question producer
+原本已是V2。CLI、ACP、TUI plugin native bus與App event/state consumer全部直接使用
+`permission.v2.asked/replied`、`question.v2.asked/replied/rejected`。EventV2Bridge不再重新命名或降級payload，
+`PermissionV1.Event.Definitions`與`QuestionV1.Event.Definitions`已從public manifest移除；event inventory由
+104降至99，durable map維持47。V1 permission rules/config/errors暫留給尚未遷移的legacy工具執行面，
+不再是public event producer。
+
 ---
 
 ## 1. 各区域现状总表

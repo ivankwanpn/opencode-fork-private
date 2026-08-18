@@ -375,7 +375,7 @@ function syncPermission(data: SessionData, part: ToolPart): FooterOutput | undef
   }
 }
 
-// Question tool replies can complete without a matching question.replied event.
+// Question tool replies can complete without a matching question.v2.replied event.
 // When that happens, drop the recovered pending request tied to this tool call so
 // the footer can return to the next blocker or to the prompt.
 function syncQuestion(data: SessionData, part: ToolPart): FooterOutput | undefined {
@@ -1057,27 +1057,16 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return out(data, commits)
   }
 
-  if (event.type === "permission.asked") {
+  if (event.type === "permission.v2.asked") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }
 
-    upsert(
-      data.permissions,
-      enrichPermission(data, {
-        id: event.properties.id,
-        sessionID: event.properties.sessionID,
-        action: event.properties.permission,
-        resources: event.properties.patterns,
-        metadata: event.properties.metadata,
-        save: event.properties.always,
-        ...(event.properties.tool ? { source: { type: "tool", ...event.properties.tool } } : {}),
-      }),
-    )
+    upsert(data.permissions, enrichPermission(data, event.properties))
     return queueOut(data, commits)
   }
 
-  if (event.type === "permission.replied") {
+  if (event.type === "permission.v2.replied") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }
@@ -1089,7 +1078,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return queueOut(data, commits)
   }
 
-  if (event.type === "question.asked") {
+  if (event.type === "question.v2.asked") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }
@@ -1098,7 +1087,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return queueOut(data, commits)
   }
 
-  if (event.type === "question.replied" || event.type === "question.rejected") {
+  if (event.type === "question.v2.replied" || event.type === "question.v2.rejected") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }

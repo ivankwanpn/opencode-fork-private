@@ -484,15 +484,16 @@ function askPermission(state: State, item: Permit): void {
   })
 
   feed(state, {
-    type: "permission.asked",
+    type: "permission.v2.asked",
     properties: {
       id,
       sessionID: state.id,
-      permission: item.permission,
-      patterns: item.patterns,
+      action: item.permission,
+      resources: item.patterns,
       metadata: item.metadata ?? {},
-      always: item.always,
-      tool: {
+      save: item.always,
+      source: {
+        type: "tool",
         messageID: item.ref.msg,
         callID: item.ref.call,
       },
@@ -1007,7 +1008,7 @@ function emitQuestion(state: State, kind: QuestionKind = "multi"): void {
   state.asks.set(id, { ref })
 
   feed(state, {
-    type: "question.asked",
+    type: "question.v2.asked",
     properties: {
       id,
       sessionID: state.id,
@@ -1200,8 +1201,8 @@ export function createRunDemo(input: Input) {
 
     state.perms.delete(input.requestID)
     const event = {
-      id: `permission.replied:${input.requestID}:${Date.now()}`,
-      type: "permission.replied",
+      id: `permission.v2.replied:${input.requestID}:${Date.now()}`,
+      type: "permission.v2.replied",
       properties: {
         sessionID: state.id,
         requestID: input.requestID,
@@ -1227,8 +1228,8 @@ export function createRunDemo(input: Input) {
 
     state.asks.delete(input.requestID)
     const event = {
-      id: `question.replied:${input.requestID}:${Date.now()}`,
-      type: "question.replied",
+      id: `question.v2.replied:${input.requestID}:${Date.now()}`,
+      type: "question.v2.replied",
       properties: {
         sessionID: state.id,
         requestID: input.requestID,
@@ -1254,7 +1255,7 @@ export function createRunDemo(input: Input) {
 
     state.asks.delete(input.requestID)
     feed(state, {
-      type: "question.rejected",
+      type: "question.v2.rejected",
       properties: {
         sessionID: state.id,
         requestID: input.requestID,

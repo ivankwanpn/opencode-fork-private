@@ -11,7 +11,7 @@ import os from "os"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
 
-export const Event = PermissionV1.Event
+export const Event = PermissionV2.Event
 
 export interface Interface {
   readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<void, PermissionV1.Error>
@@ -132,7 +132,15 @@ const layer = Layer.effect(
 
       const deferred = yield* Deferred.make<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>()
       pending.set(id, { info, deferred })
-      yield* events.publish(Event.Asked, info)
+      yield* events.publish(Event.Asked, {
+        id: PermissionV2.ID.create(info.id),
+        sessionID: info.sessionID,
+        action: info.permission,
+        resources: info.patterns,
+        metadata: info.metadata,
+        save: info.always,
+        ...(info.tool ? { source: { type: "tool" as const, ...info.tool } } : {}),
+      })
       return yield* Effect.ensuring(
         Deferred.await(deferred),
         Effect.sync(() => {
@@ -149,7 +157,7 @@ const layer = Layer.effect(
       pending.delete(input.requestID)
       yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
-        requestID: existing.info.id,
+        requestID: PermissionV2.ID.create(existing.info.id),
         reply: input.reply,
       })
 
@@ -166,7 +174,7 @@ const layer = Layer.effect(
           pending.delete(id)
           yield* events.publish(Event.Replied, {
             sessionID: item.info.sessionID,
-            requestID: item.info.id,
+            requestID: PermissionV2.ID.create(item.info.id),
             reply: "reject",
           })
           yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
@@ -194,7 +202,7 @@ const layer = Layer.effect(
         pending.delete(id)
         yield* events.publish(Event.Replied, {
           sessionID: item.info.sessionID,
-          requestID: item.info.id,
+          requestID: PermissionV2.ID.create(item.info.id),
           reply: "always",
         })
         yield* Deferred.succeed(item.deferred, undefined)

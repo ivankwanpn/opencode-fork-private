@@ -32,6 +32,81 @@ describe("run attach clients", () => {
     })
   })
 
+  test("preserves canonical permission and question events", async () => {
+    const source = [
+      {
+        id: "evt-permission-asked",
+        type: "permission.v2.asked",
+        data: {
+          id: "per_1",
+          sessionID: "ses-1",
+          action: "bash",
+          resources: ["git status --short"],
+          save: ["git status *"],
+          source: { type: "tool", messageID: "msg-1", callID: "call-1" },
+        },
+      },
+      {
+        id: "evt-permission-replied",
+        type: "permission.v2.replied",
+        data: { sessionID: "ses-1", requestID: "per_1", reply: "once" },
+      },
+      {
+        id: "evt-question-asked",
+        type: "question.v2.asked",
+        data: {
+          id: "que_1",
+          sessionID: "ses-1",
+          questions: [
+            {
+              header: "Mode",
+              question: "Which mode?",
+              options: [{ label: "Fast", description: "Use the fast mode" }],
+            },
+          ],
+        },
+      },
+      {
+        id: "evt-question-replied",
+        type: "question.v2.replied",
+        data: { sessionID: "ses-1", requestID: "que_1", answers: [["Fast"]] },
+      },
+      {
+        id: "evt-question-asked-2",
+        type: "question.v2.asked",
+        data: {
+          id: "que_2",
+          sessionID: "ses-1",
+          questions: [
+            {
+              header: "Continue",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue the task" }],
+            },
+          ],
+        },
+      },
+      {
+        id: "evt-question-rejected",
+        type: "question.v2.rejected",
+        data: { sessionID: "ses-1", requestID: "que_2" },
+      },
+    ] as const
+    const clients = createAttachClients({
+      baseUrl: "https://opencode.test",
+      fetch: (async () =>
+        new Response(source.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+          headers: { "content-type": "text/event-stream" },
+        })) as unknown as typeof globalThis.fetch,
+    })
+
+    const events = await clients.sdk.event.subscribe()
+    const actual: unknown[] = []
+    for (let index = 0; index < source.length; index++) actual.push((await events.stream.next()).value)
+
+    expect(actual).toEqual(source.map((event) => ({ id: event.id, type: event.type, properties: event.data })))
+  })
+
   test("share one timeout-safe fetch and authentication headers", async () => {
     const requests: Array<{
       authorization: string | null

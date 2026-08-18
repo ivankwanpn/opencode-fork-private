@@ -86,3 +86,21 @@ test("legacy wire helpers do not re-export V1 Session events", async () => {
 
   expect(sources.filter((entry) => entry.source.includes("SessionV1.Event.")).map((entry) => entry.file)).toEqual([])
 })
+
+test("production request lifecycles do not publish or consume V1 event names", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const pattern = /\b(?:permission\.(?:asked|replied)|question\.(?:asked|replied|rejected))\b/
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter((entry) => pattern.test(entry.source))
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(offenders).toEqual([])
+})

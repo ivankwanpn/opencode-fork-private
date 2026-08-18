@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { describe, expect, test } from "bun:test"
+import type { OpenCodeEvent } from "@opencode-ai/client"
 import { testRender } from "@opentui/solid"
 import type { Event, GlobalEvent } from "@opencode-ai/sdk/v2"
 import { onMount } from "solid-js"
@@ -88,7 +89,7 @@ async function mount() {
   ))
 
   await ready
-  return { app, emit: events.emit, project, seen, workspaces }
+  return { app, emit: events.emit, emitNative: events.emitNative, project, seen, workspaces }
 }
 
 function Probe(props: {
@@ -161,6 +162,28 @@ describe("useEvent", () => {
 
     try {
       emit(event(status(), { directory, project: projectID }))
+      await Bun.sleep(30)
+
+      expect(seen).toEqual([])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
+  test("does not project canonical question and permission events into the compatibility stream", async () => {
+    const { app, emitNative, seen } = await mount()
+
+    try {
+      emitNative({
+        id: "evt_question",
+        type: "question.v2.asked",
+        data: { id: "que_test", sessionID: "ses_test", questions: [] },
+      } as OpenCodeEvent)
+      emitNative({
+        id: "evt_permission",
+        type: "permission.v2.asked",
+        data: { id: "per_test", sessionID: "ses_test", action: "edit", resources: [] },
+      } as OpenCodeEvent)
       await Bun.sleep(30)
 
       expect(seen).toEqual([])

@@ -11,13 +11,11 @@ import { LspEvent } from "./lsp-event"
 import { McpEvent } from "./mcp-event"
 import { ModelsDev } from "./models-dev"
 import { Permission } from "./permission"
-import { PermissionV1 } from "./permission-v1"
 import { Plugin } from "./plugin"
 import { Project } from "./project"
 import { ProjectDirectories } from "./project-directories"
 import { Pty } from "./pty"
 import { Question } from "./question"
-import { QuestionV1 } from "./question-v1"
 import { Reference } from "./reference"
 import { ServerEvent } from "./server-event"
 import { SessionEvent } from "./session-event"
@@ -55,12 +53,10 @@ const featureDefinitions = Event.inventory(
 
 const compatibilityDefinitions = Event.inventory(
   ...sessionV1LiveDefinitions,
-  ...PermissionV1.Event.Definitions,
   ...TuiEvent.Definitions,
   ...McpEvent.Definitions,
   ...LegacyEvent.Definitions,
   ...Project.Event.Definitions,
-  ...QuestionV1.Event.Definitions,
   ...WorkspaceEvent.Definitions,
   ...WorktreeEvent.Definitions,
   ...ServerEvent.Definitions,

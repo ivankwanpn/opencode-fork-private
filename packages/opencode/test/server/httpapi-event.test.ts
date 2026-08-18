@@ -327,7 +327,7 @@ describe("legacy event projection", () => {
     })
   })
 
-  test("projects step failures and permission events", () => {
+  test("projects step failures", () => {
     const project = legacyEventProjection()
     beginStep(project)
 
@@ -349,7 +349,11 @@ describe("legacy event projection", () => {
       error: { name: "UnknownError", data: { message: "provider failed" } },
     })
 
-    const asked = project(
+  })
+
+  test("keeps permission and question lifecycles canonical", () => {
+    const project = legacyEventProjection()
+    const sources = [
       canonicalEvent("permission.v2.asked", {
         id: "per_test",
         sessionID: "ses_test",
@@ -359,31 +363,35 @@ describe("legacy event projection", () => {
         metadata: { reason: "test" },
         source: { type: "tool", messageID: "msg_assistant", callID: "call_1" },
       }),
-    )
-    expect(asked[0]).toMatchObject({
-      type: "permission.asked",
-      properties: {
-        id: "per_test",
-        sessionID: "ses_test",
-        permission: "bash",
-        patterns: ["rm file"],
-        always: ["rm *"],
-        metadata: { reason: "test" },
-        tool: { messageID: "msg_assistant", callID: "call_1" },
-      },
-    })
-
-    const replied = project(
       canonicalEvent("permission.v2.replied", {
         sessionID: "ses_test",
         requestID: "per_test",
         reply: "reject",
       }),
-    )
-    expect(replied[0]).toMatchObject({
-      type: "permission.replied",
-      properties: { sessionID: "ses_test", requestID: "per_test", reply: "reject" },
-    })
+      canonicalEvent("question.v2.asked", {
+        id: "que_test",
+        sessionID: "ses_test",
+        questions: [{ header: "Choice", question: "Choose", options: [] }],
+      }),
+      canonicalEvent("question.v2.replied", {
+        sessionID: "ses_test",
+        requestID: "que_test",
+        answers: [["one"]],
+      }),
+      canonicalEvent("question.v2.rejected", {
+        sessionID: "ses_test",
+        requestID: "que_test",
+      }),
+    ]
+
+    expect(sources.flatMap(project)).toEqual([])
+    expect(sources.flatMap((source) => legacyEventPayloads(project, source)).map((event) => event.type)).toEqual([
+      "permission.v2.asked",
+      "permission.v2.replied",
+      "question.v2.asked",
+      "question.v2.replied",
+      "question.v2.rejected",
+    ])
   })
 
   test("emits only the legacy projection and never the raw canonical envelope", () => {

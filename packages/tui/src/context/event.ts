@@ -19,11 +19,6 @@ const compatibilityEventTypes = new Set<string>([
   "message.part.delta",
   "message.part.removed",
   "permission.updated",
-  "permission.asked",
-  "permission.replied",
-  "question.asked",
-  "question.replied",
-  "question.rejected",
   "file.edited",
   "todo.updated",
   "command.executed",
@@ -50,17 +45,14 @@ export function useEvent() {
 
   // Boundary adapter: the V2 native event stream is filtered to the events
   // the views consume. Producers that already publish V2 vocabulary are
-  // mapped onto the V1 names the views still switch on (session.next.*,
-  // question.v2.*); events with no V2 producer pass through unchanged. The
+  // mapped onto the V1 names the views still switch on (session.next.*);
+  // events with no V2 producer pass through unchanged. The
   // handler type stays the V1 SDK Event; data is projected onto properties.
   const lifecycleMap = new Map<string, string>([
     ["session.next.created", "session.created"],
     ["session.next.updated", "session.updated"],
     ["session.next.deleted", "session.deleted"],
     ["session.next.diff", "session.diff"],
-    ["question.v2.asked", "question.asked"],
-    ["question.v2.replied", "question.replied"],
-    ["question.v2.rejected", "question.rejected"],
   ])
 
   function subscribe(handler: (event: Event, metadata: EventMetadata) => void) {

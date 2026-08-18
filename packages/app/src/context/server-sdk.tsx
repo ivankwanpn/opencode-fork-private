@@ -51,22 +51,6 @@ type CurrentDelta = Extract<
 >
 
 export function adaptServerEvent(event: CurrentServerEvent): ServerEvent {
-  if (event.type === "permission.v2.asked") {
-    return {
-      id: event.id,
-      type: "permission.asked",
-      properties: event.data,
-      current: event,
-    } as unknown as ServerEvent
-  }
-  if (event.type === "permission.v2.replied")
-    return { id: event.id, type: "permission.replied", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.asked")
-    return { id: event.id, type: "question.asked", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.replied")
-    return { id: event.id, type: "question.replied", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.rejected")
-    return { id: event.id, type: "question.rejected", properties: event.data, current: event } as ServerEvent
   return { id: event.id, type: event.type, properties: event.data, current: event } as ServerEvent
 }
 

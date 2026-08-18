@@ -18,7 +18,8 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
 `session_message_tombstone` 已从當前 schema 刪除並生成 drop migration。`Session.Service` production consumer
 也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。下一阻塞點是
-event manifest 仍註冊 V1 durable definitions，以及 legacy HTTP/plugin/CLI/ACP wire schema 仍引用 V1 型別。整個
+legacy HTTP/plugin/CLI/ACP wire schema 與 live compatibility manifest 仍引用 V1 型別；V1 durable definitions 已從
+replay manifest 移除。整個
 V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
 **999.0.19 進度**：production runtime 已無 `Session.Service` / `Session.node` consumer。CLI session/stats/GitHub、
@@ -30,6 +31,12 @@ repository/list/mutation implementation 與所有 V1 lifecycle publisher 已從 
 HTTP wire schema、event alias、BusyError、title/usage/background helpers。舊 repository 專用測試已刪除，仍在測
 現役 workspace/share/task/HttpApi 行為的 fixtures 全部改用 canonical V2。Core projector 的 V1
 Created/Updated/Deleted branches 與 `sessionRow(SessionV1.Info)` 已刪除，V1 import allowlist 同步縮小。
+
+**999.0.19 durable manifest closeout**：7 個 SessionV1 durable definitions（lifecycle 3 個、message/part 4 個）
+已從 `DurableEventManifest.Durable` 移除，durable map 由 54 降至 47，只接受 canonical SessionEvent replay。
+全部 SessionV1 definitions 暫留 `ServerDefinitions` compatibility 區，因此 public Latest/OpenAPI/SSE union 仍保持
+106 個事件，舊 wire consumer 不會在此批被靜默刪除。Core generic Event fixture 與 database migration restart 測試
+也改用 V2 durable definitions。
 
 ---
 
@@ -342,12 +349,12 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 >
 > **仍阻止实际删表/删目录的依赖** ⏸️：
 > - `session/session.ts` 已不含 repository/layer，只剩 legacy HTTP wire schema、BusyError、event alias 與通用 helpers；legacy route/plugin/CLI consumer 未遷移前仍不能整檔刪除。
-> - Core projector 已 V2-only，但 schema event manifest/durable manifest 仍註冊 V1 lifecycle definitions，外部 compatibility projection 也仍依賴其型別。
+> - Durable manifest 已 V2-only；`ServerDefinitions` compatibility 區仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
-> **批次 8 下一步**：Session mutation、production consumer、repository 與 projector 已 canonical。接下来縮減
-> event/durable manifest 的 V1 lifecycle registration，並逐一遷移 legacy HTTP/plugin/CLI/TUI/ACP wire consumer；之后按 Config/Provider/Agent/Permission 与外部
+> **批次 8 下一步**：Session mutation、production consumer、repository、projector 與 durable replay manifest 已 canonical。接下来逐一遷移
+> legacy HTTP/plugin/CLI/TUI/ACP live/wire consumer；之后按 Config/Provider/Agent/Permission 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
 >

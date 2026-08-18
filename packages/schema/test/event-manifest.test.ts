@@ -27,7 +27,18 @@ describe("public event manifest", () => {
       SessionV1.Event.Error,
     ])
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
-    expect(EventManifest.Durable.size).toBe(54)
+    expect(EventManifest.Durable.size).toBe(47)
+    for (const type of [
+      "session.created.1",
+      "session.updated.1",
+      "session.deleted.1",
+      "message.updated.1",
+      "message.removed.1",
+      "message.part.updated.1",
+      "message.part.removed.1",
+    ]) {
+      expect(EventManifest.Durable.has(type)).toBe(false)
+    }
   })
 
   test("uses canonical definitions for current public events", () => {

@@ -16,7 +16,7 @@ export const textPartID = "prt_9999_text"
 const title = "Timeline collapse state regression"
 const model = { providerID: "opencode", modelID: "claude-opus-4-6", variant: "max" }
 
-type EventPayload = Extract<V2Event, { type: "message.part.updated" | "message.part.delta" }>
+type EventPayload = Extract<V2Event, { type: "message.part.updated" }>
 let eventSequence = 0
 
 const userMessage = {
@@ -210,14 +210,15 @@ export function buildInitialStreamEvent(deltaCount: number): EventPayload {
 export function buildStreamDeltaEvents(deltaCount: number): EventPayload[] {
   return Array.from({ length: deltaCount }, (_, index) => ({
     id: `evt_benchmark_${++eventSequence}`,
-    type: "message.part.delta",
+    type: "message.part.updated",
     location: { directory },
     data: {
       sessionID,
-      messageID: assistantMessageID,
-      partID: textPartID,
-      field: "text",
-      delta: streamChunk(index + 1, deltaCount + 1),
+      part: {
+        ...streamedTextPart,
+        text: `Streaming${Array.from({ length: index + 2 }, (_, offset) => streamChunk(offset, deltaCount + 1)).join("")}\n\n\`\`\`ts\nconst initial = true\n\`\`\``,
+      },
+      time: 1700000002000,
     },
   }))
 }

@@ -102,17 +102,18 @@ describe("legacy event projection", () => {
       text: "",
       time: { start: 110 },
     })
-    const textDelta = project(
+    const textDelta = legacyEventPayloads(
+      project,
       canonicalEvent("session.next.text.delta", {
-        ...stepData(),
-        textID: "text_1",
-        delta: "hello",
-        timestamp: 115,
+          ...stepData(),
+          textID: "text_1",
+          delta: "hello",
+          timestamp: 115,
       }),
     )
     expect(textDelta[0]).toMatchObject({
-      type: "message.part.delta",
-      properties: { field: "text", delta: "hello" },
+      type: "session.next.text.delta",
+      properties: { assistantMessageID: "msg_assistant", textID: "text_1", delta: "hello" },
     })
     const textEnded = project(
       canonicalEvent("session.next.text.ended", {
@@ -142,17 +143,18 @@ describe("legacy event projection", () => {
       metadata: { provider: "start" },
       time: { start: 130 },
     })
-    const reasoningDelta = project(
+    const reasoningDelta = legacyEventPayloads(
+      project,
       canonicalEvent("session.next.reasoning.delta", {
-        ...stepData(),
-        reasoningID: "reasoning_1",
-        delta: "thinking",
-        timestamp: 135,
+          ...stepData(),
+          reasoningID: "reasoning_1",
+          delta: "thinking",
+          timestamp: 135,
       }),
     )
     expect(reasoningDelta[0]).toMatchObject({
-      type: "message.part.delta",
-      properties: { field: "text", delta: "thinking" },
+      type: "session.next.reasoning.delta",
+      properties: { assistantMessageID: "msg_assistant", reasoningID: "reasoning_1", delta: "thinking" },
     })
     const reasoningEnded = project(
       canonicalEvent("session.next.reasoning.ended", {

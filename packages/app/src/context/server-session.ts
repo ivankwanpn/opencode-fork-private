@@ -1580,49 +1580,6 @@ export function createServerSession(
         )
         return
       }
-      case "message.part.delta": {
-        const props = event.properties as {
-          sessionID: string
-          messageID: string
-          partID: string
-          field: string
-          delta: string
-        }
-        const parts = data.part[props.messageID]
-        if (!parts) return
-        const index = parts.findIndex((part) => part.id === props.partID)
-        if (index === -1) return
-        trackPartChange(props.sessionID, props.messageID, props.partID)
-        const load = messageLoads.get(props.sessionID)
-        if (load) {
-          const parts = load.deltaParts.get(props.messageID) ?? new Set<string>()
-          parts.add(props.partID)
-          load.deltaParts.set(props.messageID, parts)
-          const carried = load.carriedDeltaParts.get(props.messageID)
-          carried?.delete(props.partID)
-          if (carried?.size === 0) load.carriedDeltaParts.delete(props.messageID)
-        }
-        const field = props.field as keyof (typeof parts)[number]
-        const current = parts[index]?.[field]
-        if (!deltaBases.has(props.partID) && typeof current === "string")
-          deltaBases.set(props.partID, { base: current, sessionID: props.sessionID })
-        setData(
-          "part_text_accum_delta",
-          props.partID,
-          (value) => (value ?? (typeof current === "string" ? current : "")) + props.delta,
-        )
-        setData(
-          "part",
-          props.messageID,
-          produce((draft) => {
-            if (!draft) return
-            const part = draft[index]
-            const field = props.field as keyof typeof part
-            ;(part[field] as string) = ((part[field] as string | undefined) ?? "") + props.delta
-          }),
-        )
-        return
-      }
       case "permission.v2.asked": {
         const permission = event.properties as PermissionV2Request
         const permissions = data.permission[permission.sessionID]

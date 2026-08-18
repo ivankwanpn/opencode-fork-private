@@ -1579,22 +1579,6 @@ describe("server session", () => {
     expect(store.data.part[message.id]).toEqual([pendingPart])
   })
 
-  test("clears delta buffers when removing optimistic content", () => {
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "optimistic" })
-    const store = setup({ child: session("child") }).store
-    store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
-    })
-
-    store.optimistic.remove({ sessionID: "child", messageID: message.id })
-
-    expect(store.data.part[message.id]).toBeUndefined()
-    expect(store.data.part_text_accum_delta[part.id]).toBeUndefined()
-  })
-
   test("does not remove content confirmed by a message event", () => {
     const message = userMessage("message")
     const part = textPart(message.id)
@@ -1650,122 +1634,6 @@ describe("server session", () => {
     expect(store.data.part[message.id]).toBeUndefined()
   })
 
-  test("clears delta buffers for parts omitted by the initial page", async () => {
-    const pending = deferredResponse()
-    const message = userMessage("message")
-    const kept = textPart(message.id, { id: "part-1", text: "kept" })
-    const removed: Part = { ...kept, id: "part-2", text: "removed" }
-    const store = createServerSession(messageClient(pending.promise))
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: kept, time: 1 } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: removed, time: 1 } })
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: removed.id, field: "text", delta: " delta" },
-    })
-    const loading = store.sync("child")
-
-    pending.resolve(response([{ info: message, parts: [kept] }]))
-    await loading
-
-    expect(store.data.part[message.id]).toEqual([kept])
-    expect(store.data.part_text_accum_delta[removed.id]).toBeUndefined()
-  })
-
-  test("clears a stale delta buffer when a refresh replaces its part", async () => {
-    const message = userMessage("message")
-    const stale = textPart(message.id, { text: "stale" })
-    const fetched = { ...stale, text: "fetched" }
-    const store = createServerSession(
-      messageClient(response([{ info: message, parts: [stale] }]), response([{ info: message, parts: [fetched] }])),
-    )
-    await store.sync("child")
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: stale.id, field: "text", delta: " delta" },
-    })
-
-    await store.sync("child", { force: true })
-
-    expect(store.data.part[message.id]).toEqual([fetched])
-    expect(store.data.part_text_accum_delta[stale.id]).toBeUndefined()
-  })
-
-  test("preserves a non-durable delta received before refresh", async () => {
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "stale" })
-    const store = createServerSession(
-      messageClient(response([{ info: message, parts: [part] }]), response([{ info: message, parts: [{ ...part }] }])),
-    )
-    await store.sync("child")
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
-    })
-
-    await store.sync("child", { force: true })
-
-    expect(store.data.part[message.id]).toEqual([{ ...part, text: "stale delta" }])
-    expect(store.data.part_text_accum_delta[part.id]).toBe("stale delta")
-  })
-
-  test("accepts fetched text that intentionally replaces an accumulated prefix", async () => {
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "abc" })
-    const fetched = { ...part, text: "ab" }
-    const store = createServerSession(
-      messageClient(response([{ info: message, parts: [part] }]), response([{ info: message, parts: [fetched] }])),
-    )
-    await store.sync("child")
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: "def" },
-    })
-
-    await store.sync("child", { force: true })
-
-    expect(store.data.part[message.id]).toEqual([fetched])
-    expect(store.data.part_text_accum_delta[part.id]).toBeUndefined()
-  })
-
-  test("preserves an unpersisted delta suffix after partial server catch-up", async () => {
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "a" })
-    const fetched = { ...part, text: "ab" }
-    const store = createServerSession(
-      messageClient(response([{ info: message, parts: [part] }]), response([{ info: message, parts: [fetched] }])),
-    )
-    await store.sync("child")
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: "bc" },
-    })
-
-    await store.sync("child", { force: true })
-
-    expect(store.data.part[message.id]).toEqual([{ ...part, text: "abc" }])
-    expect(store.data.part_text_accum_delta[part.id]).toBe("abc")
-  })
-
-  test("clears delta state after exact server catch-up", async () => {
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "a" })
-    const fetched = { ...part, text: "ab" }
-    const store = createServerSession(
-      messageClient(response([{ info: message, parts: [part] }]), response([{ info: message, parts: [fetched] }])),
-    )
-    await store.sync("child")
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: "b" },
-    })
-
-    await store.sync("child", { force: true })
-
-    expect(store.data.part[message.id]).toEqual([fetched])
-    expect(store.data.part_text_accum_delta[part.id]).toBeUndefined()
-  })
-
   test("uses the successful retry response over events from a failed attempt", async () => {
     const failed = Promise.withResolvers<MessageResponse>()
     const retried = Promise.withResolvers<MessageResponse>()
@@ -1786,29 +1654,6 @@ describe("server session", () => {
     await loading
 
     expect(store.data.part[message.id]).toEqual([fetched])
-  })
-
-  test("preserves non-durable deltas across message retries", async () => {
-    const failed = Promise.withResolvers<MessageResponse>()
-    const retried = Promise.withResolvers<MessageResponse>()
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "stale" })
-    const client = messageClient(failed.promise, retried.promise)
-    const store = createServerSession(client, { retry: retryImmediately })
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 1 } })
-    const loading = store.sync("child")
-
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
-    })
-    failed.reject(new Error("failed to fetch"))
-    await client.requested(2)
-    retried.resolve(response([{ info: message, parts: [part] }]))
-    await loading
-
-    expect(store.data.part[message.id]).toEqual([{ ...part, text: "stale delta" }])
   })
 
   test("preserves part removals across message retries", async () => {
@@ -1875,29 +1720,6 @@ describe("server session", () => {
     expect(store.data.part[message.id]).toEqual([optimistic])
   })
 
-  test("accepts part omission from a successful retry after an earlier delta", async () => {
-    const failed = Promise.withResolvers<MessageResponse>()
-    const retried = Promise.withResolvers<MessageResponse>()
-    const message = userMessage("message")
-    const part = textPart(message.id)
-    const client = messageClient(response([{ info: message, parts: [part] }]), failed.promise, retried.promise)
-    const store = createServerSession(client, { retry: retryImmediately })
-    await store.sync("child")
-    const loading = store.sync("child", { force: true })
-
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
-    })
-    failed.reject(new Error("failed to fetch"))
-    await client.requested(3)
-    retried.resolve(response([{ info: message, parts: [] }]))
-    await loading
-
-    expect(store.data.part[message.id]).toBeUndefined()
-    expect(store.data.part_text_accum_delta[part.id]).toBeUndefined()
-  })
-
   test("clears load-owned orphan parts when all retries fail", async () => {
     const first = Promise.withResolvers<MessageResponse>()
     const second = Promise.withResolvers<MessageResponse>()
@@ -1917,47 +1739,6 @@ describe("server session", () => {
     await loading
 
     expect(store.data.part[message.id]).toBeUndefined()
-  })
-
-  test("preserves live updates during a forced refresh", async () => {
-    const pending = deferredResponse()
-    const stale = userMessage("message")
-    const stalePart = textPart(stale.id, { text: "stale" })
-    const store = createServerSession(messageClient(response([{ info: stale, parts: [stalePart] }]), pending.promise))
-    await store.sync("child")
-    const refreshing = store.sync("child", { force: true })
-    const live = { ...stale, time: { created: 2 } }
-
-    store.apply({ type: "message.updated", properties: { info: live } })
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: stale.id, partID: stalePart.id, field: "text", delta: " live" },
-    })
-    pending.resolve(response([{ info: stale, parts: [stalePart] }]))
-    await refreshing
-
-    expect(store.data.message.child).toEqual([live])
-    expect(store.data.part[stale.id]).toEqual([{ ...stalePart, text: "stale live" }])
-  })
-
-  test("keeps fetched message metadata when only a part changes", async () => {
-    const pending = deferredResponse()
-    const stale = userMessage("message")
-    const fetched = { ...stale, time: { created: 2 } }
-    const part = textPart(stale.id, { text: "stale" })
-    const store = createServerSession(messageClient(response([{ info: stale, parts: [part] }]), pending.promise))
-    await store.sync("child")
-    const refreshing = store.sync("child", { force: true })
-
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: stale.id, partID: part.id, field: "text", delta: " live" },
-    })
-    pending.resolve(response([{ info: fetched, parts: [part] }]))
-    await refreshing
-
-    expect(store.data.message.child).toEqual([fetched])
-    expect(store.data.part[stale.id]).toEqual([{ ...part, text: "stale live" }])
   })
 
   test("preserves a part update when a forced refresh omits its message", async () => {
@@ -2066,23 +1847,6 @@ describe("server session", () => {
     store.optimistic.add({ sessionID: "child", message, parts: [before, file, after] })
 
     expect(store.data.part[message.id]?.map((part) => part.id)).toEqual(["part-z", "part-a", "part-m"])
-  })
-
-  test("clears stale delta buffers when replacing optimistic parts", () => {
-    const message = userMessage("message")
-    const stale = textPart(message.id, { id: "stale", text: "stale" })
-    const optimistic = textPart(message.id, { id: "optimistic", text: "optimistic" })
-    const store = setup({ child: session("child") }).store
-    store.optimistic.add({ sessionID: "child", message, parts: [stale] })
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: stale.id, field: "text", delta: " delta" },
-    })
-
-    store.optimistic.add({ sessionID: "child", message, parts: [optimistic] })
-
-    expect(store.data.part_text_accum_delta[stale.id]).toBeUndefined()
-    expect(store.data.part_text_accum_delta[optimistic.id]).toBeUndefined()
   })
 
   test("preserves removals during history prepend", async () => {
@@ -2280,22 +2044,6 @@ describe("server session", () => {
     await loadingHistory
 
     expect(store.data.part[older.id]).toBeUndefined()
-  })
-
-  test("clears orphaned parts when a refresh drops a message", async () => {
-    const message = userMessage("message")
-    const part = textPart(message.id, { text: "stale" })
-    const store = createServerSession(messageClient(response([{ info: message, parts: [part] }]), response()))
-    await store.sync("child")
-    store.apply({
-      type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
-    })
-    await store.sync("child", { force: true })
-
-    expect(store.data.message.child).toEqual([])
-    expect(store.data.part[message.id]).toBeUndefined()
-    expect(store.data.part_text_accum_delta[part.id]).toBeUndefined()
   })
 
   test("applies events without a directory store", () => {

@@ -201,4 +201,27 @@ describe("useEvent", () => {
       app.renderer.destroy()
     }
   })
+
+  test("does not forward part deltas through the compatibility stream", async () => {
+    const { app, emitNative, seen } = await mount()
+
+    try {
+      emitNative({
+        id: "evt_text_delta",
+        type: "session.next.text.delta",
+        data: {
+          timestamp: 1,
+          sessionID: "ses_test",
+          assistantMessageID: "msg_test",
+          textID: "part_test",
+          delta: "canonical",
+        },
+      } as OpenCodeEvent)
+      await Bun.sleep(30)
+
+      expect(seen).toEqual([])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
 })

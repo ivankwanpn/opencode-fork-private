@@ -32,6 +32,58 @@ describe("run attach clients", () => {
     })
   })
 
+  test("preserves canonical streaming deltas", async () => {
+    const source = [
+      {
+        id: "evt-text",
+        type: "session.next.text.delta",
+        data: {
+          timestamp: 1,
+          sessionID: "ses-1",
+          assistantMessageID: "msg-1",
+          textID: "text-1",
+          delta: "hello",
+        },
+      },
+      {
+        id: "evt-reasoning",
+        type: "session.next.reasoning.delta",
+        data: {
+          timestamp: 2,
+          sessionID: "ses-1",
+          assistantMessageID: "msg-1",
+          reasoningID: "reasoning-1",
+          delta: "thinking",
+        },
+      },
+      {
+        id: "evt-tool-input",
+        type: "session.next.tool.input.delta",
+        data: {
+          timestamp: 3,
+          sessionID: "ses-1",
+          assistantMessageID: "msg-1",
+          callID: "call-1",
+          delta: "{",
+        },
+      },
+    ] as const
+    const clients = createAttachClients({
+      baseUrl: "https://opencode.test",
+      fetch: (async () =>
+        new Response(source.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+          headers: { "content-type": "text/event-stream" },
+        })) as unknown as typeof globalThis.fetch,
+    })
+
+    const events = await clients.sdk.event.subscribe()
+    const actual = await Promise.all(source.map(() => events.stream.next().then((event) => event.value)))
+
+    expect(actual[0]).toEqual({ id: source[0].id, type: source[0].type, properties: source[0].data })
+    expect(actual[1]).toEqual({ id: source[1].id, type: source[1].type, properties: source[1].data })
+    expect(actual[2]).toEqual({ id: source[2].id, type: source[2].type, properties: source[2].data })
+  })
+
   test("preserves canonical session error and diff events", async () => {
     const source = [
       {

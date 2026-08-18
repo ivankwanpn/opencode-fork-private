@@ -35,7 +35,6 @@ type TimelinePayload = Extract<
       | "message.removed"
       | "message.part.updated"
       | "message.part.removed"
-      | "message.part.delta"
       | "session.next.status"
       | "server.connected"
   }
@@ -79,7 +78,6 @@ const timelineEventSchema = Schema.Union([
   SessionV1.Event.MessageRemoved,
   SessionV1.Event.PartUpdated,
   SessionV1.Event.PartRemoved,
-  SessionV1.Event.PartDelta,
   SessionEvent.Status,
   ServerEvent.Connected,
 ])
@@ -336,10 +334,6 @@ export function partUpdated(part: Part | PartSeed<"assistant">) {
     part: owned,
     time: 1700000002000,
   })
-}
-
-export function partDelta(partID: string, delta: string, messageID = assistantID) {
-  return event("message.part.delta", { sessionID, messageID, partID, field: "text", delta })
 }
 
 export function messageUpdated(info: Message) {

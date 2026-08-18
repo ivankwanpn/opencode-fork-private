@@ -26,7 +26,6 @@ const SESSION_CONTENT_EVENTS = new Set([
   "message.removed",
   "message.part.updated",
   "message.part.removed",
-  "message.part.delta",
   "permission.v2.asked",
   "permission.v2.replied",
   "question.v2.asked",
@@ -377,31 +376,6 @@ export function applyDirectoryEvent(input: {
           }),
         )
       }
-      break
-    }
-    case "message.part.delta": {
-      const props = event.properties as { messageID: string; partID: string; field: string; delta: string }
-      const parts = input.store.part[props.messageID]
-      if (!parts) break
-      const result = Binary.search(parts, props.partID, (p) => p.id)
-      if (!result.found) break
-      const field = props.field as keyof (typeof parts)[number]
-      const current = parts[result.index]?.[field]
-      input.setStore(
-        "part_text_accum_delta",
-        props.partID,
-        (existing) => (existing ?? (typeof current === "string" ? current : "")) + props.delta,
-      )
-      input.setStore(
-        "part",
-        props.messageID,
-        produce((draft) => {
-          const part = draft[result.index]
-          const field = props.field as keyof typeof part
-          const existing = part[field] as string | undefined
-          ;(part[field] as string) = (existing ?? "") + props.delta
-        }),
-      )
       break
     }
     case "vcs.branch.updated": {

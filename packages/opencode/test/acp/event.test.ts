@@ -114,12 +114,26 @@ function createHarness(messages: Record<string, ACPClient.LegacySessionMessage> 
 function textDelta(sessionID: string, messageID: string, partID: string, delta: string): ACPClient.LegacyEvent {
   return {
     id: `evt_${sessionID}_${messageID}_${partID}_${delta}`,
-    type: "message.part.delta",
+    type: "session.next.text.delta",
     properties: {
+      timestamp: 1,
       sessionID,
-      messageID,
-      partID,
-      field: "text",
+      assistantMessageID: messageID,
+      textID: partID,
+      delta,
+    },
+  }
+}
+
+function reasoningDelta(sessionID: string, messageID: string, partID: string, delta: string): ACPClient.LegacyEvent {
+  return {
+    id: `evt_${sessionID}_${messageID}_${partID}_${delta}`,
+    type: "session.next.reasoning.delta",
+    properties: {
+      timestamp: 1,
+      sessionID,
+      assistantMessageID: messageID,
+      reasoningID: partID,
       delta,
     },
   }
@@ -327,7 +341,7 @@ async function createKnownSession(
 }
 
 describe("acp event routing", () => {
-  it("routes message.part.delta by sessionID without cross-session pollution", async () => {
+  it("routes canonical text deltas by sessionID without cross-session pollution", async () => {
     const harness = createHarness()
     await createKnownSession(harness.session, "ses_a", { messageId: "msg_a", partId: "part_a", partType: "text" })
     await createKnownSession(harness.session, "ses_b", { messageId: "msg_b", partId: "part_b", partType: "text" })
@@ -348,9 +362,9 @@ describe("acp event routing", () => {
     })
 
     await harness.subscription.handle(textDelta("ses_a", "msg_a", "part_a", "A1"))
-    await harness.subscription.handle(textDelta("ses_b", "msg_b", "part_b", "B1"))
+    await harness.subscription.handle(reasoningDelta("ses_b", "msg_b", "part_b", "B1"))
     await harness.subscription.handle(textDelta("ses_a", "msg_a", "part_a", "A2"))
-    await harness.subscription.handle(textDelta("ses_b", "msg_b", "part_b", "B2"))
+    await harness.subscription.handle(reasoningDelta("ses_b", "msg_b", "part_b", "B2"))
 
     expect(
       harness.updates.filter((update) => update.sessionId === "ses_a").map((update) => update.update.sessionUpdate),
@@ -417,7 +431,7 @@ describe("acp event routing", () => {
     expect(harness.updates).toHaveLength(5)
   })
 
-  it("fetches unknown part metadata once and reuses it for later deltas", async () => {
+  it("does not fetch legacy part metadata for canonical deltas", async () => {
     const harness = createHarness({
       msg_a: assistantMessage("ses_a", "msg_a", "part_a", "text"),
     })
@@ -427,7 +441,7 @@ describe("acp event routing", () => {
     await harness.subscription.handle(textDelta("ses_a", "msg_a", "part_a", "a"))
     await harness.subscription.handle(textDelta("ses_a", "msg_a", "part_a", "b"))
 
-    expect(harness.calls.message).toBe(1)
+    expect(harness.calls.message).toBe(0)
     expect(harness.updates).toHaveLength(2)
   })
 
@@ -508,7 +522,7 @@ describe("acp event routing", () => {
     events.close()
   })
 
-  it("ignores unknown sessions and live user parts without user_message_chunk duplication", async () => {
+  it("ignores unknown sessions and live user part snapshots without duplication", async () => {
     const harness = createHarness()
     await createKnownSession(harness.session, "ses_user", {
       messageId: "msg_user",
@@ -519,7 +533,6 @@ describe("acp event routing", () => {
 
     await harness.subscription.handle(textDelta("ses_missing", "msg_missing", "part_missing", "ignored"))
     await harness.subscription.handle(partUpdated("ses_user", "msg_user", "part_live", "text"))
-    await harness.subscription.handle(textDelta("ses_user", "msg_user", "part_user", "hello"))
 
     expect(harness.updates).toHaveLength(0)
   })

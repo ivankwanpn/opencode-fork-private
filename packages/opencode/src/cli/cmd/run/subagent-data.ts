@@ -549,6 +549,7 @@ function compactDetail(detail: DetailState) {
   next.part = copyMap(detail.data.part, activePartIDs)
   next.text = copyMap(detail.data.text, activePartIDs)
   next.sent = copyMap(detail.data.sent, activePartIDs)
+  next.fragment = new Map([...detail.data.fragment].filter(([, partID]) => activePartIDs.has(partID)))
   next.end = new Set([...detail.data.end].filter((item) => activePartIDs.has(item)))
   next.echo = compactEchoMap(detail.data, messageIDs)
   detail.data = next
@@ -811,7 +812,9 @@ export function reduceSubagentData(input: {
 
   const sessionID =
     event.type === "message.updated" ||
-    event.type === "message.part.delta" ||
+    event.type === "session.next.text.delta" ||
+    event.type === "session.next.reasoning.delta" ||
+    event.type === "session.next.tool.input.delta" ||
     event.type === "permission.v2.asked" ||
     event.type === "permission.v2.replied" ||
     event.type === "question.v2.asked" ||

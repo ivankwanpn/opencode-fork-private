@@ -386,12 +386,12 @@ describe("run subagent data", () => {
       },
     })
     reduce(data, {
-      type: "message.part.delta",
+      type: "session.next.text.delta",
       properties: {
+        timestamp: 1,
         sessionID: "child-1",
-        messageID: "msg-assistant-1",
-        partID: "txt-1",
-        field: "text",
+        assistantMessageID: "msg-assistant-1",
+        textID: "txt-1",
         delta: " world",
       },
     })

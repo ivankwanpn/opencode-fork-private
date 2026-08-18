@@ -99,14 +99,6 @@ export function legacyEventProjection() {
       part: value,
       time,
     })
-  const delta = (state: AssistantState, id: string, value: string) =>
-    event("message.part.delta", {
-      sessionID: SessionID.make(state.sessionID),
-      messageID: state.messageID,
-      partID: id,
-      field: "text",
-      delta: value,
-    })
   const info = (state: AssistantState) => ({
     id: state.messageID,
     sessionID: SessionID.make(state.sessionID),
@@ -348,10 +340,6 @@ export function legacyEventProjection() {
         ),
       ]
     }
-    if (source.type === "session.next.text.delta") {
-      const item = state.text.get(String(data.textID))
-      return item ? [delta(state, partID(state, "text", item.index), String(data.delta))] : []
-    }
     if (source.type === "session.next.text.ended") {
       const textID = String(data.textID)
       const item = state.text.get(textID) ?? { index: allocate(state), started: timestamp }
@@ -390,10 +378,6 @@ export function legacyEventProjection() {
           timestamp,
         ),
       ]
-    }
-    if (source.type === "session.next.reasoning.delta") {
-      const item = state.reasoning.get(String(data.reasoningID))
-      return item ? [delta(state, partID(state, "reasoning", item.index), String(data.delta))] : []
     }
     if (source.type === "session.next.reasoning.ended") {
       const reasoningID = String(data.reasoningID)

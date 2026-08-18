@@ -35,8 +35,6 @@ const sessionV1DurableDefinitions = Event.inventory(
   SessionV1.Event.PartUpdated,
   SessionV1.Event.PartRemoved,
 )
-const sessionV1LiveDefinitions = Event.inventory(SessionV1.Event.PartDelta)
-
 const coreDefinitions = Event.inventory(...sessionV1DurableDefinitions, ...SessionEvent.Definitions)
 
 const foundationDefinitions = Event.inventory(
@@ -60,7 +58,6 @@ const featureDefinitions = Event.inventory(
 )
 
 const compatibilityDefinitions = Event.inventory(
-  ...sessionV1LiveDefinitions,
   ...TuiEvent.Definitions,
   ...McpEvent.Definitions,
   ...LegacyEvent.Definitions,

@@ -12,7 +12,6 @@ import {
   completedAssistantInfo,
   event,
   messageUpdated,
-  partDelta,
   partUpdated,
   setupTimeline,
   shell,
@@ -63,8 +62,11 @@ test("streams text through growth, canonical replacement, and completion", async
     following: { selector: `[data-timeline-part-id="${followingID}"]`, closest: '[data-timeline-row="AssistantPart"]' },
   })
   await startVisualProbe(page, regions)
-  await timeline.send(partDelta(textID, " streamed content"), 100)
-  await timeline.send(partDelta(textID, "\n\n- item one\n- item two\n- item three"), 180)
+  await timeline.send(partUpdated(textPart(textID, "Starting streamed content")), 100)
+  await timeline.send(
+    partUpdated(textPart(textID, "Starting streamed content\n\n- item one\n- item two\n- item three")),
+    180,
+  )
   await timeline.send(partUpdated(textPart(textID, "Canonical replacement with a shorter final paragraph.")), 200)
   await timeline.send(messageUpdated(completedAssistantInfo(assistant.info)), 500)
   const trace = await stopVisualProbe<keyof typeof regions>(page)

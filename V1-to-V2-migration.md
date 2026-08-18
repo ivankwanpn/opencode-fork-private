@@ -87,6 +87,13 @@ public manifest的SessionV1 live集合現只保留`message.part.delta`，event i
 仍公開的7個V1 durable wire definitions改為明確列舉，避免`Array.filter`未縮窄型別而讓已退役diff/error
 繼續污染Client declaration union；tracked Client declarations以排除既有`.d.ts`輸入的乾淨emit重生。
 
+**999.0.19 final SessionV1 live event hard cut**：`message.part.delta`consumer已切到canonical
+text/reasoning/tool-input delta。CLI以fragment ID綁定bridge建立的active part，保留resize replay與ended snapshot
+防重複；ACP直接將assistant text/reasoning delta轉為ACP chunk，App/TUI使用既有native V2 reducer。
+EventV2Bridge不再投影delta，SessionV1 live definitions已從public manifest清空；event inventory由97降至96，
+durable維持47。仍公開的SessionV1項目只剩7個durable wire compatibility definitions，待message snapshot
+consumer整體遷移後刪除。
+
 ---
 
 ## 1. 各区域现状总表

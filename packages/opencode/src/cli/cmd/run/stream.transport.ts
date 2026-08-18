@@ -22,6 +22,7 @@ import {
   blockerStatus,
   bootstrapSessionData,
   createSessionData,
+  fragmentPartID,
   flushInterrupted,
   pickBlockerView,
   reduceSessionData,
@@ -139,7 +140,11 @@ function sid(event: Event): string | undefined {
     return event.properties.sessionID
   }
 
-  if (event.type === "message.part.delta") {
+  if (
+    event.type === "session.next.text.delta" ||
+    event.type === "session.next.reasoning.delta" ||
+    event.type === "session.next.tool.input.delta"
+  ) {
     return event.properties.sessionID
   }
 
@@ -217,7 +222,12 @@ function active(event: Event, sessionID: string): boolean {
     return event.properties.info.role === "assistant"
   }
 
-  if (event.type === "message.part.delta" || event.type === "message.part.updated") {
+  if (
+    event.type === "session.next.text.delta" ||
+    event.type === "session.next.reasoning.delta" ||
+    event.type === "session.next.tool.input.delta" ||
+    event.type === "message.part.updated"
+  ) {
     return false
   }
 
@@ -883,14 +893,18 @@ function createLayer(input: StreamInput) {
         }
 
         const applyEvent = Effect.fn("RunStreamTransport.applyEvent")(function* (event: Event) {
-          if (event.type === "message.part.delta" && event.properties.sessionID === input.sessionID) {
-            if (replayedParts.has(event.properties.partID)) {
-              const seen = state.data.text.get(event.properties.partID) ?? ""
+          if (
+            (event.type === "session.next.text.delta" || event.type === "session.next.reasoning.delta") &&
+            event.properties.sessionID === input.sessionID
+          ) {
+            const partID = fragmentPartID(state.data, event)
+            if (partID && replayedParts.has(partID)) {
+              const seen = state.data.text.get(partID) ?? ""
               if (seen.endsWith(event.properties.delta)) {
                 return
               }
 
-              replayedParts.delete(event.properties.partID)
+              replayedParts.delete(partID)
             }
           }
 

@@ -61,6 +61,7 @@ type SessionCommit = StreamCommit
 // - text:   part ID → full accumulated text so far
 // - sent:   part ID → byte offset of last flushed text (for incremental output)
 // - visible: part ID → rendered text for an active part after display transforms
+// - fragment: canonical text/reasoning fragment ID → active legacy part ID
 // - end:    part IDs whose time.end has arrived (part is finished)
 // - shell:  shell call ID → chosen transcript source for direct shell calls
 // - echo:   message ID → bash outputs to strip from the next assistant chunk
@@ -84,6 +85,7 @@ export type SessionData = {
   text: Map<string, string>
   sent: Map<string, number>
   visible: Map<string, string>
+  fragment: Map<string, string>
   end: Set<string>
   echo: Map<string, Set<string>>
 }
@@ -122,6 +124,7 @@ export function createSessionData(
     text: new Map(),
     sent: new Map(),
     visible: new Map(),
+    fragment: new Map(),
     end: new Set(),
     echo: new Map(),
   }
@@ -577,6 +580,36 @@ function drop(data: SessionData, partID: string) {
   data.visible.delete(partID)
   data.msg.delete(partID)
   data.end.delete(partID)
+  for (const [fragmentID, activePartID] of data.fragment) {
+    if (activePartID === partID) data.fragment.delete(fragmentID)
+  }
+}
+
+type FragmentDelta = Extract<Event, { type: "session.next.text.delta" | "session.next.reasoning.delta" }>
+
+export function fragmentPartID(data: SessionData, event: FragmentDelta) {
+  const fragmentID =
+    event.type === "session.next.text.delta"
+      ? `text:${event.properties.textID}`
+      : `reasoning:${event.properties.reasoningID}`
+  const current = data.fragment.get(fragmentID)
+  if (current && data.part.has(current)) return current
+
+  const kind = event.type === "session.next.text.delta" ? "assistant" : "reasoning"
+  const claimed = new Set(data.fragment.values())
+  const partID = [...data.part.entries()]
+    .reverse()
+    .find(
+      ([id, partKind]) =>
+        partKind === kind &&
+        data.msg.get(id) === event.properties.assistantMessageID &&
+        !data.ids.has(id) &&
+        !claimed.has(id),
+    )?.[0]
+  if (!partID) return undefined
+
+  data.fragment.set(fragmentID, partID)
+  return partID
 }
 
 // Called when we learn a message's role (from message.updated). Flushes any
@@ -768,7 +801,7 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
 //
 // Event handling follows the SDK event types:
 //   message.updated      → learn role, flush buffered parts, track usage
-//   message.part.delta   → accumulate text, flush if ready
+//   session.next.*.delta → accumulate text/reasoning, flush if ready
 //   message.part.updated → handle text/reasoning/tool state transitions
 //   permission.*         → manage the permission queue, drive footer view
 //   question.*           → manage the question queue, drive footer view
@@ -872,31 +905,17 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return out(data, commits, patch(next))
   }
 
-  if (event.type === "message.part.delta") {
+  if (event.type === "session.next.tool.input.delta") {
+    return out(data, commits)
+  }
+
+  if (event.type === "session.next.text.delta" || event.type === "session.next.reasoning.delta") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }
 
-    if (
-      typeof event.properties.partID !== "string" ||
-      typeof event.properties.field !== "string" ||
-      typeof event.properties.delta !== "string"
-    ) {
-      return out(data, commits)
-    }
-
-    if (event.properties.field !== "text") {
-      return out(data, commits)
-    }
-
-    const partID = event.properties.partID
-    if (data.ids.has(partID)) {
-      return out(data, commits)
-    }
-
-    if (typeof event.properties.messageID === "string") {
-      data.msg.set(partID, event.properties.messageID)
-    }
+    const partID = fragmentPartID(data, event)
+    if (!partID || data.ids.has(partID)) return out(data, commits)
 
     const text = data.text.get(partID) ?? ""
     data.text.set(partID, text + event.properties.delta)

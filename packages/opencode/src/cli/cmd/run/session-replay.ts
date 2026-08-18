@@ -354,6 +354,9 @@ export function replayActiveText(data: SessionData, current: SessionData): Strea
         data.role.set(messageID, role)
       }
     }
+    for (const [fragmentID, activePartID] of current.fragment) {
+      if (activePartID === partID) data.fragment.set(fragmentID, partID)
+    }
 
     const chunk = visible.slice(existingVisible.length)
     if (!chunk) {

@@ -340,12 +340,26 @@ function toolUpdated(part: SessionToolPart): SdkEvent {
 function textDelta(messageID: string, partID: string, delta: string, sessionID = "session-1"): SdkEvent {
   return {
     id: `evt-${partID}-delta`,
-    type: "message.part.delta",
+    type: "session.next.text.delta",
     properties: {
+      timestamp: 1,
       sessionID,
-      messageID,
-      partID,
-      field: "text",
+      assistantMessageID: messageID,
+      textID: partID,
+      delta,
+    },
+  }
+}
+
+function reasoningDelta(messageID: string, partID: string, delta: string, sessionID = "session-1"): SdkEvent {
+  return {
+    id: `evt-${partID}-delta`,
+    type: "session.next.reasoning.delta",
+    properties: {
+      timestamp: 1,
+      sessionID,
+      assistantMessageID: messageID,
+      reasoningID: partID,
       delta,
     },
   }
@@ -1023,7 +1037,7 @@ describe("run stream transport", () => {
     try {
       src.push(assistant("msg-thinking"))
       src.push(reasoningUpdated(reasoningPart("thinking-1", "msg-thinking", "")))
-      src.push(textDelta("msg-thinking", "thinking-1", "plan"))
+      src.push(reasoningDelta("msg-thinking", "thinking-1", "plan"))
       await waitFor(() => ui.commits.find((commit) => commit.kind === "reasoning" && commit.text === "Thinking: plan"))
       ui.commits.length = 0
 

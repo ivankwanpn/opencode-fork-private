@@ -1132,26 +1132,28 @@ describe("ACP client EventV2 boundary", () => {
     ])
     expect(
       events
-        .filter((event) => event.type === "message.part.delta")
+        .filter(
+          (event) => event.type === "session.next.text.delta" || event.type === "session.next.reasoning.delta",
+        )
         .map((event) => ({ type: event.type, properties: event.properties })),
     ).toEqual([
       {
-        type: "message.part.delta",
+        type: "session.next.text.delta",
         properties: {
+          timestamp: 12,
           sessionID: "ses_events",
-          messageID: "msg_assistant",
-          partID: "prt_msg_assistant_text_0",
-          field: "text",
+          assistantMessageID: "msg_assistant",
+          textID: "text",
           delta: "hello",
         },
       },
       {
-        type: "message.part.delta",
+        type: "session.next.reasoning.delta",
         properties: {
+          timestamp: 15,
           sessionID: "ses_events",
-          messageID: "msg_assistant",
-          partID: "prt_msg_assistant_reasoning_1",
-          field: "text",
+          assistantMessageID: "msg_assistant",
+          reasoningID: "reasoning",
           delta: "think",
         },
       },

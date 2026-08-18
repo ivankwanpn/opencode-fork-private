@@ -11,7 +11,6 @@ import {
   assistantMessage,
   completedAssistantInfo,
   messageUpdated,
-  partDelta,
   partUpdated,
   reasoningPart,
   setupTimeline,
@@ -122,9 +121,12 @@ test.describe("timeline visual lifecycle stability", () => {
     await timeline.waitForPart(reasoningID)
     await expect(page.locator('[data-timeline-row="Thinking"]')).toHaveCount(0)
     await timeline.send(partUpdated(textPart(textID, "Starting")), 100)
-    await timeline.send(partDelta(textID, " **stable"), 90)
-    await timeline.send(partDelta(textID, " output** with `code` and [a link"), 130)
-    await timeline.send(partDelta(textID, "](https://example.com)."), 220)
+    await timeline.send(partUpdated(textPart(textID, "Starting **stable")), 90)
+    await timeline.send(partUpdated(textPart(textID, "Starting **stable output** with `code` and [a link")), 130)
+    await timeline.send(
+      partUpdated(textPart(textID, "Starting **stable output** with `code` and [a link](https://example.com).")),
+      220,
+    )
     await timeline.send(messageUpdated(completedAssistantInfo(assistant.info)), 120)
     await timeline.send(status("idle"), 500)
     const trace = await stopVisualProbe<keyof typeof regions>(page)

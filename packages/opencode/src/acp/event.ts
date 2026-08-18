@@ -58,8 +58,10 @@ export class Subscription {
         return
       case "message.part.updated":
         return this.handlePartUpdated(event)
-      case "message.part.delta":
-        return this.handlePartDelta(event)
+      case "session.next.text.delta":
+        return this.handleAssistantDelta(event.properties, "agent_message_chunk")
+      case "session.next.reasoning.delta":
+        return this.handleAssistantDelta(event.properties, "agent_thought_chunk")
     }
   }
 
@@ -134,53 +136,24 @@ export class Subscription {
     }
   }
 
-  private async handlePartDelta(
-    event: Extract<ACPClient.LegacyEvent, { type: "message.part.delta" }>,
+  private async handleAssistantDelta(
+    props: {
+      readonly sessionID: string
+      readonly assistantMessageID: string
+      readonly delta: string
+    },
+    sessionUpdate: "agent_message_chunk" | "agent_thought_chunk",
   ) {
-    const props = event.properties
     const session = await Effect.runPromise(this.input.session.tryGet(props.sessionID))
     if (!session) return
-
-    const known = await Effect.runPromise(
-      this.input.session.tryGetPartMetadata({
-        sessionId: session.id,
-        messageId: props.messageID,
-        partId: props.partID,
-      }),
-    )
-    const metadata =
-      known?.role && known.partType
-        ? known
-        : await this.fetchPartMetadata(session.id, props.messageID, props.partID)
-    if (metadata?.role !== "assistant") return
-    if (metadata.partType === "text" && props.field === "text" && metadata.ignored !== true) {
-      await this.input.connection.sessionUpdate({
-        sessionId: session.id,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          messageId: props.messageID,
-          content: {
-            type: "text",
-            text: props.delta,
-          },
-        },
-      })
-      return
-    }
-
-    if (metadata.partType === "reasoning" && props.field === "text") {
-      await this.input.connection.sessionUpdate({
-        sessionId: session.id,
-        update: {
-          sessionUpdate: "agent_thought_chunk",
-          messageId: props.messageID,
-          content: {
-            type: "text",
-            text: props.delta,
-          },
-        },
-      })
-    }
+    await this.input.connection.sessionUpdate({
+      sessionId: session.id,
+      update: {
+        sessionUpdate,
+        messageId: props.assistantMessageID,
+        content: { type: "text", text: props.delta },
+      },
+    })
   }
 
   private async fetchPartMetadata(sessionId: string, messageId: string, partId: string) {

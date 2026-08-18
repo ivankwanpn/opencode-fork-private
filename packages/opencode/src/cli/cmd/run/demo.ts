@@ -342,12 +342,12 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
 
     next += item
     feed(state, {
-      type: "message.part.delta",
+      type: "session.next.text.delta",
       properties: {
+        timestamp: Date.now(),
         sessionID: state.id,
-        messageID: msg,
-        partID: part,
-        field: "text",
+        assistantMessageID: msg,
+        textID: part,
         delta: item,
       },
     } as Event)
@@ -405,12 +405,12 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
 
     next += item
     feed(state, {
-      type: "message.part.delta",
+      type: "session.next.reasoning.delta",
       properties: {
+        timestamp: Date.now(),
         sessionID: state.id,
-        messageID: msg,
-        partID: part,
-        field: "text",
+        assistantMessageID: msg,
+        reasoningID: part,
         delta: item,
       },
     } as Event)

@@ -82,12 +82,25 @@ function reasoning(input: { id: string; messageID: string; text: string; time?: 
 
 function delta(messageID: string, partID: string, value: string) {
   return {
-    type: "message.part.delta",
+    type: "session.next.text.delta",
     properties: {
+      timestamp: 1,
       sessionID: "session-1",
-      messageID,
-      partID,
-      field: "text",
+      assistantMessageID: messageID,
+      textID: partID,
+      delta: value,
+    },
+  }
+}
+
+function reasoningDelta(messageID: string, partID: string, value: string) {
+  return {
+    type: "session.next.reasoning.delta",
+    properties: {
+      timestamp: 1,
+      sessionID: "session-1",
+      assistantMessageID: messageID,
+      reasoningID: partID,
       delta: value,
     },
   }
@@ -113,26 +126,30 @@ function tool(input: { id: string; messageID: string; tool: string; state: Recor
 describe("run session data", () => {
   test("buffers delayed assistant text until the role is known", () => {
     let data = createSessionData()
+    data = reduce(data, text({ id: "txt-1", messageID: "msg-1", text: "", time: { start: 1 } })).data
     data = reduce(data, delta("msg-1", "txt-1", "hello")).data
-    data = reduce(data, assistant("msg-1")).data
+    const announced = reduce(data, assistant("msg-1"))
 
-    const out = reduce(
-      data,
-      text({
-        id: "txt-1",
-        messageID: "msg-1",
-        text: "",
-        time: { end: 1 },
-      }),
-    )
-
-    expect(out.commits).toEqual([
+    expect(announced.commits).toEqual([
       expect.objectContaining({
         kind: "assistant",
         text: "hello",
         partID: "txt-1",
       }),
     ])
+
+    const ended = reduce(
+      announced.data,
+      text({
+        id: "txt-1",
+        messageID: "msg-1",
+        text: "hello",
+        time: { end: 1 },
+      }),
+    )
+
+    expect(ended.commits).toEqual([])
+    expect(ended.data.fragment.size).toBe(0)
   })
 
   test("keeps leading whitespace buffered until real assistant content arrives", () => {
@@ -163,16 +180,15 @@ describe("run session data", () => {
   })
 
   test("suppresses reasoning commits when thinking is disabled", () => {
-    const out = reduce(
-      createSessionData(),
-      reasoning({
-        id: "reason-1",
-        messageID: "msg-1",
-        text: "hidden",
-        time: { end: 1 },
-      }),
+    let data = reduce(createSessionData(), assistant("msg-1"), false).data
+    data = reduce(
+      data,
+      reasoning({ id: "reason-1", messageID: "msg-1", text: "", time: { start: 1 } }),
       false,
-    )
+    ).data
+    expect(reduce(data, reasoningDelta("msg-1", "reason-1", "hidden"), false).commits).toEqual([])
+
+    const out = reduce(data, reasoning({ id: "reason-1", messageID: "msg-1", text: "hidden", time: { end: 1 } }), false)
 
     expect(out.commits).toEqual([])
     expect(out.data.ids.has("reason-1")).toBe(true)

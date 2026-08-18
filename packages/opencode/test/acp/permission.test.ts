@@ -129,15 +129,15 @@ function permissionAsked(
 function textDelta(sessionID: string, messageID: string, partID: string, delta: string) {
   return {
     id: `evt_${sessionID}_${messageID}_${partID}`,
-    type: "message.part.delta",
+    type: "session.next.text.delta",
     properties: {
+      timestamp: 1,
       sessionID,
-      messageID,
-      partID,
-      field: "text",
+      assistantMessageID: messageID,
+      textID: partID,
       delta,
     },
-  } as ACPClient.LegacyEvent
+  } as Extract<ACPClient.LegacyEvent, { type: "session.next.text.delta" }>
 }
 
 function textFromUpdates(updates: SessionUpdateParams[], sessionId: string) {

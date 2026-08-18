@@ -119,6 +119,9 @@ function cliEventPayloads(projectLegacy: ReturnType<typeof legacyEventProjection
     source.type === "session.next.error" ||
     source.type === "session.next.status" ||
     source.type === "session.next.diff" ||
+    source.type === "session.next.text.delta" ||
+    source.type === "session.next.reasoning.delta" ||
+    source.type === "session.next.tool.input.delta" ||
     source.type === "permission.v2.asked" ||
     source.type === "permission.v2.replied" ||
     source.type === "question.v2.asked" ||

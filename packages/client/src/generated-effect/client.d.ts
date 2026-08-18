@@ -11170,28 +11170,6 @@ export declare const make: (options?: {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "message.part.delta";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string & import("effect/Brand").Brand<"AbsolutePath">;
-                readonly workspaceID?: (string & import("effect/Brand").Brand<"WorkspaceV2.ID">) | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string & import("effect/Brand").Brand<"SessionID">;
-                readonly messageID: string & import("effect/Brand").Brand<"MessageID">;
-                readonly partID: string & import("effect/Brand").Brand<"PartID">;
-                readonly field: string;
-                readonly delta: string;
-            };
-        } | {
-            readonly id: string & import("effect/Brand").Brand<"Event.ID">;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
             readonly type: "message.part.removed";
             readonly durable?: {
                 readonly aggregateID: string;

@@ -37,36 +37,12 @@ describe("titlebar session events", () => {
     ).toBeUndefined()
   })
 
-  test("maps legacy deleted and archived events to tab cleanup", () => {
-    expect(
-      sessionTabsRemovedFromServerEvent({
-        server: remote,
-        directory: "/tmp/project",
-        event: {
-          type: "session.deleted",
-          properties: { sessionID: "ses_deleted" },
-        } as ServerEvent,
-      }),
-    ).toEqual({ server: remote, directory: "/tmp/project", sessionIDs: ["ses_deleted"] })
-
-    expect(
-      sessionTabsRemovedFromServerEvent({
-        server: remote,
-        directory: "/tmp/project",
-        event: {
-          type: "session.updated",
-          properties: { info: { id: "ses_archived", time: { archived: 10 } } },
-        } as ServerEvent,
-      }),
-    ).toEqual({ server: remote, directory: "/tmp/project", sessionIDs: ["ses_archived"] })
-  })
-
-  test("prefers the current V2 session identity and ignores unrelated events", () => {
+  test("uses the canonical session identity and ignores unrelated events", () => {
     const event = {
-      type: "session.deleted",
-      properties: { sessionID: "legacy-id" },
+      type: "session.next.deleted",
+      properties: { timestamp: 1, sessionID: "v2-id", info: { id: "v2-id" } },
       current: {
-        type: "session.deleted",
+        type: "session.next.deleted",
         data: { sessionID: "v2-id", info: { id: "v2-id" } },
       },
     } as ServerEvent

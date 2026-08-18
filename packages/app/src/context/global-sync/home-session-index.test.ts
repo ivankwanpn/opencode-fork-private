@@ -19,8 +19,11 @@ const session = (input: {
   updated?: number
 }) => ({
   id: input.id,
+  slug: input.id,
+  version: "1",
   parentID: input.parentID,
   projectID: "project",
+  directory: "/tmp",
   cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   time: { created: 1, updated: input.updated ?? 1, archived: input.archived },
@@ -119,15 +122,15 @@ describe("Home V2 session index", () => {
     const created = { ...initial[0], id: "new", slug: "new", title: "new", time: { created: 2, updated: 2 } }
 
     const afterCreate = applyHomeSessionEvent(initial, {
-      type: "session.created",
-      properties: { sessionID: created.id, info: created },
+      type: "session.next.created",
+      properties: { timestamp: 2, sessionID: created.id, info: session({ id: created.id }) },
     })
     expect(
       applyHomeSessionEvent(afterCreate, {
-        type: "session.deleted",
-        properties: { sessionID: initial[0]!.id, info: initial[0]! },
+        type: "session.next.deleted",
+        properties: { timestamp: 3, sessionID: initial[0]!.id, info: session({ id: initial[0]!.id }) },
       }),
-    ).toEqual([created])
+    ).toEqual([expect.objectContaining({ id: "new", title: "new" })])
   })
 
   test("applies only events newer than the index baseline", () => {
@@ -135,12 +138,12 @@ describe("Home V2 session index", () => {
     const stale = { ...initial[0], title: "stale" }
     const current = { ...initial[0], title: "current" }
     const first = appendHomeSessionEvent(undefined, {
-      type: "session.updated",
-      properties: { sessionID: stale.id, info: stale },
+      type: "session.next.updated",
+      properties: { timestamp: 2, sessionID: stale.id, info: { ...session({ id: stale.id }), title: "stale" } },
     })
     const events = appendHomeSessionEvent(first, {
-      type: "session.updated",
-      properties: { sessionID: current.id, info: current },
+      type: "session.next.updated",
+      properties: { timestamp: 3, sessionID: current.id, info: { ...session({ id: current.id }), title: "current" } },
     })
 
     expect(homeSessionIndexSessions({ sessions: initial, eventSequence: 1 }, events)[0]?.title).toBe("current")

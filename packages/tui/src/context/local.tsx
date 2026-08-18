@@ -2,7 +2,7 @@ import { createStore } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import { batch, createEffect, createMemo } from "solid-js"
 import { useSync } from "./sync"
-import { useEvent } from "./event"
+import { useNativeEvent } from "./event"
 import path from "path"
 import { useTuiPaths } from "./runtime"
 import { useArgs } from "./args"
@@ -60,7 +60,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const route = useRoute()
     const paths = useTuiPaths()
     const args = useArgs()
-    const event = useEvent()
+    const nativeEvent = useNativeEvent()
     const permission = usePermission()
 
     const catalog = createMemo(() => data.location.catalog.get())
@@ -470,8 +470,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
       }
 
-      event.on("session.deleted", (evt) => {
-        prune(evt.properties.info.id)
+      nativeEvent.on("session.next.deleted", (event) => {
+        prune(event.data.sessionID)
       })
 
       return {

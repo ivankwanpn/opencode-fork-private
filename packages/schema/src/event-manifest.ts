@@ -27,9 +27,6 @@ import { WorkspaceEvent } from "./workspace-event"
 import { WorktreeEvent } from "./worktree-event"
 
 const sessionV1DurableDefinitions = Event.inventory(
-  SessionV1.Event.Created,
-  SessionV1.Event.Updated,
-  SessionV1.Event.Deleted,
   SessionV1.Event.MessageUpdated,
   SessionV1.Event.MessageRemoved,
   SessionV1.Event.PartUpdated,

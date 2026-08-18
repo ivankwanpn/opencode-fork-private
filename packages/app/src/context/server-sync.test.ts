@@ -150,7 +150,7 @@ describe("provider refresh", () => {
   )
 
   test("ignores unrelated events", () => {
-    expect(isProviderCatalogEvent("session.updated")).toBe(false)
+    expect(isProviderCatalogEvent("session.next.updated")).toBe(false)
   })
 
   test("refetches bootstrap before invalidating global and directory provider queries", async () => {
@@ -212,7 +212,7 @@ describe("command catalog refresh", () => {
   })
 
   test("ignores unrelated events", () => {
-    expect(isCommandCatalogEvent("session.updated")).toBe(false)
+    expect(isCommandCatalogEvent("session.next.updated")).toBe(false)
   })
 })
 

@@ -150,6 +150,21 @@ describe("plugin.codex", () => {
     await enabled.dispose?.()
   })
 
+  test("consumes canonical session deletion events", async () => {
+    const hooks = await CodexAuthPlugin({} as never, { experimentalWebSockets: true })
+    await hooks.auth!.loader!(async () => ({ type: "api", key: "sk-test" }) as never, {} as never)
+
+    await hooks.event!({
+      event: {
+        id: "evt_session_deleted",
+        type: "session.next.deleted",
+        data: { sessionID: "ses_deleted", info: { id: "ses_deleted" } },
+      },
+    } as never)
+
+    await hooks.dispose?.()
+  })
+
   test("applies Codex request parameter and header hooks", async () => {
     const hooks = await CodexAuthPlugin({} as never)
     const input = {

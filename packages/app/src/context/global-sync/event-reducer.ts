@@ -7,6 +7,7 @@ import type {
   Project,
   QuestionV2Request,
   Session,
+  SessionNextSessionSnapshot,
   SessionNextStatusInfo,
   Todo,
 } from "@opencode-ai/sdk/v2/client"
@@ -16,6 +17,7 @@ import type { State, VcsCache } from "./types"
 import { trimSessions } from "./session-trim"
 import { dropSessionCaches } from "./session-cache"
 import { diffs as list, message as clean } from "@/utils/diffs"
+import { projectSessionInfo } from "@/utils/session-snapshot"
 
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const SESSION_CONTENT_EVENTS = new Set([
@@ -145,23 +147,20 @@ export function applyDirectoryEvent(input: {
       input.push(input.directory)
       return
     }
-    case "session.created": {
-      const info = (event.properties as { info: Session }).info
-      const result = Binary.search(input.store.session, info.id, (s) => s.id)
-      if (result.found) {
-        input.setStore("session", result.index, reconcile(info))
-        break
-      }
-      const next = input.store.session.slice()
-      next.splice(result.index, 0, info)
-      const trimmed = trimSessions(next, { limit, permission: input.permission ?? input.store.permission })
-      input.setStore("session", reconcile(trimmed, { key: "id" }))
-      cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
-      if (!info.parentID) input.setStore("sessionTotal", (value) => value + 1)
+    case "session.next.created": {
+      const info = projectSessionInfo((event.properties as { info: SessionNextSessionSnapshot }).info)
+      applyDirectorySessionCreated({
+        info,
+        store: input.store,
+        setStore: input.setStore,
+        limit,
+        permission: input.permission,
+        setSessionTodo: input.setSessionTodo,
+      })
       break
     }
-    case "session.updated": {
-      const info = (event.properties as { info: Session }).info
+    case "session.next.updated": {
+      const info = projectSessionInfo((event.properties as { info: SessionNextSessionSnapshot }).info)
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (info.time.archived) {
         if (!result.found) break
@@ -188,12 +187,11 @@ export function applyDirectoryEvent(input: {
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
       break
     }
-    case "session.deleted": {
-      const properties = event.properties as { sessionID?: string; info?: Session }
-      const sessionID = properties.info?.id ?? properties.sessionID
-      if (!sessionID) break
+    case "session.next.deleted": {
+      const properties = event.properties as { sessionID: string; info: SessionNextSessionSnapshot }
+      const sessionID = properties.sessionID
       const result = Binary.search(input.store.session, sessionID, (s) => s.id)
-      const info = properties.info ?? (result.found ? input.store.session[result.index] : undefined)
+      const info = projectSessionInfo(properties.info)
       if (result.found) {
         input.setStore(
           "session",
@@ -468,4 +466,28 @@ export function applyDirectoryEvent(input: {
       break
     }
   }
+}
+
+export function applyDirectorySessionCreated(input: {
+  info: Session
+  store: Store<State>
+  setStore: SetStoreFunction<State>
+  limit: number
+  permission?: State["permission"]
+  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void
+}) {
+  const result = Binary.search(input.store.session, input.info.id, (session) => session.id)
+  if (result.found) {
+    input.setStore("session", result.index, reconcile(input.info))
+    return
+  }
+  const next = input.store.session.slice()
+  next.splice(result.index, 0, input.info)
+  const trimmed = trimSessions(next, {
+    limit: input.limit,
+    permission: input.permission ?? input.store.permission,
+  })
+  input.setStore("session", reconcile(trimmed, { key: "id" }))
+  cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
+  if (!input.info.parentID) input.setStore("sessionTotal", (value) => value + 1)
 }

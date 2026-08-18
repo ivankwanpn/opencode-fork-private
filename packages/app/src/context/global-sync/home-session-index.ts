@@ -2,15 +2,14 @@ import type { Event, Session, SessionV2Info } from "@opencode-ai/sdk/v2/client"
 import type { QueryClient } from "@tanstack/solid-query"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
+import type { HomeSessionEvent } from "@/utils/session-snapshot"
+
+export type { HomeSessionEvent } from "@/utils/session-snapshot"
 
 export const HOME_V2_SESSION_PAGE_LIMIT = 5_000
 
 type HomeSessionInfo = Omit<SessionV2Info, "revert">
 
-export type HomeSessionEvent = {
-  type: "session.created" | "session.updated" | "session.deleted"
-  properties: { sessionID: string; info: Session }
-}
 export type HomeSessionEvents = {
   sequence: number
   entries: Array<{ sequence: number; event: HomeSessionEvent }>
@@ -148,11 +147,10 @@ export function retainHomeSessions(sessions: Session[], limit: number, now: numb
 export function applyHomeSessionEvent(sessions: Session[], event: HomeSessionEvent) {
   const info = event.properties.info
   const index = sessions.findIndex((session) => session.id === info.id)
-  if (event.type === "session.deleted" || info.parentID || typeof info.time.archived === "number") {
+  if (event.type === "session.next.deleted" || info.parentID || typeof info.time.archived === "number") {
     if (index === -1) return sessions
     return sessions.toSpliced(index, 1)
   }
-  if (event.type !== "session.created" && event.type !== "session.updated") return sessions
   if (index === -1) return [...sessions, info]
   return sessions.with(index, info)
 }

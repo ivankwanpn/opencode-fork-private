@@ -169,26 +169,6 @@ export const {
           setStore("todo", event.properties.sessionID, event.properties.todos)
           break
 
-        case "session.deleted": {
-          const result = search(store.session, event.properties.info.id, (s) => s.id)
-          if (result.found) {
-            setStore(
-              "session",
-              produce((draft) => {
-                draft.splice(result.index, 1)
-              }),
-            )
-          }
-          break
-        }
-        case "session.updated": {
-          void sdk.native.sessions
-            .get({ sessionID: event.properties.info.id })
-            .then((info) => upsertSession(mutable<SessionV2Info>(info)))
-            .catch(() => undefined)
-          break
-        }
-
         case "session.next.moved": {
           const result = search(store.session, event.properties.sessionID, (s) => s.id)
           if (!result.found) break
@@ -217,6 +197,25 @@ export const {
           break
         }
       }
+    })
+
+    nativeEvent.on("session.next.created", (event) => {
+      upsertSession(mutable<SessionV2Info>(event.data.info))
+    })
+
+    nativeEvent.on("session.next.updated", (event) => {
+      upsertSession(mutable<SessionV2Info>(event.data.info))
+    })
+
+    nativeEvent.on("session.next.deleted", (event) => {
+      const result = search(store.session, event.data.sessionID, (session) => session.id)
+      if (!result.found) return
+      setStore(
+        "session",
+        produce((draft) => {
+          draft.splice(result.index, 1)
+        }),
+      )
     })
 
     nativeEvent.on("session.next.status", (event) => {

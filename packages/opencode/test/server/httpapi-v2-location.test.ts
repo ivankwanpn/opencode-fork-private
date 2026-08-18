@@ -128,8 +128,8 @@ describe("v2 location HttpApi", () => {
 
     const created = await request("/session", publisher.path, { method: "POST" })
     expect(created.status).toBe(200)
-    expect(await readEventType(reader, "session.created")).toMatchObject({
-      type: "session.created",
+    expect(await readEventType(reader, "session.next.created")).toMatchObject({
+      type: "session.next.created",
       location: { directory: publisher.path },
       data: { sessionID: expect.any(String) },
     })

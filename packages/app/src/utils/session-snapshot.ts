@@ -1,7 +1,6 @@
 import type { JsonValue, OpenCodeEvent } from "../../../client/src"
 import type { Session, SessionNextSessionSnapshot } from "@opencode-ai/sdk/v2/client"
 import type { ServerEvent } from "@/context/server-sdk"
-import type { HomeSessionEvent } from "@/context/global-sync/home-session-index"
 
 // The vendored @opencode-ai/client/promise (1.17.13) predates the session.next.*
 // lifecycle vocabulary, so the wire-event types come from the fork's client
@@ -12,6 +11,10 @@ export type SessionLifecycleEvent = Extract<
   { type: "session.next.created" | "session.next.updated" | "session.next.deleted" }
 >
 export type SessionStatusEvent = Extract<OpenCodeEvent, { type: "session.next.status" }>
+export type HomeSessionEvent = {
+  type: SessionLifecycleEvent["type"]
+  properties: { timestamp: number; sessionID: string; info: Session }
+}
 
 export function projectSessionInfo(info: SessionSnapshotInfo | SessionNextSessionSnapshot): Session {
   return {
@@ -77,9 +80,7 @@ function projectJsonValue(value: unknown, seen: Set<object>): JsonValue | undefi
   return projected
 }
 
-export function toHomeSessionEvent(
-  event: ServerEvent,
-): HomeSessionEvent | undefined {
+export function toHomeSessionEvent(event: ServerEvent): HomeSessionEvent | undefined {
   const current = event.current
   if (
     current?.type !== "session.next.created" &&
@@ -87,12 +88,12 @@ export function toHomeSessionEvent(
     current?.type !== "session.next.deleted"
   )
     return
-  const projected = projectSessionInfo(current.data.info)
-  const legacy =
-    current.type === "session.next.created"
-      ? "session.created"
-      : current.type === "session.next.deleted"
-        ? "session.deleted"
-        : "session.updated"
-  return { type: legacy, properties: { sessionID: projected.id, info: projected } }
+  return {
+    type: current.type,
+    properties: {
+      timestamp: current.data.timestamp,
+      sessionID: current.data.sessionID,
+      info: projectSessionInfo(current.data.info),
+    },
+  }
 }

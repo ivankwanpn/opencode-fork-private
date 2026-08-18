@@ -1367,10 +1367,11 @@ describe("server session", () => {
     const first = store.sync("child")
 
     store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({
-      type: "session.deleted",
-      properties: { sessionID: "child", info: session("child", "root") },
-    })
+    store.applyV2({
+      id: "evt_deleted_1",
+      type: "session.next.deleted",
+      data: { timestamp: 2, sessionID: "child", info: snapshot({ parentID: "root" }) },
+    } as unknown as V2Event)
     const second = store.sync("child")
 
     firstResponse.resolve(response())
@@ -1387,10 +1388,11 @@ describe("server session", () => {
     const message = userMessage("message")
     const store = createServerSession(messageClient(firstResponse.promise, secondResponse.promise))
     const first = store.sync("child")
-    store.apply({
-      type: "session.deleted",
-      properties: { sessionID: "child", info: session("child", "root") },
-    })
+    store.applyV2({
+      id: "evt_deleted_2",
+      type: "session.next.deleted",
+      data: { timestamp: 2, sessionID: "child", info: snapshot({ parentID: "root" }) },
+    } as unknown as V2Event)
     const second = store.sync("child")
 
     store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
@@ -2048,7 +2050,11 @@ describe("server session", () => {
 
   test("applies events without a directory store", () => {
     const ctx = setup({})
-    ctx.store.apply({ type: "session.created", properties: { sessionID: "root", info: session("root") } })
+    ctx.store.applyV2({
+      id: "evt_created",
+      type: "session.next.created",
+      data: { timestamp: 1, sessionID: "root", info: snapshot({ id: "root" }) },
+    } as unknown as V2Event)
     ctx.store.applyV2({
       id: "evt_busy",
       type: "session.next.status",

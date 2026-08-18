@@ -28,32 +28,17 @@ export function sessionTabsRemovedFromServerEvent(input: {
   event: ServerEvent
 }): SessionTabsRemovedDetail | undefined {
   const current = input.event.current
-  if (current) {
-    const data = record(current.data)
-    const info = record(data?.info)
-    const time = record(info?.time)
-    const type = current.type as string
-    const archived =
-      type === "session.deleted" ||
-      type === "session.next.deleted" ||
-      type === "session.archived" ||
-      (type === "session.updated" && time?.archived !== undefined) ||
-      (type === "session.next.updated" && time?.archived !== undefined)
-    if (archived && typeof data?.sessionID === "string") {
-      return { server: input.server, directory: input.directory, sessionIDs: [data.sessionID] }
-    }
-  }
-
-  const properties = record(input.event.properties)
-  const info = record(properties?.info)
+  if (!current) return
+  const data = record(current.data)
+  const info = record(data?.info)
   const time = record(info?.time)
-  const type = input.event.type as string
-  const archived = type === "session.deleted" || type === "session.archived" || (type === "session.updated" && time?.archived !== undefined)
-  if (!archived) return undefined
-
-  const sessionID = typeof info?.id === "string" ? info.id : properties?.sessionID
-  if (typeof sessionID !== "string") return undefined
-  return { server: input.server, directory: input.directory, sessionIDs: [sessionID] }
+  const type = current.type as string
+  const archived =
+    type === "session.next.deleted" ||
+    type === "session.archived" ||
+    (type === "session.next.updated" && time?.archived !== undefined)
+  if (!archived || typeof data?.sessionID !== "string") return
+  return { server: input.server, directory: input.directory, sessionIDs: [data.sessionID] }
 }
 
 export function readSessionTabsRemovedDetail(event: Event): SessionTabsRemovedDetail | undefined {

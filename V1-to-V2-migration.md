@@ -94,6 +94,12 @@ EventV2Bridge不再投影delta，SessionV1 live definitions已從public manifest
 durable維持47。仍公開的SessionV1項目只剩7個durable wire compatibility definitions，待message snapshot
 consumer整體遷移後刪除。
 
+**999.0.19 Session lifecycle consumer hard cut**：TUI native state、App Home/global/session/titlebar與OpenAI Codex
+plugin改用`session.next.created/updated/deleted`，不再由TUI/App邊界降級命名。Codex websocket cleanup修正為
+讀取native`event.data.info.id`；原本讀`properties.info`在V2 hook上實際無效。V1 lifecycle三項已從public
+manifest移除，event inventory由96降至93，durable維持47；SessionV1 public compatibility只剩四個
+message/part snapshot definitions。
+
 ---
 
 ## 1. 各区域现状总表

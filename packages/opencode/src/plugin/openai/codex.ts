@@ -1,6 +1,8 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { EventV2 } from "@opencode-ai/core/event"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { OAUTH_DUMMY_KEY } from "../../auth"
 import os from "os"
 import { setTimeout as sleep } from "node:timers/promises"
@@ -275,8 +277,10 @@ export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPlug
       websocketFetches.length = 0
     },
     async event(input) {
-      if (input.event.type !== "session.deleted") return
-      for (const websocketFetch of websocketFetches) websocketFetch.remove(input.event.properties.info.id)
+      const event = input.event as unknown as EventV2.Payload
+      if (event.type !== SessionEvent.Deleted.type) return
+      const data = event.data as EventV2.Data<typeof SessionEvent.Deleted>
+      for (const websocketFetch of websocketFetches) websocketFetch.remove(data.info.id)
     },
     provider: {
       id: "openai",

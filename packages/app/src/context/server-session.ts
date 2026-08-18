@@ -1381,9 +1381,6 @@ export function createServerSession(
       touch(eventID)
       if (
         !data.info[eventID] &&
-        event.type !== "session.created" &&
-        event.type !== "session.updated" &&
-        event.type !== "session.deleted" &&
         event.type !== "session.next.created" &&
         event.type !== "session.next.updated" &&
         event.type !== "session.next.deleted"
@@ -1391,27 +1388,6 @@ export function createServerSession(
         void resolve(eventID).catch(() => {})
     }
     switch (event.type) {
-      case "session.created":
-        remember((event.properties as { info: Session }).info)
-        return
-      case "session.updated": {
-        const info = (event.properties as { info: Session }).info
-        remember(info)
-        if (info.time.archived) evict([info.id])
-        return
-      }
-      case "session.deleted": {
-        const properties = event.properties as { sessionID?: string; info?: Session }
-        const sessionID = properties.info?.id ?? properties.sessionID
-        if (!sessionID) return
-        infoSeen.delete(sessionID)
-        setData(
-          "info",
-          produce((draft) => void delete draft[sessionID]),
-        )
-        evict([sessionID])
-        return
-      }
       case "todo.updated": {
         const props = event.properties as { sessionID: string; todos: Todo[] }
         setData("todo", props.sessionID, reconcile(props.todos, { key: "id" }))

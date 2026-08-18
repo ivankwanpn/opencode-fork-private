@@ -19,7 +19,12 @@ import {
   loadReferencesQuery,
 } from "./global-sync/bootstrap"
 import { createChildStoreManager } from "./global-sync/child-store"
-import { applyDirectoryEvent, applyGlobalEvent, isAgentConfigDisposal } from "./global-sync/event-reducer"
+import {
+  applyDirectoryEvent,
+  applyDirectorySessionCreated,
+  applyGlobalEvent,
+  isAgentConfigDisposal,
+} from "./global-sync/event-reducer"
 import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/session-load"
 import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta, State } from "./global-sync/types"
@@ -669,16 +674,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const key = directoryKey(info.directory)
     const existing = children.children[key]
     if (!existing) return
-    applyDirectoryEvent({
-      event: { type: "session.created", properties: { info } },
-      directory: key,
+    applyDirectorySessionCreated({
+      info,
       store: existing[0],
       setStore: existing[1],
-      push: queue.push,
-      retainedLimit: sessionMeta.get(key)?.limit,
-      sessionContent: false,
+      limit: Math.max(existing[0].limit, sessionMeta.get(key)?.limit ?? 0),
       permission: session.data.permission,
-      loadLsp() {},
     })
   }
 
@@ -695,9 +696,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const server = ServerConnection.key(serverSDK.server)
     const removedTabs = sessionTabsRemovedFromServerEvent({ server, directory, event })
     if (removedTabs) notifySessionTabsRemoved(removedTabs)
-    if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
-      homeSessions.apply(event)
-    }
     const homeSessionEvent = toHomeSessionEvent(event)
     if (homeSessionEvent) homeSessions.apply(homeSessionEvent)
     homeSessions.refresh(event.type)

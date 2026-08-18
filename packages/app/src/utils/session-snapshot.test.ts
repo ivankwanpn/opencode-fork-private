@@ -31,14 +31,18 @@ describe("toHomeSessionEvent", () => {
     const event = adaptServerEvent(current("session.next.updated"))
     expect("data" in event).toBe(false)
     expect(toHomeSessionEvent(event)).toEqual({
-      type: "session.updated",
-      properties: { sessionID: "child", info: expect.objectContaining({ id: "child", title: "Title" }) },
+      type: "session.next.updated",
+      properties: {
+        timestamp: 2,
+        sessionID: "child",
+        info: expect.objectContaining({ id: "child", title: "Title", directory: "/repo" }),
+      },
     })
   })
 
-  test("maps created and deleted lifecycle types", () => {
-    expect(toHomeSessionEvent(adaptServerEvent(current("session.next.created")))?.type).toBe("session.created")
-    expect(toHomeSessionEvent(adaptServerEvent(current("session.next.deleted")))?.type).toBe("session.deleted")
+  test("preserves created and deleted lifecycle types", () => {
+    expect(toHomeSessionEvent(adaptServerEvent(current("session.next.created")))?.type).toBe("session.next.created")
+    expect(toHomeSessionEvent(adaptServerEvent(current("session.next.deleted")))?.type).toBe("session.next.deleted")
   })
 
   test("ignores events without a current V2 lifecycle payload", () => {

@@ -180,6 +180,39 @@ describe("useEvent", () => {
     }
   })
 
+  test("does not rename canonical session lifecycle events into the compatibility stream", async () => {
+    const { app, emitNative, seen } = await mount()
+
+    try {
+      for (const type of ["session.next.created", "session.next.updated", "session.next.deleted"] as const) {
+        emitNative({
+          id: `evt_${type}`,
+          type,
+          data: {
+            timestamp: 1,
+            sessionID: "ses_test",
+            info: {
+              id: "ses_test",
+              projectID: projectID,
+              slug: "test",
+              version: "test",
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: 1, updated: 1 },
+              title: "Test",
+              location: { directory },
+            },
+          },
+        } as OpenCodeEvent)
+      }
+      await Bun.sleep(30)
+
+      expect(seen).toEqual([])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
   test("does not project canonical question and permission events into the compatibility stream", async () => {
     const { app, emitNative, seen } = await mount()
 

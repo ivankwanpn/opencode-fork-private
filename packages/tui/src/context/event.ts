@@ -8,7 +8,7 @@ type EventMetadata = {
 }
 
 // useEvent remains the compatibility boundary for views that still consume the
-// V1 event vocabulary. Native-only V2 events belong on useNativeEvent.
+// V1 event vocabulary. Canonical V2 events belong on useNativeEvent.
 const compatibilityEventTypes = new Set<string>([
   "server.instance.disposed",
   "lsp.client.diagnostics",
@@ -21,9 +21,6 @@ const compatibilityEventTypes = new Set<string>([
   "file.edited",
   "todo.updated",
   "command.executed",
-  "session.created",
-  "session.updated",
-  "session.deleted",
   "session.next.moved",
   "file.watcher.updated",
   "vcs.branch.updated",
@@ -40,23 +37,11 @@ const compatibilityEventTypes = new Set<string>([
 export function useEvent() {
   const sdk = useSDK()
 
-  // Boundary adapter: the V2 native event stream is filtered to the events
-  // the views consume. Producers that already publish V2 vocabulary are
-  // mapped onto the V1 names the views still switch on (session.next.*);
-  // events with no V2 producer pass through unchanged. The
-  // handler type stays the V1 SDK Event; data is projected onto properties.
-  const lifecycleMap = new Map<string, string>([
-    ["session.next.created", "session.created"],
-    ["session.next.updated", "session.updated"],
-    ["session.next.deleted", "session.deleted"],
-  ])
-
   function subscribe(handler: (event: Event, metadata: EventMetadata) => void) {
     return sdk.nativeEvent.on("event", (event) => {
-      const type = lifecycleMap.get(event.type) ?? event.type
-      if (!compatibilityEventTypes.has(type)) return
+      if (!compatibilityEventTypes.has(event.type)) return
       handler(
-        { id: event.id, type, properties: event.data } as Event,
+        { id: event.id, type: event.type, properties: event.data } as Event,
         {
           directory: event.location?.directory ?? sdk.directory ?? "",
           workspace: event.location?.workspaceID,

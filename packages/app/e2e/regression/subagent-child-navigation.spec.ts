@@ -12,7 +12,7 @@ const childTitle = "Subagent child session"
 // Child session pages derive their heading from the task part that spawned them.
 const taskDescription = "Inspect child navigation"
 
-type EventPayload = { directory: string; payload: Record<string, unknown> }
+type EventPayload = Record<string, unknown>
 
 test.use({ viewport: { width: 1440, height: 900 } })
 
@@ -34,8 +34,10 @@ test("shows the not found fallback when the viewed session is deleted", async ({
   await expectSessionTitle(page, taskDescription)
 
   events.push({
-    directory,
-    payload: { type: "session.deleted", properties: { info: childSession() } },
+    id: "evt_child_deleted",
+    type: "session.next.deleted",
+    data: { timestamp: Date.now(), sessionID: childID, info: childSnapshot() },
+    location: { directory },
   })
 
   await expect(page.getByText("This session cannot be found")).toBeVisible()
@@ -113,6 +115,21 @@ function session(id: string, title: string, created: number, extra?: Record<stri
 
 function childSession() {
   return session(childID, childTitle, 1700000001000, { parentID })
+}
+
+function childSnapshot() {
+  return {
+    id: childID,
+    slug: childID,
+    version: "dev",
+    parentID,
+    projectID,
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1700000001000, updated: 1700000001000 },
+    title: childTitle,
+    location: { directory },
+  }
 }
 
 function parentMessages() {

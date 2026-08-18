@@ -17,7 +17,7 @@ import { Spinner } from "./spinner"
 import { errorMessage } from "../util/error"
 import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
 import { useCommandShortcut } from "../keymap"
-import { useEvent } from "../context/event"
+import { useNativeEvent } from "../context/event"
 import { nativeSessionListQuery, type SessionListFilter } from "../context/session-query"
 import type { SessionV2Info } from "@opencode-ai/sdk/v2"
 
@@ -51,7 +51,7 @@ export function DialogSessionList() {
   const project = useProject()
   const { theme } = useTheme()
   const sdk = useSDK()
-  const event = useEvent()
+  const nativeEvent = useNativeEvent()
   const local = useLocal()
   const toast = useToast()
   const [toDelete, setToDelete] = createSignal<string>()
@@ -105,8 +105,8 @@ export function DialogSessionList() {
   })
 
   onCleanup(
-    event.on("session.deleted", (event) => {
-      setDeleted((current) => new Set(current).add(event.properties.info.id))
+    nativeEvent.on("session.next.deleted", (event) => {
+      setDeleted((current) => new Set(current).add(event.data.sessionID))
     }),
   )
 

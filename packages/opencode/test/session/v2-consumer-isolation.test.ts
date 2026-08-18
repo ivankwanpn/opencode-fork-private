@@ -104,3 +104,21 @@ test("production request lifecycles do not publish or consume V1 event names", a
 
   expect(offenders).toEqual([])
 })
+
+test("production Session lifecycle consumers use canonical V2 event names", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const pattern = /\bsession\.(?:created|updated|deleted)\b/
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter((entry) => pattern.test(entry.source))
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(offenders).toEqual([])
+})

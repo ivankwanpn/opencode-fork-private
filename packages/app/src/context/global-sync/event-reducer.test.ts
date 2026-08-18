@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part, PermissionV2Request, Project, QuestionV2Request, Session } from "@opencode-ai/sdk/v2/client"
+import type {
+  Message,
+  Part,
+  PermissionV2Request,
+  Project,
+  QuestionV2Request,
+  Session,
+  SessionNextSessionSnapshot,
+} from "@opencode-ai/sdk/v2/client"
 import { createStore } from "solid-js/store"
 import type { State } from "./types"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
@@ -14,6 +22,19 @@ const rootSession = (input: { id: string; parentID?: string; archived?: number }
       archived: input.archived,
     },
   }) as Session
+
+const sessionSnapshot = (input: { id: string; parentID?: string; archived?: number }): SessionNextSessionSnapshot => ({
+  id: input.id,
+  slug: input.id,
+  version: "1",
+  parentID: input.parentID,
+  projectID: "project",
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  time: { created: 1, updated: 1, archived: input.archived },
+  title: input.id,
+  location: { directory: "/tmp" },
+})
 
 const userMessage = (id: string, sessionID: string) =>
   ({
@@ -168,7 +189,10 @@ describe("applyDirectoryEvent", () => {
     )
 
     applyDirectoryEvent({
-      event: { type: "session.created", properties: { info: rootSession({ id: "d" }) } },
+      event: {
+        type: "session.next.created",
+        properties: { timestamp: 1, sessionID: "d", info: sessionSnapshot({ id: "d" }) },
+      },
       store,
       setStore,
       push() {},
@@ -189,7 +213,10 @@ describe("applyDirectoryEvent", () => {
     )
 
     applyDirectoryEvent({
-      event: { type: "session.created", properties: { info: rootSession({ id: "a" }) } },
+      event: {
+        type: "session.next.created",
+        properties: { timestamp: 1, sessionID: "a", info: sessionSnapshot({ id: "a" }) },
+      },
       store,
       setStore,
       push() {},
@@ -201,7 +228,10 @@ describe("applyDirectoryEvent", () => {
     expect(store.sessionTotal).toBe(2)
 
     applyDirectoryEvent({
-      event: { type: "session.created", properties: { info: rootSession({ id: "c", parentID: "a" }) } },
+      event: {
+        type: "session.next.created",
+        properties: { timestamp: 1, sessionID: "c", info: sessionSnapshot({ id: "c", parentID: "a" }) },
+      },
       store,
       setStore,
       push() {},
@@ -229,7 +259,10 @@ describe("applyDirectoryEvent", () => {
     )
 
     applyDirectoryEvent({
-      event: { type: "session.updated", properties: { info: rootSession({ id: "ses_1", archived: 10 }) } },
+      event: {
+        type: "session.next.updated",
+        properties: { timestamp: 10, sessionID: "ses_1", info: sessionSnapshot({ id: "ses_1", archived: 10 }) },
+      },
       store,
       setStore,
       push() {},
@@ -294,7 +327,10 @@ describe("applyDirectoryEvent", () => {
     const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
 
     applyDirectoryEvent({
-      event: { type: "session.updated", properties: { info: rootSession({ id: "missing", archived: 10 }) } },
+      event: {
+        type: "session.next.updated",
+        properties: { timestamp: 10, sessionID: "missing", info: sessionSnapshot({ id: "missing", archived: 10 }) },
+      },
       store,
       setStore,
       push() {},
@@ -308,8 +344,8 @@ describe("applyDirectoryEvent", () => {
 
   test("cleans session caches when deleted and decrements only root totals", () => {
     const cases = [
-      { info: rootSession({ id: "ses_1" }), expectedTotal: 1, current: false },
-      { info: rootSession({ id: "ses_2", parentID: "ses_1" }), expectedTotal: 2, current: true },
+      { info: rootSession({ id: "ses_1" }), expectedTotal: 1 },
+      { info: rootSession({ id: "ses_2", parentID: "ses_1" }), expectedTotal: 2 },
     ]
 
     for (const item of cases) {
@@ -334,8 +370,12 @@ describe("applyDirectoryEvent", () => {
 
       applyDirectoryEvent({
         event: {
-          type: "session.deleted",
-          properties: item.current ? { sessionID: item.info.id } : { info: item.info },
+          type: "session.next.deleted",
+          properties: {
+            timestamp: 2,
+            sessionID: item.info.id,
+            info: sessionSnapshot({ id: item.info.id, parentID: item.info.parentID }),
+          },
         },
         store,
         setStore,
@@ -356,7 +396,7 @@ describe("applyDirectoryEvent", () => {
     }
   })
 
-  test("cleans caches for trimmed sessions on session.created", () => {
+  test("cleans caches for trimmed sessions on session.next.created", () => {
     const dropped = rootSession({ id: "ses_b" })
     const kept = rootSession({ id: "ses_a" })
     const message = userMessage("msg_1", dropped.id)
@@ -376,7 +416,10 @@ describe("applyDirectoryEvent", () => {
     )
 
     applyDirectoryEvent({
-      event: { type: "session.created", properties: { info: kept } },
+      event: {
+        type: "session.next.created",
+        properties: { timestamp: 1, sessionID: kept.id, info: sessionSnapshot({ id: kept.id }) },
+      },
       store,
       setStore,
       push() {},

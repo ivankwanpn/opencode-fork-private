@@ -984,8 +984,8 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     })
   })
 
-  event.on("session.deleted", (evt) => {
-    if (route.data.type === "session" && route.data.sessionID === evt.properties.info.id) {
+  nativeEvent.on("session.next.deleted", (evt) => {
+    if (route.data.type === "session" && route.data.sessionID === evt.data.sessionID) {
       route.navigate({ type: "home" })
       toast.show({
         variant: "info",

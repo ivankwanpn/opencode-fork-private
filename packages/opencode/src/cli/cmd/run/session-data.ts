@@ -24,7 +24,7 @@
 //   `data.questions`. The footer shows whichever is first. When a reply
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
-import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
+import type { Event, Part, PermissionV2Request, QuestionV2Request, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
 import type { FooterOutput, FooterPatch, FooterView, StreamCommit } from "./types"
@@ -76,8 +76,8 @@ export type SessionData = {
   tools: Set<string>
   call: Map<string, Dict>
   shell: Map<string, ShellCall>
-  permissions: PermissionRequest[]
-  questions: QuestionRequest[]
+  permissions: PermissionV2Request[]
+  questions: QuestionV2Request[]
   role: Map<string, MessageRole>
   msg: Map<string, string>
   part: Map<string, PartKind>
@@ -216,7 +216,7 @@ function out(data: SessionData, commits: SessionCommit[], footer?: FooterOutput)
   }
 }
 
-export function pickBlockerView(input: { permission?: PermissionRequest; question?: QuestionRequest }): FooterView {
+export function pickBlockerView(input: { permission?: PermissionV2Request; question?: QuestionV2Request }): FooterView {
   if (input.permission) {
     return { type: "permission", request: input.permission }
   }
@@ -285,8 +285,8 @@ export function bootstrapSessionData(input: {
   messages: Array<{
     parts: Part[]
   }>
-  permissions: PermissionRequest[]
-  questions: QuestionRequest[]
+  permissions: PermissionV2Request[]
+  questions: QuestionV2Request[]
 }) {
   for (const message of input.messages) {
     for (const part of message.parts) {
@@ -311,12 +311,12 @@ function key(msg: string, call: string): string {
   return `${msg}:${call}`
 }
 
-function enrichPermission(data: SessionData, request: PermissionRequest): PermissionRequest {
-  if (!request.tool) {
+function enrichPermission(data: SessionData, request: PermissionV2Request): PermissionV2Request {
+  if (request.source?.type !== "tool") {
     return request
   }
 
-  const input = data.call.get(key(request.tool.messageID, request.tool.callID))
+  const input = data.call.get(key(request.source.messageID, request.source.callID))
   if (!input) {
     return request
   }
@@ -348,7 +348,11 @@ function syncPermission(data: SessionData, part: ToolPart): FooterOutput | undef
   let changed = false
   let active = false
   data.permissions = data.permissions.map((request, index) => {
-    if (!request.tool || request.tool.messageID !== part.messageID || request.tool.callID !== part.callID) {
+    if (
+      request.source?.type !== "tool" ||
+      request.source.messageID !== part.messageID ||
+      request.source.callID !== part.callID
+    ) {
       return request
     }
 
@@ -1058,7 +1062,18 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    upsert(data.permissions, enrichPermission(data, event.properties))
+    upsert(
+      data.permissions,
+      enrichPermission(data, {
+        id: event.properties.id,
+        sessionID: event.properties.sessionID,
+        action: event.properties.permission,
+        resources: event.properties.patterns,
+        metadata: event.properties.metadata,
+        save: event.properties.always,
+        ...(event.properties.tool ? { source: { type: "tool", ...event.properties.tool } } : {}),
+      }),
+    )
     return queueOut(data, commits)
   }
 

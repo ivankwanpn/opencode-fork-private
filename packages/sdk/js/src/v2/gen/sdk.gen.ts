@@ -94,6 +94,8 @@ import type {
   LocationRef,
   LspStatusErrors,
   LspStatusResponses,
+  ManagedMcpLocalConfig,
+  ManagedMcpRemoteConfig,
   McpAddErrors,
   McpAddResponses,
   McpAuthAuthenticateErrors,
@@ -174,13 +176,13 @@ import type {
   PtyShellsResponses,
   PtyUpdateErrors,
   PtyUpdateResponses,
-  QuestionAnswer,
   QuestionListErrors,
   QuestionListResponses,
   QuestionRejectErrors,
   QuestionRejectResponses,
   QuestionReplyErrors,
   QuestionReplyResponses,
+  QuestionV2Answer,
   QuestionV2Reply,
   ServerConfigConfigGetErrors,
   ServerConfigConfigGetResponses,
@@ -202,6 +204,16 @@ import type {
   ServerMcpMcpResourcesResponses,
   ServerMcpMcpStatusErrors,
   ServerMcpMcpStatusResponses,
+  ServerPluginsPluginsDirectDisableErrors,
+  ServerPluginsPluginsDirectDisableResponses,
+  ServerPluginsPluginsDirectEnableErrors,
+  ServerPluginsPluginsDirectEnableResponses,
+  ServerPluginsPluginsDirectInspectErrors,
+  ServerPluginsPluginsDirectInspectResponses,
+  ServerPluginsPluginsDirectInstallErrors,
+  ServerPluginsPluginsDirectInstallResponses,
+  ServerPluginsPluginsDirectUninstallErrors,
+  ServerPluginsPluginsDirectUninstallResponses,
   ServerPluginsPluginsDisableErrors,
   ServerPluginsPluginsDisableResponses,
   ServerPluginsPluginsEnableErrors,
@@ -216,6 +228,16 @@ import type {
   ServerPluginsPluginsMarketplaceRefreshResponses,
   ServerPluginsPluginsMarketplaceRemoveErrors,
   ServerPluginsPluginsMarketplaceRemoveResponses,
+  ServerPluginsPluginsMcpDisableErrors,
+  ServerPluginsPluginsMcpDisableResponses,
+  ServerPluginsPluginsMcpEnableErrors,
+  ServerPluginsPluginsMcpEnableResponses,
+  ServerPluginsPluginsMcpInstallErrors,
+  ServerPluginsPluginsMcpInstallResponses,
+  ServerPluginsPluginsMcpRemoveErrors,
+  ServerPluginsPluginsMcpRemoveResponses,
+  ServerPluginsPluginsRuntimeErrors,
+  ServerPluginsPluginsRuntimeResponses,
   ServerPluginsPluginsUninstallErrors,
   ServerPluginsPluginsUninstallResponses,
   ServerVcsVcsDiffErrors,
@@ -3138,7 +3160,7 @@ export class Question extends HeyApiClient {
       requestID: string
       directory?: string
       workspace?: string
-      answers?: Array<QuestionAnswer>
+      answers?: Array<QuestionV2Answer>
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3241,7 +3263,7 @@ export class Permission extends HeyApiClient {
       requestID: string
       directory?: string
       workspace?: string
-      reply?: "once" | "always" | "reject"
+      reply?: PermissionV2Reply
       message?: string
     },
     options?: Options<never, ThrowOnError>,
@@ -3285,7 +3307,7 @@ export class Permission extends HeyApiClient {
       permissionID: string
       directory?: string
       workspace?: string
-      response?: "once" | "always" | "reject"
+      response?: PermissionV2Reply
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6161,15 +6183,26 @@ export class Session3 extends HeyApiClient {
   /**
    * Background foreground tasks
    *
-   * Promote running foreground subagent tasks so the parent session can continue.
+   * Promote running foreground subagent or shell tasks so the session can continue. When callID is provided, only the matching shell tool call is promoted.
    */
   public background<ThrowOnError extends boolean = false>(
     parameters: {
       sessionID: string
+      callID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "sessionID" }] }])
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "callID" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).post<V2SessionBackgroundResponses, V2SessionBackgroundErrors, ThrowOnError>(
       {
         url: "/api/session/{sessionID}/background",
@@ -9055,7 +9088,263 @@ export class Marketplace extends HeyApiClient {
   }
 }
 
+export class Direct extends HeyApiClient {
+  public inspect<ThrowOnError extends boolean = false>(
+    parameters?: {
+      source?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "source" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsDirectInspectResponses,
+      ServerPluginsPluginsDirectInspectErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/direct/inspect",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public uninstall<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).delete<
+      ServerPluginsPluginsDirectUninstallResponses,
+      ServerPluginsPluginsDirectUninstallErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/direct",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public install<ThrowOnError extends boolean = false>(
+    parameters?: {
+      source?: string
+      trusted?: boolean
+      approvedCapabilities?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "source" },
+            { in: "body", key: "trusted" },
+            { in: "body", key: "approvedCapabilities" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsDirectInstallResponses,
+      ServerPluginsPluginsDirectInstallErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/direct",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public enable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsDirectEnableResponses,
+      ServerPluginsPluginsDirectEnableErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/direct/enable",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public disable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "id" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsDirectDisableResponses,
+      ServerPluginsPluginsDirectDisableErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/direct/disable",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Mcp5 extends HeyApiClient {
+  public remove<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "name" }] }])
+    return (options?.client ?? this.client).delete<
+      ServerPluginsPluginsMcpRemoveResponses,
+      ServerPluginsPluginsMcpRemoveErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/mcp",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public install<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string
+      config?: ManagedMcpLocalConfig | ManagedMcpRemoteConfig
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "config" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsMcpInstallResponses,
+      ServerPluginsPluginsMcpInstallErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/mcp",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public enable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "name" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsMcpEnableResponses,
+      ServerPluginsPluginsMcpEnableErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/mcp/enable",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public disable<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "name" }] }])
+    return (options?.client ?? this.client).post<
+      ServerPluginsPluginsMcpDisableResponses,
+      ServerPluginsPluginsMcpDisableErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/mcp/disable",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Plugins extends HeyApiClient {
+  public runtime<ThrowOnError extends boolean = false>(
+    parameters?: {
+      location?: {
+        directory?: string
+        workspace?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "location" }] }])
+    return (options?.client ?? this.client).get<
+      ServerPluginsPluginsRuntimeResponses,
+      ServerPluginsPluginsRuntimeErrors,
+      ThrowOnError
+    >({
+      url: "/api/plugins/runtime",
+      ...options,
+      ...params,
+    })
+  }
+
   public list<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
       ServerPluginsPluginsListResponses,
@@ -9159,6 +9448,16 @@ export class Plugins extends HeyApiClient {
   private _marketplace?: Marketplace
   get marketplace(): Marketplace {
     return (this._marketplace ??= new Marketplace({ client: this.client }))
+  }
+
+  private _direct?: Direct
+  get direct(): Direct {
+    return (this._direct ??= new Direct({ client: this.client }))
+  }
+
+  private _mcp?: Mcp5
+  get mcp(): Mcp5 {
+    return (this._mcp ??= new Mcp5({ client: this.client }))
   }
 }
 

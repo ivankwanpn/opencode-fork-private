@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import type { QuestionV2Request } from "@opencode-ai/sdk/v2"
 import {
   createQuestionBodyState,
   questionConfirm,
@@ -12,7 +12,7 @@ import {
   questionSync,
 } from "@/cli/cmd/run/question.shared"
 
-function req(input: Partial<QuestionRequest> = {}): QuestionRequest {
+function req(input: Partial<QuestionV2Request> = {}): QuestionV2Request {
   return {
     id: "question-1",
     sessionID: "session-1",

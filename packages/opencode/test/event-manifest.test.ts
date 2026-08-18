@@ -10,7 +10,7 @@ describe("public event manifest", () => {
     expect(EventManifest.Definitions).toBe(SchemaEventManifest.Definitions)
     expect(EventManifest.Latest).toBe(SchemaEventManifest.Latest)
     expect(EventManifest.Durable).toBe(SchemaEventManifest.Durable)
-    expect(EventManifest.Latest.size).toBe(107)
+    expect(EventManifest.Latest.size).toBe(105)
     expect(EventManifest.Durable.size).toBe(47)
     expect(EventManifest.Latest.get("mcp.browser.open.failed")).toBe(McpEvent.BrowserOpenFailed)
     expect(EventManifest.Latest.get("session.next.step.ended")).toBe(SessionEvent.Step.Ended)
@@ -18,6 +18,8 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.has("ide.installed")).toBe(false)
     expect(EventManifest.Latest.has("server.connected")).toBe(true)
     expect(EventManifest.Latest.has("global.disposed")).toBe(true)
+    expect(EventManifest.Latest.has("session.idle")).toBe(false)
+    expect(EventManifest.Latest.has("session.compacted")).toBe(false)
   })
 
   test("contains only the current step settlement versions", () => {

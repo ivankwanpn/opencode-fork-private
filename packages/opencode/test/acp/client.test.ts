@@ -1223,7 +1223,7 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
     expect(recording.requests[0]?.url.pathname).toBe("/api/session/ses_permission/permission/per_request/reply")
   })
 
-  test("one provider catalog and four supporting reads use /api and one Location", async () => {
+  test("one provider catalog and three supporting reads use /api and one Location", async () => {
     const location = {
       directory,
       project: { id: "project", directory },
@@ -1269,12 +1269,7 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
           return [
             { name: "zeta", template: "zeta command" },
             { name: "beta", template: "beta command", description: "command wins" },
-          ]
-        }
-        if (request.url.pathname === "/api/skill") {
-          return [
-            { name: "beta", content: "beta skill", location: "/skills/beta" },
-            { name: "alpha", content: "alpha skill", location: "/skills/alpha" },
+            { name: "alpha", template: "alpha skill", description: "Skill command" },
           ]
         }
         return undefined
@@ -1293,11 +1288,10 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
       "/api/command",
       "/api/config",
       "/api/provider/catalog",
-      "/api/skill",
     ])
     expect(recording.requests.every((request) => request.url.pathname.startsWith("/api"))).toBe(true)
     expect(recording.requests.map((request) => request.url.searchParams.get("location[directory]"))).toEqual(
-      Array.from({ length: 5 }, () => directory),
+      Array.from({ length: 4 }, () => directory),
     )
     expect(catalog.providers[ProviderV2.ID.make("provider")]).toMatchObject({
       id: "provider",
@@ -1313,8 +1307,8 @@ describe("ACP client permission, catalog, and fallback boundaries", () => {
       description: "command wins",
     })
     expect(catalog.commands.find((command) => command.name === "alpha")).toMatchObject({
-      source: "skill",
       template: "alpha skill",
+      description: "Skill command",
     })
     expect(catalog.configuredModel).toBe("provider/configured")
   })

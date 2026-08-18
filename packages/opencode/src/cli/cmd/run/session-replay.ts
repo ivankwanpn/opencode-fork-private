@@ -1,4 +1,4 @@
-import type { Event, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2"
+import type { Event, PermissionV2Request, QuestionV2Request } from "@opencode-ai/sdk/v2"
 import { bootstrapSessionData, createSessionData, reduceSessionData, type SessionData } from "./session-data"
 import { messagePrompt, type SessionMessages } from "./session.shared"
 import { messageTurnSummaryCommit } from "./turn-summary"
@@ -6,8 +6,8 @@ import type { FooterPatch, LocalReplayRow, RunProvider, StreamCommit } from "./t
 
 type ReplayInput = {
   messages: SessionMessages
-  permissions: PermissionRequest[]
-  questions: QuestionRequest[]
+  permissions: PermissionV2Request[]
+  questions: QuestionV2Request[]
   thinking: boolean
   limits: Record<string, number>
   providers?: RunProvider[]

@@ -5,13 +5,12 @@ import type {
   Part,
   Session,
   SessionMessage,
-  SessionV2Info,
   ToolPart,
   UserMessage,
 } from "@opencode-ai/sdk/v2"
+import type { NativeSessionInfo } from "./native-v1-session"
 
 type NativeMessage = SessionMessage
-type NativeSession = SessionV2Info
 type LegacyMessage = { info: Message; parts: Part[] }
 
 const CONTENT_FILTER_ERROR_MESSAGE = "Response blocked by content filter"
@@ -68,7 +67,7 @@ function retained(input: {
 
 function user(input: {
   message: Extract<NativeMessage, { type: "user" }>
-  session: NativeSession
+  session: NativeSessionInfo
   agent: string
   model: { id: string; providerID: string; variant?: string }
 }): LegacyMessage {
@@ -238,7 +237,7 @@ function assistantError(message: Extract<NativeMessage, { type: "assistant" }>):
 
 function assistant(input: {
   message: Extract<NativeMessage, { type: "assistant" }>
-  session: NativeSession
+  session: NativeSessionInfo
   parentID: string
 }): LegacyMessage {
   const message = input.message
@@ -317,7 +316,7 @@ function assistant(input: {
 
 function syntheticUser(input: {
   id: string
-  session: NativeSession
+  session: NativeSessionInfo
   created: number
   text?: string
   description?: string
@@ -363,7 +362,7 @@ function syntheticUser(input: {
 
 export function legacyTranscriptFromNative(input: {
   messages: readonly NativeMessage[]
-  session: NativeSession
+  session: NativeSessionInfo
 }): LegacyMessage[] {
   let agent = input.session.agent ?? "build"
   let model = input.session.model ?? { id: "unknown", providerID: "unknown" }

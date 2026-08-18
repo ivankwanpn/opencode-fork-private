@@ -10,7 +10,7 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(107)
+    expect(EventManifest.ServerDefinitions.length).toBe(105)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
@@ -66,6 +66,8 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.get("session.next.updated")).toBe(SessionEvent.Updated)
     expect(EventManifest.Latest.get("session.next.deleted")).toBe(SessionEvent.Deleted)
     expect(EventManifest.Latest.get("session.next.status")).toBe(SessionEvent.Status)
+    expect(EventManifest.Latest.has("session.idle")).toBe(false)
+    expect(EventManifest.Latest.has("session.compacted")).toBe(false)
     expect(EventManifest.Latest.get("session.next.diff")).toBe(SessionEvent.Diff)
     expect(EventManifest.Latest.get("session.next.transcript.message.removed")).toBe(
       SessionEvent.TranscriptMutation.MessageRemoved,

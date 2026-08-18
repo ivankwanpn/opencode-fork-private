@@ -4,7 +4,7 @@ import { createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useTheme, selectedForeground } from "../../context/theme"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { PermissionV2Request } from "@opencode-ai/sdk/v2"
 import { useSDK } from "../../context/sdk"
 import { SplitBorder } from "../../ui/border"
 import { useSync } from "../../context/sync"
@@ -20,7 +20,7 @@ import { toolInput } from "../../util/native-transcript"
 
 type PermissionStage = "permission" | "always" | "reject"
 
-function EditBody(props: { request: PermissionRequest }) {
+function EditBody(props: { request: PermissionV2Request }) {
   const themeState = useTheme()
   const theme = themeState.theme
   const syntax = themeState.syntax
@@ -109,7 +109,7 @@ function TextBody(props: { title: string; description?: string; icon?: string })
   )
 }
 
-export function PermissionPrompt(props: { request: PermissionRequest; directory?: string }) {
+export function PermissionPrompt(props: { request: PermissionV2Request; directory?: string }) {
   const sdk = useSDK()
   const sync = useSync()
   const data = useData()
@@ -128,13 +128,13 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
   const input = createMemo(() => {
-    const tool = props.request.tool
-    if (!tool) return {}
+    const source = props.request.source
+    if (source?.type !== "tool") return {}
     const message = data.session.message
       .list(props.request.sessionID)
-      ?.find((message) => message.type === "assistant" && message.id === tool.messageID)
+      ?.find((message) => message.type === "assistant" && message.id === source.messageID)
     if (message?.type !== "assistant") return {}
-    const part = message.content.find((part) => part.type === "tool" && part.id === tool.callID)
+    const part = message.content.find((part) => part.type === "tool" && part.id === source.callID)
     return part?.type === "tool" ? toolInput(part) : {}
   })
 
@@ -147,14 +147,14 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
           title="Always allow"
           body={
             <Switch>
-              <Match when={props.request.always.length === 1 && props.request.always[0] === "*"}>
-                <TextBody title={"This will allow " + props.request.permission + " until OpenCode is restarted."} />
+              <Match when={props.request.save?.length === 1 && props.request.save[0] === "*"}>
+                <TextBody title={"This will allow " + props.request.action + " until OpenCode is restarted."} />
               </Match>
               <Match when={true}>
                 <box paddingLeft={1} gap={1}>
                   <text fg={theme.textMuted}>This will allow the following patterns until OpenCode is restarted</text>
                   <box>
-                    <For each={props.request.always}>
+                    <For each={props.request.save ?? []}>
                       {(pattern) => (
                         <text fg={theme.text}>
                           {"- "}
@@ -189,7 +189,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
       <Match when={store.stage === "permission"}>
         {(() => {
           const info = () => {
-            const permission = props.request.permission
+            const permission = props.request.action
             const data = input()
 
             if (permission === "edit") {
@@ -329,13 +329,13 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               const meta = props.request.metadata ?? {}
               const parent = typeof meta["parentDir"] === "string" ? meta["parentDir"] : undefined
               const filepath = typeof meta["filepath"] === "string" ? meta["filepath"] : undefined
-              const pattern = props.request.patterns?.[0]
+              const pattern = props.request.resources[0]
               const derived =
                 typeof pattern === "string" ? (pattern.includes("*") ? dirname(pattern) : pattern) : undefined
 
               const raw = parent ?? filepath ?? derived
               const dir = pathFormatter.format(raw)
-              const patterns = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
+              const patterns = props.request.resources.filter((pattern): pattern is string => typeof pattern === "string")
 
               return {
                 icon: "←",

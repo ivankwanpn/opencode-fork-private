@@ -365,34 +365,20 @@ function catalog(native: GeneratedClients["native"]): Interface["catalog"] {
   return {
     load: async (directory) => {
       const target = { location: { directory } }
-      const [providerCatalog, agents, commands, skills, configured] = await Promise.all([
+      const [providerCatalog, agents, commands, configured] = await Promise.all([
         native.providers.catalog(target),
         native.agents.list(target),
         native.commands.list(target),
-        native.skills.list(target),
         configuration.get(directory),
       ])
       const projected = legacyProvidersFromNative(providerCatalog.data as unknown as Parameters<typeof legacyProvidersFromNative>[0])
-      const projectedCommands = commands.data.map(legacyCommandFromNative)
-      const commandNames = new Set(projectedCommands.map((command) => command.name))
       return {
         providers: Object.fromEntries(projected.providers.map((provider) => [provider.id, provider])) as Record<
           ProviderV2.ID,
           Provider.Info
         >,
         agents: agents.data.map((agent) => legacyAgentFromNative(agent as unknown as Parameters<typeof legacyAgentFromNative>[0])),
-        commands: [
-          ...projectedCommands,
-          ...skills.data
-            .filter((skill) => !commandNames.has(skill.name))
-            .map((skill) => ({
-              name: skill.name,
-              description: skill.description,
-              source: "skill" as const,
-              template: skill.content,
-              hints: [],
-            })),
-        ].toSorted((a, b) => a.name.localeCompare(b.name)),
+        commands: commands.data.map(legacyCommandFromNative).toSorted((a, b) => a.name.localeCompare(b.name)),
         configuredModel: configured.model,
       }
     },

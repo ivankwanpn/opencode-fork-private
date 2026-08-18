@@ -12,7 +12,7 @@
 //       → footer.ts queues commits and patches the footer view
 //         → OpenTUI split-footer renderer writes to terminal
 import type { OpenCode } from "@opencode-ai/client"
-import type { OpencodeClient, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
+import type { OpencodeClient, PermissionV2Request, QuestionV2Request, ToolPart } from "@opencode-ai/sdk/v2"
 import type { TuiConfig } from "@opencode-ai/tui/config"
 
 export type NativeClient = ReturnType<typeof OpenCode.make>
@@ -176,8 +176,8 @@ export type RunEntryBody =
 // "prompt".
 export type FooterView =
   | { type: "prompt" }
-  | { type: "permission"; request: PermissionRequest }
-  | { type: "question"; request: QuestionRequest }
+  | { type: "permission"; request: PermissionV2Request }
+  | { type: "question"; request: QuestionV2Request }
 
 export type FooterPromptRoute =
   | { type: "composer" }
@@ -185,7 +185,6 @@ export type FooterPromptRoute =
   | { type: "subagent-menu" }
   | { type: "subagent"; sessionID: string }
   | { type: "command" }
-  | { type: "skill" }
   | { type: "model" }
   | { type: "variant" }
 
@@ -210,8 +209,8 @@ export type FooterSubagentDetail = {
 export type FooterSubagentState = {
   tabs: FooterSubagentTab[]
   details: Record<string, FooterSubagentDetail>
-  permissions: PermissionRequest[]
-  questions: QuestionRequest[]
+  permissions: PermissionV2Request[]
+  questions: QuestionV2Request[]
 }
 
 // The reducer emits this alongside scrollback commits so the footer can update in the same frame.

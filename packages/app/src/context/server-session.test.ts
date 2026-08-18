@@ -638,12 +638,6 @@ describe("server session", () => {
       location: { directory: "/repo" },
       data: { sessionID: "child", status: { type: "idle" } },
     } as unknown as V2Event)
-    store.applyV2({
-      id: "evt_idle",
-      type: "session.idle",
-      location: { directory: "/repo" },
-      data: { sessionID: "child" },
-    } as unknown as V2Event)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(requests).toEqual([{ sessionID: "child", limit: 20, order: "desc" }])
@@ -2314,7 +2308,7 @@ describe("server session", () => {
     expect(ctx.get).toEqual([])
   })
 
-  test("clears a busy session when the idle lifecycle event arrives", () => {
+  test("clears a busy session when the status becomes idle", () => {
     const ctx = setup({})
     ctx.store.remember(session("root"))
     ctx.store.set("session_status", "root", { type: "busy" })
@@ -2322,8 +2316,8 @@ describe("server session", () => {
     ctx.store.applyV2({
       id: "evt_idle",
       created: 2,
-      type: "session.idle",
-      data: { sessionID: "root" },
+      type: "session.status",
+      data: { sessionID: "root", status: { type: "idle" } },
     } as V2Event)
 
     expect(ctx.store.data.session_status.root).toEqual({ type: "idle" })
@@ -2415,7 +2409,7 @@ describe("server session", () => {
     await flush()
     expect(requests).toEqual(["child", "child"])
 
-    apply("session.idle", { sessionID: "child" })
+    apply("session.status", { sessionID: "child", status: { type: "idle" } })
     await flush()
     expect(requests).toEqual(["child", "child", "child"])
   })
@@ -2435,7 +2429,6 @@ describe("server session", () => {
     expect(ctx.store.data.session_working("child")).toBe(true)
 
     status("idle")
-    marker("session.idle")
     expect(ctx.store.data.session_status.child).toEqual({ type: "idle" })
     expect(ctx.store.data.session_working("child")).toBe(false)
 

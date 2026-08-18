@@ -1297,11 +1297,12 @@ describe("run stream transport", () => {
             {
               id: "perm-1",
               sessionID: "child-1",
-              permission: "edit",
-              patterns: ["src/run/subagent-data.ts"],
+              action: "edit",
+              resources: ["src/run/subagent-data.ts"],
               metadata: {},
-              always: [],
-              tool: {
+              save: [],
+              source: {
+                type: "tool",
                 messageID: "msg-child-1",
                 callID: "call-edit-1",
               },

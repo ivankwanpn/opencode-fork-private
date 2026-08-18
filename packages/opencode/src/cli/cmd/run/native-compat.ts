@@ -1,4 +1,4 @@
-import type { Event, GlobalEvent, OpencodeClient, PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { Event, GlobalEvent, OpencodeClient, PermissionV2Request } from "@opencode-ai/sdk/v2"
 import { legacyEventPayloads, legacyEventProjection } from "@/event-v2-bridge"
 import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
@@ -76,15 +76,17 @@ function permission(input: {
   readonly save?: readonly string[]
   readonly metadata?: Readonly<Record<string, unknown>>
   readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
-}): PermissionRequest {
+}): PermissionV2Request {
   return {
     id: input.id,
     sessionID: input.sessionID,
-    permission: input.action,
-    patterns: [...input.resources],
+    action: input.action,
+    resources: [...input.resources],
     metadata: { ...input.metadata },
-    always: [...(input.save ?? [])],
-    ...(input.source ? { tool: { messageID: input.source.messageID, callID: input.source.callID } } : {}),
+    ...(input.save ? { save: [...input.save] } : {}),
+    ...(input.source
+      ? { source: { type: "tool" as const, messageID: input.source.messageID, callID: input.source.callID } }
+      : {}),
   }
 }
 

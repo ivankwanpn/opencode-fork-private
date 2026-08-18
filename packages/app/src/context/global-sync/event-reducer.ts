@@ -21,7 +21,6 @@ const SESSION_CONTENT_EVENTS = new Set([
   "session.diff",
   "todo.updated",
   "session.status",
-  "session.idle",
   "message.updated",
   "message.removed",
   "message.part.updated",
@@ -285,11 +284,6 @@ export function applyDirectoryEvent(input: {
     case "session.status": {
       const props = event.properties as { sessionID: string; status: SessionStatus }
       input.setStore("session_status", props.sessionID, reconcile(props.status))
-      break
-    }
-    case "session.idle": {
-      const props = event.properties as { sessionID: string }
-      input.setStore("session_status", props.sessionID, reconcile({ type: "idle" }))
       break
     }
     case "message.updated": {

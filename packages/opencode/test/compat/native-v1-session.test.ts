@@ -9,7 +9,43 @@ import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { MessageID, PartID } from "@/session/schema"
-import { legacySessionFromV2 } from "../../src/compat/native-v1-session"
+import { legacySessionFromNative, legacySessionFromV2 } from "../../src/compat/native-v1-session"
+
+describe("legacySessionFromNative", () => {
+  test("accepts canonical readonly wire session info", () => {
+    const info = {
+      id: "sess_wire",
+      projectID: "prj_1",
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: 1000, updated: 2000 },
+      title: "wire session",
+      location: { directory: "D:/work" },
+      revert: {
+        messageID: "msg_1",
+        removedMessageIDs: ["msg_2"],
+        files: [
+          {
+            path: "src/index.ts",
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+            patch: "@@ -1 +1 @@",
+          },
+        ],
+      },
+    } as const
+
+    expect(legacySessionFromNative(info)).toMatchObject({
+      id: "sess_wire",
+      projectID: "prj_1",
+      directory: "D:/work",
+      revert: { messageID: "msg_1" },
+    })
+    expect(info.revert.removedMessageIDs).toEqual(["msg_2"])
+    expect(info.revert.files).toHaveLength(1)
+  })
+})
 
 describe("legacySessionFromV2", () => {
   test("projects a canonical V2 info into the V1 wire shape", () => {

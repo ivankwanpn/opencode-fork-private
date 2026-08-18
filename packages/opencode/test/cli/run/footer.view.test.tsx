@@ -4,7 +4,7 @@ import { BoxRenderable, RGBA, type RootRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import type { QuestionV2Request } from "@opencode-ai/sdk/v2"
 import { OpencodeKeymapProvider, registerOpencodeKeymap } from "@opencode-ai/tui/keymap"
 import {
   RUN_COMMAND_PANEL_ROWS,
@@ -12,7 +12,6 @@ import {
   RunCommandMenuBody,
   RunModelSelectBody,
   RunQueuedPromptSelectBody,
-  RunSkillSelectBody,
   RunSubagentSelectBody,
   RunVariantSelectBody,
 } from "@/cli/cmd/run/footer.command"
@@ -37,13 +36,11 @@ import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
 
 const tuiConfig = createTuiResolvedConfig()
 
-function command(input: { name: string; description: string; source?: "command" | "mcp" | "skill" }) {
+function command(input: { name: string; description: string }) {
   return {
     name: input.name,
     description: input.description,
-    source: input.source,
     template: "",
-    hints: [],
   } satisfies RunCommand
 }
 
@@ -359,8 +356,8 @@ test("run entry content updates when live commit text changes", async () => {
 test("direct command panel renders grouped command palette", async () => {
   const [commands] = createSignal<RunCommand[] | undefined>([
     command({ name: "review", description: "Review code" }),
-    command({ name: "deploy", description: "Deploy prompt", source: "mcp" }),
-    command({ name: "internal", description: "Skill command", source: "skill" }),
+    command({ name: "deploy", description: "Deploy prompt" }),
+    command({ name: "internal", description: "Skill command" }),
   ])
   const [subagents] = createSignal([])
   const [variants] = createSignal(["high", "minimal"])
@@ -378,7 +375,6 @@ test("direct command panel renders grouped command palette", async () => {
           onClose={() => {}}
           onModel={() => {}}
           onEditor={() => {}}
-          onSkill={() => {}}
           onSubagent={() => {}}
           onQueued={() => {}}
           onVariant={() => {}}
@@ -403,99 +399,16 @@ test("direct command panel renders grouped command palette", async () => {
     expect(frame).toContain("Search")
     expect(frame).toContain("Session")
     expect(frame).toContain("Agent")
-    expect(frame).toContain("Prompt")
     expect(frame).toContain("Open editor")
     expect(frame).toContain("/editor")
     expect(frame).toContain("Switch model")
-    expect(frame).toContain("Skills")
-    expect(frame).toContain("/skills")
     expect(frame.match(/\bAgent\b/g)?.length).toBe(1)
     expect(frame).not.toContain("┌")
     expect(frame).not.toContain("┃")
-    expect(frame).not.toContain("/internal")
     expect(frame).not.toContain("Choose model for future turns")
     expect(frame).not.toContain("Cycle reasoning effort for future turns")
     expect(frame).not.toContain("Review code")
     expect(frame).not.toContain("Commands 8")
-  } finally {
-    app.renderer.destroy()
-  }
-})
-
-test("direct skill panel renders searchable skill list", async () => {
-  const [commands] = createSignal<RunCommand[] | undefined>([
-    command({ name: "review", description: "Review code" }),
-    command({ name: "internal", description: "Skill command", source: "skill" }),
-    command({ name: "formatter", description: "Apply formatter fixes", source: "skill" }),
-  ])
-
-  const app = await testRender(
-    () => (
-      <box width={100} height={RUN_COMMAND_PANEL_ROWS}>
-        <RunSkillSelectBody
-          theme={() => RUN_THEME_FALLBACK.footer}
-          commands={commands}
-          onClose={() => {}}
-          onSelect={() => {}}
-        />
-      </box>
-    ),
-    {
-      width: 100,
-      height: RUN_COMMAND_PANEL_ROWS,
-    },
-  )
-
-  try {
-    await app.renderOnce()
-    const frame = app.captureCharFrame()
-
-    expect(frame).toContain("Skills")
-    expect(frame).toContain("Search")
-    expect(frame).toContain("internal")
-    expect(frame).not.toContain("/internal")
-    expect(frame).toContain("formatter")
-    expect(frame).toContain("Apply formatter fixes")
-    expect(frame).not.toContain("review")
-  } finally {
-    app.renderer.destroy()
-  }
-})
-
-test("direct skill panel truncates long descriptions from the end", async () => {
-  const [commands] = createSignal<RunCommand[] | undefined>([
-    command({
-      name: "terminal-control",
-      description:
-        "Control and test terminal applications, REPLs, interactive CLIs, shell processes, OpenTUI applications, or other terminal-backed workflows.",
-      source: "skill",
-    }),
-  ])
-
-  const app = await testRender(
-    () => (
-      <box width={100} height={RUN_COMMAND_PANEL_ROWS}>
-        <RunSkillSelectBody
-          theme={() => RUN_THEME_FALLBACK.footer}
-          commands={commands}
-          onClose={() => {}}
-          onSelect={() => {}}
-        />
-      </box>
-    ),
-    {
-      width: 100,
-      height: RUN_COMMAND_PANEL_ROWS,
-    },
-  )
-
-  try {
-    await app.renderOnce()
-    const frame = app.captureCharFrame()
-
-    expect(frame).toContain("terminal-control")
-    expect(frame).toContain("Control and test terminal applications")
-    expect(frame).not.toMatch(/application(?:…|\.\.\.)ocess/)
   } finally {
     app.renderer.destroy()
   }
@@ -519,7 +432,6 @@ test("direct command panel shows subagent entry when available", async () => {
           onClose={() => {}}
           onModel={() => {}}
           onEditor={() => {}}
-          onSkill={() => {}}
           onSubagent={() => {}}
           onQueued={() => {}}
           onVariant={() => {}}
@@ -567,7 +479,6 @@ test("direct command panel keeps completed subagents available", async () => {
           onClose={() => {}}
           onModel={() => {}}
           onEditor={() => {}}
-          onSkill={() => {}}
           onSubagent={() => {}}
           onQueued={() => {}}
           onVariant={() => {}}
@@ -841,12 +752,12 @@ test("direct footer submits slash autocomplete selections without dispatching sh
   }
 })
 
-test("direct footer slash autocomplete keeps a real skills command", async () => {
+test("direct footer slash autocomplete exposes every V2 command", async () => {
   const submits: RunPrompt[] = []
   const app = await renderFooter({
     commands: [
       command({ name: "skills", description: "Run the real skills command" }),
-      command({ name: "formatter", description: "Apply formatter fixes", source: "skill" }),
+      command({ name: "formatter", description: "Apply formatter fixes" }),
     ],
     onSubmit(prompt) {
       submits.push(prompt)
@@ -856,84 +767,12 @@ test("direct footer slash autocomplete keeps a real skills command", async () =>
 
   try {
     await app.renderOnce()
-    "/skills".split("").forEach((key) => app.mockInput.pressKey(key))
+    "/form".split("").forEach((key) => app.mockInput.pressKey(key))
     await app.renderOnce()
     app.mockInput.pressEnter()
     await app.renderOnce()
 
-    expect(submits).toEqual([{ text: "/skills ", parts: [], command: { name: "skills", arguments: "" } }])
-    expect(app.captureCharFrame()).not.toContain("Apply formatter fixes")
-  } finally {
-    app.cleanup()
-  }
-})
-
-// OpenTUI currently segfaults Bun while tearing down this composer-to-skill-panel transition.
-// Re-enable after the upstream renderer teardown fix lands.
-test.skip("direct footer skill picker inserts an editable bound skill command", async () => {
-  const submits: RunPrompt[] = []
-  const app = await renderFooter({
-    commands: [command({ name: "new", description: "Skill named new", source: "skill" })],
-    onSubmit(prompt) {
-      submits.push(prompt)
-      return true
-    },
-  })
-
-  try {
-    await app.renderOnce()
-    "/skills".split("").forEach((key) => app.mockInput.pressKey(key))
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    expect(app.captureCharFrame()).toContain("Skill named new")
-
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    expect(submits).toEqual([])
-    expect(app.captureCharFrame()).toContain("/new")
-
-    "task".split("").forEach((key) => app.mockInput.pressKey(key))
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    expect(submits).toEqual([{ text: "/new task", parts: [], command: { name: "new", arguments: "task" } }])
-  } finally {
-    app.cleanup()
-  }
-})
-
-// OpenTUI currently segfaults Bun while tearing down this skill-panel close transition.
-// Re-enable after the upstream renderer teardown fix lands.
-test.skip("direct footer clears the synthetic skills draft when the panel closes", async () => {
-  const submits: RunPrompt[] = []
-  const app = await renderFooter({
-    commands: [command({ name: "formatter", description: "Apply formatter fixes", source: "skill" })],
-    onSubmit(prompt) {
-      submits.push(prompt)
-      return true
-    },
-  })
-
-  try {
-    await app.renderOnce()
-    "/skills".split("").forEach((key) => app.mockInput.pressKey(key))
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    expect(app.captureCharFrame()).toContain("Apply formatter fixes")
-
-    app.mockInput.pressKey("c", { ctrl: true })
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    expect(submits).toEqual([])
-    expect(app.captureCharFrame()).not.toContain("/skills")
+    expect(submits).toEqual([{ text: "/formatter ", parts: [], command: { name: "formatter", arguments: "" } }])
   } finally {
     app.cleanup()
   }
@@ -1178,7 +1017,7 @@ test("direct question body separates single-select checkmark from label", async 
         ],
       },
     ],
-  } satisfies QuestionRequest
+  } satisfies QuestionV2Request
   const replies: unknown[] = []
 
   const app = await testRender(
@@ -1225,7 +1064,7 @@ test.skip("direct custom answer submits through keymap return binding", async ()
         custom: true,
       },
     ],
-  } satisfies QuestionRequest
+  } satisfies QuestionV2Request
   const questions: unknown[] = []
   let off: (() => void) | undefined
 

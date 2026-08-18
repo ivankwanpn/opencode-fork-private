@@ -1,14 +1,15 @@
 import { DateTime } from "effect"
+import type { SessionsGetOutput } from "@opencode-ai/client"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
-import type { Session, SessionV2Info } from "@opencode-ai/sdk/v2"
+import type { Session } from "@opencode-ai/sdk/v2"
 import type { Session as LegacySession } from "@/session/session"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 
-type NativeSession = SessionV2Info
+export type NativeSessionInfo = SessionsGetOutput
 
-export function legacySessionFromNative(info: NativeSession): Session {
+export function legacySessionFromNative(info: NativeSessionInfo): Session {
   return {
     id: info.id,
     slug: info.id,

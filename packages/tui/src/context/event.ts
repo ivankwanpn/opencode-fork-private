@@ -25,8 +25,6 @@ const compatibilityEventTypes = new Set<string>([
   "question.replied",
   "question.rejected",
   "session.status",
-  "session.idle",
-  "session.compacted",
   "file.edited",
   "todo.updated",
   "command.executed",

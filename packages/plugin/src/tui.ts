@@ -8,8 +8,8 @@ import type {
   Message,
   Part,
   Provider,
-  PermissionRequest,
-  QuestionRequest,
+  PermissionV2Request,
+  QuestionV2Request,
   Session,
   SessionStatus,
   TextPart,
@@ -413,8 +413,8 @@ export type TuiState = {
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>
     messages: (sessionID: string) => ReadonlyArray<Message>
     status: (sessionID: string) => SessionStatus | undefined
-    permission: (sessionID: string) => ReadonlyArray<PermissionRequest>
-    question: (sessionID: string) => ReadonlyArray<QuestionRequest>
+    permission: (sessionID: string) => ReadonlyArray<PermissionV2Request>
+    question: (sessionID: string) => ReadonlyArray<QuestionV2Request>
   }
   part: (messageID: string) => ReadonlyArray<Part>
   lsp: () => ReadonlyArray<TuiSidebarLspItem>

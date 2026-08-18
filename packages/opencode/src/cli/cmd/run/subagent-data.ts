@@ -1,4 +1,4 @@
-import type { Event, Message, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
+import type { Event, Message, Part, PermissionV2Request, QuestionV2Request, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
 import {
   bootstrapSessionData,
@@ -46,8 +46,8 @@ export type BootstrapSubagentInput = {
   data: SubagentData
   messages: SessionMessage[]
   children: Array<{ id: string; title?: string }>
-  permissions: PermissionRequest[]
-  questions: QuestionRequest[]
+  permissions: PermissionV2Request[]
+  questions: QuestionV2Request[]
 }
 
 function createDetail(sessionID: string): DetailState {
@@ -499,7 +499,7 @@ function compactCallMap(detail: DetailState) {
   const keep = new Set(recent(detail.data.call.keys(), SUBAGENT_CALL_LIMIT))
 
   for (const request of detail.data.permissions) {
-    const key = callKey(request.tool?.messageID, request.tool?.callID)
+    const key = callKey(request.source?.messageID, request.source?.callID)
     if (key) {
       keep.add(key)
     }

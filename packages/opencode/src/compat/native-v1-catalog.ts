@@ -1,13 +1,13 @@
 import type {
   Agent,
   AgentV2Info,
-  Command,
   CommandV2Info,
   Model,
   ModelV2Info,
   Provider,
   ProviderCatalogInfo,
 } from "@opencode-ai/sdk/v2"
+import type { Command } from "@opencode-ai/sdk"
 
 export function legacyAgentFromNative(info: AgentV2Info): Agent {
   const topP = info.request.body.topP
@@ -33,7 +33,7 @@ export function legacyAgentFromNative(info: AgentV2Info): Agent {
   }
 }
 
-export function legacyCommandFromNative(info: CommandV2Info): Command {
+export function legacyCommandFromNative(info: CommandV2Info): Command & { hints: string[] } {
   return {
     name: info.name,
     description: info.description,

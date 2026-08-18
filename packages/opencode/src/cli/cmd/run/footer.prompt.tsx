@@ -48,7 +48,7 @@ type Auto = RunFooterMenuItem & {
 type SlashOption = RunFooterMenuItem & {
   kind: "slash"
   name: string
-  action?: "skill-menu" | "editor"
+  action?: "editor"
 }
 
 type PromptOption = Auto | SlashOption
@@ -75,7 +75,6 @@ type PromptInput = {
   onInputClear: () => void
   onExitRequest?: () => boolean
   onExit: () => void
-  onSkillMenu: () => void
   onRows: (rows: number) => void
   onStatus: (text: string) => void
 }
@@ -403,10 +402,6 @@ export function createPromptState(input: PromptInput): PromptState {
     { initialValue: [] as Auto[] },
   )
   const mentionOptions = createMemo(() => [...agents(), ...files(), ...resources()])
-  const skillCommands = createMemo(() => (input.commands() ?? []).filter((item) => item.source === "skill"))
-  const hasSkillsCommand = createMemo(() =>
-    (input.commands() ?? []).some((item) => item.source !== "skill" && item.name === "skills"),
-  )
   const slashOptions = createMemo<SlashOption[]>(() => {
     const builtins = [
       {
@@ -420,31 +415,16 @@ export function createPromptState(input: PromptInput): PromptState {
       { kind: "slash", name: "exit", display: "/exit", description: "close OpenCode" } satisfies SlashOption,
     ]
     const hidden = new Set(builtins.map((item) => item.name))
-    const showSkillMenu = !shell() && skillCommands().length > 0 && !hasSkillsCommand()
-    if (showSkillMenu) {
-      hidden.add("skills")
-    }
 
     return [
-      ...(showSkillMenu
-        ? [
-            {
-              kind: "slash",
-              action: "skill-menu" as const,
-              name: "skills",
-              display: "/skills",
-              description: "browse available skills",
-            } satisfies SlashOption,
-          ]
-        : []),
       ...(input.commands() ?? [])
-        .filter((item) => item.source !== "skill" && !hidden.has(item.name))
+        .filter((item) => !hidden.has(item.name))
         .map(
           (item) =>
             ({
               kind: "slash",
               name: item.name,
-              display: `/${item.name}${item.source === "mcp" ? ":mcp" : ""}`,
+              display: `/${item.name}`,
               description: item.description,
             }) satisfies SlashOption,
         ),
@@ -853,12 +833,6 @@ export function createPromptState(input: PromptInput): PromptState {
         return
       }
 
-      if (next.action === "skill-menu") {
-        cancelAutocomplete()
-        input.onSkillMenu()
-        return
-      }
-
       const cursor = area.cursorOffset
       const head = slashHead(area.plainText)
       const local = !shell() && (next.name === "new" || next.name === "exit")
@@ -967,7 +941,6 @@ export function createPromptState(input: PromptInput): PromptState {
   const baseBindingsEnabled = () => {
     const current = input.view()
     if (current === "command") return false
-    if (current === "skill") return false
     if (current === "model") return false
     if (current === "variant") return false
     if (current === "queued-menu") return false

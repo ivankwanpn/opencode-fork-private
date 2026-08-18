@@ -17,7 +17,6 @@ import {
   RunCommandMenuBody,
   RunModelSelectBody,
   RunQueuedPromptSelectBody,
-  RunSkillSelectBody,
   RunSubagentSelectBody,
   RunVariantSelectBody,
 } from "./footer.command"
@@ -133,13 +132,11 @@ export function RunFooterView(props: RunFooterViewProps) {
   const [route, setRoute] = createSignal<FooterPromptRoute>({ type: "composer" })
   const [subagentMenuRows, setSubagentMenuRows] = createSignal(RUN_SUBAGENT_PANEL_ROWS)
   const queuedPrompts = createMemo(() => props.queuedPrompts?.() ?? [])
-  const skills = createMemo(() => (props.commands() ?? []).filter((item) => item.source === "skill"))
   const prompt = createMemo(() => active().type === "prompt" && route().type === "composer")
   const selectingSubagent = createMemo(() => active().type === "prompt" && route().type === "subagent-menu")
   const selectingQueued = createMemo(() => active().type === "prompt" && route().type === "queued-menu")
   const inspecting = createMemo(() => active().type === "prompt" && route().type === "subagent")
   const commanding = createMemo(() => active().type === "prompt" && route().type === "command")
-  const skilling = createMemo(() => active().type === "prompt" && route().type === "skill")
   const modeling = createMemo(() => active().type === "prompt" && route().type === "model")
   const varianting = createMemo(() => active().type === "prompt" && route().type === "variant")
   const panel = createMemo(
@@ -149,7 +146,6 @@ export function RunFooterView(props: RunFooterViewProps) {
       selectingQueued() ||
       selectingSubagent() ||
       commanding() ||
-      skilling() ||
       modeling() ||
       varianting(),
   )
@@ -297,15 +293,6 @@ export function RunFooterView(props: RunFooterViewProps) {
     props.onSubagentSelect?.(undefined)
   }
 
-  const openSkillMenu = () => {
-    if (props.commands() && skills().length === 0) {
-      return
-    }
-
-    setRoute({ type: "skill" })
-    props.onSubagentSelect?.(undefined)
-  }
-
   const openVariant = () => {
     setRoute({ type: "variant" })
     props.onSubagentSelect?.(undefined)
@@ -376,7 +363,6 @@ export function RunFooterView(props: RunFooterViewProps) {
     onInputClear: props.onInputClear,
     onExitRequest: props.onExitRequest,
     onExit: props.onExit,
-    onSkillMenu: openSkillMenu,
     onRows: props.onRows,
     onStatus: props.onStatus,
   })
@@ -601,7 +587,6 @@ export function RunFooterView(props: RunFooterViewProps) {
     const current = route()
     if (
       current.type !== "command" &&
-      current.type !== "skill" &&
       current.type !== "model" &&
       current.type !== "variant" &&
       current.type !== "queued-menu" &&
@@ -716,7 +701,6 @@ export function RunFooterView(props: RunFooterViewProps) {
                               closePanel()
                               void composer.openEditor()
                             }}
-                            onSkill={openSkillMenu}
                             onSubagent={openSubagentMenu}
                             onQueued={openQueuedMenu}
                             onVariant={openVariant}
@@ -733,24 +717,6 @@ export function RunFooterView(props: RunFooterViewProps) {
                               closePanel()
                             }}
                             onExit={props.onExit}
-                          />
-                        </Match>
-                        <Match when={skilling()}>
-                          <RunSkillSelectBody
-                            theme={theme}
-                            commands={props.commands}
-                            onClose={closePanel}
-                            onSelect={(name) => {
-                              composer.replacePrompt({
-                                text: `/${name} `,
-                                parts: [],
-                                command: {
-                                  name,
-                                  arguments: "",
-                                },
-                              })
-                              closePanel()
-                            }}
                           />
                         </Match>
                         <Match when={modeling()}>

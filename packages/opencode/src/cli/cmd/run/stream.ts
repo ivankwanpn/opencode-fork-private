@@ -103,9 +103,9 @@ export function traceSubagentState(state: FooterSubagentState) {
     permissions: state.permissions.map((item) => ({
       id: item.id,
       sessionID: item.sessionID,
-      permission: item.permission,
-      patterns: item.patterns,
-      tool: item.tool,
+      permission: item.action,
+      patterns: item.resources,
+      tool: item.source?.type === "tool" ? { messageID: item.source.messageID, callID: item.source.callID } : undefined,
       metadata: item.metadata
         ? {
             keys: Object.keys(item.metadata),

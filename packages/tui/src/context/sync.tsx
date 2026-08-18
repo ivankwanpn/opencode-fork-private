@@ -1,8 +1,8 @@
 import type {
   Config,
   Todo,
-  PermissionRequest,
-  QuestionRequest,
+  PermissionV2Request,
+  QuestionV2Request,
   LspStatus,
   McpStatus,
   McpResource,
@@ -65,10 +65,10 @@ export const {
         experimentalBackgroundSubagents: boolean
       }
       permission: {
-        [sessionID: string]: PermissionRequest[]
+        [sessionID: string]: PermissionV2Request[]
       }
       question: {
-        [sessionID: string]: QuestionRequest[]
+        [sessionID: string]: QuestionV2Request[]
       }
       config: Config
       session: SessionV2Info[]
@@ -180,7 +180,15 @@ export const {
         }
 
         case "permission.asked": {
-          const request = event.properties
+          const request: PermissionV2Request = {
+            id: event.properties.id,
+            sessionID: event.properties.sessionID,
+            action: event.properties.permission,
+            resources: event.properties.patterns,
+            metadata: event.properties.metadata,
+            save: event.properties.always,
+            ...(event.properties.tool ? { source: { type: "tool", ...event.properties.tool } } : {}),
+          }
           if (permission.mode === "auto") {
             void sdk.native.permissions.reply({
               sessionID: request.sessionID,

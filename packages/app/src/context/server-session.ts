@@ -1263,10 +1263,6 @@ export function createServerSession(
       if (event.data.status.type === "idle") activities.delete(sessionID)
       setData("session_status", sessionID, reconcile(event.data.status as SessionStatus))
     }
-    if (event.type === "session.idle") {
-      activities.delete(sessionID)
-      setData("session_status", sessionID, reconcile({ type: "idle" }))
-    }
     if (event.type === "session.execution.started") setData("session_status", sessionID, reconcile({ type: "busy" }))
     if (event.type === "session.next.provider.attempt.started")
       setData("session_status", sessionID, reconcile({ type: "busy" }))
@@ -1368,14 +1364,13 @@ export function createServerSession(
       hasCurrentApi &&
       ((event.type === "session.status" && event.data.status.type === "idle") ||
         (event.type === "session.next.status" && event.data.status.type === "idle") ||
-        eventType === "session.idle" ||
         eventType === "session.execution.succeeded" ||
         eventType === "session.execution.failed" ||
         eventType === "session.execution.interrupted")
     if (settled) reconcileV2Settlement(sessionID)
     if (
-      eventType === "session.idle" ||
-      (event.type === "session.next.status" && event.data.status.type === "idle") ||
+      ((event.type === "session.status" || event.type === "session.next.status") &&
+        event.data.status.type === "idle") ||
       eventType === "session.next.context.updated" ||
       eventType === "session.context.updated" ||
       eventType === "session.next.compaction.ended" ||
@@ -1431,11 +1426,6 @@ export function createServerSession(
       case "session.status": {
         const props = event.properties as { sessionID: string; status: SessionStatus }
         setData("session_status", props.sessionID, reconcile(props.status))
-        return
-      }
-      case "session.idle": {
-        const props = event.properties as { sessionID: string }
-        setData("session_status", props.sessionID, reconcile({ type: "idle" }))
         return
       }
       case "message.updated": {

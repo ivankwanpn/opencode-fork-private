@@ -4,6 +4,7 @@ import { render } from "solid-js/web"
 import { Part } from "./message-part"
 import type { MessagePartProps } from "./message-part"
 import { readPartText } from "./message-part-text"
+import { Markdown } from "./markdown"
 import { DataProvider } from "../context"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
 import { I18nProvider, type UiI18n } from "@opencode-ai/ui/context/i18n"
@@ -139,6 +140,46 @@ describe("message-part remount regression", () => {
     })
 
     await expect.poll(() => document.querySelector('[data-slot="reasoning-part-heading"]')).toBeTruthy()
+  })
+})
+
+describe("markdown settlement regression", () => {
+  let dispose: () => void
+
+  afterEach(() => dispose?.())
+
+  test("preserves stable blocks and the complete tail when streaming settles", async () => {
+    const [streaming, setStreaming] = createSignal(true)
+    const text = "# Plan\n\nStable paragraph.\n\n- final item"
+    dispose = createRoot((disposeRoot) => {
+      const cleanup = render(
+        () => (
+          <MarkedProvider>
+            <I18nProvider value={i18n}>
+              <Markdown text={text} cacheKey="markdown-settlement" streaming={streaming()} />
+            </I18nProvider>
+          </MarkedProvider>
+        ),
+        document.body,
+      )
+      return () => {
+        cleanup()
+        disposeRoot()
+      }
+    })
+
+    await expect.poll(() => document.querySelectorAll("[data-markdown-block]").length).toBe(3)
+    const first = document.querySelector("[data-markdown-block]")
+    expect(first).toBeTruthy()
+
+    setStreaming(false)
+
+    await expect
+      .poll(() => document.querySelector('[data-component="markdown"]')?.textContent?.includes("final item"))
+      .toBe(true)
+    expect(document.querySelector("[data-markdown-block]")).toBe(first)
+    expect(document.querySelector('[data-component="markdown"]')?.textContent).toContain("Stable paragraph.")
+    expect(document.querySelector('[data-component="markdown"]')?.textContent).toContain("final item")
   })
 })
 

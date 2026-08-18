@@ -19,7 +19,8 @@ import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { bundledLanguages } from "shiki"
-import { canReusePendingBlock, project, type Block, type Projection } from "./markdown-stream"
+import { canReusePendingBlock } from "./markdown-projection"
+import { project, type Block, type Projection } from "./markdown-stream"
 import {
   disposeStreamingCode,
   highlightStreamingCode,

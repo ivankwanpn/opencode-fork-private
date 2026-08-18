@@ -56,6 +56,10 @@ manifest 移除；public event inventory 由 107 降至 105，durable map 維持
 `source`：Core 合成的 skill slash commands 與其他 commands 共用 `CommandV2Info`，Direct footer 全部直接
 搜尋/提交，ACP 也只讀一次 canonical command catalog，不再額外讀 skills 後重複合成。
 
+**999.0.19 runtime V1 event alias closeout**：OpenCode `Session.Event` 與 `MessageV2.Event.PartDelta` 無任何
+consumer，只是把 V1 Session event schema 重新 export 到 production runtime；兩者已刪除並以 source gate
+阻止回流。`SessionV1.Event.*` 現只存在 Schema public manifest 的 wire compatibility inventory。
+
 ---
 
 ## 1. 各区域现状总表

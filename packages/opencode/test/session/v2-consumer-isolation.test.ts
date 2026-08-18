@@ -76,3 +76,13 @@ test("production status publishers do not emit the deprecated Session Idle event
 
   expect(offenders).toEqual([])
 })
+
+test("legacy wire helpers do not re-export V1 Session events", async () => {
+  const sources = await Promise.all(
+    [new URL("../../src/session/session.ts", import.meta.url), new URL("../../src/session/message-v2.ts", import.meta.url)].map(
+      async (file) => ({ file: file.pathname, source: await Bun.file(file).text() }),
+    ),
+  )
+
+  expect(sources.filter((entry) => entry.source.includes("SessionV1.Event.")).map((entry) => entry.file)).toEqual([])
+})

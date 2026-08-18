@@ -47,10 +47,6 @@ function truncateToolOutput(text: string, maxChars?: number) {
   return `${text.slice(0, maxChars)}\n[Tool output truncated for compaction: omitted ${omitted} chars]`
 }
 
-export const Event = {
-  PartDelta: SessionV1.Event.PartDelta,
-}
-
 const Cursor = Schema.Struct({
   id: MessageID,
   time: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),

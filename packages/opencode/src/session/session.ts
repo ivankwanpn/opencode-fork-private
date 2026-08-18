@@ -1,5 +1,4 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
 import { Decimal } from "decimal.js"
 import type { ProviderMetadata, Usage } from "@opencode-ai/llm"
@@ -125,15 +124,6 @@ export const ForkInput = Schema.Struct({
   sessionID: SessionID,
   messageID: Schema.optional(MessageID),
 })
-
-export const Event = {
-  Created: SessionV1.Event.Created,
-  Updated: SessionV1.Event.Updated,
-  Deleted: SessionV1.Event.Deleted,
-  Diff: SessionV1.Event.Diff,
-  Error: SessionV1.Event.Error,
-}
-
 
 export const getUsage = (input: { model: Provider.Model; usage: Usage; metadata?: ProviderMetadata }) => {
   const safe = (value: number) => {

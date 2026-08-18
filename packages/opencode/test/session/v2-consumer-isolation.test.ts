@@ -59,3 +59,20 @@ test("legacy Session wire module cannot recreate a repository or lifecycle produ
   expect(source).not.toContain("events.publish(SessionV1.Event.Updated")
   expect(source).not.toContain("events.publish(SessionV1.Event.Deleted")
 })
+
+test("production status publishers do not emit the deprecated Session Idle event", async () => {
+  const sources = await Promise.all(
+    [
+      new URL("../../../core/src/session.ts", import.meta.url),
+      new URL("../../../core/src/session/execution/local.ts", import.meta.url),
+      new URL("../../src/session/status.ts", import.meta.url),
+    ].map(async (file) => ({ file: file.pathname, source: await Bun.file(file).text() })),
+  )
+  const offenders = sources
+    .filter(
+      (entry) => entry.source.includes("SessionStatusEvent.Idle") || entry.source.includes("events.publish(Event.Idle"),
+    )
+    .map((entry) => entry.file)
+
+  expect(offenders).toEqual([])
+})

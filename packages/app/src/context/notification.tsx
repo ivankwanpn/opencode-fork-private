@@ -393,11 +393,12 @@ function createServerNotificationState(input: {
 
   const unsub = serverSDK().event.listen((e) => {
     const event = e.details
-    if (event.type !== "session.idle" && event.type !== "session.error") return
+    if (event.type !== "session.status" && event.type !== "session.error") return
 
     const directory = e.name
     const time = Date.now()
-    if (event.type === "session.idle") {
+    if (event.type === "session.status") {
+      if (event.properties.status.type !== "idle") return
       handleSessionIdle(directory, event, time)
       return
     }

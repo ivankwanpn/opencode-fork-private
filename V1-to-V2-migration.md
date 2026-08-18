@@ -43,6 +43,11 @@ Created/Updated/Deleted branches 與 `sessionRow(SessionV1.Info)` 已刪除，V1
 producers 全部切到 V2；EventV2Bridge 對舊 CLI/TUI/App consumer 純投影 `session.error`。public event inventory
 由 106 增至 107，durable map 維持 47；Client generation 為 identity，沒有手動修改 generated files。
 
+**999.0.19 deprecated idle producer closeout**：Core drain、manual compaction 與 OpenCode SessionStatus state
+只發布 canonical `session.next.status`，不再緊接著重複發布 `session.idle`。EventV2Bridge 繼續投影唯一的
+`session.status` 給舊 CLI/TUI/App consumer；Desktop 完成通知改由該 status 的 idle variant 觸發。
+`session.idle` definition 暫留 public wire compatibility，但 production runtime 已無 publisher。
+
 ---
 
 ## 1. 各区域现状总表
@@ -355,7 +360,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > **仍阻止实际删表/删目录的依赖** ⏸️：
 > - `session/session.ts` 已不含 repository/layer，只剩 legacy HTTP wire schema、BusyError、event alias 與通用 helpers；legacy route/plugin/CLI consumer 未遷移前仍不能整檔刪除。
 > - Durable manifest 已 V2-only；`ServerDefinitions` 仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
-> - `session.error` producer 已 V2-only；舊 consumer 暫經 bridge 投影，下一個 producer closeout 可處理 `SessionStatusEvent.Idle` 等仍重複發布的 live 相容事件。
+> - `session.error` 與 Session status producer 已 V2-only；舊 consumer 暫經 bridge 投影，deprecated `session.idle` definition 僅保留 public wire compatibility，production runtime 不再發布。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >

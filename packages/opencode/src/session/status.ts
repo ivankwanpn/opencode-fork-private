@@ -4,12 +4,9 @@ import { SessionID } from "./schema"
 import { DateTime, Effect, Layer, Context } from "effect"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { SessionEvent } from "@opencode-ai/core/session/event"
-import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 
 export const Info = SessionEvent.StatusInfo
 export type Info = SessionEvent.StatusInfo
-
-export const Event = SessionStatusEvent
 
 export interface Interface {
   readonly get: (sessionID: SessionID) => Effect.Effect<Info>
@@ -45,7 +42,6 @@ const layer = Layer.effect(
         status,
       })
       if (status.type === "idle") {
-        yield* events.publish(Event.Idle, { sessionID })
         data.delete(sessionID)
         return
       }

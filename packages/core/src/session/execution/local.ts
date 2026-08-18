@@ -20,7 +20,6 @@ import { SessionAttemptTable, SessionInputTable, TaskSubmissionTable } from "../
 import { SessionEvent } from "../event"
 import { mutateSession } from "../mutation"
 import { EventV2 } from "../../event"
-import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 
 type DB = Database.Interface["db"]
 
@@ -232,8 +231,6 @@ const layer = Layer.effect(
         { timestamp: yield* DateTime.now, sessionID: session.id, status: { type: status } },
         { location: session.location },
       )
-      if (status === "idle")
-        yield* events.publish(SessionStatusEvent.Idle, { sessionID: session.id }, { location: session.location })
     })
     const publishDerivedStatus = Effect.fn("SessionExecutionLocal.publishDerivedStatus")(function* (
       session: SessionSchema.Info,

@@ -43,7 +43,6 @@ import { Revert } from "@opencode-ai/schema/revert"
 import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 import { SessionV1 } from "./v1/session"
-import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import type { PermissionV2 } from "./permission"
 import { isDeepStrictEqual } from "node:util"
 
@@ -968,18 +967,13 @@ const layer = Layer.effect(
               ),
               Effect.asVoid,
             ),
-            Effect.gen(function* () {
-              yield* events.publish(
+            events
+              .publish(
                 SessionEvent.Status,
                 { timestamp: yield* DateTime.now, sessionID: session.id, status: { type: "idle" } },
                 { location: session.location },
               )
-              yield* events.publish(
-                SessionStatusEvent.Idle,
-                { sessionID: session.id },
-                { location: session.location },
-              )
-            }).pipe(Effect.asVoid),
+              .pipe(Effect.asVoid),
           )
         })
         yield* execution.exclusive(session.id, work)

@@ -30,8 +30,8 @@ import { SessionEvent } from "./session/event"
 import { SessionInput } from "./session/input"
 import { SessionAttachment } from "./session/attachment"
 import { SessionAttempt } from "./session/attempt"
-import { AssistantErrorCodec } from "./session/assistant-error-codec"
 import { SessionCommand } from "./session/command"
+import { SessionLifecycle } from "./session/lifecycle"
 import { SessionPromptExpansion } from "./session/prompt-expansion"
 import { PluginRuntime } from "./plugin/runtime"
 import { SessionCompaction } from "./session/compaction"
@@ -386,35 +386,6 @@ const layer = Layer.effect(
             }),
         ),
       )
-    const settleRecoveryAssistant = Effect.fn("V2Session.settleRecoveryAssistant")(function* (
-      sessionID: SessionSchema.ID,
-      assistantMessageID: SessionMessage.ID,
-    ) {      const stored = yield* store.message(assistantMessageID)
-      if (stored?.sessionID !== sessionID || stored.message.type !== "assistant") return
-      const assistant = stored.message
-      for (const tool of assistant.content) {
-        if (tool.type !== "tool" || (tool.state.status !== "pending" && tool.state.status !== "running")) continue
-        yield* events.publish(SessionEvent.Tool.Failed, {
-          sessionID,
-          timestamp: yield* DateTime.now,
-          assistantMessageID,
-          callID: tool.id,
-          error: { type: "unknown", message: "Tool execution interrupted" },
-          provider: {
-            executed: tool.provider?.executed === true,
-            ...(tool.provider?.metadata === undefined ? {} : { metadata: tool.provider.metadata }),
-          },
-        })
-      }
-      if (assistant.time.completed !== undefined) return
-      yield* events.publish(SessionEvent.Step.Failed, {
-        sessionID,
-        timestamp: yield* DateTime.now,
-        assistantMessageID,
-        error: { type: "unknown", message: AssistantErrorCodec.encode("Provider turn interrupted") },
-      })
-    })
-
     const mutate = (sessionID: SessionSchema.ID, next: SnapshotTransform) => mutateSession(db, events, sessionID, next)
 
     const publishCompatibilityUpdate = Effect.fn("V2Session.publishCompatibilityUpdate")(function* (
@@ -432,6 +403,18 @@ const layer = Layer.effect(
       if (!session.revert) return session
       yield* SessionRevert.commit(session).pipe(Effect.provideService(EventV2.Service, events))
       return yield* publishCompatibilityUpdate(session.id)
+    })
+    const prepareStart = Effect.fn("V2Session.prepareStart")(function* (
+      sessionID: SessionSchema.ID,
+      intent: SessionInput.Intent | undefined,
+    ) {
+      if (intent?.type !== "start") return
+      yield* execution
+        .exclusive(
+          sessionID,
+          SessionLifecycle.reconcileForStart(db, store, events, sessionID),
+        )
+        .pipe(Effect.catchTag("Session.ExecutionBusyError", () => Effect.void))
     })
 
     const result = Service.of({
@@ -669,6 +652,7 @@ const layer = Layer.effect(
           Effect.gen(function* () {
             const current = yield* result.get(input.sessionID)
             const session = yield* commitStagedRevert(current)
+            yield* prepareStart(input.sessionID, input.intent)
             const prepared = yield* Effect.gen(function* () {
               const plugins = yield* PluginRuntime.Service
               const attachment = yield* SessionAttachment.Service
@@ -711,6 +695,7 @@ const layer = Layer.effect(
           Effect.gen(function* () {
             const current = yield* result.get(input.sessionID)
             const session = yield* commitStagedRevert(current)
+            yield* prepareStart(input.sessionID, input.intent)
             const messageID = input.id ?? SessionMessage.ID.create()
             const prepared = yield* Effect.gen(function* () {
               const plugins = yield* PluginRuntime.Service
@@ -1028,7 +1013,11 @@ const layer = Layer.effect(
               if (row.status !== "started" && row.status !== "responding")
                 return yield* conflict(`Provider attempt cannot be recovered from ${row.status}`)
 
-              yield* settleRecoveryAssistant(input.sessionID, row.assistant_message_id)
+              yield* SessionLifecycle.settleAssistant(store, events, {
+                sessionID: input.sessionID,
+                assistantMessageID: row.assistant_message_id,
+                message: "Provider turn interrupted",
+              })
               yield* events.publish(SessionEvent.ProviderAttempt.Recovery.Decided, {
                 sessionID: input.sessionID,
                 attemptID: input.attemptID,

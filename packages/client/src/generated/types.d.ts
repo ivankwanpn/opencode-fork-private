@@ -538,6 +538,7 @@ export type SessionsActiveOutput = {
             readonly type: "running";
             readonly turnID?: string | undefined;
             readonly phase?: "pending" | "active" | undefined;
+            readonly activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user" | undefined;
         };
     };
 }["data"];
@@ -4147,6 +4148,7 @@ export type SessionsHistoryOutput = {
             readonly timestamp: number;
             readonly sessionID: string;
             readonly turnID: string;
+            readonly outcome?: "completed" | "failed" | "interrupted" | "abandoned";
         };
     } | {
         readonly id: string;
@@ -6355,6 +6357,7 @@ export type SessionsEventsOutput = {
         readonly timestamp: number;
         readonly sessionID: string;
         readonly turnID: string;
+        readonly outcome?: "completed" | "failed" | "interrupted" | "abandoned";
     };
 } | {
     readonly id: string;

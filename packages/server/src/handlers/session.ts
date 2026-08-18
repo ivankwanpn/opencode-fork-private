@@ -1,8 +1,13 @@
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionTurn } from "@opencode-ai/core/session/turn"
+import { SessionAttemptTable } from "@opencode-ai/core/session/sql"
 import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
+import { EventTable } from "@opencode-ai/core/event/sql"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { DateTime, Effect, Stream } from "effect"
+import { and, desc, inArray } from "drizzle-orm"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import { SessionsCursor } from "@opencode-ai/protocol/groups/session"
@@ -116,21 +121,69 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.active",
         Effect.fn(function* () {
+          const turns = yield* SessionTurn.open(database.db)
+          const owned = yield* session.active
+          const sessionIDs = new Set<Session.ID>([
+            ...turns.map((turn) => Session.ID.make(turn.session_id)),
+            ...owned,
+          ])
+          if (sessionIDs.size === 0) return { data: {} }
+          const ids = [...sessionIDs]
+          const attempts = yield* database.db
+            .select()
+            .from(SessionAttemptTable)
+            .where(inArray(SessionAttemptTable.session_id, ids))
+            .all()
+            .pipe(Effect.orDie)
+          const compactions = yield* database.db
+            .select({ sessionID: EventTable.aggregate_id, type: EventTable.type })
+            .from(EventTable)
+            .where(
+              and(
+                inArray(EventTable.aggregate_id, ids),
+                inArray(EventTable.type, [
+                  EventV2.versionedType(SessionEvent.Compaction.Started.type, 1),
+                  EventV2.versionedType(SessionEvent.Compaction.Ended.type, 1),
+                  EventV2.versionedType(SessionEvent.Compaction.Failed.type, 1),
+                ]),
+              ),
+            )
+            .orderBy(desc(EventTable.seq))
+            .all()
+            .pipe(Effect.orDie)
+          const turnBySession = new Map(turns.map((turn) => [turn.session_id, turn] as const))
+          const attemptBySession = new Map(attempts.map((attempt) => [attempt.session_id, attempt] as const))
+          const compactionBySession = new Map<string, string>()
+          for (const compaction of compactions) {
+            if (!compactionBySession.has(compaction.sessionID))
+              compactionBySession.set(compaction.sessionID, compaction.type)
+          }
           const statuses = new Map<
             Session.ID,
-            { readonly type: "running"; readonly turnID?: SessionMessage.ID; readonly phase?: "pending" | "active" }
-          >(
-            (yield* SessionTurn.open(database.db)).map((turn) => [
-              Session.ID.make(turn.session_id),
-              {
-                type: "running" as const,
-                turnID: SessionMessage.ID.make(turn.turn_id),
-                phase: turn.status === "pending" ? ("pending" as const) : ("active" as const),
-              } as const,
-            ]),
-          )
-          for (const sessionID of yield* session.active) {
-            if (!statuses.has(sessionID)) statuses.set(sessionID, { type: "running" })
+            {
+              readonly type: "running"
+              readonly turnID?: SessionMessage.ID
+              readonly phase?: "pending" | "active"
+              readonly activity?: "compacting" | "dispatching" | "responding"
+            }
+          >()
+          for (const sessionID of sessionIDs) {
+            const turn = turnBySession.get(sessionID)
+            const attempt = attemptBySession.get(sessionID)
+            const activity =
+              compactionBySession.get(sessionID) === EventV2.versionedType(SessionEvent.Compaction.Started.type, 1)
+                ? ("compacting" as const)
+                : attempt?.status === "responding"
+                  ? ("responding" as const)
+                  : attempt?.status === "started"
+                    ? ("dispatching" as const)
+                    : undefined
+            statuses.set(sessionID, {
+              type: "running",
+              turnID: turn ? SessionMessage.ID.make(turn.turn_id) : undefined,
+              phase: turn ? (turn.status === "pending" ? "pending" : "active") : undefined,
+              activity,
+            })
           }
           return {
             data: Object.fromEntries(statuses),

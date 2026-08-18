@@ -16,6 +16,7 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionCommand } from "@opencode-ai/core/session/command"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
+import { SessionAttempt } from "@opencode-ai/core/session/attempt"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -160,7 +161,11 @@ const titleSessionID = SessionSchema.ID.make("ses_title_update")
 const titleUserID = SessionMessage.ID.make("msg_title_user")
 const titleAssistantID = SessionMessage.ID.make("msg_title_assistant")
 
-const withExecution = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+const withExecution = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  runnerCalls = { count: 0 },
+  onRun?: (sessionID: SessionSchema.ID) => Effect.Effect<void>,
+) =>
   Effect.gen(function* () {
     const database = yield* Database.Service
     const events = yield* EventV2.Service
@@ -169,7 +174,7 @@ const withExecution = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         LayerNode.compile(SessionExecutionLocal.node, [
           [Database.node, Layer.succeed(Database.Service, database)],
           [EventV2.node, Layer.succeed(EventV2.Service, events)],
-          [LocationServiceMap.node, makeLocationLayer({ count: 0 })],
+          [LocationServiceMap.node, makeLocationLayer(runnerCalls, onRun)],
           [SessionCommand.node, commandLayer],
         ]),
       ),
@@ -207,6 +212,108 @@ const updatedCount = () =>
   })
 
 describe("SessionExecution recovery", () => {
+  it.effect("interrupts detached durable work even when no coordinator fiber owns the session", () =>
+    Effect.gen(function* () {
+      yield* setupProject([{ id: nonTaskSessionID }])
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const inputID = SessionMessage.ID.make("msg_detached_interrupt")
+      const attemptID = EventV2.ID.make("evt_detached_interrupt")
+      const assistantMessageID = SessionMessage.ID.make("msg_detached_interrupt_assistant")
+
+      yield* withExecution(
+        Effect.gen(function* () {
+          const execution = yield* SessionExecution.Service
+          yield* SessionInput.admit(db, events, {
+            id: inputID,
+            sessionID: nonTaskSessionID,
+            prompt: Prompt.make({ text: "stop detached work" }),
+            delivery: "steer",
+            intent: { type: "start" },
+          })
+          yield* SessionInput.promote(db, events, nonTaskSessionID, inputID)
+          yield* SessionTurn.start(events, { sessionID: nonTaskSessionID, turnID: inputID })
+          yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+            sessionID: nonTaskSessionID,
+            attemptID,
+            assistantMessageID,
+            attempt: 1,
+            timestamp: yield* DateTime.now,
+          })
+          yield* events.publish(SessionEvent.ProviderAttempt.ResponseStarted, {
+            sessionID: nonTaskSessionID,
+            attemptID,
+            timestamp: yield* DateTime.now,
+          })
+
+          yield* execution.interrupt(nonTaskSessionID)
+        }),
+      )
+
+      expect(yield* SessionAttempt.status(db, nonTaskSessionID, false)).toEqual({ type: "idle" })
+      expect(yield* SessionAttempt.latestEnded(db, nonTaskSessionID)).toMatchObject({
+        attemptID,
+        outcome: "interrupted",
+        continuation: false,
+      })
+      expect(yield* SessionTurn.get(db, nonTaskSessionID)).toMatchObject({ turn_id: inputID, status: "ended" })
+    }),
+  )
+
+  it.effect("finalizes an attempt and turn when a live runner defects after provider response start", () =>
+    Effect.gen(function* () {
+      yield* setupProject([{ id: nonTaskSessionID }])
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const inputID = SessionMessage.ID.make("msg_live_drain_failure")
+      const attemptID = EventV2.ID.make("evt_live_drain_failure")
+      const assistantMessageID = SessionMessage.ID.make("msg_live_drain_failure_assistant")
+      yield* SessionInput.admit(db, events, {
+        id: inputID,
+        sessionID: nonTaskSessionID,
+        prompt: Prompt.make({ text: "fail after response start" }),
+        delivery: "steer",
+        intent: { type: "start" },
+      })
+      const runnerCalls = { count: 0 }
+
+      yield* withExecution(
+        Effect.gen(function* () {
+          const execution = yield* SessionExecution.Service
+          yield* execution.resume(nonTaskSessionID).pipe(Effect.catchCause(() => Effect.void))
+        }),
+        runnerCalls,
+        () =>
+          Effect.gen(function* () {
+            yield* SessionInput.promote(db, events, nonTaskSessionID, inputID)
+            yield* SessionTurn.start(events, { sessionID: nonTaskSessionID, turnID: inputID })
+            yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+              sessionID: nonTaskSessionID,
+              attemptID,
+              assistantMessageID,
+              attempt: 1,
+              timestamp: yield* DateTime.now,
+            })
+            yield* events.publish(SessionEvent.ProviderAttempt.ResponseStarted, {
+              sessionID: nonTaskSessionID,
+              attemptID,
+              timestamp: yield* DateTime.now,
+            })
+            return yield* Effect.die("runner defect after response start")
+          }),
+      )
+
+      expect(runnerCalls.count).toBe(1)
+      expect(yield* SessionTurn.get(db, nonTaskSessionID)).toMatchObject({ turn_id: inputID, status: "ended" })
+      expect(yield* SessionAttempt.status(db, nonTaskSessionID, false)).toEqual({ type: "idle" })
+      expect(yield* SessionAttempt.latestEnded(db, nonTaskSessionID)).toMatchObject({
+        attemptID,
+        outcome: "failed",
+        continuation: false,
+      })
+    }),
+  )
+
   it.effect("ends an interrupted open turn at startup instead of replaying its pending steer", () =>
     Effect.gen(function* () {
       yield* setupProject([{ id: interruptedSessionID }])
@@ -550,18 +657,20 @@ describe("SessionExecution recovery", () => {
     }),
   )
 
-  it.effect("keeps a non-task responding attempt in recovery candidates and out of safe startup dispatch", () =>
+  it.effect("abandons a non-task responding attempt and releases its orphan turn without replaying it", () =>
     Effect.gen(function* () {
       yield* setupProject([{ id: nonTaskSessionID }])
       const { db } = yield* Database.Service
       const events = yield* EventV2.Service
       const inputID = SessionMessage.ID.make("msg_non_task_prompt")
+      const nextInputID = SessionMessage.ID.make("msg_non_task_prompt_after_recovery")
 
       yield* SessionInput.admit(db, events, {
         id: inputID,
         sessionID: nonTaskSessionID,
         prompt: Prompt.make({ text: "non task prompt" }),
         delivery: "steer",
+        intent: { type: "start" },
       })
       yield* db
         .update(SessionInputTable)
@@ -582,6 +691,11 @@ describe("SessionExecution recovery", () => {
         })
         .run()
         .pipe(Effect.orDie)
+      yield* SessionTurn.start(events, {
+        sessionID: nonTaskSessionID,
+        turnID: inputID,
+        timestamp: DateTime.makeUnsafe(2),
+      })
 
       expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([
         { sessionID: nonTaskSessionID, reason: "response-interrupted" },
@@ -600,9 +714,7 @@ describe("SessionExecution recovery", () => {
       yield* startRecovery(runnerCalls)
 
       expect(runnerCalls.count).toBe(0)
-      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([
-        { sessionID: nonTaskSessionID, reason: "response-interrupted" },
-      ])
+      expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
       expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
       expect(
         yield* db
@@ -611,7 +723,17 @@ describe("SessionExecution recovery", () => {
           .where(eq(SessionAttemptTable.session_id, nonTaskSessionID))
           .all()
           .pipe(Effect.orDie),
-      ).toEqual([{ status: "responding", retryAt: null }])
+      ).toEqual([{ status: "abandoned", retryAt: null }])
+      expect(yield* SessionTurn.get(db, nonTaskSessionID)).toMatchObject({ turn_id: inputID, status: "ended" })
+
+      yield* SessionInput.admit(db, events, {
+        id: nextInputID,
+        sessionID: nonTaskSessionID,
+        prompt: Prompt.make({ text: "continue after recovery" }),
+        delivery: "steer",
+        intent: { type: "start" },
+      })
+      expect(yield* SessionTurn.get(db, nonTaskSessionID)).toMatchObject({ turn_id: nextInputID, status: "pending" })
     }),
   )
 

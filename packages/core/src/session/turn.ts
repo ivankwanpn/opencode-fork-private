@@ -118,7 +118,8 @@ export const projectEnded = Effect.fn("SessionTurn.projectEnded")(function* (
       }),
     )
   const pending = (yield* SessionInput.pending(db, event.data.sessionID, "steer")).some(SessionInput.isTurnScoped)
-  if (pending) return yield* Effect.die(new PendingSteerError({ sessionID: event.data.sessionID, turnID: event.data.turnID }))
+  if (pending && (event.data.outcome ?? "completed") === "completed")
+    return yield* Effect.die(new PendingSteerError({ sessionID: event.data.sessionID, turnID: event.data.turnID }))
   yield* db
     .update(SessionTurnTable)
     .set({ status: "ended", seq: event.durable.seq, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
@@ -140,13 +141,19 @@ export const start = Effect.fn("SessionTurn.start")(function* (
 
 export const end = Effect.fn("SessionTurn.end")(function* (
   events: EventV2.Interface,
-  input: { sessionID: SessionSchema.ID; turnID: SessionMessage.ID; timestamp?: DateTime.Utc },
+  input: {
+    sessionID: SessionSchema.ID
+    turnID: SessionMessage.ID
+    timestamp?: DateTime.Utc
+    outcome?: "completed" | "failed" | "interrupted" | "abandoned"
+  },
 ) {
   const result = yield* events
     .publish(SessionEvent.Turn.Ended, {
       sessionID: input.sessionID,
       turnID: input.turnID,
       timestamp: input.timestamp ?? (yield* DateTime.now),
+      outcome: input.outcome,
     })
     .pipe(
       Effect.as(true),
@@ -175,10 +182,10 @@ export const settleInterrupted = Effect.fn("SessionTurn.settleInterrupted")(func
     (pending) => SessionInput.cancelPending(db, input.sessionID, pending.id),
     { discard: true },
   )
-  if (!(yield* end(events, { sessionID: input.sessionID, turnID: input.turnID }))) return "pending" as const
-  return (yield* SessionInput.pending(db, input.sessionID, "steer")).some(SessionInput.isSessionScoped)
-    ? ("restart" as const)
-    : ("ended" as const)
+  if (!(yield* end(events, { sessionID: input.sessionID, turnID: input.turnID, outcome: "interrupted" })))
+    return "pending" as const
+  const remaining = yield* SessionInput.pending(db, input.sessionID, "steer")
+  return remaining.length > 0 ? ("restart" as const) : ("ended" as const)
 })
 
 const upsert = Effect.fn("SessionTurn.upsert")(function* (

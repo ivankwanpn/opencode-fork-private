@@ -307,6 +307,7 @@ export namespace Turn {
     schema: {
       ...Base,
       turnID: SessionMessage.ID,
+      outcome: Schema.Literals(["completed", "failed", "interrupted", "abandoned"]).pipe(optional),
     },
   })
   export type Ended = typeof Ended.Type

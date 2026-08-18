@@ -100,6 +100,9 @@ const SessionActive = Schema.Struct({
   type: Schema.Literal("running"),
   turnID: Schema.optional(SessionMessage.ID),
   phase: Schema.optional(Schema.Literals(["pending", "active"])),
+  activity: Schema.optional(
+    Schema.Literals(["compacting", "dispatching", "responding", "running-tool", "waiting-user"]),
+  ),
 }).annotate({ identifier: "SessionActive" })
 
 const SessionHistoryLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(100))

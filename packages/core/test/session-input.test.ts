@@ -164,7 +164,7 @@ describe("SessionInput", () => {
     }),
   )
 
-  inputIt.effect("settles only steering admitted before an interruption cutoff and preserves queued input", () =>
+  inputIt.effect("settles steering before an interruption cutoff and restarts for later durable input", () =>
     Effect.gen(function* () {
       yield* setup
       const { db } = yield* Database.Service
@@ -214,7 +214,7 @@ describe("SessionInput", () => {
           turnID,
           cutoff: before.admittedSeq,
         }),
-      ).toBe("pending")
+      ).toBe("restart")
       expect(
         yield* db
           .select({ outcome: SessionInputTable.terminal_outcome })
@@ -228,16 +228,6 @@ describe("SessionInput", () => {
         mailbox.id,
         after.id,
       ])
-      expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ status: "active", turn_id: turnID })
-
-      expect(
-        yield* SessionTurn.settleInterrupted(db, events, {
-          sessionID,
-          turnID,
-          cutoff: after.admittedSeq,
-        }),
-      ).toBe("restart")
-      expect((yield* SessionInput.pending(db, sessionID)).map((input) => input.id)).toEqual([queued.id, mailbox.id])
       expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ status: "ended", turn_id: turnID })
     }),
   )

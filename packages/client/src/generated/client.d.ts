@@ -84,6 +84,7 @@ export declare function make(options: ClientOptions): {
                 readonly type: "running";
                 readonly turnID?: string | undefined;
                 readonly phase?: "active" | "pending" | undefined;
+                readonly activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user" | undefined;
             };
         }>;
         get: (input: SessionsGetInput, requestOptions?: RequestOptions | undefined) => Promise<{
@@ -3936,6 +3937,7 @@ export declare function make(options: ClientOptions): {
                 readonly timestamp: number;
                 readonly sessionID: string;
                 readonly turnID: string;
+                readonly outcome?: "abandoned" | "completed" | "failed" | "interrupted" | undefined;
             };
         } | {
             readonly id: string;

@@ -72,7 +72,7 @@ import { llmClient } from "../../effect/app-node-platform"
  * - Session ownership and controls
  *   - [x] Coordinate one local active drain per Session; explicit resumes join and prompt wakeups coalesce.
  *   - [ ] Replace local ownership with durable multi-node ownership when clustered.
- *   - [ ] Mark busy, retrying, idle, interrupted, or terminal-failure status durably.
+ *   - [x] Mark busy, retrying, idle, interrupted, or terminal-failure status durably.
  *   - [ ] Honor interruption and reject stale work after runtime attachment replacement.
  *   - [x] Honor optional agent step limits.
  *   - [x] Bound provider retries and repeated identical tool calls.
@@ -98,10 +98,10 @@ import { llmClient } from "../../effect/app-node-platform"
  *     plugins, and cancellation settlement.
  *   - [x] Reload projected history and start the next explicit provider turn after local tool results.
  *   - [x] Continue for durable user steering accepted during an active provider turn.
- *   - [ ] Continue for compaction or another continuation condition when required.
+ *   - [x] Continue for compaction or another continuation condition when required.
  *
  * - Post-run maintenance
- *   - [ ] Settle final status and expose durable output events to replayable consumers.
+ *   - [x] Settle final status and expose durable output events to replayable consumers.
  *   - [ ] Coalesce streamed deltas and add covering projected-history indexes.
  *   - [ ] Update title, summaries, compaction state, and cleanup in bounded background work.
  *
@@ -202,24 +202,13 @@ const layer = Layer.effect(
     }
 
     type TurnTransition =
+      | { readonly _tag: "Settled"; readonly needsContinuation: boolean; readonly step: number }
       // Automatic compaction completed; rebuild the request from compacted history.
       | { readonly _tag: "ContinueAfterCompaction"; readonly step: number }
       // Overflow compaction completed; rebuild once through the path without overflow recovery.
       | { readonly _tag: "ContinueAfterOverflowCompaction"; readonly step: number }
       // A durable retry notice authorized one bounded replacement attempt.
       | { readonly _tag: "RetryProvider"; readonly step: number; readonly physical: PhysicalAttempt }
-
-    class TurnTransitionError extends Error {
-      constructor(readonly transition: TurnTransition) {
-        super()
-      }
-    }
-
-    const continueAfterCompaction = (step: number) => new TurnTransitionError({ _tag: "ContinueAfterCompaction", step })
-    const continueAfterOverflowCompaction = (step: number) =>
-      new TurnTransitionError({ _tag: "ContinueAfterOverflowCompaction", step })
-    const retryProvider = (step: number, physical: PhysicalAttempt) =>
-      new TurnTransitionError({ _tag: "RetryProvider", step, physical })
 
     const MAX_PROVIDER_ATTEMPTS = 3
     const retryDelay = (attempt: number, error?: LLMError) =>
@@ -317,29 +306,14 @@ const layer = Layer.effect(
         }
       }
       const turnAfterPromotion = yield* SessionTurn.get(db, session.id)
-      const turnCandidate =
-        (turnAfterPromotion?.status === "pending" || turnAfterPromotion?.status === "active"
-          ? turnAfterPromotion.turn_id
-          : undefined) ??
-        pendingForPromotion?.id ??
-        latestPromoted?.id
-      const turnAware =
-        turnAfterPromotion !== undefined ||
-        pendingForPromotion?.intent !== undefined ||
-        latestPromoted?.intent !== undefined
-      const promotedAfterEndedTurn =
-        latestPromoted?.promotedSeq !== undefined &&
-        (turnAfterPromotion === undefined || latestPromoted.promotedSeq > turnAfterPromotion.seq)
-      if (turnAware && turnAfterPromotion?.status === "pending")
+      if (turnAfterPromotion?.status === "pending")
         yield* SessionTurn.start(events, { sessionID: session.id, turnID: turnAfterPromotion.turn_id })
-      else if (
-        turnAware &&
-        turnCandidate &&
-        (promotion !== undefined || latestPromoted !== undefined) &&
-        (!turnAfterPromotion ||
-          (turnAfterPromotion.status === "ended" && (promotion !== undefined || promotedAfterEndedTurn)))
-      )
-        yield* SessionTurn.start(events, { sessionID: session.id, turnID: turnCandidate })
+      if (turnAfterPromotion?.status !== "pending" && turnAfterPromotion?.status !== "active") {
+        const promoted = pendingForPromotion ?? latestPromoted
+        const turnID =
+          promoted && !SessionInput.isSessionScoped(promoted) ? promoted.id : SessionMessage.ID.create()
+        yield* SessionTurn.start(events, { sessionID: session.id, turnID })
+      }
       const preparedContext =
         initialized ??
         (yield* SessionContextEpoch.prepare(db, events, loadSystemContext(agent, session.id), session.id))
@@ -575,8 +549,9 @@ const layer = Layer.effect(
             })
           : Effect.succeed(true)
       if (yield* compaction.compactIfNeeded({ sessionID: session.id, entries, model, request })) {
-        if (!(yield* autoContinue(false))) return { needsContinuation: false, step: currentStep }
-        return yield* Effect.die(continueAfterCompaction(currentStep))
+        if (!(yield* autoContinue(false)))
+          return { _tag: "Settled", needsContinuation: false, step: currentStep } as const
+        return { _tag: "ContinueAfterCompaction", step: currentStep } as const
       }
       const startSnapshot = yield* snapshots.capture()
       const attemptID = EventV2.ID.create()
@@ -780,10 +755,10 @@ const layer = Layer.effect(
               (failure instanceof LLMError ? failure.reason.message : "Provider context overflow")
             if (!(yield* restore(autoContinue(true)))) {
               yield* endAttempt("failed", false, message)
-              return { needsContinuation: false, step: currentStep }
+              return { _tag: "Settled", needsContinuation: false, step: currentStep } as const
             }
             yield* endAttempt("failed", true, message)
-            return yield* Effect.die(continueAfterOverflowCompaction(currentStep))
+            return { _tag: "ContinueAfterOverflowCompaction", step: currentStep } as const
           }
           const llmFailure = failure instanceof LLMError ? failure : undefined
           const retryableFailure =
@@ -809,12 +784,14 @@ const layer = Layer.effect(
             })
             attemptEnded = true
             yield* restore(Effect.sleep(delay))
-            return yield* Effect.die(
-              retryProvider(currentStep, {
+            return {
+              _tag: "RetryProvider",
+              step: currentStep,
+              physical: {
                 attempt: physicalAttempt.attempt + 1,
                 retryOf: attemptID,
-              }),
-            )
+              },
+            } as const
           }
           if (overflowFailure) yield* publish(overflowFailure)
           if (llmFailure && !publisher.hasProviderError()) {
@@ -832,7 +809,7 @@ const layer = Layer.effect(
             yield* FiberSet.clear(toolFibers)
             yield* withPublication(publisher.failUnsettledTools("Tool execution interrupted"))
             yield* endAttempt("completed", false)
-            return { needsContinuation: false, step: currentStep }
+            return { _tag: "Settled", needsContinuation: false, step: currentStep } as const
           }
           if (
             (stream._tag === "Failure" && Cause.hasInterrupts(stream.cause)) ||
@@ -956,7 +933,7 @@ const layer = Layer.effect(
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (settled._tag === "Failure" && Cause.hasInterrupts(settled.cause))
             return yield* Effect.failCause(settled.cause)
-          return { needsContinuation: continuation, step: currentStep }
+          return { _tag: "Settled", needsContinuation: continuation, step: currentStep } as const
         }),
       )
     }, Effect.scoped)
@@ -970,97 +947,36 @@ const layer = Layer.effect(
       searchedTools: SearchedTools,
     ) => Effect.Effect<{ readonly needsContinuation: boolean; readonly step: number }, RunError>
 
-    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(
-      function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures, searchedTools) {
-        return yield* runTurnAttempt(
-          sessionID,
-          promotion,
-          step,
-          undefined,
-          physical,
-          stopBlockCount,
-          toolFailures,
-          searchedTools,
-        ).pipe(
-          Effect.catchDefect(
-            Effect.fnUntraced(function* (defect) {
-              if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
-              if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-                return yield* Effect.die("Post-compaction provider attempt cannot recover another overflow")
-              yield* Effect.yieldNow
-              if (defect.transition._tag === "RetryProvider")
-                return yield* runAfterOverflowCompaction(
-                  sessionID,
-                  undefined,
-                  defect.transition.step,
-                  defect.transition.physical,
-                  stopBlockCount,
-                  toolFailures,
-                  searchedTools,
-                )
-              return yield* runAfterOverflowCompaction(
-                sessionID,
-                undefined,
-                defect.transition.step,
-                physical,
-                stopBlockCount,
-                toolFailures,
-                searchedTools,
-              )
-            }),
-          ),
-        )
-      },
-    )
-
     const runTurn: RunTurn = Effect.fnUntraced(
       function* (sessionID, promotion, step, physical, stopBlockCount, toolFailures, searchedTools) {
-        return yield* runTurnAttempt(
-          sessionID,
-          promotion,
-          step,
-          compaction.compactAfterOverflow,
-          physical,
-          stopBlockCount,
-          toolFailures,
-          searchedTools,
-        ).pipe(
-          Effect.catchDefect(
-            Effect.fnUntraced(function* (defect) {
-              if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
-              yield* Effect.yieldNow
-              if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-                return yield* runAfterOverflowCompaction(
-                  sessionID,
-                  undefined,
-                  defect.transition.step,
-                  undefined,
-                  stopBlockCount,
-                  toolFailures,
-                  searchedTools,
-                )
-              if (defect.transition._tag === "RetryProvider")
-                return yield* runTurn(
-                  sessionID,
-                  undefined,
-                  defect.transition.step,
-                  defect.transition.physical,
-                  stopBlockCount,
-                  toolFailures,
-                  searchedTools,
-                )
-              return yield* runTurn(
-                sessionID,
-                undefined,
-                defect.transition.step,
-                physical,
-                stopBlockCount,
-                toolFailures,
-                searchedTools,
-              )
-            }),
-          ),
-        )
+        let nextPromotion = promotion
+        let nextStep = step
+        let nextPhysical = physical
+        let recoverOverflow: typeof compaction.compactAfterOverflow | undefined = compaction.compactAfterOverflow
+        while (true) {
+          const result: TurnTransition = yield* runTurnAttempt(
+            sessionID,
+            nextPromotion,
+            nextStep,
+            recoverOverflow,
+            nextPhysical,
+            stopBlockCount,
+            toolFailures,
+            searchedTools,
+          )
+          if (result._tag === "Settled") return result
+          yield* Effect.yieldNow
+          nextPromotion = undefined
+          nextStep = result.step
+          if (result._tag === "RetryProvider") {
+            nextPhysical = result.physical
+            continue
+          }
+          if (result._tag === "ContinueAfterOverflowCompaction") {
+            nextPhysical = undefined
+            recoverOverflow = undefined
+          }
+        }
       },
     )
 

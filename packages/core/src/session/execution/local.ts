@@ -1,4 +1,4 @@
-import { Cause, Clock, DateTime, Effect, Layer, Stream } from "effect"
+import { Cause, Clock, DateTime, Effect, Exit, Layer, Stream } from "effect"
 import { and, desc, eq, isNotNull, isNull, lte, or } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { LocationServiceMap } from "../../location-service-map"
@@ -12,6 +12,7 @@ import { SessionAttempt } from "../attempt"
 import { SessionInput } from "../input"
 import { SessionMessage } from "../message"
 import { SessionTurn } from "../turn"
+import { SessionLifecycle } from "../lifecycle"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
@@ -199,43 +200,6 @@ const layer = Layer.effect(
       if (outcome === "pending" || outcome === "restart") yield* current.service?.wake(sessionID) ?? Effect.void
     })
     /**
-     * Settles a stale `started`/`responding` attempt whose assistant message already
-     * reached a terminal state. Mirrors the runner's own reconciliation: once the
-     * assistant is completed and no tool call is left unsettled, the attempt is a
-     * finished work item that a crash interrupted before it could publish its ended
-     * event. Publishing `ProviderAttempt.Ended` lets the projector advance the row
-     * instead of leaving it stranded in `recovery-required` forever.
-     *
-     * Returns true when the attempt was settled (or was not a stale candidate).
-     */
-    const settleCompletedAttempt = Effect.fn("SessionExecutionLocal.settleCompletedAttempt")(function* (
-      sessionID: SessionSchema.ID,
-    ) {
-      const attempt = yield* SessionAttempt.get(db, sessionID)
-      if (!attempt || (attempt.status !== "started" && attempt.status !== "responding")) return true
-      const stored = yield* store.message(attempt.assistant_message_id)
-      const assistant =
-        stored?.sessionID === sessionID && stored.message.type === "assistant" ? stored.message : undefined
-      const unsettled = assistant?.content.some(
-        (part) => part.type === "tool" && (part.state.status === "pending" || part.state.status === "running"),
-      )
-      if (assistant?.time.completed === undefined || unsettled === false) return false
-      const interrupted = assistant.error?.message === "Provider turn interrupted"
-      const failed = assistant.finish === "error"
-      const continuation =
-        !failed && assistant.content.some((part) => part.type === "tool" && part.provider?.executed !== true)
-      yield* events.publish(SessionEvent.ProviderAttempt.Ended, {
-        sessionID,
-        attemptID: attempt.attempt_id,
-        assistantMessageID: attempt.assistant_message_id,
-        timestamp: yield* DateTime.now,
-        outcome: interrupted ? "interrupted" : failed ? "failed" : "completed",
-        continuation,
-        error: assistant.error ? { type: "unknown", message: assistant.error.message } : undefined,
-      })
-      return true
-    })
-    /**
      * Derives a session title from the first user message when the session still
      * carries the default placeholder. Heuristic: first non-empty text prompt,
      * normalized to a single line, capped at 60 chars. Bounded and best-effort.
@@ -260,23 +224,72 @@ const layer = Layer.effect(
         Effect.catchTag("Session.NotFoundError", () => Effect.void),
       )
     })
+    const publishStatus = Effect.fn("SessionExecutionLocal.publishStatus")(function* (
+      session: SessionSchema.Info,
+      status: "busy" | "idle",
+    ) {
+      yield* events.publish(
+        SessionEvent.Status,
+        { timestamp: yield* DateTime.now, sessionID: session.id, status: { type: status } },
+        { location: session.location },
+      )
+      if (status === "idle")
+        yield* events.publish(SessionStatusEvent.Idle, { sessionID: session.id }, { location: session.location })
+    })
+    const publishDerivedStatus = Effect.fn("SessionExecutionLocal.publishDerivedStatus")(function* (
+      session: SessionSchema.Info,
+    ) {
+      const attempt = yield* SessionAttempt.get(db, session.id)
+      const turn = yield* SessionTurn.get(db, session.id)
+      const activeAttempt =
+        attempt?.status === "started" ||
+        attempt?.status === "responding" ||
+        attempt?.status === "retrying" ||
+        attempt?.status === "continuation"
+      const openTurn = turn?.status === "pending" || turn?.status === "active"
+      const pendingSteer = yield* SessionInput.hasPending(db, session.id, "steer")
+      yield* publishStatus(session, activeAttempt || openTurn || pendingSteer ? "busy" : "idle")
+    })
+    const finalizeDrain = Effect.fn("SessionExecutionLocal.finalizeDrain")(function* (
+      session: SessionSchema.Info,
+      exit: Exit.Exit<void, unknown>,
+    ) {
+      const interruption = interruptions.get(session.id)
+      const interrupted = interruption !== undefined || (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause))
+      if (interrupted) {
+        yield* SessionLifecycle.terminateAttempt(db, store, events, {
+          sessionID: session.id,
+          outcome: "interrupted",
+          message: "Provider turn interrupted",
+        })
+        yield* settleInterruption(session.id)
+      } else if (Exit.isFailure(exit)) {
+        yield* SessionLifecycle.terminateAttempt(db, store, events, {
+          sessionID: session.id,
+          outcome: "failed",
+          message: "Session execution failed before the provider turn reached a terminal event",
+        })
+        yield* SessionLifecycle.endOpenTurn(db, events, session.id, "failed")
+      } else {
+        const abandoned = yield* SessionLifecycle.terminateAttempt(db, store, events, {
+          sessionID: session.id,
+          outcome: "abandoned",
+          message: "Session execution ended before the provider turn reached a terminal event",
+        })
+        if (abandoned) yield* SessionLifecycle.endOpenTurn(db, events, session.id, "abandoned")
+      }
+
+      yield* recoverCompletedSubmissions(session.id, store, submissions)
+      yield* drainNotifications()
+      yield* updateSessionTitle(session.id)
+
+      yield* publishDerivedStatus(session)
+    })
     const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, SessionRunner.RunError>({
       drain: Effect.fnUntraced(function* (sessionID: SessionSchema.ID, force) {
         const session = yield* store.get(sessionID)
         if (!session) return yield* Effect.die(`Session not found: ${sessionID}`)
-        const publish = (status: "busy" | "idle") =>
-          Effect.gen(function* () {
-            yield* events.publish(
-              SessionEvent.Status,
-              { timestamp: yield* DateTime.now, sessionID, status: { type: status } },
-              { location: session.location },
-            )
-          })
-        const idle = Effect.gen(function* () {
-          yield* publish("idle")
-          yield* events.publish(SessionStatusEvent.Idle, { sessionID }, { location: session.location })
-        })
-        yield* publish("busy")
+        yield* publishStatus(session, "busy")
         yield* Effect.gen(function* () {
           yield* SessionRunner.Service.use((runner) => runner.run({ sessionID, force })).pipe(
             Effect.provide(locations.get(session.location)),
@@ -297,13 +310,21 @@ const layer = Layer.effect(
                       ),
                     ],
                     { discard: true },
-                  ),
+              ),
             ),
           )
-          yield* recoverCompletedSubmissions(sessionID, store, submissions)
-          yield* drainNotifications()
-          yield* updateSessionTitle(sessionID)
-        }).pipe(Effect.ensuring(settleInterruption(sessionID).pipe(Effect.ensuring(idle))))
+        }).pipe(
+          Effect.onExit((exit) =>
+            finalizeDrain(session, exit).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logError("Failed to finalize Session drain", cause).pipe(
+                  Effect.annotateLogs({ sessionID }),
+                  Effect.asVoid,
+                ),
+              ),
+            ),
+          ),
+        )
       }),
     })
 
@@ -317,7 +338,15 @@ const layer = Layer.effect(
             : undefined
         if (interruption) interruptions.set(sessionID, interruption)
         if (!(yield* coordinator.interruptOwned(sessionID))) {
-          if (interruptions.get(sessionID) === interruption) interruptions.delete(sessionID)
+          const terminated = yield* SessionLifecycle.terminateAttempt(db, store, events, {
+            sessionID,
+            outcome: "interrupted",
+            message: "Provider turn interrupted",
+          })
+          yield* settleInterruption(sessionID)
+          if (!terminated && !interruption) return
+          const session = yield* store.get(sessionID)
+          if (session) yield* publishDerivedStatus(session)
           return
         }
         yield* settleInterruption(sessionID)
@@ -354,12 +383,15 @@ const layer = Layer.effect(
     for (const recovery of yield* startupRecoveryCandidates(db, now)) {
       yield* recoverCompletedSubmissions(recovery.sessionID, store, submissions)
       if (yield* clearTerminalTaskAttempt(recovery.sessionID, db)) continue
-      if (yield* settleCompletedAttempt(recovery.sessionID)) continue
+      if (yield* SessionLifecycle.settleCompletedAttempt(db, store, events, recovery.sessionID)) continue
       const childInputID = yield* interruptedChildInputID(recovery.sessionID, db)
-      if (childInputID)
+      if (childInputID) {
         yield* submissions
           .markRecoveryRequired({ ...recovery, childInputID })
           .pipe(Effect.catch(() => Effect.succeed(0)))
+        continue
+      }
+      yield* SessionLifecycle.abandonOrphan(db, store, events, recovery.sessionID)
     }
     yield* drainNotifications()
     yield* notifications

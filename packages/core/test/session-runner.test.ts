@@ -1339,6 +1339,52 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("opens a distinct internal turn for an idle session-scoped task notification", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const firstTurnID = SessionMessage.ID.make("msg_notification_owner_first_turn")
+      const notificationID = SessionMessage.ID.make("msg_task_notification_owner_regression")
+
+      yield* session.prompt({
+        id: firstTurnID,
+        sessionID,
+        prompt: Prompt.make({ text: "Finish the first turn" }),
+        intent: { type: "start" },
+        resume: false,
+      })
+      response = [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+        LLMEvent.finish({ reason: "stop" }),
+      ]
+      yield* session.resume(sessionID)
+
+      yield* SessionInput.admit(db, events, {
+        id: notificationID,
+        sessionID,
+        prompt: Prompt.make({ text: '<task id="ses_child" state="completed">done</task>' }),
+        synthetic: { description: "task completion notification", scope: "session" },
+        delivery: "steer",
+      })
+      response = [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+        LLMEvent.finish({ reason: "stop" }),
+      ]
+      yield* session.resume(sessionID)
+
+      const history = yield* session.history({ sessionID, limit: 100 })
+      const starts = history.events.filter((event) => event.type === SessionEvent.Turn.Started.type)
+      expect(starts).toHaveLength(2)
+      expect(starts[0]?.data.turnID).toBe(firstTurnID)
+      expect(starts[1]?.data.turnID).not.toBe(notificationID)
+      expect(yield* SessionTurn.get((yield* Database.Service).db, sessionID)).toMatchObject({ status: "ended" })
+    }),
+  )
+
   it.effect("streams one request with registry definitions from chronological V2 user history", () =>
     Effect.gen(function* () {
       yield* setup
@@ -4228,6 +4274,57 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("abandons an inactive ambiguous attempt before admitting an explicit new turn", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const events = yield* EventV2.Service
+      const { db } = yield* Database.Service
+      const staleTurnID = SessionMessage.ID.make("msg_stale_turn_before_start")
+      const nextTurnID = SessionMessage.ID.make("msg_start_after_stale_turn")
+      const attemptID = EventV2.ID.make("evt_stale_attempt_before_start")
+      yield* session.prompt({
+        id: staleTurnID,
+        sessionID,
+        prompt: Prompt.make({ text: "stale provider work" }),
+        intent: { type: "start" },
+        resume: false,
+      })
+      yield* SessionInput.promote(db, events, sessionID, staleTurnID)
+      yield* SessionTurn.start(events, { sessionID, turnID: staleTurnID })
+      yield* events.publish(SessionEvent.ProviderAttempt.Started, {
+        sessionID,
+        attemptID,
+        assistantMessageID: SessionMessage.ID.make("msg_stale_attempt_assistant"),
+        timestamp: yield* DateTime.now,
+        attempt: 1,
+      })
+      yield* events.publish(SessionEvent.ProviderAttempt.ResponseStarted, {
+        sessionID,
+        attemptID,
+        timestamp: yield* DateTime.now,
+      })
+      requests.length = 0
+
+      yield* session.prompt({
+        id: nextTurnID,
+        sessionID,
+        prompt: Prompt.make({ text: "continue as new work" }),
+        intent: { type: "start" },
+        resume: false,
+      })
+
+      expect(requests).toHaveLength(0)
+      expect(yield* SessionAttempt.status(db, sessionID, false)).toEqual({ type: "idle" })
+      expect(yield* SessionAttempt.latestEnded(db, sessionID)).toMatchObject({
+        attemptID,
+        outcome: "abandoned",
+        continuation: false,
+      })
+      expect(yield* SessionTurn.get(db, sessionID)).toMatchObject({ turn_id: nextTurnID, status: "pending" })
+    }),
+  )
+
   it.effect("resumes a durable continuation that never crossed the next dispatch boundary", () =>
     Effect.gen(function* () {
       yield* setup
@@ -5193,6 +5290,7 @@ describe("SessionRunnerLLM", () => {
       const session = yield* SessionV2.Service
       const registry = yield* ToolRegistry.Service
       const questions = yield* QuestionV2.Service
+      const turnID = SessionMessage.ID.make("msg_question_dismissed_turn")
       yield* registry.register({
         question: Tool.make({
           description: "Ask the user",
@@ -5202,7 +5300,13 @@ describe("SessionRunnerLLM", () => {
             questions.ask({ sessionID: context.sessionID, questions: [] }).pipe(Effect.as({}), Effect.orDie),
         }),
       })
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Ask then stop" }), resume: false })
+      yield* session.prompt({
+        id: turnID,
+        sessionID,
+        prompt: Prompt.make({ text: "Ask then stop" }),
+        intent: { type: "start" },
+        resume: false,
+      })
 
       requests.length = 0
       responses = [
@@ -5239,6 +5343,10 @@ describe("SessionRunnerLLM", () => {
           ],
         },
       ])
+      const history = yield* session.history({ sessionID, limit: 100 })
+      expect(history.events.filter((event) => event.type === SessionEvent.ProviderAttempt.Ended.type)).toHaveLength(1)
+      expect(history.events.filter((event) => event.type === SessionEvent.Turn.Ended.type)).toHaveLength(1)
+      expect(yield* SessionAttempt.status((yield* Database.Service).db, sessionID, false)).toEqual({ type: "idle" })
     }),
   )
 

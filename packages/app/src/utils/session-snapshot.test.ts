@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { OpenCodeEvent } from "../../../client/src"
+import type { SessionNextSessionSnapshot } from "@opencode-ai/sdk/v2/client"
 import { adaptServerEvent } from "@/context/server-sdk"
-import { toHomeSessionEvent } from "./session-snapshot"
+import { projectSessionInfo, toHomeSessionEvent } from "./session-snapshot"
 
 const snapshot = (title = "Title") =>
   ({
@@ -44,5 +45,25 @@ describe("toHomeSessionEvent", () => {
     expect(
       toHomeSessionEvent({ type: "server.connected", properties: {} } as ReturnType<typeof adaptServerEvent>),
     ).toBeUndefined()
+  })
+})
+
+describe("projectSessionInfo", () => {
+  test("normalizes unknown snapshot metadata to JSON", () => {
+    const info: SessionNextSessionSnapshot = {
+      ...snapshot(),
+      metadata: {
+        kept: "value",
+        omitted: undefined,
+        nested: { infinity: Number.POSITIVE_INFINITY, omitted: () => undefined },
+        list: [1, undefined, Symbol("unsupported")],
+      },
+    }
+
+    expect(projectSessionInfo(info).metadata).toEqual({
+      kept: "value",
+      nested: { infinity: null },
+      list: [1, null, null],
+    })
   })
 })

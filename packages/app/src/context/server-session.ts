@@ -11,11 +11,11 @@ import type { V2Event } from "@opencode-ai/sdk/v2/client"
 import type {
   Message,
   Part,
-  PermissionRequest,
-  QuestionRequest,
+  PermissionV2Request,
+  QuestionV2Request,
   SessionMessage,
   Session,
-  SessionStatus,
+  SessionNextStatusInfo,
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
@@ -295,11 +295,11 @@ export function createServerSession(
   const hasCurrentApi = !!options?.apiForGeneration || !!options?.api || !!sessionApi || !!messageApi
   const [data, setData] = createStore({
     info: {} as Record<string, Session | undefined>,
-    session_status: {} as Record<string, SessionStatus>,
+    session_status: {} as Record<string, SessionNextStatusInfo>,
     session_diff: {} as Record<string, FileDiffInfo[]>,
     todo: {} as Record<string, Todo[]>,
-    permission: {} as Record<string, PermissionRequest[]>,
-    question: {} as Record<string, QuestionRequest[]>,
+    permission: {} as Record<string, PermissionV2Request[]>,
+    question: {} as Record<string, QuestionV2Request[]>,
     message: {} as Record<string, Message[]>,
     session_message: {} as Record<string, SessionMessageInfo[]>,
     session_context: {} as Record<string, readonly SessionMessage[] | undefined>,
@@ -1259,10 +1259,6 @@ export function createServerSession(
       if (info) remember({ ...info, time: { ...info.time, archived: event.created, updated: event.created } })
       evict([sessionID])
     }
-    if (event.type === "session.status") {
-      if (event.data.status.type === "idle") activities.delete(sessionID)
-      setData("session_status", sessionID, reconcile(event.data.status as SessionStatus))
-    }
     if (event.type === "session.execution.started") setData("session_status", sessionID, reconcile({ type: "busy" }))
     if (event.type === "session.next.provider.attempt.started")
       setData("session_status", sessionID, reconcile({ type: "busy" }))
@@ -1362,15 +1358,13 @@ export function createServerSession(
     const eventType = event.type as string
     const settled =
       hasCurrentApi &&
-      ((event.type === "session.status" && event.data.status.type === "idle") ||
-        (event.type === "session.next.status" && event.data.status.type === "idle") ||
+      ((event.type === "session.next.status" && event.data.status.type === "idle") ||
         eventType === "session.execution.succeeded" ||
         eventType === "session.execution.failed" ||
         eventType === "session.execution.interrupted")
     if (settled) reconcileV2Settlement(sessionID)
     if (
-      ((event.type === "session.status" || event.type === "session.next.status") &&
-        event.data.status.type === "idle") ||
+      (event.type === "session.next.status" && event.data.status.type === "idle") ||
       eventType === "session.next.context.updated" ||
       eventType === "session.context.updated" ||
       eventType === "session.next.compaction.ended" ||
@@ -1421,11 +1415,6 @@ export function createServerSession(
       case "todo.updated": {
         const props = event.properties as { sessionID: string; todos: Todo[] }
         setData("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
-        return
-      }
-      case "session.status": {
-        const props = event.properties as { sessionID: string; status: SessionStatus }
-        setData("session_status", props.sessionID, reconcile(props.status))
         return
       }
       case "message.updated": {
@@ -1635,7 +1624,7 @@ export function createServerSession(
         return
       }
       case "permission.asked": {
-        const permission = event.properties as PermissionRequest
+        const permission = event.properties as PermissionV2Request
         const permissions = data.permission[permission.sessionID]
         if (!permissions) {
           setData("permission", permission.sessionID, [permission])
@@ -1665,7 +1654,7 @@ export function createServerSession(
         return
       }
       case "question.asked": {
-        const question = event.properties as QuestionRequest
+        const question = event.properties as QuestionV2Request
         const questions = data.question[question.sessionID]
         if (!questions) {
           setData("question", question.sessionID, [question])

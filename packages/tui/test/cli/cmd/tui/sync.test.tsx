@@ -126,4 +126,27 @@ describe("tui sync", () => {
       app.renderer.destroy()
     }
   })
+
+  test("native session status updates the synchronized session state", async () => {
+    await using tmp = await tmpdir()
+    await Bun.write(`${tmp.path}/kv.json`, "{}")
+    const { app, emitNative, sync } = await mount(undefined, tmp.path)
+
+    try {
+      emitNative({
+        id: "evt_status",
+        type: "session.next.status",
+        data: {
+          timestamp: 1,
+          sessionID: "ses_test",
+          status: { type: "busy" },
+        },
+      })
+      await wait(() => sync.data.session_status.ses_test?.type === "busy")
+
+      expect(sync.data.session_status.ses_test).toEqual({ type: "busy" })
+    } finally {
+      app.renderer.destroy()
+    }
+  })
 })

@@ -634,9 +634,9 @@ describe("server session", () => {
 
     store.applyV2({
       id: "evt_status_idle",
-      type: "session.status",
+      type: "session.next.status",
       location: { directory: "/repo" },
-      data: { sessionID: "child", status: { type: "idle" } },
+      data: { timestamp: 1, sessionID: "child", status: { type: "idle" } },
     } as unknown as V2Event)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -680,9 +680,9 @@ describe("server session", () => {
 
     store.applyV2({
       id: "evt_status_idle",
-      type: "session.status",
+      type: "session.next.status",
       location: { directory: "/repo" },
-      data: { sessionID: "child", status: { type: "idle" } },
+      data: { timestamp: 1, sessionID: "child", status: { type: "idle" } },
     } as unknown as V2Event)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -710,9 +710,9 @@ describe("server session", () => {
 
     store.applyV2({
       id: "evt_status_idle",
-      type: "session.status",
+      type: "session.next.status",
       location: { directory: "/repo" },
-      data: { sessionID: "child", status: { type: "idle" } },
+      data: { timestamp: 1, sessionID: "child", status: { type: "idle" } },
     } as unknown as V2Event)
     first.resolve({ data: [], cursor: { previous: null, next: null } })
     await initial
@@ -2301,7 +2301,11 @@ describe("server session", () => {
   test("applies events without a directory store", () => {
     const ctx = setup({})
     ctx.store.apply({ type: "session.created", properties: { sessionID: "root", info: session("root") } })
-    ctx.store.apply({ type: "session.status", properties: { sessionID: "root", status: { type: "busy" } } })
+    ctx.store.applyV2({
+      id: "evt_busy",
+      type: "session.next.status",
+      data: { timestamp: 1, sessionID: "root", status: { type: "busy" } },
+    } as unknown as V2Event)
 
     expect(ctx.store.get("root")?.directory).toBe("/repo")
     expect(ctx.store.data.session_working("root")).toBe(true)
@@ -2316,9 +2320,9 @@ describe("server session", () => {
     ctx.store.applyV2({
       id: "evt_idle",
       created: 2,
-      type: "session.status",
-      data: { sessionID: "root", status: { type: "idle" } },
-    } as V2Event)
+      type: "session.next.status",
+      data: { timestamp: 2, sessionID: "root", status: { type: "idle" } },
+    } as unknown as V2Event)
 
     expect(ctx.store.data.session_status.root).toEqual({ type: "idle" })
     expect(ctx.store.data.session_working("root")).toBe(false)
@@ -2409,7 +2413,7 @@ describe("server session", () => {
     await flush()
     expect(requests).toEqual(["child", "child"])
 
-    apply("session.status", { sessionID: "child", status: { type: "idle" } })
+    apply("session.next.status", { timestamp: 4, sessionID: "child", status: { type: "idle" } })
     await flush()
     expect(requests).toEqual(["child", "child", "child"])
   })
@@ -2419,7 +2423,11 @@ describe("server session", () => {
     ctx.store.remember(session("child"))
 
     const status = (value: "busy" | "idle") =>
-      ctx.store.apply({ type: "session.status", properties: { sessionID: "child", status: { type: value } } })
+      ctx.store.applyV2({
+        id: `evt_status_${value}`,
+        type: "session.next.status",
+        data: { timestamp: 1, sessionID: "child", status: { type: value } },
+      } as unknown as V2Event)
     const marker = (type: string) => ctx.store.apply({ type, properties: { sessionID: "child" } })
 
     status("busy")
@@ -2498,10 +2506,13 @@ describe("server session", () => {
 
     for (let index = 0; index < 50; index++) {
       ctx.store.remember(session(`session-${index}`))
-      ctx.store.apply({
-        type: "session.status",
-        properties: { sessionID: `session-${index}`, status: { type: "idle" } },
-      })
+      const event = {
+        id: `evt_status_${index}`,
+        type: "session.next.status",
+        data: { timestamp: index, sessionID: `session-${index}`, status: { type: "idle" } },
+      } as unknown as V2Event
+      ctx.store.applyV2(event)
+      ctx.store.apply({ type: event.type, properties: event.data })
     }
 
     expect(ctx.store.data.message.active?.map((message) => message.id)).toEqual(["message"])

@@ -60,6 +60,17 @@ manifest 移除；public event inventory 由 107 降至 105，durable map 維持
 consumer，只是把 V1 Session event schema 重新 export 到 production runtime；兩者已刪除並以 source gate
 阻止回流。`SessionV1.Event.*` 現只存在 Schema public manifest 的 wire compatibility inventory。
 
+**999.0.19 Session status consumer hard cut**：CLI native adapter、TUI native event bus、App server state 與
+E2E fixtures 全部改用 `session.next.status`，EventV2Bridge 不再投影 `session.status`。TUI plugin API 新增
+typed `nativeEvent`（`Frozen<V2Event>`）並由 runtime scope 自動釋放 listener；內建 notifications 直接消費
+canonical status。`SessionStatusEvent` definition 已刪除，public event inventory 由 105 降至 104，durable
+map 維持 47；HTTP `session.status()` polling endpoint 保留，因為它是查詢而非 legacy event。
+
+SDK 重生同時移除舊 `SessionStatus` / `PermissionRequest` / `QuestionRequest` aliases。App、Session UI 與
+plugin state 改用 `SessionNextStatusInfo`、`PermissionV2Request`、`QuestionV2Request`；permission 欄位只使用
+`action/resources/save/source`。V2 Session snapshot 的 unknown metadata 在唯一 UI projection boundary 安全
+正規化為 JSON，非 JSON object 欄位丟棄、array 位置以 `null` 保留，並防止循環引用。
+
 ---
 
 ## 1. 各区域现状总表

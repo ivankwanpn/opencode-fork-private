@@ -7,7 +7,7 @@
 //
 // Prompt turns are one-at-a-time: runPromptTurn() sends the prompt, arms a
 // deferred Wait, and resolves when the session becomes idle.
-// Prefer session.status idle events, but also poll session.status because some
+// Prefer session.next.status idle events, but also poll session.status because some
 // transports can miss status events while still delivering message events. If
 // the turn is aborted (user interrupt), it flushes any in-progress parts as
 // interrupted entries.
@@ -156,7 +156,7 @@ function sid(event: Event): string | undefined {
     event.type === "question.replied" ||
     event.type === "question.rejected" ||
     event.type === "session.error" ||
-    event.type === "session.status"
+    event.type === "session.next.status"
   ) {
     return event.properties.sessionID
   }
@@ -221,7 +221,7 @@ function active(event: Event, sessionID: string): boolean {
     return false
   }
 
-  if (event.type !== "session.status") {
+  if (event.type !== "session.next.status") {
     return true
   }
 
@@ -851,7 +851,7 @@ function createLayer(input: StreamInput) {
 
         const mark = Effect.fn("RunStreamTransport.mark")(function* (event: Event) {
           if (
-            event.type !== "session.status" ||
+            event.type !== "session.next.status" ||
             event.properties.sessionID !== input.sessionID ||
             event.properties.status.type !== "idle"
           ) {
@@ -1512,7 +1512,7 @@ function createLayer(input: StreamInput) {
 // Opens an SDK event subscription and returns a SessionTransport.
 //
 // The background `watch` loop consumes every SDK event, runs it through the
-// reducer, and writes output to the footer. When a session.status idle
+// reducer, and writes output to the footer. When a session.next.status idle
 // event arrives, it resolves the current turn's Wait so runPromptTurn()
 // can return.
 //

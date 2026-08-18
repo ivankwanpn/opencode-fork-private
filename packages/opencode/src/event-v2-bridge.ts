@@ -242,15 +242,6 @@ export function legacyEventProjection() {
       ]
     }
 
-    if (source.type === "session.next.status") {
-      return [
-        event("session.status", {
-          sessionID: SessionID.make(sessionID),
-          status: data.status,
-        }),
-      ]
-    }
-
     if (source.type === "session.next.diff") {
       return [
         event("session.diff", {

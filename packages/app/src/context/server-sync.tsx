@@ -1,4 +1,4 @@
-import type { Config, Path, Project, ProviderAuthResponse, SessionStatus } from "@opencode-ai/sdk/v2/client"
+import type { Config, Path, Project, ProviderAuthResponse, SessionNextStatusInfo } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
@@ -249,7 +249,7 @@ export function seedActiveSessionStatuses(
     setTurn?: (sessionID: string, turnID: string, phase: "pending" | "active") => void
     setActivity?: (sessionID: string, activity: SessionActivity) => void
   },
-  active: ActiveSessionMap | Record<string, SessionStatus>,
+  active: ActiveSessionMap | Record<string, SessionNextStatusInfo>,
 ) {
   for (const sessionID of Object.keys(active)) {
     const status = active[sessionID]
@@ -269,7 +269,7 @@ export function reconcileActiveSessionStatuses(
     setActivity?: (sessionID: string, activity: SessionActivity) => void
     clearActivity?: (sessionID: string) => void
   },
-  active: ActiveSessionMap | Record<string, SessionStatus>,
+  active: ActiveSessionMap | Record<string, SessionNextStatusInfo>,
 ) {
   const reload = new Set([
     ...Object.keys(active),

@@ -2,6 +2,36 @@ import { describe, expect, test } from "bun:test"
 import { createAttachClients, rebindAttachClients } from "@/cli/cmd/run/clients"
 
 describe("run attach clients", () => {
+  test("preserves canonical session status events", async () => {
+    const source = {
+      id: "evt-status",
+      type: "session.next.status",
+      location: { directory: "C:/project" },
+      data: {
+        timestamp: 1,
+        sessionID: "ses-1",
+        status: { type: "idle" },
+      },
+    } as const
+    const clients = createAttachClients({
+      baseUrl: "https://opencode.test",
+      directory: "C:/project",
+      fetch: (async () =>
+        new Response(`data: ${JSON.stringify(source)}\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        })) as unknown as typeof globalThis.fetch,
+    })
+
+    const events = await clients.sdk.event.subscribe()
+    const next = await events.stream.next()
+
+    expect(next.value).toEqual({
+      id: "evt-status",
+      type: "session.next.status",
+      properties: source.data,
+    })
+  })
+
   test("share one timeout-safe fetch and authentication headers", async () => {
     const requests: Array<{
       authorization: string | null
@@ -17,10 +47,10 @@ describe("run attach clients", () => {
       })
 
       const pathname = new URL(request.url).pathname
-      if (["/api/provider", "/api/model", "/api/integration"].includes(pathname))
+      if (pathname === "/api/provider/catalog")
         return Response.json({
           location: { directory: "C:/project", project: { id: "project-1", directory: "C:/project" } },
-          data: [],
+          data: { providers: [], models: [], connected: [], default: {} },
         })
       if (pathname.startsWith("/api/session/"))
         return Response.json({ data: { id: "ses-1", title: "Session" } })
@@ -41,17 +71,7 @@ describe("run attach clients", () => {
     expect(requests).toEqual([
       {
         authorization: "Basic credentials",
-        pathname: "/api/provider",
-        timeout: false,
-      },
-      {
-        authorization: "Basic credentials",
-        pathname: "/api/model",
-        timeout: false,
-      },
-      {
-        authorization: "Basic credentials",
-        pathname: "/api/integration",
+        pathname: "/api/provider/catalog",
         timeout: false,
       },
       {
@@ -70,8 +90,8 @@ describe("run attach clients", () => {
         const request = new Request(input, init)
         requests.push(new URL(request.url).pathname)
         const pathname = new URL(request.url).pathname
-        if (["/api/provider", "/api/model", "/api/integration"].includes(pathname))
-          return Response.json({ data: [] })
+        if (pathname === "/api/provider/catalog")
+          return Response.json({ data: { providers: [], models: [], connected: [], default: {} } })
         if (pathname.startsWith("/api/session/")) return Response.json({ data: { id: "ses-1", title: "Session" } })
         return Response.json({ providers: [], default: {} })
       }) as typeof globalThis.fetch
@@ -92,9 +112,7 @@ describe("run attach clients", () => {
     expect(rebound).not.toBe(original)
     expect(originalRequests).toEqual([])
     expect(reboundRequests).toEqual([
-      "/api/provider",
-      "/api/model",
-      "/api/integration",
+      "/api/provider/catalog",
       "/api/session/ses-1",
     ])
   })

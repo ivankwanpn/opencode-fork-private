@@ -437,24 +437,17 @@ describe("legacy event projection", () => {
     ])
   })
 
-  test("projects V2 Session status without a duplicate deprecated idle event", () => {
+  test("keeps V2 Session status canonical after the legacy definition is retired", () => {
     const project = legacyEventProjection()
+    const source = canonicalEvent("session.next.status", {
+      timestamp: 1,
+      sessionID: "ses_test",
+      status: { type: "idle" },
+    })
 
-    expect(
-      project(canonicalEvent("session.next.status", { timestamp: 1, sessionID: "ses_test", status: { type: "busy" } })),
-    ).toEqual([
-      expect.objectContaining({
-        type: "session.status",
-        properties: { sessionID: "ses_test", status: { type: "busy" } },
-      }),
-    ])
-    expect(
-      project(canonicalEvent("session.next.status", { timestamp: 2, sessionID: "ses_test", status: { type: "idle" } })),
-    ).toEqual([
-      expect.objectContaining({
-        type: "session.status",
-        properties: { sessionID: "ses_test", status: { type: "idle" } },
-      }),
+    expect(project(source)).toEqual([])
+    expect(legacyEventPayloads(project, source)).toEqual([
+      { id: source.id, type: "session.next.status", properties: source.data as Record<string, unknown> },
     ])
   })
 

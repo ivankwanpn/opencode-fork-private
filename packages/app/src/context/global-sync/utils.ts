@@ -1,5 +1,5 @@
-import type { AgentListOutput, PermissionV2Request } from "@opencode-ai/client/promise"
-import type { Agent, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
+import type { AgentListOutput } from "@opencode-ai/client/promise"
+import type { Agent, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
 import type { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
@@ -42,20 +42,6 @@ export function normalizeAgentList(input: AgentListOutput["data"] | Agent[]): Ag
       steps: agent.steps,
     }
   })
-}
-
-export function normalizePermissionRequest(input: PermissionV2Request | PermissionRequest): PermissionRequest {
-  if ("permission" in input) return input
-  return {
-    id: input.id,
-    sessionID: input.sessionID,
-    permission: input.action,
-    patterns: input.resources,
-    always: input.save ?? [],
-    metadata: input.metadata ?? {},
-    tool:
-      input.source?.type === "tool" ? { messageID: input.source.messageID, callID: input.source.callID } : undefined,
-  }
 }
 
 export function normalizeProviderList(

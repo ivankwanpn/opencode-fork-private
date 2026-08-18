@@ -11,8 +11,9 @@ import type {
   PermissionV2Request,
   QuestionV2Request,
   Session,
-  SessionStatus,
+  SessionNextStatusInfo,
   TextPart,
+  V2Event,
   Config as SdkConfig,
 } from "@opencode-ai/sdk/v2"
 import type { CliRenderer, KeyEvent, RGBA, Renderable, SlotMode } from "@opentui/core"
@@ -412,7 +413,7 @@ export type TuiState = {
     diff: (sessionID: string) => ReadonlyArray<TuiSidebarFileItem>
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>
     messages: (sessionID: string) => ReadonlyArray<Message>
-    status: (sessionID: string) => SessionStatus | undefined
+    status: (sessionID: string) => SessionNextStatusInfo | undefined
     permission: (sessionID: string) => ReadonlyArray<PermissionV2Request>
     question: (sessionID: string) => ReadonlyArray<QuestionV2Request>
   }
@@ -543,6 +544,15 @@ export type TuiEventBus = {
   on: <Type extends Event["type"]>(type: Type, handler: (event: Extract<Event, { type: Type }>) => void) => () => void
 }
 
+export type TuiNativeEvent = Frozen<V2Event>
+
+export type TuiNativeEventBus = {
+  on: <Type extends TuiNativeEvent["type"]>(
+    type: Type,
+    handler: (event: Extract<TuiNativeEvent, { type: Type }>) => void,
+  ) => () => void
+}
+
 export type TuiDispose = () => void | Promise<void>
 
 export type TuiLifecycle = {
@@ -636,6 +646,7 @@ export type TuiPluginApi = {
   theme: TuiTheme
   client: TuiPluginClient
   event: TuiEventBus
+  nativeEvent: TuiNativeEventBus
   renderer: CliRenderer
   slots: TuiSlots
   plugins: {

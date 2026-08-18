@@ -31,7 +31,7 @@ import { ErrorComponent } from "./component/error-component"
 import { PluginRouteMissing } from "./component/plugin-route-missing"
 import { ProjectProvider, useProject } from "./context/project"
 import { EditorContextProvider } from "./context/editor"
-import { useEvent } from "./context/event"
+import { useEvent, useNativeEvent } from "./context/event"
 import { SDKProvider, useSDK } from "./context/sdk"
 import { StartupLoading } from "./component/startup-loading"
 import { SyncProvider, useSync } from "./context/sync"
@@ -354,6 +354,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   const kv = useKV()
   const keymap = useOpencodeKeymap()
   const event = useEvent()
+  const nativeEvent = useNativeEvent()
   const sdk = useSDK()
   const toast = useToast()
   const themeState = useTheme()
@@ -377,6 +378,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       route,
       routes: pluginRuntime.routes,
       event,
+      nativeEvent,
       sdk,
       sync,
       data,

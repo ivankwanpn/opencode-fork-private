@@ -45,8 +45,9 @@ async function waitFor<T>(check: () => T | undefined, timeout = 1_000): Promise<
 function busy(sessionID = "session-1") {
   return {
     id: `evt-${sessionID}-busy`,
-    type: "session.status",
+    type: "session.next.status",
     properties: {
+      timestamp: 1,
       sessionID,
       status: {
         type: "busy",
@@ -58,8 +59,9 @@ function busy(sessionID = "session-1") {
 function idle(sessionID = "session-1") {
   return {
     id: `evt-${sessionID}-idle`,
-    type: "session.status",
+    type: "session.next.status",
     properties: {
+      timestamp: 2,
       sessionID,
       status: {
         type: "idle",
@@ -71,8 +73,9 @@ function idle(sessionID = "session-1") {
 function retry(sessionID: string, attempt: number, message: string) {
   return {
     id: `evt-${sessionID}-retry-${attempt}`,
-    type: "session.status",
+    type: "session.next.status",
     properties: {
+      timestamp: 1,
       sessionID,
       status: {
         type: "retry",

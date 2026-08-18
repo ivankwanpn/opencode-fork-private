@@ -55,20 +55,9 @@ export function adaptServerEvent(event: CurrentServerEvent): ServerEvent {
     return {
       id: event.id,
       type: "permission.asked",
-      properties: {
-        id: event.data.id,
-        sessionID: event.data.sessionID,
-        permission: event.data.action,
-        patterns: event.data.resources,
-        always: event.data.save ?? [],
-        metadata: event.data.metadata ?? {},
-        tool:
-          event.data.source?.type === "tool"
-            ? { messageID: event.data.source.messageID, callID: event.data.source.callID }
-            : undefined,
-      },
+      properties: event.data,
       current: event,
-    } as ServerEvent
+    } as unknown as ServerEvent
   }
   if (event.type === "permission.v2.replied")
     return { id: event.id, type: "permission.replied", properties: event.data, current: event } as ServerEvent

@@ -596,6 +596,12 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
     },
   }
 
+  const nativeEvent: TuiPluginApi["nativeEvent"] = {
+    on(type, handler) {
+      return scope.track(api.nativeEvent.on(type, handler))
+    },
+  }
+
   const keymap = createScopedKeymap(api.keymap, scope)
 
   let count = 0
@@ -627,6 +633,7 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
       return api.client
     },
     event,
+    nativeEvent,
     renderer: api.renderer,
     slots,
     plugins: {

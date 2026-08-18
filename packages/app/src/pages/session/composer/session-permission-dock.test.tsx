@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
 import { createRoot } from "solid-js"
 import { render } from "solid-js/web"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { PermissionV2Request } from "@opencode-ai/sdk/v2"
 import { LanguageProvider } from "@/context/language"
 import { PlatformProvider, type Platform } from "@/context/platform"
 import { realLanguageModule, realPlatformModule } from "@/test-module-snapshots"
@@ -24,13 +24,13 @@ const platform: Platform = {
   notify: async () => {},
 }
 
-const request: PermissionRequest = {
+const request: PermissionV2Request = {
   id: "prm_1",
   sessionID: "ses_1",
-  permission: "execute:bash",
-  patterns: [],
+  action: "execute:bash",
+  resources: [],
   metadata: {},
-  always: [],
+  save: [],
 }
 
 describe("SessionPermissionDock", () => {
@@ -61,7 +61,7 @@ describe("SessionPermissionDock", () => {
   })
 
   test("keeps the translated description when the action has a translation", () => {
-    const translated = { ...request, permission: "bash" }
+    const translated = { ...request, action: "bash" }
 
     dispose = createRoot((disposeRoot) => {
       const cleanup = render(

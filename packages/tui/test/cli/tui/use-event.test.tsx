@@ -46,6 +46,18 @@ function connected(): Event {
   }
 }
 
+function status(): Event {
+  return {
+    id: "evt_status",
+    type: "session.next.status",
+    properties: {
+      timestamp: 1,
+      sessionID: "ses_test",
+      status: { type: "busy" },
+    },
+  }
+}
+
 async function mount() {
   const events = createEventSource()
   const calls = createFetch()
@@ -139,6 +151,19 @@ describe("useEvent", () => {
       await wait(() => seen.length === 1)
 
       expect(seen).toEqual([connected()])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
+  test("does not project native session status into the compatibility stream", async () => {
+    const { app, emit, seen } = await mount()
+
+    try {
+      emit(event(status(), { directory, project: projectID }))
+      await Bun.sleep(30)
+
+      expect(seen).toEqual([])
     } finally {
       app.renderer.destroy()
     }

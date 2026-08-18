@@ -818,7 +818,7 @@ export function reduceSubagentData(input: {
     event.type === "question.replied" ||
     event.type === "question.rejected" ||
     event.type === "session.error" ||
-    event.type === "session.status"
+    event.type === "session.next.status"
       ? event.properties.sessionID
       : event.type === "message.part.updated"
         ? event.properties.part.sessionID
@@ -833,7 +833,7 @@ export function reduceSubagentData(input: {
     event.type === "message.updated" && isAbortedAssistantMessage(event.properties.info)
       ? cancelSubagentTab(input.data, sessionID)
       : false
-  if (event.type === "session.status") {
+  if (event.type === "session.next.status") {
     if (event.properties.status.type !== "retry") {
       return cancelled
     }

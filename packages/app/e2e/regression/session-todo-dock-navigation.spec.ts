@@ -121,7 +121,7 @@ function session(id: string, title: string, created: number) {
 function statusEvent(sessionID: string, type: "busy" | "idle"): EventPayload {
   return {
     directory,
-    payload: { type: "session.status", properties: { sessionID, status: { type } } },
+    payload: { type: "session.next.status", properties: { timestamp: Date.now(), sessionID, status: { type } } },
   }
 }
 

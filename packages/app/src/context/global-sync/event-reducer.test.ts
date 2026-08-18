@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part, PermissionRequest, Project, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part, PermissionV2Request, Project, QuestionV2Request, Session } from "@opencode-ai/sdk/v2/client"
 import { createStore } from "solid-js/store"
 import type { State } from "./types"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
@@ -38,11 +38,11 @@ const permissionRequest = (id: string, sessionID: string, title = id) =>
   ({
     id,
     sessionID,
-    permission: title,
-    patterns: ["*"],
+    action: title,
+    resources: ["*"],
     metadata: {},
-    always: [],
-  }) as PermissionRequest
+    save: [],
+  }) as PermissionV2Request
 
 const questionRequest = (id: string, sessionID: string, title = id) =>
   ({
@@ -55,7 +55,7 @@ const questionRequest = (id: string, sessionID: string, title = id) =>
         options: [{ label: title, description: title }],
       },
     ],
-  }) as QuestionRequest
+  }) as QuestionV2Request
 
 const baseState = (input: Partial<State> = {}) =>
   ({
@@ -272,7 +272,10 @@ describe("applyDirectoryEvent", () => {
     const [store, setStore] = createStore(baseState({ session_status: { ses_1: { type: "busy" } } }))
 
     applyDirectoryEvent({
-      event: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } },
+      event: {
+        type: "session.next.status",
+        properties: { timestamp: 1, sessionID: "ses_1", status: { type: "idle" } },
+      },
       store,
       setStore,
       push() {},
@@ -551,7 +554,7 @@ describe("applyDirectoryEvent", () => {
       directory: "/tmp",
       loadLsp() {},
     })
-    expect(store.permission[sessionID]?.find((x) => x.id === "perm_2")?.permission).toBe("updated")
+    expect(store.permission[sessionID]?.find((x) => x.id === "perm_2")?.action).toBe("updated")
 
     applyDirectoryEvent({
       event: { type: "permission.replied", properties: { sessionID, requestID: "perm_2" } },

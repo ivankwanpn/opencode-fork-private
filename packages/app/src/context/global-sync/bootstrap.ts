@@ -1,13 +1,13 @@
 import type {
   Config,
   Path,
-  PermissionRequest,
+  PermissionV2Request,
   Project,
   ProviderAuthResponse,
-  QuestionRequest,
+  QuestionV2Request,
   ReferenceInfo,
   Session,
-  SessionStatus,
+  SessionNextStatusInfo,
 } from "@opencode-ai/sdk/v2/client"
 import type {
   AgentListInput,
@@ -40,7 +40,6 @@ import type { ServerSession } from "../server-session"
 import {
   cmp,
   normalizeAgentList,
-  normalizePermissionRequest,
   normalizeProjectInfo,
   normalizeProviderList,
 } from "./utils"
@@ -356,7 +355,7 @@ export const loadReferencesQuery = (
     placeholderData: [],
   })
 
-function normalizeSessionStatus(status: SessionStatus | SessionActiveOutput[string]): SessionStatus {
+function normalizeSessionStatus(status: SessionNextStatusInfo | SessionActiveOutput[string]): SessionNextStatusInfo {
   if (status.type === "running") return { type: "busy" }
   return status
 }
@@ -440,7 +439,7 @@ export async function bootstrapDirectory(input: {
           (async () => {
             const snapshot = input.activeSessions?.()
             if (!snapshot) return
-            const statuses: Record<string, SessionStatus> = Object.fromEntries(
+            const statuses: Record<string, SessionNextStatusInfo> = Object.fromEntries(
               Object.entries(snapshot).map(([sessionID, status]) => [sessionID, normalizeSessionStatus(status)]),
             )
             if (!input.session) {
@@ -519,7 +518,7 @@ export async function bootstrapDirectory(input: {
             const revision = input.pendingRequestRevision?.permission() ?? 0
             const permissions = await api.permission.request
               .list({ location: { directory: input.directory } })
-              .then((result) => extractArray(result).map(normalizePermissionRequest))
+              .then((result) => extractArray(result))
             const ids = permissions.map((permission) => permission.sessionID)
             const grouped = groupBySession(
               permissions.filter((permission) => !!permission.id && !!permission.sessionID),
@@ -558,7 +557,7 @@ export async function bootstrapDirectory(input: {
               .then((result) => extractArray(result))
             const ids = questions.map((question) => question.sessionID)
             const grouped = groupBySession(
-              questions.filter((question) => !!question.id && !!question.sessionID) as QuestionRequest[],
+              questions.filter((question) => !!question.id && !!question.sessionID) as QuestionV2Request[],
             )
             const warm = input.session
               ? Promise.all(ids.map((sessionID) => input.session!.resolve(sessionID))).then(() => undefined)

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentListOutput } from "@opencode-ai/client/promise"
 import type { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
-import { directoryKey, normalizeAgentList, normalizePermissionRequest, normalizeProviderList } from "./utils"
+import { directoryKey, normalizeAgentList, normalizeProviderList } from "./utils"
 
 describe("normalizeAgentList", () => {
   test("adapts current agents to the app agent shape", () => {
@@ -71,30 +71,6 @@ describe("normalizeAgentList", () => {
         steps: undefined,
       },
     ])
-  })
-})
-
-describe("normalizePermissionRequest", () => {
-  test("adapts the current permission request to app state", () => {
-    expect(
-      normalizePermissionRequest({
-        id: "permission-1",
-        sessionID: "session-1",
-        action: "read",
-        resources: ["README.md"],
-        save: ["*.md"],
-        metadata: { path: "README.md" },
-        source: { type: "tool", messageID: "message-1", callID: "call-1" },
-      }),
-    ).toEqual({
-      id: "permission-1",
-      sessionID: "session-1",
-      permission: "read",
-      patterns: ["README.md"],
-      always: ["*.md"],
-      metadata: { path: "README.md" },
-      tool: { messageID: "message-1", callID: "call-1" },
-    })
   })
 })
 

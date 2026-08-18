@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client"
+import type {
+  Message,
+  Part,
+  PermissionV2Request,
+  QuestionV2Request,
+  SessionNextStatusInfo,
+  Todo,
+} from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { dropSessionCaches, pickSessionCacheEvictions } from "./session-cache"
 
@@ -25,24 +32,24 @@ const part = (id: string, sessionID: string, messageID: string) =>
 describe("app session cache", () => {
   test("dropSessionCaches clears orphaned parts without message rows", () => {
     const store: {
-      session_status: Record<string, SessionStatus | undefined>
+      session_status: Record<string, SessionNextStatusInfo | undefined>
       session_diff: Record<string, FileDiffInfo[] | undefined>
       todo: Record<string, Todo[] | undefined>
       message: Record<string, Message[] | undefined>
       session_message: Record<string, never[] | undefined>
       part: Record<string, Part[] | undefined>
-      permission: Record<string, PermissionRequest[] | undefined>
-      question: Record<string, QuestionRequest[] | undefined>
+      permission: Record<string, PermissionV2Request[] | undefined>
+      question: Record<string, QuestionV2Request[] | undefined>
       part_text_accum_delta: Record<string, string | undefined>
     } = {
-      session_status: { ses_1: { type: "busy" } as SessionStatus },
+      session_status: { ses_1: { type: "busy" } as SessionNextStatusInfo },
       session_diff: { ses_1: [] },
       todo: { ses_1: [] as Todo[] },
       message: {},
       session_message: {},
       part: { msg_1: [part("prt_1", "ses_1", "msg_1")] },
-      permission: { ses_1: [] as PermissionRequest[] },
-      question: { ses_1: [] as QuestionRequest[] },
+      permission: { ses_1: [] as PermissionV2Request[] },
+      question: { ses_1: [] as QuestionV2Request[] },
       part_text_accum_delta: { prt_1: "streamed text" },
     }
 
@@ -61,14 +68,14 @@ describe("app session cache", () => {
   test("dropSessionCaches clears message-backed parts", () => {
     const m = msg("msg_1", "ses_1")
     const store: {
-      session_status: Record<string, SessionStatus | undefined>
+      session_status: Record<string, SessionNextStatusInfo | undefined>
       session_diff: Record<string, FileDiffInfo[] | undefined>
       todo: Record<string, Todo[] | undefined>
       message: Record<string, Message[] | undefined>
       session_message: Record<string, never[] | undefined>
       part: Record<string, Part[] | undefined>
-      permission: Record<string, PermissionRequest[] | undefined>
-      question: Record<string, QuestionRequest[] | undefined>
+      permission: Record<string, PermissionV2Request[] | undefined>
+      question: Record<string, QuestionV2Request[] | undefined>
       part_text_accum_delta: Record<string, string | undefined>
     } = {
       session_status: {},

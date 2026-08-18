@@ -266,7 +266,7 @@ function base64Encode(value: string) {
 function statusEvent(type: "busy" | "idle") {
   return {
     directory,
-    payload: { type: "session.status", properties: { sessionID, status: { type } } },
+    payload: { type: "session.next.status", properties: { timestamp: Date.now(), sessionID, status: { type } } },
   }
 }
 

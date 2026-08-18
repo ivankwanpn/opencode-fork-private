@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
+import type { PermissionV2Request, Session } from "@opencode-ai/sdk/v2/client"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { autoRespondsPermission, isDirectoryAutoAccepting, sessionAutoAccept } from "./permission-auto-respond"
 
@@ -12,7 +12,7 @@ const session = (input: { id: string; parentID?: string }) =>
 const permission = (sessionID: string) =>
   ({
     sessionID,
-  }) as Pick<PermissionRequest, "sessionID">
+  }) as Pick<PermissionV2Request, "sessionID">
 
 describe("autoRespondsPermission", () => {
   test("uses a parent session's directory-scoped auto-accept", () => {

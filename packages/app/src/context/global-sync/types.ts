@@ -5,11 +5,11 @@ import type {
   Message,
   Part,
   Path,
-  PermissionRequest,
-  QuestionRequest,
+  PermissionV2Request,
+  QuestionV2Request,
   ReferenceInfo,
   Session,
-  SessionStatus,
+  SessionNextStatusInfo,
   Todo,
   VcsInfo,
 } from "@opencode-ai/sdk/v2/client"
@@ -45,7 +45,7 @@ export type State = {
   session: Session[]
   sessionTotal: number
   session_status: {
-    [sessionID: string]: SessionStatus
+    [sessionID: string]: SessionNextStatusInfo
   }
   session_working(id: string): boolean
   session_diff: {
@@ -55,10 +55,10 @@ export type State = {
     [sessionID: string]: Todo[]
   }
   permission: {
-    [sessionID: string]: PermissionRequest[]
+    [sessionID: string]: PermissionV2Request[]
   }
   question: {
-    [sessionID: string]: QuestionRequest[]
+    [sessionID: string]: QuestionV2Request[]
   }
   mcp_ready: boolean
   mcp: {

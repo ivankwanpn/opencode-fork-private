@@ -80,7 +80,11 @@ describe("titlebar session events", () => {
       sessionTabsRemovedFromServerEvent({
         server: remote,
         directory: "/tmp/project",
-        event: { id: "evt_1", type: "session.status", properties: { sessionID: "ses_1" } } as ServerEvent,
+        event: {
+          id: "evt_1",
+          type: "session.next.status",
+          properties: { timestamp: 1, sessionID: "ses_1", status: { type: "idle" } },
+        } as ServerEvent,
       }),
     ).toBeUndefined()
   })

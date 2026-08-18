@@ -56,15 +56,15 @@ const tui: TuiPlugin = async (api) => {
     permissions.delete(event.properties.requestID)
   })
 
-  api.event.on("session.status", (event) => {
-    const sessionID = event.properties.sessionID
-    if (event.properties.status.type === "busy" || event.properties.status.type === "retry") {
+  api.nativeEvent.on("session.next.status", (event) => {
+    const sessionID = event.data.sessionID
+    if (event.data.status.type === "busy" || event.data.status.type === "retry") {
       active.add(sessionID)
       errored.delete(sessionID)
       return
     }
 
-    if (event.properties.status.type !== "idle") return
+    if (event.data.status.type !== "idle") return
     if (!active.has(sessionID)) return
     active.delete(sessionID)
 

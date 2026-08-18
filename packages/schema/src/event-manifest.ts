@@ -21,7 +21,6 @@ import { QuestionV1 } from "./question-v1"
 import { Reference } from "./reference"
 import { ServerEvent } from "./server-event"
 import { SessionEvent } from "./session-event"
-import { SessionStatusEvent } from "./session-status-event"
 import { SessionTodo } from "./session-todo"
 import { SessionV1 } from "./session-v1"
 import { TuiEvent } from "./tui-event"
@@ -61,7 +60,6 @@ const compatibilityDefinitions = Event.inventory(
   ...McpEvent.Definitions,
   ...LegacyEvent.Definitions,
   ...Project.Event.Definitions,
-  ...SessionStatusEvent.Definitions,
   ...QuestionV1.Event.Definitions,
   ...WorkspaceEvent.Definitions,
   ...WorktreeEvent.Definitions,

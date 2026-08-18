@@ -1,4 +1,4 @@
-import type { Message, Session, Part, SnapshotFileDiff, SessionStatus, Provider } from "@opencode-ai/sdk/v2"
+import type { Message, Session, Part, SnapshotFileDiff, SessionNextStatusInfo, Provider } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
@@ -19,7 +19,7 @@ type Data = {
   provider?: NormalizedProviderListResponse
   session: Session[]
   session_status: {
-    [sessionID: string]: SessionStatus
+    [sessionID: string]: SessionNextStatusInfo
   }
   session_diff: {
     [sessionID: string]: (SnapshotFileDiff | FileDiffInfo)[]

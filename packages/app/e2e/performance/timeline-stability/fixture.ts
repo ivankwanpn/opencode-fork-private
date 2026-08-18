@@ -1,13 +1,13 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { ServerEvent } from "@opencode-ai/schema/server-event"
-import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
+import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionV1 } from "@opencode-ai/schema/session-v1"
 import type {
   AssistantMessage,
   Message,
   Part,
   Session,
-  SessionStatus,
+  SessionNextStatusInfo,
   ToolPart,
   ToolState,
   UserMessage,
@@ -36,7 +36,7 @@ type TimelinePayload = Extract<
       | "message.part.updated"
       | "message.part.removed"
       | "message.part.delta"
-      | "session.status"
+      | "session.next.status"
       | "server.connected"
   }
 >
@@ -73,17 +73,18 @@ type ToolOptions<State extends ToolStatus> = State extends "pending"
 const decodeOptions = { errors: "all", onExcessProperty: "error" } as const
 const decodeMessage = Schema.decodeUnknownSync(SessionV1.WithParts)
 const decodePart = Schema.decodeUnknownSync(SessionV1.Part)
-const decodeStatus = Schema.decodeUnknownSync(SessionStatusEvent.Info)
+const decodeStatus = Schema.decodeUnknownSync(SessionEvent.StatusInfo)
 const timelineEventSchema = Schema.Union([
   SessionV1.Event.MessageUpdated,
   SessionV1.Event.MessageRemoved,
   SessionV1.Event.PartUpdated,
   SessionV1.Event.PartRemoved,
   SessionV1.Event.PartDelta,
-  SessionStatusEvent.Status,
+  SessionEvent.Status,
   ServerEvent.Connected,
 ])
 const decodeEvent = Schema.decodeUnknownSync(timelineEventSchema)
+const encodeEvent = Schema.encodeSync(timelineEventSchema)
 let eventSequence = 0
 
 export async function setupTimeline(
@@ -217,7 +218,7 @@ function describeEvent(event: EventPayload) {
       .filter(Boolean)
       .join(":")
   }
-  if (event.type === "session.status") {
+  if (event.type === "session.next.status") {
     const status = event.data.status
     return [event.type, status.type, status.type === "retry" ? status.attempt : undefined]
       .filter((value) => value !== undefined)
@@ -240,7 +241,7 @@ export function event(type: TimelinePayload["type"], data: TimelinePayload["data
 }
 
 export function validateTimelineEvent(input: unknown): TimelineEvent {
-  return decodeEvent(input, decodeOptions)
+  return encodeEvent(decodeEvent(input, decodeOptions))
 }
 
 export function validateTimelineMessages(input: readonly TimelineMessage[]): TimelineMessage[] {
@@ -345,8 +346,9 @@ export function messageUpdated(info: Message) {
   return event("message.updated", { sessionID, info })
 }
 
-export function status(type: SessionStatus["type"], attempt = 1) {
-  return event("session.status", {
+export function status(type: SessionNextStatusInfo["type"], attempt = 1) {
+  return event("session.next.status", {
+    timestamp: 1700000003000,
     sessionID,
     status: type === "retry" ? { type, attempt, message: "Rate limited", next: 1700000010000 } : { type },
   })

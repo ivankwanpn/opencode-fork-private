@@ -25,8 +25,8 @@ describe("timeline fixture validation", () => {
         directory: "C:/OpenCode/TimelineStability",
         payload: {
           id: "evt_invalid_status",
-          type: "session.status",
-          properties: { sessionID: "ses_timeline_stability", status: { type: "retry", attempt: 1 } },
+          type: "session.next.status",
+          properties: { timestamp: 1, sessionID: "ses_timeline_stability", status: { type: "retry", attempt: 1 } },
         },
       }),
     ).toThrow()
@@ -40,8 +40,16 @@ describe("timeline fixture validation", () => {
   })
 
   test("assigns deterministic event IDs", () => {
-    const first = event("session.status", { sessionID: "ses_timeline_stability", status: { type: "busy" } })
-    const second = event("session.status", { sessionID: "ses_timeline_stability", status: { type: "idle" } })
+    const first = event("session.next.status", {
+      timestamp: 1,
+      sessionID: "ses_timeline_stability",
+      status: { type: "busy" },
+    })
+    const second = event("session.next.status", {
+      timestamp: 2,
+      sessionID: "ses_timeline_stability",
+      status: { type: "idle" },
+    })
     expect(first.id).toMatch(/^evt_timeline_\d{4}$/)
     expect(Number(second.id.slice(-4))).toBe(Number(first.id.slice(-4)) + 1)
   })
@@ -63,6 +71,10 @@ if (false) {
     { id: "prt_invalid_owner", type: "agent", name: "explore", source: { value: "@explore", start: 0, end: 8 } },
   ])
 
-  // @ts-expect-error Retry status events require message and next.
-  event("session.status", { sessionID: "ses_timeline_stability", status: { type: "retry", attempt: 1 } })
+  event("session.next.status", {
+    timestamp: 1,
+    sessionID: "ses_timeline_stability",
+    // @ts-expect-error Retry status events require message and next.
+    status: { type: "retry", attempt: 1 },
+  })
 }

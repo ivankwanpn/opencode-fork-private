@@ -21,6 +21,7 @@ test("runs onDispose callbacks with aborted signal and is idempotent", async () 
   id: "demo.lifecycle",
   tui: async (api, options) => {
     api.event.on("event.test", () => {})
+    api.nativeEvent.on("session.next.status", () => {})
     api.route.register([{ name: "lifecycle.route", render: () => null }])
     api.lifecycle.onDispose(async () => {
       const prev = await Bun.file(options.marker).text().catch(() => "")
@@ -40,10 +41,26 @@ test("runs onDispose callbacks with aborted signal and is idempotent", async () 
   })
 
   const { config, restore } = mockTuiRuntime(tmp.path, [[tmp.extra.spec, { marker: tmp.extra.marker }]])
+  let nativeEventAdded = 0
+  let nativeEventDropped = 0
 
   try {
-    await TuiPluginRuntime.init({ api: createTuiPluginApi(), config })
+    await TuiPluginRuntime.init({
+      api: createTuiPluginApi({
+        nativeEvent: {
+          on() {
+            nativeEventAdded += 1
+            return () => {
+              nativeEventDropped += 1
+            }
+          },
+        },
+      }),
+      config,
+    })
+    expect(nativeEventAdded).toBeGreaterThan(0)
     await TuiPluginRuntime.dispose()
+    expect(nativeEventDropped).toBe(nativeEventAdded)
 
     const marker = await fs.readFile(tmp.extra.marker, "utf8")
     expect(marker).toContain("custom")

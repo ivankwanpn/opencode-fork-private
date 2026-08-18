@@ -1,5 +1,5 @@
-import type { OpenCodeEvent } from "../../../client/src"
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { JsonValue, OpenCodeEvent } from "../../../client/src"
+import type { Session, SessionNextSessionSnapshot } from "@opencode-ai/sdk/v2/client"
 import type { ServerEvent } from "@/context/server-sdk"
 import type { HomeSessionEvent } from "@/context/global-sync/home-session-index"
 
@@ -13,7 +13,7 @@ export type SessionLifecycleEvent = Extract<
 >
 export type SessionStatusEvent = Extract<OpenCodeEvent, { type: "session.next.status" }>
 
-export function projectSessionInfo(info: SessionSnapshotInfo): Session {
+export function projectSessionInfo(info: SessionSnapshotInfo | SessionNextSessionSnapshot): Session {
   return {
     id: info.id,
     slug: info.slug,
@@ -29,7 +29,7 @@ export function projectSessionInfo(info: SessionSnapshotInfo): Session {
     cost: info.cost,
     tokens: info.tokens,
     share: info.share,
-    metadata: info.metadata,
+    metadata: projectJsonRecord(info.metadata),
     permission: info.permission?.map((rule) => ({
       permission: rule.action,
       pattern: rule.resource,
@@ -43,6 +43,38 @@ export function projectSessionInfo(info: SessionSnapshotInfo): Session {
       ...(info.time.archived !== undefined ? { archived: info.time.archived } : {}),
     },
   }
+}
+
+function projectJsonRecord(value: Readonly<Record<string, unknown>> | undefined) {
+  if (!value) return
+  const seen = new Set<object>()
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) => {
+      const projected = projectJsonValue(item, seen)
+      return projected === undefined ? [] : [[key, projected] as const]
+    }),
+  )
+}
+
+function projectJsonValue(value: unknown, seen: Set<object>): JsonValue | undefined {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (typeof value !== "object") return
+  if (seen.has(value)) return
+  seen.add(value)
+  if (Array.isArray(value)) {
+    const projected = value.map((item) => projectJsonValue(item, seen) ?? null)
+    seen.delete(value)
+    return projected
+  }
+  const projected = Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) => {
+      const itemValue = projectJsonValue(item, seen)
+      return itemValue === undefined ? [] : [[key, itemValue] as const]
+    }),
+  )
+  seen.delete(value)
+  return projected
 }
 
 export function toHomeSessionEvent(

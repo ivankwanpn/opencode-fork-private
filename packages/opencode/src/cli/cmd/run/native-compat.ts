@@ -7,6 +7,7 @@ import type { NativeClient } from "./types"
 
 type RequestOptions = { signal?: AbortSignal; throwOnError?: boolean }
 type Input = Record<string, any>
+type NativeEvent = ReturnType<NativeClient["events"]["subscribe"]> extends AsyncIterable<infer T> ? T : never
 
 const location = (directory?: string) => (directory ? { directory } : undefined)
 
@@ -113,6 +114,23 @@ function commandFiles(parts: unknown) {
     }))
 }
 
+function cliEventPayloads(projectLegacy: ReturnType<typeof legacyEventProjection>, source: NativeEvent) {
+  if (source.type === "session.next.status") {
+    return [
+      {
+        id: source.id,
+        type: source.type,
+        properties: source.data,
+      } satisfies Extract<Event, { type: "session.next.status" }>,
+    ]
+  }
+
+  return legacyEventPayloads(
+    projectLegacy,
+    source as unknown as Parameters<typeof legacyEventPayloads>[1],
+  ).map((event) => event as Event)
+}
+
 export function createNativeCompatClient(input: { native: NativeClient; directory?: string }): OpencodeClient {
   const native = input.native
   const permissionSessions = new Map<string, string>()
@@ -131,22 +149,16 @@ export function createNativeCompatClient(input: { native: NativeClient; director
 
   async function* projected(options?: RequestOptions): AsyncGenerator<Event> {
     for await (const source of native.events.subscribe({ signal: options?.signal })) {
-      for (const event of legacyEventPayloads(
-        projectLegacy,
-        source as unknown as Parameters<typeof legacyEventPayloads>[1],
-      )) {
-        yield remember(event as Event)
+      for (const event of cliEventPayloads(projectLegacy, source)) {
+        yield remember(event)
       }
     }
   }
 
   async function* global(options?: RequestOptions): AsyncGenerator<GlobalEvent> {
     for await (const source of native.events.subscribe({ signal: options?.signal })) {
-      for (const payload of legacyEventPayloads(
-        projectLegacy,
-        source as unknown as Parameters<typeof legacyEventPayloads>[1],
-      )) {
-        const event = remember(payload as Event)
+      for (const payload of cliEventPayloads(projectLegacy, source)) {
+        const event = remember(payload)
         yield {
           directory: source.location?.directory,
           workspace: source.location?.workspaceID,

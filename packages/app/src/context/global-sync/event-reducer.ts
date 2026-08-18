@@ -3,11 +3,11 @@ import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/
 import type {
   Message,
   Part,
-  PermissionRequest,
+  PermissionV2Request,
   Project,
-  QuestionRequest,
+  QuestionV2Request,
   Session,
-  SessionStatus,
+  SessionNextStatusInfo,
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
@@ -20,7 +20,7 @@ const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const SESSION_CONTENT_EVENTS = new Set([
   "session.diff",
   "todo.updated",
-  "session.status",
+  "session.next.status",
   "message.updated",
   "message.removed",
   "message.part.updated",
@@ -281,8 +281,8 @@ export function applyDirectoryEvent(input: {
       input.setSessionTodo?.(props.sessionID, props.todos)
       break
     }
-    case "session.status": {
-      const props = event.properties as { sessionID: string; status: SessionStatus }
+    case "session.next.status": {
+      const props = event.properties as { sessionID: string; status: SessionNextStatusInfo }
       input.setStore("session_status", props.sessionID, reconcile(props.status))
       break
     }
@@ -412,7 +412,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "permission.asked": {
-      const permission = event.properties as PermissionRequest
+      const permission = event.properties as PermissionV2Request
       const permissions = input.store.permission[permission.sessionID]
       if (!permissions) {
         input.setStore("permission", permission.sessionID, [permission])
@@ -448,7 +448,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "question.asked": {
-      const question = event.properties as QuestionRequest
+      const question = event.properties as QuestionV2Request
       const questions = input.store.question[question.sessionID]
       if (!questions) {
         input.setStore("question", question.sessionID, [question])

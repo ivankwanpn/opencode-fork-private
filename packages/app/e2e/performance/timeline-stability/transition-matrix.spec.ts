@@ -170,7 +170,8 @@ test("updates retry attempts and long provider messages without remounting the r
   })
   await startVisualProbe(page, regions)
   await timeline.send(
-    event("session.status", {
+    event("session.next.status", {
+      timestamp: 1700000003000,
       sessionID: "ses_timeline_stability",
       status: {
         type: "retry",

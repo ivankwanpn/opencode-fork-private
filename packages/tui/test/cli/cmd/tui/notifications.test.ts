@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import Notifications from "../../../../src/feature-plugins/system/notifications"
 import type { Event, Session } from "@opencode-ai/sdk/v2"
-import type { TuiAttentionNotifyInput } from "@opencode-ai/plugin/tui"
+import type { TuiAttentionNotifyInput, TuiNativeEvent } from "@opencode-ai/plugin/tui"
 import { createTuiPluginApi } from "../../../fixture/tui-plugin"
 
 async function setup() {
   const notifications: TuiAttentionNotifyInput[] = []
   const handlers = new Map<Event["type"], ((event: Event) => void)[]>()
+  const nativeHandlers = new Map<TuiNativeEvent["type"], ((event: TuiNativeEvent) => void)[]>()
   const session = (id: string, title: string, parentID?: string): Session => ({
     id,
     title,
@@ -46,6 +47,23 @@ async function setup() {
           }
         },
       },
+      nativeEvent: {
+        on: <Type extends TuiNativeEvent["type"]>(
+          type: Type,
+          handler: (event: Extract<TuiNativeEvent, { type: Type }>) => void,
+        ) => {
+          const list = nativeHandlers.get(type) ?? []
+          const wrapped = handler as (event: TuiNativeEvent) => void
+          list.push(wrapped)
+          nativeHandlers.set(type, list)
+          return () => {
+            nativeHandlers.set(
+              type,
+              (nativeHandlers.get(type) ?? []).filter((item) => item !== wrapped),
+            )
+          }
+        },
+      },
       state: {
         session: {
           get: (sessionID: string) => sessions[sessionID],
@@ -61,6 +79,17 @@ async function setup() {
     emit(event: Event) {
       for (const handler of handlers.get(event.type) ?? []) handler(event)
     },
+    emitNative(event: TuiNativeEvent) {
+      for (const handler of nativeHandlers.get(event.type) ?? []) handler(event)
+    },
+  }
+}
+
+function status(sessionID: string, type: "busy" | "idle"): TuiNativeEvent {
+  return {
+    id: `event-status-${sessionID}-${type}`,
+    type: "session.next.status",
+    data: { timestamp: 1, sessionID, status: { type } },
   }
 }
 
@@ -139,21 +168,9 @@ describe("internal notifications TUI plugin", () => {
   test("notifies when an active session becomes idle and suppresses no-op idle", async () => {
     const harness = await setup()
 
-    harness.emit({
-      id: "event-1",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "idle" } },
-    })
-    harness.emit({
-      id: "event-2",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "idle" } },
-    })
+    harness.emitNative(status("session", "idle"))
+    harness.emitNative(status("session", "busy"))
+    harness.emitNative(status("session", "idle"))
 
     expect(harness.notifications).toEqual([
       {
@@ -169,16 +186,8 @@ describe("internal notifications TUI plugin", () => {
     const harness = await setup()
 
     harness.emit({ id: "event-1", type: "question.asked", properties: question("question-1", "subagent") })
-    harness.emit({
-      id: "event-2",
-      type: "session.status",
-      properties: { sessionID: "subagent", status: { type: "busy" } },
-    })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "subagent", status: { type: "idle" } },
-    })
+    harness.emitNative(status("subagent", "busy"))
+    harness.emitNative(status("subagent", "idle"))
 
     expect(harness.notifications).toEqual([
       {
@@ -199,21 +208,13 @@ describe("internal notifications TUI plugin", () => {
   test("notifies session errors once and suppresses the following idle done notification", async () => {
     const harness = await setup()
 
-    harness.emit({
-      id: "event-1",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "busy" } },
-    })
+    harness.emitNative(status("session", "busy"))
     harness.emit({
       id: "event-2",
       type: "session.error",
       properties: { sessionID: "session", error: { name: "UnknownError", data: { message: "boom" } } },
     })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "session", status: { type: "idle" } },
-    })
+    harness.emitNative(status("session", "idle"))
 
     expect(harness.notifications).toEqual([
       {
@@ -228,21 +229,13 @@ describe("internal notifications TUI plugin", () => {
   test("special-cases aborts and model response timeouts", async () => {
     const harness = await setup()
 
-    harness.emit({
-      id: "event-1",
-      type: "session.status",
-      properties: { sessionID: "abort", status: { type: "busy" } },
-    })
+    harness.emitNative(status("abort", "busy"))
     harness.emit({
       id: "event-2",
       type: "session.error",
       properties: { sessionID: "abort", error: { name: "MessageAbortedError", data: { message: "Aborted" } } },
     })
-    harness.emit({
-      id: "event-3",
-      type: "session.status",
-      properties: { sessionID: "timeout", status: { type: "busy" } },
-    })
+    harness.emitNative(status("timeout", "busy"))
     harness.emit({
       id: "event-4",
       type: "session.error",

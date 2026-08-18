@@ -776,7 +776,7 @@ export const RunCommand = effectCmd({
             }
 
             if (
-              event.type === "session.status" &&
+              event.type === "session.next.status" &&
               event.properties.sessionID === sessionID &&
               event.properties.status.type === "idle"
             ) {

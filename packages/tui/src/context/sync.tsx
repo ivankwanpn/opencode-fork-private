@@ -7,7 +7,7 @@ import type {
   McpStatus,
   McpResource,
   FormatterStatus,
-  SessionStatus,
+  SessionNextStatusInfo,
   VcsInfo,
   SnapshotFileDiff,
   ConsoleState,
@@ -15,7 +15,7 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useProject } from "./project"
-import { useEvent } from "./event"
+import { useEvent, useNativeEvent } from "./event"
 import { useSDK } from "./sdk"
 import { useTuiStartup } from "./runtime"
 import { createSimpleContext } from "./helper"
@@ -73,7 +73,7 @@ export const {
       config: Config
       session: SessionV2Info[]
       session_status: {
-        [sessionID: string]: SessionStatus
+        [sessionID: string]: SessionNextStatusInfo
       }
       session_diff: {
         [sessionID: string]: SnapshotFileDiff[]
@@ -111,6 +111,7 @@ export const {
     })
 
     const event = useEvent()
+    const nativeEvent = useNativeEvent()
     const project = useProject()
     const sdk = useSDK()
     const data = useData()
@@ -299,11 +300,6 @@ export const {
           break
         }
 
-        case "session.status": {
-          setStore("session_status", event.properties.sessionID, event.properties.status)
-          break
-        }
-
         case "lsp.updated": {
           void sdk.native.lsp.status().then((x) => setStore("lsp", x.data))
           break
@@ -316,6 +312,10 @@ export const {
           break
         }
       }
+    })
+
+    nativeEvent.on("session.next.status", (event) => {
+      setStore("session_status", event.data.sessionID, event.data.status)
     })
 
     const exit = useExit()

@@ -89,6 +89,7 @@ type Opts = {
   renderer?: HostPluginApi["renderer"]
   attention?: AttentionOpts
   event?: HostPluginApi["event"]
+  nativeEvent?: HostPluginApi["nativeEvent"]
   mode?: HostPluginApi["mode"]
   count?: Count
   keymap?: HostPluginApi["keymap"]
@@ -217,6 +218,7 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
         }
       },
     },
+    nativeEvent: opts.nativeEvent ?? { on: () => () => {} },
     renderer,
     slots: {
       register: () => "fixture-slot",

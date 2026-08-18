@@ -26,7 +26,7 @@ describe("adaptServerEvent", () => {
 
     expect(adaptServerEvent(current)).toMatchObject({
       type: "permission.asked",
-      properties: { id: "perm_1", sessionID: "ses_1", permission: "read", patterns: ["src/**"] },
+      properties: { id: "perm_1", sessionID: "ses_1", action: "read", resources: ["src/**"] },
       current,
     })
   })
@@ -81,11 +81,11 @@ describe("adaptServerEvent", () => {
       properties: {
         id: "perm_1",
         sessionID: "ses_1",
-        permission: "read",
-        patterns: ["src/**"],
-        always: ["src/**"],
+        action: "read",
+        resources: ["src/**"],
+        save: ["src/**"],
         metadata: { reason: "test" },
-        tool: { messageID: "msg_1", callID: "call_1" },
+        source: { type: "tool", messageID: "msg_1", callID: "call_1" },
       },
     })
     expect(adaptServerEvent(permissionReplied)).toMatchObject({
@@ -152,14 +152,17 @@ describe("coalesceServerEvents", () => {
   test("preserves event boundaries and distinct fields", () => {
     const status = {
       directory: "/repo",
-      payload: { type: "session.status", properties: { sessionID: "ses", status: { type: "idle" } } } as Event,
+      payload: {
+        type: "session.next.status",
+        properties: { timestamp: 1, sessionID: "ses", status: { type: "idle" } },
+      } as Event,
     }
     const result = coalesceServerEvents([delta("a"), delta("b", "metadata"), status, delta("c")])
 
     expect(result.map((event) => event.payload.type)).toEqual([
       "message.part.delta",
       "message.part.delta",
-      "session.status",
+      "session.next.status",
       "message.part.delta",
     ])
   })
@@ -259,8 +262,9 @@ describe("enqueueServerEvent", () => {
       enqueueServerEvent(events, {
         directory: "/repo",
         payload: {
-          type: "session.status",
+          type: "session.next.status",
           properties: {
+            timestamp: 1,
             sessionID: "session",
             status: status === "retry" ? { type: "retry", attempt: 1, message: "retry", next: 1 } : { type: "busy" },
           },

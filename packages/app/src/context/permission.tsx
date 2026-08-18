@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createRoot, getOwner, onCleanup } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2/client"
+import type { PermissionV2Request } from "@opencode-ai/sdk/v2/client"
 import { Persist, persisted } from "@/utils/persist"
 import type { ServerSDK } from "@/context/server-sdk"
 import type { ServerSync } from "./server-sync"
@@ -13,7 +13,6 @@ import { type DraftTab, useTabs } from "./tabs"
 import { useSettings } from "./settings"
 import { requireServerKey } from "@/utils/session-route"
 import type { ServerScope } from "@/utils/server-scope"
-import { normalizePermissionRequest } from "./global-sync/utils"
 import {
   acceptKey,
   directoryAcceptKey,
@@ -151,7 +150,7 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       respond(input: Parameters<PermissionRespondFn>[0]) {
         selected().respond(input)
       },
-      autoResponds(permission: PermissionRequest, directory?: string) {
+      autoResponds(permission: PermissionV2Request, directory?: string) {
         return selected().autoResponds(permission, directory)
       },
       isAutoAccepting(sessionID: string, directory?: string) {
@@ -246,9 +245,9 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
   const list = (directory: string) =>
     input.sdk.apiForGeneration()
       .then((api) => api.permission.request.list({ location: { directory } }))
-      .then((result) => extractArray(result).map(normalizePermissionRequest))
+      .then((result) => extractArray(result))
 
-  function respondOnce(permission: PermissionRequest, directory?: string) {
+  function respondOnce(permission: PermissionV2Request, directory?: string) {
     const now = Date.now()
     const hit = responded.has(permission.id)
     responded.delete(permission.id)
@@ -277,16 +276,16 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
     return isDirectoryAutoAccepting(store.autoAccept, directory)
   }
 
-  function shouldAutoRespond(permission: PermissionRequest, directory?: string) {
+  function shouldAutoRespond(permission: PermissionV2Request, directory?: string) {
     return autoRespondsPermission(store.autoAccept, sessions(directory), permission, directory)
   }
 
-  function isPending(permission: PermissionRequest) {
+  function isPending(permission: PermissionV2Request) {
     const pending = input.sync.session.data.permission[permission.sessionID]
     return pending === undefined || pending.some((item) => item.id === permission.id)
   }
 
-  async function shouldAutoRespondResolved(permission: PermissionRequest, directory?: string) {
+  async function shouldAutoRespondResolved(permission: PermissionV2Request, directory?: string) {
     const override = sessionAutoAccept(store.autoAccept, sessions(directory), permission, directory)
     if (override !== undefined) return override
     if (input.sync.session.lineage.peek(permission.sessionID)) return shouldAutoRespond(permission, directory)
@@ -296,7 +295,7 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
   }
 
   async function respondPending(
-    permission: PermissionRequest,
+    permission: PermissionV2Request,
     directory?: string,
     current: () => boolean = () => true,
   ) {
@@ -316,7 +315,8 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
   const handlePermission = (e: PermissionEvent) => {
     const event = e.details
     if (event?.type !== "permission.asked") return
-    void respondPending(event.properties, e.name)
+    if (event.current?.type !== "permission.v2.asked") return
+    void respondPending(event.current.data, e.name)
   }
 
   const unsubscribe = input.sdk.event.listen((event) => {
@@ -407,7 +407,7 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
   const api = {
     ready: () => !meta.disposed && ready(),
     respond,
-    autoResponds(permission: PermissionRequest, directory?: string) {
+    autoResponds(permission: PermissionV2Request, directory?: string) {
       if (meta.disposed) return false
       return shouldAutoRespond(permission, directory)
     },

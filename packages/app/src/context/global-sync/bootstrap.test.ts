@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
-import type { Config, PermissionRequest, Project, QuestionRequest } from "@opencode-ai/sdk/v2/client"
+import type { Config, PermissionV2Request, Project, QuestionV2Request } from "@opencode-ai/sdk/v2/client"
 import type { AgentApi, CommandApi, ProjectApi, ReferenceApi } from "@opencode-ai/client/promise"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
@@ -193,16 +193,16 @@ describe("bootstrapDirectory", () => {
     const permission = {
       id: "per_1",
       sessionID: "ses_1",
-      permission: "read",
-      patterns: ["src/**"],
+      action: "read",
+      resources: ["src/**"],
       metadata: {},
-      always: [],
-    } satisfies PermissionRequest
+      save: [],
+    } satisfies PermissionV2Request
     const question = {
       id: "que_1",
       sessionID: "ses_1",
       questions: [{ question: "Continue?", header: "Continue", options: [] }],
-    } satisfies QuestionRequest
+    } satisfies QuestionV2Request
 
     let startPermission!: () => void
     let startQuestion!: () => void

@@ -1,18 +1,25 @@
-import type { Message, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client"
+import type {
+  Message,
+  Part,
+  PermissionV2Request,
+  QuestionV2Request,
+  SessionNextStatusInfo,
+  Todo,
+} from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 
 export const SESSION_CACHE_LIMIT = 40
 
 type SessionCache = {
-  session_status: Record<string, SessionStatus | undefined>
+  session_status: Record<string, SessionNextStatusInfo | undefined>
   session_diff: Record<string, FileDiffInfo[] | undefined>
   todo: Record<string, Todo[] | undefined>
   message: Record<string, Message[] | undefined>
   session_message: Record<string, SessionMessageInfo[] | undefined>
   part: Record<string, Part[] | undefined>
-  permission: Record<string, PermissionRequest[] | undefined>
-  question: Record<string, QuestionRequest[] | undefined>
+  permission: Record<string, PermissionV2Request[] | undefined>
+  question: Record<string, QuestionV2Request[] | undefined>
   part_text_accum_delta: Record<string, string | undefined>
 }
 

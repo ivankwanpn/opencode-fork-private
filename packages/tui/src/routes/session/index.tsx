@@ -35,7 +35,7 @@ import type {
   SessionMessageAssistantTool,
   SessionMessageShell,
   SessionMessageUser,
-  SessionStatus,
+  SessionNextStatusInfo,
 } from "@opencode-ai/sdk/v2"
 import { useLocal } from "../../context/local"
 import { Locale } from "../../util/locale"
@@ -104,7 +104,7 @@ const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
 
 export const alwaysSeparate = new WeakSet<BoxRenderable>()
 
-type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
+type RetryAction = Extract<SessionNextStatusInfo, { type: "retry" }>["action"]
 
 function goUpsellKeys(action: RetryAction) {
   if (!action) return
@@ -357,13 +357,13 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
 
-  event.on("session.status", (evt) => {
-    if (evt.properties.sessionID !== route.sessionID) return
-    if (evt.properties.status.type !== "retry") return
-    if (!evt.properties.status.action) return
+  nativeEvent.on("session.next.status", (event) => {
+    if (event.data.sessionID !== route.sessionID) return
+    if (event.data.status.type !== "retry") return
+    if (!event.data.status.action) return
     if (dialog.stack.length > 0) return
 
-    const keys = goUpsellKeys(evt.properties.status.action)
+    const keys = goUpsellKeys(event.data.status.action)
     if (!keys) return
 
     const seen = kv.get(keys.lastSeenAt)
@@ -371,7 +371,7 @@ export function Session() {
 
     if (kv.get(keys.dontShow)) return
 
-    void DialogRetryAction.show(dialog, evt.properties.status.action).then((dontShowAgain) => {
+    void DialogRetryAction.show(dialog, event.data.status.action).then((dontShowAgain) => {
       if (dontShowAgain) kv.set(keys.dontShow, true)
       kv.set(keys.lastSeenAt, Date.now())
     })

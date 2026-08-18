@@ -54,6 +54,10 @@ let protocol: "openai-responses" | "openai-compatible" | "anthropic-messages" | 
 let permissionServer = "server-a"
 let createSessionGate: Promise<void> | undefined
 let activeTurnID: string | undefined
+let refreshedActiveTurnID: string | undefined
+let promptFailure: unknown
+let commandFailure: unknown
+let sessionStatusRefreshes = 0
 
 let promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
 const [promptStore, setPromptStore] = createStore<PromptStore>({
@@ -109,10 +113,20 @@ const clientFor = (directory: string) => {
         prompt: async (input: unknown) => {
           sentPrompts.push(input)
           promptInputs.push(input)
+          if (promptFailure !== undefined) {
+            const error = promptFailure
+            promptFailure = undefined
+            throw error
+          }
           return { data: undefined }
         },
         command: async (input: unknown) => {
           sentCommands.push(input)
+          if (commandFailure !== undefined) {
+            const error = commandFailure
+            commandFailure = undefined
+            throw error
+          }
         },
         interrupt: async (input: { sessionID: string }) => {
           sentInterrupts.push(input.sessionID)
@@ -264,6 +278,10 @@ beforeAll(async () => {
 
   mock.module("@/context/server-sync", () => ({
     useServerSync: () => () => ({
+      refreshSessionStatuses: async () => {
+        sessionStatusRefreshes++
+        activeTurnID = refreshedActiveTurnID
+      },
       session: {
         remember: () => undefined,
         set: () => undefined,
@@ -338,6 +356,10 @@ beforeEach(() => {
   permissionServer = "server-a"
   createSessionGate = undefined
   activeTurnID = undefined
+  refreshedActiveTurnID = undefined
+  promptFailure = undefined
+  commandFailure = undefined
+  sessionStatusRefreshes = 0
   serverSessionSyncs = 0
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
@@ -770,6 +792,84 @@ describe("prompt submit worktree selection", () => {
     await Bun.sleep(0)
 
     expect(promptInputs[0]).toMatchObject({ delivery: "steer", intent: { type: "start" } })
+  })
+
+  test("refreshes and retries the same start identity once after a settled turn conflict", async () => {
+    params = { id: "session-1" }
+    activeTurnID = "msg_stale"
+    refreshedActiveTurnID = undefined
+    promptFailure = {
+      _tag: "SessionTurnConflictError",
+      sessionID: "session-1",
+      reason: "already-active",
+      turnID: "msg_stale",
+      message: "Session already has an open turn: msg_stale",
+    }
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    for (let attempt = 0; attempt < 20 && promptInputs.length < 2; attempt++) await Bun.sleep(5)
+
+    expect(sessionStatusRefreshes).toBe(1)
+    expect(promptInputs).toHaveLength(2)
+    expect(promptInputs[0]).toMatchObject({ delivery: "steer", intent: { type: "start" } })
+    expect(promptInputs[1]).toMatchObject({ delivery: "steer", intent: { type: "start" } })
+    expect((promptInputs[1] as { id: string }).id).toBe((promptInputs[0] as { id: string }).id)
+  })
+
+  test("refreshes and retries a slash command with the same start identity", async () => {
+    params = { id: "session-1" }
+    commands.push({ name: "review" })
+    promptValue = [{ type: "text", content: "/review staged changes", start: 0, end: 22 }]
+    activeTurnID = "msg_stale_command"
+    refreshedActiveTurnID = undefined
+    commandFailure = {
+      _tag: "SessionTurnConflictError",
+      sessionID: "session-1",
+      reason: "already-active",
+      turnID: "msg_stale_command",
+      message: "Session already has an open turn: msg_stale_command",
+    }
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    for (let attempt = 0; attempt < 20 && sentCommands.length < 2; attempt++) await Bun.sleep(5)
+
+    expect(sessionStatusRefreshes).toBe(1)
+    expect(sentCommands).toHaveLength(2)
+    expect(sentCommands[0]).toMatchObject({ delivery: "steer", intent: { type: "start" } })
+    expect(sentCommands[1]).toMatchObject({ delivery: "steer", intent: { type: "start" } })
+    expect((sentCommands[1] as { id: string }).id).toBe((sentCommands[0] as { id: string }).id)
   })
 
   test("reuses the persisted follow-up message id when sending a retry", async () => {

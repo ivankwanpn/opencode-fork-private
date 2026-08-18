@@ -256,6 +256,24 @@ type SessionTurnState = {
   phase: "pending" | "active"
 }
 
+export type SessionActivity = "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user"
+
+function activityFromSnapshot(snapshot: unknown, sessionID: string) {
+  if (!snapshot || typeof snapshot !== "object") return
+  const status = (snapshot as Record<string, unknown>)[sessionID]
+  if (!status || typeof status !== "object" || !("activity" in status)) return
+  const activity = status.activity
+  if (
+    activity !== "compacting" &&
+    activity !== "dispatching" &&
+    activity !== "responding" &&
+    activity !== "running-tool" &&
+    activity !== "waiting-user"
+  )
+    return
+  return activity
+}
+
 export function createServerSession(
   projectedClient: unknown,
   sessionApiOrOptions?: SessionApi | ServerSessionOptions,
@@ -302,6 +320,7 @@ export function createServerSession(
   const durableSequences = new Map<string, number>()
   const pendingV2Recoveries = new Map<string, PendingV2Recovery>()
   const turns = new Map<string, SessionTurnState>()
+  const activities = new Map<string, SessionActivity>()
   const v2SettlementRefreshes = new Map<string, Promise<void>>()
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
@@ -587,6 +606,7 @@ export function createServerSession(
       pendingV2Hydrations.delete(sessionID)
       pendingV2Recoveries.delete(sessionID)
       turns.delete(sessionID)
+      activities.delete(sessionID)
       v2SettlementRefreshes.delete(sessionID)
       durableSequences.delete(sessionID)
       messageLoads.delete(sessionID)
@@ -1145,6 +1165,9 @@ export function createServerSession(
               const turn = activeTurnFromSnapshot(snapshot, sessionID)
               if (turn) turns.set(sessionID, turn)
               else turns.delete(sessionID)
+              const activity = activityFromSnapshot(snapshot, sessionID)
+              if (activity) activities.set(sessionID, activity)
+              else activities.delete(sessionID)
             }
             pendingV2Recoveries.delete(sessionID)
             const watermark = durableSequences.get(sessionID)
@@ -1189,7 +1212,17 @@ export function createServerSession(
     if (event.type === "session.next.turn.ended") {
       const current = turns.get(sessionID)
       if (!current || current.turnID === event.data.turnID) turns.delete(sessionID)
+      activities.delete(sessionID)
     }
+    if (event.type === "session.next.compaction.started") activities.set(sessionID, "compacting")
+    if (event.type === "session.next.compaction.ended" || event.type === "session.next.compaction.failed")
+      activities.set(sessionID, "dispatching")
+    if (event.type === "session.next.provider.attempt.started") activities.set(sessionID, "dispatching")
+    if (event.type === "session.next.provider.attempt.response.started") activities.set(sessionID, "responding")
+    if (event.type === "session.next.tool.called")
+      activities.set(sessionID, event.data.tool === "question" ? "waiting-user" : "running-tool")
+    if (event.type === "session.next.tool.success" || event.type === "session.next.tool.failed")
+      activities.set(sessionID, "responding")
     if (v2Hydrations.has(sessionID)) {
       pendingV2Hydrations.get(sessionID)?.events.push(event)
     } else {
@@ -1226,9 +1259,14 @@ export function createServerSession(
       if (info) remember({ ...info, time: { ...info.time, archived: event.created, updated: event.created } })
       evict([sessionID])
     }
-    if (event.type === "session.status")
+    if (event.type === "session.status") {
+      if (event.data.status.type === "idle") activities.delete(sessionID)
       setData("session_status", sessionID, reconcile(event.data.status as SessionStatus))
-    if (event.type === "session.idle") setData("session_status", sessionID, reconcile({ type: "idle" }))
+    }
+    if (event.type === "session.idle") {
+      activities.delete(sessionID)
+      setData("session_status", sessionID, reconcile({ type: "idle" }))
+    }
     if (event.type === "session.execution.started") setData("session_status", sessionID, reconcile({ type: "busy" }))
     if (event.type === "session.next.provider.attempt.started")
       setData("session_status", sessionID, reconcile({ type: "busy" }))
@@ -1236,8 +1274,10 @@ export function createServerSession(
       event.type === "session.execution.succeeded" ||
       event.type === "session.execution.failed" ||
       event.type === "session.execution.interrupted"
-    )
+    ) {
+      activities.delete(sessionID)
       setData("session_status", sessionID, reconcile({ type: "idle" }))
+    }
     if (event.type === "session.retry.scheduled")
       setData(
         "session_status",
@@ -1286,7 +1326,10 @@ export function createServerSession(
     if (event.type === "session.next.status") {
       const status = event.data.status
       if (status.type === "busy") setData("session_status", sessionID, reconcile({ type: "busy" }))
-      if (status.type === "idle") setData("session_status", sessionID, reconcile({ type: "idle" }))
+      if (status.type === "idle") {
+        activities.delete(sessionID)
+        setData("session_status", sessionID, reconcile({ type: "idle" }))
+      }
       if (status.type === "retry")
         setData(
           "session_status",
@@ -1821,6 +1864,9 @@ export function createServerSession(
     activeTurn(sessionID: string) {
       return turns.get(sessionID)?.turnID
     },
+    activity(sessionID: string) {
+      return activities.get(sessionID)
+    },
     turnPhase(sessionID: string) {
       return turns.get(sessionID)?.phase
     },
@@ -1829,6 +1875,12 @@ export function createServerSession(
     },
     clearTurn(sessionID: string) {
       turns.delete(sessionID)
+    },
+    setActivity(sessionID: string, activity: SessionActivity) {
+      activities.set(sessionID, activity)
+    },
+    clearActivity(sessionID: string) {
+      activities.delete(sessionID)
     },
     apply,
     applyV2,

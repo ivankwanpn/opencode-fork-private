@@ -58,6 +58,7 @@ type FollowupSendInput = {
   optimisticBusy?: boolean
   before?: () => Promise<boolean> | boolean
   onSubmitted?: (messageID: string, delivery: "queue" | "steer") => void
+  onTurnConflict?: (error: unknown) => Promise<FollowupRouting | undefined>
 }
 
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
@@ -104,6 +105,28 @@ function followupRouting(input: {
   }
 
   return { delivery: "steer", intent: { type: "start" } }
+}
+
+function isTurnConflict(error: unknown, seen = new Set<unknown>()): boolean {
+  if (typeof error !== "object" || error === null || seen.has(error)) return false
+  seen.add(error)
+  if ("_tag" in error && error._tag === "SessionTurnConflictError") return true
+  return ["cause", "body", "data", "error"].some((key) => key in error && isTurnConflict(error[key as keyof typeof error], seen))
+}
+
+async function sendWithTurnRetry<T>(
+  input: FollowupSendInput,
+  routing: { delivery: "queue" | "steer"; intent?: SessionInput.Intent },
+  send: (routing: { delivery: "queue" | "steer"; intent?: SessionInput.Intent }) => Promise<T>,
+) {
+  try {
+    return await send(routing)
+  } catch (error) {
+    if (!isTurnConflict(error) || !input.onTurnConflict) throw error
+    const retry = await input.onTurnConflict(error)
+    if (!retry) throw error
+    return send(retry)
+  }
 }
 
 export function followupDelivery(
@@ -154,25 +177,27 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       const messageID = input.messageID ?? input.draft.id ?? Identifier.ascending("message")
       const delivery = input.delivery ?? input.draft.delivery ?? "steer"
       const intent = input.intent ?? input.draft.intent
-      await input.api.command({
-        sessionID: input.draft.sessionID,
-        id: messageID,
-        command: cmd,
-        arguments: tail.join(" "),
-        agent: input.draft.agent,
-        model: {
-          id: input.draft.model.modelID,
-          providerID: input.draft.model.providerID,
-          variant: input.draft.variant,
-          protocol: input.draft.model.protocol,
-        },
-        files: images.map((attachment) => ({
-          uri: attachment.dataUrl,
-          name: attachment.filename,
-        })),
-        delivery,
-        intent,
-      })
+      await sendWithTurnRetry(input, { delivery, intent }, (routing) =>
+        input.api.command({
+          sessionID: input.draft.sessionID,
+          id: messageID,
+          command: cmd,
+          arguments: tail.join(" "),
+          agent: input.draft.agent,
+          model: {
+            id: input.draft.model.modelID,
+            providerID: input.draft.model.providerID,
+            variant: input.draft.variant,
+            protocol: input.draft.model.protocol,
+          },
+          files: images.map((attachment) => ({
+            uri: attachment.dataUrl,
+            name: attachment.filename,
+          })),
+          delivery: routing.delivery,
+          intent: routing.intent,
+        }),
+      )
       input.onSubmitted?.(messageID, delivery)
       return true
     } catch (err) {
@@ -237,39 +262,41 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
 
     const delivery = input.delivery ?? input.draft.delivery ?? "steer"
     const intent = input.intent ?? input.draft.intent
-    await input.api.prompt({
-      sessionID: input.draft.sessionID,
-      id: messageID,
-      agent: input.draft.agent,
-      model: input.draft.model,
-      variant: input.draft.variant,
-      delivery,
-      intent,
-      text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
-      files: requestParts.flatMap((part) => {
-        if (part.type !== "file") return []
-        const text = part.source?.text
-        return [
-          {
-            uri: part.url,
-            name: part.filename,
-            mention: text ? { start: text.start, end: text.end, text: text.value } : undefined,
-          },
-        ]
+    await sendWithTurnRetry(input, { delivery, intent }, (routing) =>
+      input.api.prompt({
+        sessionID: input.draft.sessionID,
+        id: messageID,
+        agent: input.draft.agent,
+        model: input.draft.model,
+        variant: input.draft.variant,
+        delivery: routing.delivery,
+        intent: routing.intent,
+        text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+        files: requestParts.flatMap((part) => {
+          if (part.type !== "file") return []
+          const text = part.source?.text
+          return [
+            {
+              uri: part.url,
+              name: part.filename,
+              mention: text ? { start: text.start, end: text.end, text: text.value } : undefined,
+            },
+          ]
+        }),
+        agents: requestParts.flatMap((part) =>
+          part.type === "agent"
+            ? [
+                {
+                  name: part.name,
+                  mention: part.source
+                    ? { start: part.source.start, end: part.source.end, text: part.source.value }
+                    : undefined,
+                },
+              ]
+            : [],
+        ),
       }),
-      agents: requestParts.flatMap((part) =>
-        part.type === "agent"
-          ? [
-              {
-                name: part.name,
-                mention: part.source
-                  ? { start: part.source.start, end: part.source.end, text: part.source.value }
-                  : undefined,
-              },
-            ]
-          : [],
-      ),
-    })
+    )
     input.onSubmitted?.(messageID, delivery)
     return true
   } catch (err) {
@@ -559,6 +586,12 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       delivery,
       intent,
     }
+    const onTurnConflict = async () => {
+      if (intent.type !== "start") return
+      await submissionServerSync.refreshSessionStatuses()
+      if ((submissionServerSync.session as TurnAwareSession).activeTurn?.(session.id)) return
+      return routing
+    }
 
     const clearInput = () => {
       submission.clear()
@@ -613,26 +646,36 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (customCommand) {
         clearInput()
         submissionServerSync.session.set("session_status", session.id, { type: "busy" })
-        submissionSessionApi
-          .command({
-            sessionID: session.id,
-            id: messageID,
-            command: commandName,
-            arguments: args.join(" "),
-            agent,
-            model: {
-              id: model.modelID,
-              providerID: model.providerID,
-              variant,
-              protocol: model.protocol,
-            },
-            files: images.map((attachment) => ({
-              uri: attachment.dataUrl,
-              name: attachment.filename,
-            })),
-            delivery,
-            intent,
-          })
+        sendWithTurnRetry(
+          {
+            api: submissionSessionApi,
+            serverSync: submissionServerSync,
+            sync: sync(),
+            draft,
+            onTurnConflict,
+          },
+          { delivery, intent },
+          (retry) =>
+            submissionSessionApi.command({
+              sessionID: session.id,
+              id: messageID,
+              command: commandName,
+              arguments: args.join(" "),
+              agent,
+              model: {
+                id: model.modelID,
+                providerID: model.providerID,
+                variant,
+                protocol: model.protocol,
+              },
+              files: images.map((attachment) => ({
+                uri: attachment.dataUrl,
+                name: attachment.filename,
+              })),
+              delivery: retry.delivery,
+              intent: retry.intent,
+            }),
+        )
           .catch((err) => {
             submissionServerSync.session.set("session_status", session.id, { type: "idle" })
             showToast({
@@ -727,6 +770,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
       onSubmitted: input.onSubmitted,
+      onTurnConflict,
     }).catch((err) => {
       pending.delete(pendingKey(session.id))
       if (sessionDirectory === projectDirectory) {

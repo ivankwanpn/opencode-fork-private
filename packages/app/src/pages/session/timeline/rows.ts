@@ -5,6 +5,7 @@ import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
 import { uniqueSummaryDiffs } from "./summary-diffs"
 import { compareMessages } from "@/utils/session-message"
+import type { SessionActivity } from "@/context/server-session"
 
 export { TimelineRow, type SummaryDiff } from "./timeline-row"
 
@@ -26,7 +27,7 @@ export type TimelineRowMap = {
     group: PartGroup
     previousAssistantPart: boolean
   }
-  Thinking: { userMessageID: string; reasoningHeading?: string }
+  Thinking: { userMessageID: string; reasoningHeading?: string; activity?: SessionActivity }
   Retry: { userMessageID: string }
   DiffSummary: { userMessageID: string; diffs: SummaryDiff[] }
   Error: { userMessageID: string; text: string }
@@ -41,6 +42,7 @@ export namespace Timeline {
     status: SessionStatus["type"],
     inlineComments: boolean,
     projectedUserMessages: UserMessage[],
+    activity?: SessionActivity,
   ) {
     const turns: { user: UserMessage; assistants: AssistantMessage[] }[] = []
     const turnByUserID = new Map<string, (typeof turns)[number]>()
@@ -93,6 +95,7 @@ export namespace Timeline {
           status,
           turn.user.id === activeMessageID,
           inlineComments,
+          activity,
         ),
       ),
     }
@@ -108,6 +111,7 @@ export namespace Timeline {
     isActive: boolean,
     // v2 renders comments inside the user message attachments row instead of a strip row
     inlineComments: boolean,
+    activity?: SessionActivity,
   ) {
     const rows: TimelineRow.TimelineRow[] = []
 
@@ -199,6 +203,7 @@ export namespace Timeline {
         new TimelineRow.Thinking({
           userMessageID: userMessage.id,
           reasoningHeading: heading,
+          activity,
         }),
       )
     }

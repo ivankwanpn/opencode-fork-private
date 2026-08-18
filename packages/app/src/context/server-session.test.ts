@@ -788,6 +788,43 @@ describe("server session", () => {
       },
     })
     expect(ctx.store.data.session_status.child).toEqual({ type: "busy" })
+    expect(ctx.store.activity("child")).toBe("dispatching")
+
+    apply({
+      ...current,
+      type: "session.next.provider.attempt.response.started",
+      data: {
+        timestamp: 10,
+        sessionID: "child",
+        attemptID: "evt_attempt_2",
+      },
+    })
+    expect(ctx.store.activity("child")).toBe("responding")
+
+    apply({
+      ...current,
+      type: "session.next.compaction.started",
+      data: {
+        timestamp: 10,
+        sessionID: "child",
+        messageID: "msg_compaction",
+        reason: "auto",
+      },
+    })
+    expect(ctx.store.activity("child")).toBe("compacting")
+
+    apply({
+      ...current,
+      type: "session.next.compaction.failed",
+      data: {
+        timestamp: 10,
+        sessionID: "child",
+        messageID: "msg_compaction",
+        reason: "auto",
+        error: { type: "unknown", message: "failed" },
+      },
+    })
+    expect(ctx.store.activity("child")).toBe("dispatching")
 
     apply({
       ...current,

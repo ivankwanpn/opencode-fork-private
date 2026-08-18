@@ -51,7 +51,7 @@ import type {
   SessionActiveOutput,
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
-import { createServerSession, type ServerSession } from "./server-session"
+import { createServerSession, type ServerSession, type SessionActivity } from "./server-session"
 import { extractArray } from "@/utils/response-helpers"
 import { toHomeSessionEvent } from "@/utils/session-snapshot"
 import {
@@ -102,6 +102,7 @@ type ApiQueryOptions<T, K extends readonly unknown[]> = SolidQueryOptions<T, Err
 type ActiveSessionStatus = SessionActiveOutput[string] & {
   readonly turnID?: string
   readonly phase?: "pending" | "active"
+  readonly activity?: SessionActivity
 }
 type ActiveSessionMap = Record<string, ActiveSessionStatus>
 
@@ -229,9 +230,24 @@ function activeSessionTurn(status: unknown) {
   return { turnID: status.turnID, phase: status.phase } as const
 }
 
+function activeSessionActivity(status: unknown) {
+  if (!status || typeof status !== "object" || !("activity" in status)) return
+  const activity = status.activity
+  if (
+    activity !== "compacting" &&
+    activity !== "dispatching" &&
+    activity !== "responding" &&
+    activity !== "running-tool" &&
+    activity !== "waiting-user"
+  )
+    return
+  return activity
+}
+
 export function seedActiveSessionStatuses(
   session: Pick<ServerSession, "data" | "set"> & {
     setTurn?: (sessionID: string, turnID: string, phase: "pending" | "active") => void
+    setActivity?: (sessionID: string, activity: SessionActivity) => void
   },
   active: ActiveSessionMap | Record<string, SessionStatus>,
 ) {
@@ -239,6 +255,8 @@ export function seedActiveSessionStatuses(
     const status = active[sessionID]
     const turn = activeSessionTurn(status)
     if (turn) session.setTurn?.(sessionID, turn.turnID, turn.phase)
+    const activity = activeSessionActivity(status)
+    if (activity) session.setActivity?.(sessionID, activity)
     if (session.data.session_status[sessionID] !== undefined) continue
     session.set("session_status", sessionID, status?.type === "running" ? { type: "busy" } : status)
   }
@@ -248,6 +266,8 @@ export function reconcileActiveSessionStatuses(
   session: Pick<ServerSession, "data" | "set"> & {
     setTurn?: (sessionID: string, turnID: string, phase: "pending" | "active") => void
     clearTurn?: (sessionID: string) => void
+    setActivity?: (sessionID: string, activity: SessionActivity) => void
+    clearActivity?: (sessionID: string) => void
   },
   active: ActiveSessionMap | Record<string, SessionStatus>,
 ) {
@@ -262,9 +282,15 @@ export function reconcileActiveSessionStatuses(
     const turn = activeSessionTurn(status)
     if (turn) session.setTurn?.(sessionID, turn.turnID, turn.phase)
     else session.clearTurn?.(sessionID)
+    const activity = activeSessionActivity(status)
+    if (activity) session.setActivity?.(sessionID, activity)
+    else session.clearActivity?.(sessionID)
   }
   for (const sessionID of Object.keys(session.data.session_status)) {
-    if (!active[sessionID]) session.clearTurn?.(sessionID)
+    if (!active[sessionID]) {
+      session.clearTurn?.(sessionID)
+      session.clearActivity?.(sessionID)
+    }
   }
 
   session.set(
@@ -356,6 +382,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       },
     }),
   )
+  const refreshSessionStatuses = async () => {
+    const result = await activeSessionsQuery.refetch()
+    if (result.data === undefined) return
+    reconcileActiveSessionStatuses(session, result.data)
+    return result.data
+  }
 
   const [globalStore, setGlobalStore] = createStore<GlobalStore>({
     get ready() {
@@ -897,6 +929,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     },
     project: projectApi,
     session,
+    refreshSessionStatuses,
     homeSessions,
     mcp: {
       toggle: async (directory: string, name: string) => {

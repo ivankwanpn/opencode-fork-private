@@ -112,11 +112,12 @@ describe("active session query", () => {
     const session = createServerSession({} as OpencodeClient)
 
     seedActiveSessionStatuses(session, {
-      ses_running: { type: "running", turnID: "msg_turn", phase: "active" },
+      ses_running: { type: "running", turnID: "msg_turn", phase: "active", activity: "compacting" },
     })
 
     expect(session.activeTurn("ses_running")).toBe("msg_turn")
     expect(session.turnPhase("ses_running")).toBe("active")
+    expect(session.activity("ses_running")).toBe("compacting")
     expect(session.data.session_status.ses_running).toEqual({ type: "busy" })
   })
 
@@ -125,6 +126,7 @@ describe("active session query", () => {
     session.set("session_status", "ses_done", { type: "busy" })
     session.set("session_status", "ses_retry", { type: "retry", attempt: 2, message: "retrying", next: 10 })
     session.setTurn("ses_done", "msg_stale", "active")
+    session.setActivity("ses_done", "responding")
 
     const reload = reconcileActiveSessionStatuses(session, { ses_running: { type: "running" } })
 
@@ -134,6 +136,7 @@ describe("active session query", () => {
       ses_running: { type: "busy" },
     })
     expect(session.activeTurn("ses_done")).toBeUndefined()
+    expect(session.activity("ses_done")).toBeUndefined()
     expect(reload.sort()).toEqual(["ses_done", "ses_retry", "ses_running"])
   })
 })

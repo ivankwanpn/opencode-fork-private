@@ -3,6 +3,7 @@ import type { AssistantMessage, Message, Part, SessionStatus, UserMessage } from
 import { createMemo, type Accessor } from "solid-js"
 import { reuseTimelineRows } from "./row-reconciliation"
 import { Timeline, TimelineRow } from "./rows"
+import type { SessionActivity } from "@/context/server-session"
 
 export { reuseTimelineRows } from "./row-reconciliation"
 
@@ -12,6 +13,7 @@ export function createTimelineProjection(input: {
   sessionMessages: Accessor<SessionMessageInfo[]>
   parts: (messageID: string) => Part[]
   status: Accessor<SessionStatus>
+  activity: Accessor<SessionActivity | undefined>
   showReasoningSummaries: Accessor<boolean>
   inlineComments: Accessor<boolean>
 }) {
@@ -38,6 +40,7 @@ export function createTimelineProjection(input: {
       input.status().type,
       input.inlineComments(),
       input.userMessages(),
+      input.activity(),
     ),
   )
   const activeMessageID = createMemo(() => projection().activeMessageID)

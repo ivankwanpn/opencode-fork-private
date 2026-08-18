@@ -128,12 +128,22 @@ const markBoundaryGesture = (input: {
   }
 }
 
-function TimelineThinkingRow(props: { reasoningHeading?: string; showReasoningSummaries: boolean }) {
+function TimelineThinkingRow(props: {
+  reasoningHeading?: string
+  showReasoningSummaries: boolean
+  activity?: import("@/context/server-session").SessionActivity
+}) {
   const language = useLanguage()
+  const label = () =>
+    props.activity === "compacting"
+      ? language.t("ui.sessionTurn.status.compacting")
+      : props.activity === "waiting-user"
+        ? language.t("ui.sessionTurn.status.waitingForInput")
+        : language.t("ui.sessionTurn.status.thinking")
 
   return (
-    <div data-slot="session-turn-thinking">
-      <TextShimmer text={language.t("ui.sessionTurn.status.thinking")} />
+    <div data-slot="session-turn-thinking" data-activity={props.activity}>
+      <TextShimmer text={label()} />
       <Show when={!props.showReasoningSummaries}>
         <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
       </Show>
@@ -335,6 +345,10 @@ export function MessageTimeline(props: {
     sessionMessages: projectedMessages,
     parts: getMsgParts,
     status: sessionStatus,
+    activity: () => {
+      const id = sessionID()
+      return id ? sync().session.activity(id) : undefined
+    },
     showReasoningSummaries: settings.general.showReasoningSummaries,
     inlineComments: settings.general.newLayoutDesigns,
   })
@@ -1266,6 +1280,7 @@ export function MessageTimeline(props: {
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
               <TimelineThinkingRow
                 reasoningHeading={thinkingRow().reasoningHeading}
+                activity={thinkingRow().activity}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
               />
             </div>

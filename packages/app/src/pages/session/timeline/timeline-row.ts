@@ -1,6 +1,7 @@
 import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import type { PartGroup } from "@opencode-ai/session-ui/message-part"
 import { Data, Equal } from "effect"
+import type { SessionActivity } from "@/context/server-session"
 
 export type SummaryDiff = SnapshotFileDiff & { file: string }
 
@@ -27,6 +28,7 @@ export namespace TimelineRow {
   export class Thinking extends Data.TaggedClass("Thinking")<{
     userMessageID: string
     reasoningHeading?: string
+    activity?: SessionActivity
   }> {}
   export class DiffSummary extends Data.TaggedClass("DiffSummary")<{
     userMessageID: string

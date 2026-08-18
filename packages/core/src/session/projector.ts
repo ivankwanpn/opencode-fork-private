@@ -89,7 +89,7 @@ function applyUsage(
     .pipe(Effect.orDie)
 }
 
-function run(db: DatabaseService, event: SessionEvent.Event) {
+function run(db: DatabaseService, event: SessionEvent.DurableEvent) {
   return Effect.gen(function* () {
     const decodeRow = (row: typeof SessionMessageTable.$inferSelect) =>
       decodeMessage({ ...row.data, id: row.id, type: row.type })
@@ -170,7 +170,7 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
   })
 }
 
-function insertMessage(db: DatabaseService, event: SessionEvent.Event, message: SessionMessage.Message) {
+function insertMessage(db: DatabaseService, event: SessionEvent.DurableEvent, message: SessionMessage.Message) {
   if (event.durable === undefined) return Effect.die("Durable Session event is missing aggregate sequence")
   const encoded = encodeMessage(message)
   const { id, type, ...data } = encoded

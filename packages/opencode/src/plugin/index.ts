@@ -16,7 +16,7 @@ import { ConfigPlugin } from "@/config/plugin"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { ServerAuth } from "@/server/auth"
 import { CodexAuthPlugin } from "./openai/codex"
-import { Session } from "@/session/session"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { CopilotAuthPlugin } from "./github-copilot/copilot"
 import { gitlabAuthPlugin as GitlabAuthPlugin } from "opencode-gitlab-auth"
@@ -27,7 +27,7 @@ import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { ModalPlugin } from "./modal/modal"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
-import { Effect, Layer, Context } from "effect"
+import { DateTime, Effect, Layer, Context } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { errorMessage } from "@/util/error"
@@ -185,7 +185,16 @@ const layer = Layer.effect(
           .pipe(Layer.orDie)
 
         function publishPluginError(message: string) {
-          bridge.fork(events.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
+          bridge.fork(
+            DateTime.now.pipe(
+              Effect.flatMap((timestamp) =>
+                events.publish(SessionEvent.Error, {
+                  timestamp,
+                  error: new NamedError.Unknown({ message }).toObject(),
+                }),
+              ),
+            ),
+          )
         }
 
         function recordRuntimeFailure(runtimeID: string | undefined, message: string) {

@@ -9,8 +9,8 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
-import { SessionV1 } from "@opencode-ai/schema/session-v1"
-import { Cause, Context, Effect, Layer, Schema, Scope } from "effect"
+import { SessionEvent } from "@opencode-ai/core/session/event"
+import { Cause, Context, DateTime, Effect, Layer, Schema, Scope } from "effect"
 import { MessageV2 } from "./message-v2"
 import { LegacySessionRead } from "./legacy-session-read"
 import { SessionRunState } from "./run-state"
@@ -233,7 +233,8 @@ const make = Effect.gen(function* () {
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
           yield* Effect.logError("prompt_async failed", { sessionID: input.session.id, cause })
-          yield* events.publish(SessionV1.Event.Error, {
+          yield* events.publish(SessionEvent.Error, {
+            timestamp: yield* DateTime.now,
             sessionID: input.session.id,
             error: new NamedError.Unknown({ message: Cause.pretty(cause) }).toObject(),
           })

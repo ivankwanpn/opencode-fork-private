@@ -34,9 +34,14 @@ Created/Updated/Deleted branches 與 `sessionRow(SessionV1.Info)` 已刪除，V1
 
 **999.0.19 durable manifest closeout**：7 個 SessionV1 durable definitions（lifecycle 3 個、message/part 4 個）
 已從 `DurableEventManifest.Durable` 移除，durable map 由 54 降至 47，只接受 canonical SessionEvent replay。
-全部 SessionV1 definitions 暫留 `ServerDefinitions` compatibility 區，因此 public Latest/OpenAPI/SSE union 仍保持
+全部 SessionV1 definitions 暫留 `ServerDefinitions`，並保持原 public 排序，因此 Latest/OpenAPI/SSE union 仍保持
 106 個事件，舊 wire consumer 不會在此批被靜默刪除。Core generic Event fixture 與 database migration restart 測試
 也改用 V2 durable definitions。
+
+**999.0.19 Session error producer closeout**：新增 public live `session.next.error`，payload 保留 optional Session ID
+與 named-error `{ name, data }` 形狀。Core drain failure、legacy async adapter、plugin runtime 與 skill discovery
+producers 全部切到 V2；EventV2Bridge 對舊 CLI/TUI/App consumer 純投影 `session.error`。public event inventory
+由 106 增至 107，durable map 維持 47；Client generation 為 identity，沒有手動修改 generated files。
 
 ---
 
@@ -349,7 +354,8 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 >
 > **仍阻止实际删表/删目录的依赖** ⏸️：
 > - `session/session.ts` 已不含 repository/layer，只剩 legacy HTTP wire schema、BusyError、event alias 與通用 helpers；legacy route/plugin/CLI consumer 未遷移前仍不能整檔刪除。
-> - Durable manifest 已 V2-only；`ServerDefinitions` compatibility 區仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
+> - Durable manifest 已 V2-only；`ServerDefinitions` 仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
+> - `session.error` producer 已 V2-only；舊 consumer 暫經 bridge 投影，下一個 producer closeout 可處理 `SessionStatusEvent.Idle` 等仍重複發布的 live 相容事件。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >

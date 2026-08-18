@@ -423,6 +423,20 @@ describe("legacy event projection", () => {
     })
   })
 
+  test("projects direct V2 Session errors with optional Session identity", () => {
+    const project = legacyEventProjection()
+    const error = { name: "UnknownError", data: { message: "failed" } }
+
+    expect(
+      project(canonicalEvent("session.next.error", { timestamp: 1, sessionID: "ses_test", error })),
+    ).toEqual([
+      expect.objectContaining({ type: "session.error", properties: { sessionID: "ses_test", error } }),
+    ])
+    expect(project(canonicalEvent("session.next.error", { timestamp: 2, error }))).toEqual([
+      expect.objectContaining({ type: "session.error", properties: { error } }),
+    ])
+  })
+
   test("keeps durable tool discovery out of the legacy event stream", () => {
     const project = legacyEventProjection()
     const source = canonicalEvent("session.next.tool-discovery.completed", {

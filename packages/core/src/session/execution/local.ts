@@ -21,7 +21,6 @@ import { SessionEvent } from "../event"
 import { mutateSession } from "../mutation"
 import { EventV2 } from "../../event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
-import { SessionV1 } from "@opencode-ai/schema/v1/session"
 
 type DB = Database.Interface["db"]
 
@@ -300,13 +299,18 @@ const layer = Layer.effect(
                 : Effect.all(
                     [
                       Effect.logError("Failed to drain Session", cause).pipe(Effect.annotateLogs({ sessionID })),
-                      events.publish(
-                        SessionV1.Event.Error,
-                        {
-                          sessionID,
-                          error: { name: "UnknownError", data: { message: Cause.pretty(cause) } },
-                        },
-                        { location: session.location },
+                      DateTime.now.pipe(
+                        Effect.flatMap((timestamp) =>
+                          events.publish(
+                            SessionEvent.Error,
+                            {
+                              timestamp,
+                              sessionID,
+                              error: { name: "UnknownError", data: { message: Cause.pretty(cause) } },
+                            },
+                            { location: session.location },
+                          ),
+                        ),
                       ),
                     ],
                     { discard: true },

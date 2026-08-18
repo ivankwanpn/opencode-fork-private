@@ -207,6 +207,14 @@ export function legacyEventProjection() {
   return (source: EventV2.Payload): ReadonlyArray<LegacyEvent> => {
     const data = source.data as Record<string, any>
     const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
+    if (source.type === SessionEvent.Error.type) {
+      return [
+        event("session.error", {
+          ...(sessionID === undefined ? {} : { sessionID: SessionID.make(sessionID) }),
+          error: data.error,
+        }),
+      ]
+    }
     if (!sessionID) return []
 
     if (source.type === "permission.v2.asked") {

@@ -268,6 +268,10 @@ describe("SessionExecution recovery", () => {
       const inputID = SessionMessage.ID.make("msg_live_drain_failure")
       const attemptID = EventV2.ID.make("evt_live_drain_failure")
       const assistantMessageID = SessionMessage.ID.make("msg_live_drain_failure_assistant")
+      const errors: EventV2.Payload[] = []
+      yield* events.listen((event) =>
+        event.type === SessionEvent.Error.type ? Effect.sync(() => errors.push(event)) : Effect.void,
+      )
       yield* SessionInput.admit(db, events, {
         id: inputID,
         sessionID: nonTaskSessionID,
@@ -310,6 +314,14 @@ describe("SessionExecution recovery", () => {
         attemptID,
         outcome: "failed",
         continuation: false,
+      })
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({
+        type: "session.next.error",
+        data: {
+          sessionID: nonTaskSessionID,
+          error: { name: "UnknownError", data: { message: expect.stringContaining("runner defect") } },
+        },
       })
     }),
   )

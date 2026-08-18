@@ -174,6 +174,22 @@ const stepSettlementOptions = {
 export const UnknownError = SessionMessage.UnknownError
 export type UnknownError = SessionMessage.UnknownError
 
+export const ErrorInfo = Schema.Struct({
+  name: Schema.String,
+  data: Schema.Unknown,
+}).annotate({ identifier: "Session.Error.Info" })
+export interface ErrorInfo extends Schema.Schema.Type<typeof ErrorInfo> {}
+
+export const Error = Event.define({
+  type: "session.next.error",
+  schema: {
+    timestamp: DateTimeUtcFromMillis,
+    sessionID: SessionID.pipe(optional),
+    error: ErrorInfo,
+  },
+})
+export type Error = typeof Error.Type
+
 export const AgentSwitched = Event.define({
   type: "session.next.agent.switched",
   ...options,
@@ -850,6 +866,7 @@ const LifecycleDefinitions = Event.inventory(
   Created,
   Updated,
   Deleted,
+  Error,
   Status,
   Diff,
   AgentSwitched,

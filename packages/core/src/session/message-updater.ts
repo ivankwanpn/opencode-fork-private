@@ -104,6 +104,7 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
       "session.next.created": () => Effect.void,
       "session.next.updated": () => Effect.void,
       "session.next.deleted": () => Effect.void,
+      "session.next.error": () => Effect.void,
       "session.next.status": () => Effect.void,
       "session.next.diff": () => Effect.void,
       "session.next.agent.switched": (event) => {

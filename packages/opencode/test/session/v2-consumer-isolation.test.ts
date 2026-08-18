@@ -49,3 +49,13 @@ test("production runtime does not resolve or mount the legacy Session service", 
 
   expect(offenders).toEqual([])
 })
+
+test("legacy Session wire module cannot recreate a repository or lifecycle producer", async () => {
+  const source = await Bun.file(new URL("../../src/session/session.ts", import.meta.url)).text()
+
+  expect(source).not.toContain("Context.Service")
+  expect(source).not.toContain("LayerNode.make")
+  expect(source).not.toContain("events.publish(SessionV1.Event.Created")
+  expect(source).not.toContain("events.publish(SessionV1.Event.Updated")
+  expect(source).not.toContain("events.publish(SessionV1.Event.Deleted")
+})

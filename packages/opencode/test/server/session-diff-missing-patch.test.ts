@@ -14,8 +14,9 @@ import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { DateTime, Effect, Layer } from "effect"
 import { SessionPaths } from "@/server/routes/instance/httpapi/groups/session"
-import { Session } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
 import { Storage } from "@/storage/storage"
 import { MessageID } from "@/session/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -28,10 +29,12 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestSessionV2, type Input as TestSessionInput } from "../fixture/session-v2"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(LayerNode.group([Session.node, Storage.node, Database.node]), [
+    LayerNode.compile(LayerNode.group([SessionV2.node, Storage.node, Database.node]), [
+      [LocationServiceMap.node, locationServiceMapV2Layer],
       [SessionExecution.node, SessionExecution.noopLayer],
     ]),
     httpApiLayer,
@@ -47,8 +50,11 @@ function pathFor(template: string, params: Record<string, string>) {
   return Object.entries(params).reduce((result, [key, value]) => result.replace(`:${key}`, value), template)
 }
 
-const withSession = (input?: Parameters<Session.Interface["create"]>[0]) =>
-  Effect.acquireRelease(Session.use.create(input), (created) => Session.use.remove(created.id).pipe(Effect.ignore))
+const withSession = (input?: TestSessionInput) =>
+  Effect.acquireRelease(
+    TestSessionV2.create(input),
+    (created) => SessionV2.Service.use((session) => session.remove(created.id).pipe(Effect.ignore)),
+  )
 
 describe("session diff with missing patch (#26574)", () => {
   it.instance(

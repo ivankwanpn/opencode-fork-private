@@ -174,28 +174,6 @@ describe("Session input schemas", () => {
     expect(decode(bare)).toEqual(bare)
   })
 
-  test("SetTitleInput rejects missing title", () => {
-    expect(() => decodeUnknown(Session.SetTitleInput)({ sessionID })).toThrow()
-  })
-
-  test("SetArchivedInput accepts both with and without time", () => {
-    const decode = decodeUnknown(Session.SetArchivedInput)
-    expect(decode({ sessionID })).toEqual({ sessionID })
-    expect(decode({ sessionID, time: 123 })).toEqual({ sessionID, time: 123 })
-  })
-
-  test("SetPermissionInput requires a ruleset", () => {
-    const decode = decodeUnknown(Session.SetPermissionInput)
-    const input = { sessionID, permission: [{ action: "deny" as const, pattern: "*", permission: "write" }] }
-    expect(decode(input)).toEqual(input)
-    expect(() => decode({ sessionID })).toThrow()
-  })
-
-  test("MessagesInput accepts optional limit", () => {
-    const decode = decodeUnknown(Session.MessagesInput)
-    expect(decode({ sessionID })).toEqual({ sessionID })
-    expect(decode({ sessionID, limit: 50 })).toEqual({ sessionID, limit: 50 })
-  })
 })
 
 describe("SessionRevert.RevertInput", () => {

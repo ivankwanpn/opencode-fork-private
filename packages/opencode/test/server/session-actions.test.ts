@@ -2,15 +2,17 @@ import { afterEach, describe, expect, mock } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
 import { Session as SessionNs } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestSessionV2 } from "../fixture/session-v2"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(SessionNs.node, [
+    LayerNode.compile(SessionV2.node, [
       [SessionExecution.node, SessionExecution.noopLayer],
       [LocationServiceMap.node, locationServiceMapV2Layer],
     ]),
@@ -76,8 +78,8 @@ describe("session action routes", () => {
         expect(reset.status).toBe(200)
         expect(((yield* reset.json) as SessionNs.Info).metadata).toEqual({})
 
-        yield* SessionNs.Service.use((svc) => svc.remove(fork.id).pipe(Effect.ignore))
-        yield* SessionNs.Service.use((svc) => svc.remove(session.id).pipe(Effect.ignore))
+        yield* SessionV2.Service.use((svc) => svc.remove(SessionV2.ID.make(fork.id)).pipe(Effect.ignore))
+        yield* SessionV2.Service.use((svc) => svc.remove(SessionV2.ID.make(session.id)).pipe(Effect.ignore))
       }),
     { git: true },
   )
@@ -87,8 +89,8 @@ describe("session action routes", () => {
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
-        const session = yield* Effect.acquireRelease(SessionNs.use.create({}), (created) =>
-          SessionNs.use.remove(created.id).pipe(Effect.ignore),
+        const session = yield* Effect.acquireRelease(TestSessionV2.create(), (created) =>
+          SessionV2.Service.use((svc) => svc.remove(created.id).pipe(Effect.ignore)),
         )
 
         const res = yield* requestInDirectory(`/session/${session.id}/abort`, test.directory, { method: "POST" })
@@ -114,8 +116,8 @@ describe("session action routes", () => {
     () =>
       Effect.gen(function* () {
         const test = yield* TestInstance
-        const session = yield* Effect.acquireRelease(SessionNs.use.create({}), (created) =>
-          SessionNs.use.remove(created.id).pipe(Effect.ignore),
+        const session = yield* Effect.acquireRelease(TestSessionV2.create(), (created) =>
+          SessionV2.Service.use((svc) => svc.remove(created.id).pipe(Effect.ignore)),
         )
 
         const res = yield* requestInDirectory(`/experimental/session/${session.id}/background`, test.directory, {

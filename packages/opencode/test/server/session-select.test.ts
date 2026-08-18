@@ -1,16 +1,17 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { Effect, Layer } from "effect"
-import { Session } from "@/session/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { TestSessionV2 } from "../fixture/session-v2"
 import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(Session.node, [
+    LayerNode.compile(SessionV2.node, [
       [LocationServiceMap.node, locationServiceMapV2Layer],
       [SessionExecution.node, SessionExecution.noopLayer],
     ]),
@@ -24,7 +25,7 @@ describe("tui.selectSession endpoint", () => {
     () =>
       Effect.gen(function* () {
         const tmp = yield* TestInstance
-        const session = yield* Session.use.create({})
+        const session = yield* TestSessionV2.create()
 
         const response = yield* requestInDirectory("/tui/select-session", tmp.directory, {
           method: "POST",

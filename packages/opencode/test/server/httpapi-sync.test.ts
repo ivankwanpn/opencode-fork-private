@@ -4,8 +4,10 @@ import { Context, Effect, Layer } from "effect"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { SyncPaths } from "../../src/server/routes/instance/httpapi/groups/sync"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
-import { Session } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
+import { TestSessionV2 } from "../fixture/session-v2"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -13,7 +15,15 @@ import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 const originalWorkspaces = Flag.OPENCODE_EXPERIMENTAL_WORKSPACES
 const context = Context.empty() as Context.Context<unknown>
-const it = testEffect(Layer.mergeAll(LayerNode.compile(Session.node, [[SessionExecution.node, SessionExecution.noopLayer]]), httpApiLayer))
+const it = testEffect(
+  Layer.mergeAll(
+    LayerNode.compile(SessionV2.node, [
+      [LocationServiceMap.node, locationServiceMapV2Layer],
+      [SessionExecution.node, SessionExecution.noopLayer],
+    ]),
+    httpApiLayer,
+  ),
+)
 
 afterEach(async () => {
   mock.restore()
@@ -30,7 +40,7 @@ describe("sync HttpApi", () => {
         Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
         const tmp = yield* TestInstance
         const headers = { "x-opencode-directory": tmp.directory, "content-type": "application/json" }
-        const session = yield* Session.use.create({ title: "sync" })
+        const session = yield* TestSessionV2.create({ title: "sync" })
 
         const started = yield* requestInDirectory(SyncPaths.start, tmp.directory, { method: "POST", headers })
         expect(started.status).toBe(200)

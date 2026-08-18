@@ -19,7 +19,6 @@ import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
@@ -441,31 +440,6 @@ describe("SessionV2.create", () => {
       yield* db.update(SessionTable).set({ agent: "build" }).where(eq(SessionTable.id, id)).run().pipe(Effect.orDie)
 
       expect(yield* session.create(input)).toMatchObject({ id: created.id, agent: "build" })
-    }),
-  )
-
-  it.effect("returns the current Session projection after projected updates", () =>
-    Effect.gen(function* () {
-      const session = yield* SessionV2.Service
-      const events = yield* EventV2.Service
-      const input = { id, location }
-      const created = yield* session.create(input)
-
-      yield* events.publish(SessionV1.Event.Updated, {
-        sessionID: id,
-        info: SessionV1.SessionInfo.make({
-          id,
-          slug: "updated",
-          version: "test",
-          projectID: created.projectID,
-          directory: created.location.directory,
-          title: "updated",
-          agent: "build",
-          time: { created: 0, updated: 1 },
-        }),
-      })
-
-      expect(yield* session.create(input)).toMatchObject({ id, agent: "build" })
     }),
   )
 

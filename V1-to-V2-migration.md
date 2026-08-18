@@ -17,16 +17,19 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 也已完成：运行时读取、mutation/revert 与 CLI import/export 全部只使用 canonical V2 transcript；retained
 legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
 `session_message_tombstone` 已从當前 schema 刪除並生成 drop migration。`Session.Service` production consumer
-也已在 999.0.19 清零；下一阻塞點是拆除仍混在 legacy Session 模組中的 wire schema/helpers、死 service source
-與 Core V1 lifecycle projector。整個 V1 → V2 遷移尚未完成，不能以 transcript 或 consumer hard cut 代替最終完成狀態。
+也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。下一阻塞點是
+event manifest 仍註冊 V1 durable definitions，以及 legacy HTTP/plugin/CLI/ACP wire schema 仍引用 V1 型別。整個
+V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
 **999.0.19 進度**：production runtime 已無 `Session.Service` / `Session.node` consumer。CLI session/stats/GitHub、
 workspace/sync、share、TUI validation、legacy execution adapter、legacy task/code-mode 與 experimental global list
 均改讀寫 `SessionV2`；新增 source gate 阻止 production graph 重新掛載舊 Session service。`SessionV2.list` 補齊
 archived 與 updated-time reporting filter，`SessionV2.move` 以 canonical `SessionEvent.Moved` 處理 workspace
-placement，share subscriber 改消費 V2 Updated/Diff/Deleted。舊 `session/session.ts` 暫時仍承載 legacy HTTP schema、
-BusyError、event alias、usage/background helpers，以及已不可達的舊 service source；Core projector 也仍保留 V1
-lifecycle replay branch。下一步是拆出仍需的純相容資產後刪除這些不可達實作與 V1 lifecycle projector。
+placement，share subscriber 改消費 V2 Updated/Diff/Deleted。舊 `Service`/`Interface`/`layer`/row
+repository/list/mutation implementation 與所有 V1 lifecycle publisher 已從 `session/session.ts` 刪除；該模組現在只保留明確的 legacy
+HTTP wire schema、event alias、BusyError、title/usage/background helpers。舊 repository 專用測試已刪除，仍在測
+現役 workspace/share/task/HttpApi 行為的 fixtures 全部改用 canonical V2。Core projector 的 V1
+Created/Updated/Deleted branches 與 `sessionRow(SessionV1.Info)` 已刪除，V1 import allowlist 同步縮小。
 
 ---
 
@@ -35,7 +38,7 @@ lifecycle replay branch。下一步是拆出仍需的純相容資產後刪除這
 | 区域 | 现状 | 判定 |
 |---|---|---|
 | Session 执行（prompt/command/shell/init） | `LegacySessionExecution` 仅保留外部请求/响应形状，内部选择、权限、admission 与执行全部走 V2；V1 `SessionPrompt.loop` 已删除 | **V2-only 执行，wire 壳待收** |
-| Session CRUD（list/get/create/fork/title/metadata） | production consumer 已全部走 `SessionV2`；舊 service source 不再掛載，待拆除 schema/helper 後刪檔 | **V2-only runtime，死碼待刪** |
+| Session CRUD（list/get/create/fork/title/metadata） | production consumer 與 Core projector 全部走 `SessionV2`；舊 repository/layer source 已刪除 | **V2-only runtime，wire schema 待收** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
 | Tool registry | V1 `ToolRegistry`（opencode 包）死代码；V2 `ToolRegistry`（core）完整（direct/deferred/hidden + settlement） | **V2 已接管** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
@@ -314,6 +317,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - share state 走 `SessionV2.update` 的 value/null 語義；share transcript 從 canonical messages 純投影到既有 remote wire；subscriber 改聽 V2 Updated/Diff/Deleted。
 > - legacy task/code-mode 從 V2 permissions/get/create 取得 Session 狀態；GitHub Action 建立 Session 不再發布 V1 Created。
 > - HttpApi Exerciser 的 seed/get/messages helpers 已改 V2，因此 runtime graph 移除 `Session.node` 後不靠測試專用 fallback。
+> - **後續 closeout**：不可達的 OpenCode Session repository/layer 與 V1 lifecycle publishers 已刪除；所有現役測試 seed 改用 V2 fixture，Core projector 不再接受 V1 Created/Updated/Deleted。
 >
 > **前置条件 ① TUI consumer 边界** ✅：`useEvent` 是明确的 V1/V2 边界 adapter（V2 原生流 → V1 词汇投影），满足产品决策「迁移到 V2 词汇或明确的边界 adapter」。强制 consumer 改用 V2 会破坏 6 个调用方的 Event 类型联合，边界 adapter 是正确选择。
 >
@@ -337,14 +341,13 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - `PermissionV2.configured` 与 CodeMode 执行期 catalog 过滤统一为 agent → Session → prompt overrides 三源合并（`evaluate` 的 last-match-wins 不变）；Session 级规则可通过 `setPermissions` 生效。
 >
 > **仍阻止实际删表/删目录的依赖** ⏸️：
-> - `Session.Service` 已不可達，但 `session/session.ts` 仍混合 legacy HTTP schema、BusyError、event alias、usage/background helper 與舊 service implementation；需先拆出仍活躍資產再刪除死 service source。
-> - Core projector 仍消费部分 V1 session lifecycle/event 形状，以维持尚未迁移的旧 API 与兼容事件投影。
+> - `session/session.ts` 已不含 repository/layer，只剩 legacy HTTP wire schema、BusyError、event alias 與通用 helpers；legacy route/plugin/CLI consumer 未遷移前仍不能整檔刪除。
+> - Core projector 已 V2-only，但 schema event manifest/durable manifest 仍註冊 V1 lifecycle definitions，外部 compatibility projection 也仍依賴其型別。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
-> **批次 8 下一步**：Session mutation surface 與 production consumer 已 canonical。接下来拆分
-> `session/session.ts` 中仍需的 legacy wire schema、BusyError 與通用 helpers，刪除不可達的 service/layer 與 V1
-> Created/Updated/Deleted 發布點，再移除 Core 對應 compatibility projector；之后按 Config/Provider/Agent/Permission 与外部
+> **批次 8 下一步**：Session mutation、production consumer、repository 與 projector 已 canonical。接下来縮減
+> event/durable manifest 的 V1 lifecycle registration，並逐一遷移 legacy HTTP/plugin/CLI/TUI/ACP wire consumer；之后按 Config/Provider/Agent/Permission 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
 >

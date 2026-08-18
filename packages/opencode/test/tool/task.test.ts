@@ -18,11 +18,11 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
-import { Session } from "@/session/session"
 import { LegacySessionInput } from "../../src/session/legacy-session-input"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
+import { SessionRemoval } from "@/session/removal"
 
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
 import { Truncate } from "@/tool/truncate"
@@ -34,6 +34,8 @@ import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionInputTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "@opencode-ai/core/session/sql"
+import { toV1Rules } from "@opencode-ai/core/session/info"
+import { TestSessionV2 } from "../fixture/session-v2"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -52,7 +54,6 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       EventV2Bridge.node,
       Config.node,
       CrossSpawnSpawner.node,
-      Session.node,
       SessionV2.node,
       SessionProjector.node,
       EventV2.node,
@@ -62,6 +63,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       TaskCancellation.node,
       SessionRunState.node,
       SessionStatus.node,
+      SessionRemoval.node,
       Truncate.node,
       ToolRegistry.node,
       Database.node,
@@ -215,9 +217,8 @@ function defer<T>() {
 }
 
 const seed = Effect.fn("TaskToolTest.seed")(function* (title = "Pinned") {
-  const session = yield* Session.Service
   const canonical = yield* SessionV2.Service
-  const chat = yield* session.create({ title })
+  const chat = yield* TestSessionV2.create({ title })
   const user = SessionMessage.User.make({
     id: SessionMessage.ID.create(),
     type: "user",
@@ -315,7 +316,7 @@ describe("tool.task", () => {
 
   it.instance("resolves specialized research and worker agents", () =>
     Effect.gen(function* () {
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -362,7 +363,7 @@ describe("tool.task", () => {
 
   it.instance("rejects primary and hidden agents as task targets", () =>
     Effect.gen(function* () {
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -481,7 +482,7 @@ describe("tool.task", () => {
     "accepts configured agents with mode all",
     () =>
       Effect.gen(function* () {
-        const sessions = yield* Session.Service
+        const sessions = yield* SessionV2.Service
         const { chat, assistant } = yield* seed()
         const tool = yield* TaskTool
         const def = yield* tool.init()
@@ -519,9 +520,9 @@ describe("tool.task", () => {
 
   it.instance("execute resumes an existing task session from task_id", () =>
     Effect.gen(function* () {
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat, assistant } = yield* seed()
-      const child = yield* sessions.create({ parentID: chat.id, title: "Existing child" })
+      const child = yield* TestSessionV2.create({ parentID: chat.id, title: "Existing child" })
       const tool = yield* TaskTool
       const def = yield* tool.init()
       let seen: LegacySessionInput.PromptInput | undefined
@@ -561,7 +562,7 @@ describe("tool.task", () => {
 
   it.instance("accepts general-purpose as a compatibility alias for general", () =>
     Effect.gen(function* () {
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -586,7 +587,7 @@ describe("tool.task", () => {
 
       const kids = yield* sessions.children(chat.id)
       expect(kids).toHaveLength(1)
-      expect(kids[0]?.agent).toBe("general")
+      expect(String(kids[0]?.agent)).toBe("general")
       expect(result.output).toContain(`<task id="${result.metadata.sessionId}" state="completed">`)
       expect(calls[0]).toEqual({
         permission: "task",
@@ -698,7 +699,7 @@ describe("tool.task", () => {
 
   it.instance("execute creates a child when task_id does not exist", () =>
     Effect.gen(function* () {
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -738,9 +739,9 @@ describe("tool.task", () => {
 
   it.instance("prevents subagents from launching subagents by default", () =>
     Effect.gen(function* () {
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat, assistant } = yield* seed()
-      const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+      const child = yield* TestSessionV2.create({ parentID: chat.id, title: "child" })
       const nestedAssistant = yield* importNestedAssistant(child.id, assistant)
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -776,9 +777,9 @@ describe("tool.task", () => {
     "allows nested subagents up to the configured depth",
     () =>
       Effect.gen(function* () {
-        const sessions = yield* Session.Service
+        const sessions = yield* SessionV2.Service
         const { chat, assistant } = yield* seed()
-        const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+        const child = yield* TestSessionV2.create({ parentID: chat.id, title: "child" })
         const nestedAssistant = yield* importNestedAssistant(child.id, assistant)
         const tool = yield* TaskTool
         const def = yield* tool.init()
@@ -810,7 +811,7 @@ describe("tool.task", () => {
     "execute shapes child permissions for task, todowrite, and primary tools",
     () =>
       Effect.gen(function* () {
-        const sessions = yield* Session.Service
+        const sessions = yield* SessionV2.Service
         const { chat, assistant } = yield* seed()
         const tool = yield* TaskTool
         const def = yield* tool.init()
@@ -837,8 +838,8 @@ describe("tool.task", () => {
 
         const child = yield* sessions.get(result.metadata.sessionId)
         expect(child.parentID).toBe(chat.id)
-        expect(child.agent).toBe("reviewer")
-        expect(child.permission).toEqual([
+        expect(String(child.agent)).toBe("reviewer")
+        expect(toV1Rules(yield* sessions.permissions(child.id))).toEqual([
           {
             permission: "todowrite",
             pattern: "*",
@@ -1358,7 +1359,7 @@ describe("tool.task", () => {
   background.instance("removing the parent session cancels running background tasks", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
-      const sessions = yield* Session.Service
+      const removal = yield* SessionRemoval.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -1387,7 +1388,7 @@ describe("tool.task", () => {
         },
       )
 
-      yield* sessions.remove(chat.id)
+      yield* removal.remove(chat.id)
       const waited = yield* jobs.wait({ id: result.metadata.sessionId, timeout: 1_000 })
       expect(waited.timedOut).toBe(false)
       expect(waited.info?.status).toBe("cancelled")
@@ -1397,7 +1398,7 @@ describe("tool.task", () => {
   background.instance("removing the child task session cancels its running background task", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
-      const sessions = yield* Session.Service
+      const removal = yield* SessionRemoval.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -1426,7 +1427,7 @@ describe("tool.task", () => {
         },
       )
 
-      yield* sessions.remove(result.metadata.sessionId)
+      yield* removal.remove(result.metadata.sessionId)
       const waited = yield* jobs.wait({ id: result.metadata.sessionId, timeout: 1_000 })
       expect(waited.timedOut).toBe(false)
       expect(waited.info?.status).toBe("cancelled")
@@ -1476,9 +1477,9 @@ describe("tool.task", () => {
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const runState = yield* SessionRunState.Service
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat } = yield* seed()
-      const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+      const child = yield* TestSessionV2.create({ parentID: chat.id, title: "child" })
 
       yield* jobs.start({
         id: child.id,
@@ -1497,10 +1498,10 @@ describe("tool.task", () => {
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const runState = yield* SessionRunState.Service
-      const sessions = yield* Session.Service
+      const sessions = yield* SessionV2.Service
       const { chat } = yield* seed()
-      const child = yield* sessions.create({ parentID: chat.id, title: "child" })
-      const grandchild = yield* sessions.create({ parentID: child.id, title: "grandchild" })
+      const child = yield* TestSessionV2.create({ parentID: chat.id, title: "child" })
+      const grandchild = yield* TestSessionV2.create({ parentID: child.id, title: "grandchild" })
 
       yield* jobs.start({
         id: child.id,

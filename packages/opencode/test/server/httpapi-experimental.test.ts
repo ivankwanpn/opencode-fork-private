@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { Session } from "@/session/session"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
 import { SessionTable } from "@opencode-ai/core/session/sql"
@@ -17,10 +18,11 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestSessionV2 } from "../fixture/session-v2"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(LayerNode.group([Session.node, Database.node]), [
+    LayerNode.compile(LayerNode.group([SessionV2.node, Database.node]), [
       [LocationServiceMap.node, locationServiceMapV2Layer],
       [SessionExecution.node, SessionExecution.noopLayer],
     ]),
@@ -34,7 +36,7 @@ function request(path: string, directory: string, init: RequestInit = {}) {
 }
 
 function createSession(input?: Session.CreateInput) {
-  return Session.use.create(input)
+  return TestSessionV2.create(input ?? {})
 }
 
 function json<T>(response: HttpClientResponse.HttpClientResponse) {
@@ -93,7 +95,7 @@ function insertAccount() {
   )
 }
 
-function setSessionUpdated(session: Session.Info, updated: number) {
+function setSessionUpdated(session: { readonly id: SessionV2.ID }, updated: number) {
   return Effect.gen(function* () {
     const { db } = yield* Database.Service
     yield* db

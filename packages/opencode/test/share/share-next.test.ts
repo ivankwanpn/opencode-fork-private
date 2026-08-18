@@ -5,6 +5,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -14,7 +15,6 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AccessToken, AccountID, OrgID, RefreshToken } from "../../src/account/schema"
 import { AccountRepo } from "../../src/account/repo"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
-import { Session } from "@/session/session"
 import type { SessionID } from "../../src/session/schema"
 import { ShareNext } from "@/share/share-next"
 import { SessionShareRemovalTable, SessionShareRevocationTable, SessionShareTable } from "@opencode-ai/core/share/sql"
@@ -25,6 +25,7 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { resetDatabase } from "../fixture/db"
 import { pollWithTimeout, testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
+import { TestSessionV2 } from "../fixture/session-v2"
 
 const env = LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node]))
 const it = testEffect(env)
@@ -55,7 +56,7 @@ function integrationLayer(client: HttpClient.HttpClient) {
     LayerNode.group([
       ShareNext.node,
       EventV2Bridge.node,
-      Session.node,
+      SessionV2.node,
       SessionProjector.node,
       AccountRepo.node,
       Database.node,
@@ -186,7 +187,7 @@ describe("ShareNext", () => {
           return Effect.succeed(json(req, { ok: true }))
         })
         return Effect.gen(function* () {
-          const session = yield* (yield* Session.Service).create({ title: "test" })
+          const session = yield* TestSessionV2.create({ title: "test" })
 
           const result = yield* (yield* ShareNext.Service).create(session.id)
 
@@ -226,7 +227,7 @@ describe("ShareNext", () => {
           return Effect.succeed(HttpClientResponse.fromWeb(req, new Response(null, { status: 200 })))
         })
         return Effect.gen(function* () {
-          const session = yield* (yield* Session.Service).create({ title: "test" })
+          const session = yield* TestSessionV2.create({ title: "test" })
           const service = yield* ShareNext.Service
 
           yield* service.create(session.id)
@@ -265,10 +266,9 @@ describe("ShareNext", () => {
           return Effect.succeed(HttpClientResponse.fromWeb(req, new Response(null, { status })))
         })
         return Effect.gen(function* () {
-          const sessions = yield* Session.Service
           const service = yield* ShareNext.Service
           const { db } = yield* Database.Service
-          const first = yield* sessions.create({ title: "retry revocation" })
+          const first = yield* TestSessionV2.create({ title: "retry revocation" })
 
           yield* service.create(first.id)
           yield* service.stageRemovals([first.id])
@@ -291,7 +291,7 @@ describe("ShareNext", () => {
           expect(yield* revocation(first.id)).toBeUndefined()
           expect(yield* removal(first.id)).toBeUndefined()
 
-          const second = yield* sessions.create({ title: "not found revocation" })
+          const second = yield* TestSessionV2.create({ title: "not found revocation" })
           yield* service.create(second.id)
           yield* service.stageRemovals([second.id])
           yield* db.delete(SessionTable).where(eq(SessionTable.id, second.id)).run().pipe(Effect.orDie)
@@ -333,10 +333,9 @@ describe("ShareNext", () => {
           })
 
           yield* Effect.gen(function* () {
-            const sessions = yield* Session.Service
             const service = yield* ShareNext.Service
             const { db } = yield* Database.Service
-            const session = yield* sessions.create({ title: "create removal race" })
+            const session = yield* TestSessionV2.create({ title: "create removal race" })
             const created = yield* service.create(session.id).pipe(Effect.exit, Effect.forkScoped)
 
             yield* Deferred.await(posted)
@@ -377,10 +376,9 @@ describe("ShareNext", () => {
           return Effect.succeed(json(req, { ok: true }))
         })
         return Effect.gen(function* () {
-          const sessions = yield* Session.Service
           const service = yield* ShareNext.Service
           const { db } = yield* Database.Service
-          const session = yield* sessions.create({ title: "bounded retry" })
+          const session = yield* TestSessionV2.create({ title: "bounded retry" })
           yield* service.create(session.id)
           yield* service.stageRemovals([session.id])
           yield* db.delete(SessionTable).where(eq(SessionTable.id, session.id)).run().pipe(Effect.orDie)
@@ -406,7 +404,7 @@ describe("ShareNext", () => {
     provideTmpdirInstance(() => {
       const client = HttpClient.make((req) => Effect.succeed(json(req, { error: "bad" }, 500)))
       return Effect.gen(function* () {
-        const session = yield* (yield* Session.Service).create({ title: "test" })
+        const session = yield* TestSessionV2.create({ title: "test" })
 
         const exit = yield* ShareNext.Service.use((svc) => Effect.exit(svc.create(session.id)))
 
@@ -430,9 +428,7 @@ describe("ShareNext", () => {
         return Effect.gen(function* () {
           const events = yield* EventV2Bridge.Service
           const share = yield* ShareNext.Service
-          const session = yield* Session.Service
-
-          const info = yield* session.create({ title: "first" })
+          const info = yield* TestSessionV2.create({ title: "first" })
           yield* share.init()
           yield* Effect.sleep(50)
           const { db } = yield* Database.Service
@@ -530,8 +526,7 @@ describe("ShareNext", () => {
         return Effect.gen(function* () {
           const events = yield* EventV2Bridge.Service
           const share = yield* ShareNext.Service
-          const session = yield* Session.Service
-          const info = yield* session.create({ title: "canonical share" })
+          const info = yield* TestSessionV2.create({ title: "canonical share" })
           yield* share.init()
           const { db } = yield* Database.Service
           yield* db
@@ -596,8 +591,7 @@ describe("ShareNext", () => {
         return Effect.gen(function* () {
           const events = yield* EventV2Bridge.Service
           const share = yield* ShareNext.Service
-          const session = yield* Session.Service
-          const info = yield* session.create({ title: "canonical user share" })
+          const info = yield* TestSessionV2.create({ title: "canonical user share" })
           yield* share.init()
           const { db } = yield* Database.Service
           yield* db

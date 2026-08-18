@@ -12,6 +12,7 @@ import { Workspace } from "../../src/control-plane/workspace"
 import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/workspace"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionV2 } from "@opencode-ai/core/session"
 import { Session } from "@/session/session"
 import { Database } from "@opencode-ai/core/database/database"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
@@ -24,13 +25,16 @@ import { Project } from "../../src/project/project"
 import { InstancePaths } from "../../src/server/routes/instance/httpapi/groups/instance"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestSessionV2 } from "../fixture/session-v2"
+import { locationServiceMapReplacement } from "../lib/location-service-map"
 
 const originalWorkspaces = Flag.OPENCODE_EXPERIMENTAL_WORKSPACES
 const appLayer = AppNodeBuilder.build(
-  LayerNode.group([Project.node, Session.node, Workspace.node, InstanceStore.node, Database.node, Ripgrep.node]),
+  LayerNode.group([Project.node, SessionV2.node, Workspace.node, InstanceStore.node, Database.node, Ripgrep.node]),
   [
     [InstanceStore.bootstrapNode, InstanceBootstrap.node],
     [SessionExecution.node, SessionExecution.noopLayer],
+    locationServiceMapReplacement,
   ],
 )
 const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
@@ -220,7 +224,7 @@ describe("workspace HttpApi", () => {
       const workspace = (yield* created.json) as Workspace.Info
       expect(workspace).toMatchObject({ type: "local-test", name: "local-test" })
 
-      const session = yield* Session.use.create({}).pipe(provideInstance(dir))
+      const session = yield* TestSessionV2.create().pipe(provideInstance(dir))
       const warped = yield* request(WorkspacePaths.warp, dir, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -265,7 +269,7 @@ describe("workspace HttpApi", () => {
   it.live("returns a declared not found error when warping into a missing workspace", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
-      const session = yield* Session.use.create({}).pipe(provideInstance(dir))
+      const session = yield* TestSessionV2.create().pipe(provideInstance(dir))
       const workspaceID = WorkspaceV2.ID.ascending("wrk_missing_warp")
 
       const response = yield* request(WorkspacePaths.warp, dir, {

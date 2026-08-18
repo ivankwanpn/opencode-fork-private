@@ -17,12 +17,9 @@ import path from "node:path"
 // Current legitimate V1 consumers (see V1-to-V2-migration.md §3.1).
 // Each entry is a path relative to packages/core/src.
 const allowed = new Set([
-  // V2 session → V1 storage format / compatibility events
+  // V2 session → V1 external event/shape compatibility
   "session.ts",
-  "session/command.ts",
   "session/info.ts",
-  "session/projector.ts",
-  "session/sql.ts",
   // Config loading / migration chain
   "config.ts",
   "config/plugin/agent.ts",

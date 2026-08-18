@@ -60,6 +60,7 @@ import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped 
 import { TestLLMServer } from "../lib/llm-server"
 import { testProviderConfig } from "../lib/test-provider"
 import { pollWithTimeout, testEffect } from "../lib/effect"
+import { TestSessionV2 } from "../fixture/session-v2"
 
 const originalWorkspaces = Flag.OPENCODE_EXPERIMENTAL_WORKSPACES
 const noopBootstrapLayer = Layer.succeed(
@@ -70,7 +71,6 @@ const appLayer = AppNodeBuilder.build(
   LayerNode.group([
     InstanceStore.node,
     Project.node,
-    Session.node,
     SessionV2.node,
     Workspace.node,
     Database.node,
@@ -145,7 +145,7 @@ function expectWake(sessionID: string, inputID: string, kind: "promote" | "cance
 }
 
 function createSession(input?: Session.CreateInput) {
-  return Session.use.create(input)
+  return TestSessionV2.create(input ?? {})
 }
 
 const insertCanonicalUserMessage = (sessionID: SessionIDType, text: string, seq: number) =>

@@ -6,8 +6,6 @@ import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { makeGlobalNode } from "../effect/app-node"
 import { SessionEvent } from "./event"
-import { SessionV1 } from "../v1/session"
-import { toV2Rules } from "./info"
 import { WorkspaceTable } from "../control-plane/workspace.sql"
 import { SessionMessage } from "./message"
 import { SessionMessageUpdater } from "./message-updater"
@@ -36,39 +34,6 @@ type Usage = {
   }
 }
 
-function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInsert {
-  return {
-    id: info.id,
-    project_id: info.projectID,
-    workspace_id: info.workspaceID ?? null,
-    parent_id: info.parentID,
-    slug: info.slug,
-    directory: info.directory,
-    path: info.path,
-    title: info.title,
-    agent: info.agent,
-    model: info.model,
-    version: info.version,
-    share_url: info.share?.url,
-    summary_additions: info.summary?.additions,
-    summary_deletions: info.summary?.deletions,
-    summary_files: info.summary?.files,
-    summary_diffs: info.summary?.diffs ? [...info.summary.diffs] : undefined,
-    metadata: info.metadata,
-    cost: info.cost ?? 0,
-    tokens_input: (info.tokens ?? { input: 0 }).input,
-    tokens_output: (info.tokens ?? { output: 0 }).output,
-    tokens_reasoning: (info.tokens ?? { reasoning: 0 }).reasoning,
-    tokens_cache_read: (info.tokens ?? { cache: { read: 0 } }).cache.read,
-    tokens_cache_write: (info.tokens ?? { cache: { write: 0 } }).cache.write,
-    revert: info.revert ? { ...info.revert, messageID: SessionMessage.ID.make(info.revert.messageID) } : null,
-    permission: info.permission ? toV2Rules(info.permission) : undefined,
-    time_created: info.time.created,
-    time_updated: info.time.updated,
-    time_compacting: info.time.compacting,
-    time_archived: info.time.archived,
-  }
-}
 
 function sessionRowFromSnapshot(snapshot: SessionEvent.SessionSnapshot): typeof SessionTable.$inferInsert {
   return {
@@ -247,26 +212,6 @@ const layer = Layer.effectDiscard(
         }
       }),
     )
-    yield* events.project(SessionV1.Event.Created, (event) =>
-      Effect.gen(function* () {
-        const stored = yield* db
-          .insert(SessionTable)
-          .values(sessionRow(event.data.info))
-          .onConflictDoNothing()
-          .returning({ sessionID: SessionTable.id })
-          .get()
-          .pipe(Effect.orDie)
-        if (!stored) return yield* Effect.die(new SessionAlreadyProjected())
-        if (event.data.info.workspaceID) {
-          yield* db
-            .update(WorkspaceTable)
-            .set({ time_used: Date.now() })
-            .where(eq(WorkspaceTable.id, event.data.info.workspaceID))
-            .run()
-            .pipe(Effect.orDie)
-        }
-      }),
-    )
     yield* events.project(SessionEvent.MessageImported, (event) => insertMessage(db, event, event.data.message))
     yield* events.project(SessionEvent.TranscriptMutation.MessageRemoved, (event) =>
       Effect.gen(function* () {
@@ -432,14 +377,6 @@ const layer = Layer.effectDiscard(
         .run()
         .pipe(Effect.orDie),
     )
-    yield* events.project(SessionV1.Event.Updated, (event) =>
-      db
-        .update(SessionTable)
-        .set(sessionRow(event.data.info))
-        .where(eq(SessionTable.id, event.data.sessionID))
-        .run()
-        .pipe(Effect.orDie),
-    )
     yield* events.project(SessionEvent.Moved, (event) =>
       Effect.gen(function* () {
         yield* db
@@ -458,9 +395,6 @@ const layer = Layer.effectDiscard(
     )
     yield* events.project(SessionEvent.Deleted, (event) =>
       db.delete(SessionTable).where(eq(SessionTable.id, event.data.info.id)).run().pipe(Effect.orDie),
-    )
-    yield* events.project(SessionV1.Event.Deleted, (event) =>
-      db.delete(SessionTable).where(eq(SessionTable.id, event.data.sessionID)).run().pipe(Effect.orDie),
     )
     yield* events.project(SessionEvent.AgentSwitched, (event) =>
       db

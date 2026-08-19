@@ -12,6 +12,7 @@ import { makeLocationNode } from "../effect/app-node"
 import { EventV2 } from "../event"
 import { FSUtil } from "../fs-util"
 import { Identifier } from "../id/id"
+import { Location } from "../location"
 import { LocationMutation } from "../location-mutation"
 import { AppProcess } from "../process"
 import { PermissionV2 } from "../permission"
@@ -105,8 +106,6 @@ const processCommand = (shell: string, input: string, cwd: string, env: Record<s
 // TODO: Add HTTP background-job observation only after durable status, restart recovery, and authorization are defined.
 // TODO: Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.
 // TODO: Revisit binary output handling if stdout/stderr decoding is text-only.
-// Full shell output is retained by ToolOutputStore after execution; revisit streaming
-// capture if unbounded process memory becomes a concern for hostile commands.
 
 type ScannerToken = {
   readonly value: string
@@ -260,6 +259,7 @@ const escapeXml = (value: string) =>
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const tools = yield* Tools.Service
+    const location = yield* Location.Service
     const mutation = yield* LocationMutation.Service
     const fs = yield* FSUtil.Service
     const appProcess = yield* AppProcess.Service
@@ -330,7 +330,7 @@ const layer = Layer.effectDiscard(
     yield* tools
       .register({
         [name]: Tool.make({
-          description: `Execute one shell command string with the host user's filesystem, process, and network authority. The active Location is the default working directory. Relative workdir values resolve from that Location. External workdir and command-argument paths require external_directory approval. Commands return normally when they finish; after ${DEFAULT_TIMEOUT_MS} ms in the foreground they continue as owned background tasks instead of being killed. Set run_in_background to return a task ID immediately. Use get_task_output for status and recent output, and stop_task for explicit cancellation. A new user steer also transfers a still-running command to the background so the agent can respond without terminating it. Uses the configured shell when set and the same host-shell selection as the official runtime otherwise. On Windows, configured bash resolves to Git Bash instead of WSL bash; use Windows drive paths such as D:/path with Git Bash and native paths with PowerShell or cmd.`,
+          description: `Execute one shell command string with the host user's filesystem, process, and network authority. The active Location is the default working directory. Relative workdir values resolve from that Location. External workdir and command-argument paths require external_directory approval. Commands return normally when they finish; after ${DEFAULT_TIMEOUT_MS} ms in the foreground they continue as owned background tasks instead of being killed. Captured process output is limited to ${MAX_CAPTURE_BYTES} bytes and reports when truncated. Set run_in_background to return a task ID immediately. Use get_task_output for status and recent output, and stop_task for explicit cancellation. A new user steer also transfers a still-running command to the background so the agent can respond without terminating it. Uses the configured shell when set and the same host-shell selection as the official runtime otherwise. On Windows, configured bash resolves to Git Bash instead of WSL bash; use Windows drive paths such as D:/path with Git Bash and native paths with PowerShell or cmd.`,
           input: Input,
           output: Output,
           structured: StructuredOutput,
@@ -358,17 +358,22 @@ const layer = Layer.effectDiscard(
                 return yield* new ToolFailure({
                   message: `Unsupported configured shell: ${Shell.name(shell) || shell}`,
                 })
-              const analysis = yield* ShellCommand.analyze({ command: input.command, kind }).pipe(
-                Effect.catchTag("ShellCommand.AnalysisError", (error) =>
-                  Effect.fail(
-                    new ToolFailure({
-                      message: `Unable to safely analyze ${error.kind} command (${error.reason})`,
-                    }),
-                  ),
-                ),
-              )
+              const fallback = { resources: [input.command], save: [], pathHints: [] }
+              const analysis =
+                Shell.name(shell) === "bash" || kind === "powershell"
+                  ? yield* ShellCommand.analyze({ command: input.command, kind }).pipe(
+                      Effect.catchTag("ShellCommand.AnalysisError", (error) =>
+                        error.reason === "syntax" || error.reason === "unsupported"
+                          ? Effect.succeed(fallback)
+                          : Effect.fail(new ToolFailure({ message: error.message })),
+                      ),
+                    )
+                  : fallback
               const workdir = yield* nativePath(input.workdir ?? ".", shell, kind)
-              const target = yield* mutation.resolve({ path: workdir, kind: "directory" })
+              const target = yield* mutation.resolve({
+                path: path.isAbsolute(workdir) ? workdir : path.resolve(location.directory, workdir),
+                kind: "directory",
+              })
               const candidates = [...analysis.pathHints, ...scannerPaths(input.command, kind)]
               const resolved = yield* Effect.forEach(candidates, (candidate) =>
                 nativePath(candidate.value, shell, kind).pipe(
@@ -479,6 +484,7 @@ const layer = Layer.effectDiscard(
               const run = appProcess
                 .run(processCommand(shell, input.command, target.canonical, { ...environment.get(), TERM: "dumb" }), {
                   combineOutput: true,
+                  maxOutputBytes: MAX_CAPTURE_BYTES,
                   onOutput,
                 })
                 .pipe(
@@ -561,7 +567,9 @@ const layer = Layer.effectDiscard(
               )
             }).pipe(
               Effect.mapError((error) =>
-                error instanceof ToolFailure
+                error instanceof ToolFailure ||
+                error instanceof PermissionV2.CorrectedError ||
+                error instanceof SessionCommand.NotFoundError
                   ? error
                   : new ToolFailure({ message: `Unable to execute command: ${input.command}` }),
               ),
@@ -577,6 +585,7 @@ export const node = makeLocationNode({
   layer,
   deps: [
     ToolRegistry.node,
+    Location.node,
     LocationMutation.node,
     FSUtil.node,
     AppProcess.node,

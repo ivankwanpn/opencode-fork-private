@@ -21,6 +21,7 @@ import { Project } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionCommand } from "@opencode-ai/core/session/command"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Prompt } from "@opencode-ai/core/session/prompt"
@@ -67,7 +68,9 @@ let runHandler:
       options?: AppProcess.RunOptions,
     ) => Effect.Effect<AppProcess.RunResult, AppProcess.AppProcessError>)
   | undefined
-let afterPermission = (_input: PermissionV2.AssertInput): Effect.Effect<void> => Effect.void
+let afterPermission = (
+  _input: PermissionV2.AssertInput,
+): Effect.Effect<void, PermissionV2.CorrectedError | SessionCommand.NotFoundError> => Effect.void
 
 const permission = Layer.succeed(
   PermissionV2.Service,
@@ -352,8 +355,8 @@ describe("BashTool", () => {
             expect(runs[0]?.shell).toBe(process.platform === "win32" && Shell.ps(shell) ? undefined : shell)
             expect(runs[0]?.options).toMatchObject({
               combineOutput: true,
+              maxOutputBytes: BashTool.MAX_CAPTURE_BYTES,
             })
-            expect(runs[0]?.options).not.toHaveProperty("maxOutputBytes")
             expect(assertions).toMatchObject([
               {
                 sessionID,
@@ -416,17 +419,19 @@ describe("BashTool", () => {
     ),
   )
 
-  it.live("never exposes reusable saves for non-Bash POSIX shells", () =>
+  it.live("uses exact fallback authorization for non-Bash POSIX shells", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
       (tmp) => {
         reset()
         configuredShell = "sh"
         if (Shell.name(Shell.acceptable(configuredShell)) !== "sh") return Effect.void
-        return withTool(tmp.path, (registry) => executeTool(registry, call({ command: "echo safe" }))).pipe(
+        const command = "echo safe && echo again"
+        return withTool(tmp.path, (registry) => executeTool(registry, call({ command }))).pipe(
           Effect.andThen(
             Effect.sync(() => {
-              expect(assertions).toMatchObject([{ action: "bash", resources: ["echo safe"], save: [] }])
+              expect(assertions).toMatchObject([{ action: "bash", resources: [command], save: [] }])
+              expect(runs).toHaveLength(1)
             }),
           ),
         )
@@ -459,7 +464,7 @@ describe("BashTool", () => {
     ),
   )
 
-  it.live("fails analyzer syntax and unsupported commands before permission, jobs, shell.env, or process", () =>
+  it.live("executes Bash analyzer gaps with one exact resource and no reusable save", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
       (tmp) => {
@@ -472,13 +477,50 @@ describe("BashTool", () => {
             yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, () => {
               hooks.push("shell.env")
             })
-            for (const command of ['echo "unterminated', 'bash -c "echo hidden"']) {
-              const settled = yield* settleTool(registry, call({ command }, `call-fail-${hooks.length}`))
-              expect(settled.result).toMatchObject({
-                type: "error",
-                value: expect.stringContaining("Unable to safely analyze bash command"),
-              })
+            const commands = [
+              'echo "unterminated',
+              "cat <<'EOF'\nhello\nEOF",
+              "source ./setup.sh",
+              "env VALUE=safe printenv VALUE",
+              'bash -c "echo hidden"',
+              "cd sub && pwd",
+            ]
+            for (const command of commands) {
+              yield* executeTool(registry, call({ command }, `call-fallback-${runs.length}`))
+              expect(assertions.at(-1)).toMatchObject({ action: "bash", resources: [command], save: [] })
             }
+            expect(assertions).toHaveLength(commands.length)
+            expect(jobOperations.filter((operation) => operation === "start")).toHaveLength(commands.length)
+            expect(hooks).toHaveLength(commands.length)
+            expect(runs).toHaveLength(commands.length)
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("fails oversized analyzer input before permission, jobs, shell.env, or process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry, _jobs, _database, _events, plugins) =>
+          Effect.gen(function* () {
+            const hooks: string[] = []
+            yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, () => {
+              hooks.push("shell.env")
+            })
+            const settled = yield* settleTool(
+              registry,
+              call({ command: `echo ${"x".repeat(64 * 1024)}` }, "call-analyzer-size"),
+            )
+            expect(settled.result).toMatchObject({
+              type: "error",
+              value: expect.stringContaining("Unable to safely analyze bash command (size)"),
+            })
             expect(assertions).toEqual([])
             expect(jobOperations).toEqual([])
             expect(hooks).toEqual([])
@@ -490,8 +532,62 @@ describe("BashTool", () => {
     ),
   )
 
+  it.live("keeps fallback authorization exact when that command is denied", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        const command = 'bash -c "echo hidden"'
+        denyResource = command
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry) => executeTool(registry, call({ command }, "call-fallback-deny"))).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([{ action: "bash", resources: [command], save: [] }])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("authorizes fallback scanner paths before the exact shell command", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (root) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const active = path.join(root.path, "project")
+        const outside = path.join(root.path, "outside")
+        const command = "source ../outside/setup.sh"
+        return Effect.promise(() => Promise.all([fs.mkdir(active), fs.mkdir(outside)])).pipe(
+          Effect.andThen(withTool(active, (registry) => executeTool(registry, call({ command }, "call-fallback-path")))),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(outside), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      (root) => Effect.promise(() => root[Symbol.asyncDispose]()),
+    ),
+  )
+
   if (process.platform === "win32") {
-    it.live("fails cmd before permission, jobs, shell.env, or process", () =>
+    it.live("executes cmd with exact fallback authorization", () =>
       Effect.acquireUseRelease(
         Effect.promise(() => tmpdir()),
         (tmp) => {
@@ -503,12 +599,11 @@ describe("BashTool", () => {
               yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, () => {
                 hooks.push("shell.env")
               })
-              const settled = yield* settleTool(registry, call({ command: "dir" }))
-              expect(settled.result).toMatchObject({ type: "error", value: expect.stringContaining("cmd") })
-              expect(assertions).toEqual([])
-              expect(jobOperations).toEqual([])
-              expect(hooks).toEqual([])
-              expect(runs).toEqual([])
+              yield* executeTool(registry, call({ command: "dir" }))
+              expect(assertions).toMatchObject([{ action: "bash", resources: ["dir"], save: [] }])
+              expect(jobOperations).toContain("start")
+              expect(hooks).toEqual(["shell.env"])
+              expect(runs).toHaveLength(1)
             }),
           )
         },
@@ -558,6 +653,51 @@ describe("BashTool", () => {
         )
       },
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("approves a relative workdir outside the active Location before execution", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (root) => {
+        reset()
+        const active = path.join(root.path, "project")
+        return Effect.promise(() => fs.mkdir(active)).pipe(
+          Effect.andThen(withTool(active, (registry) => executeTool(registry, call({ command: "pwd", workdir: ".." })))),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions.map((input) => input.action)).toEqual(["external_directory", "bash"])
+              expect(assertions[0]).toMatchObject({
+                resources: [path.join(realpathSync(root.path), "*").replaceAll("\\", "/")],
+              })
+              expect(runs).toMatchObject([{ cwd: realpathSync(root.path) }])
+            }),
+          ),
+        )
+      },
+      (root) => Effect.promise(() => root[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("does not start a process when a relative external workdir is denied", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (root) => {
+        reset()
+        denyAction = "external_directory"
+        const active = path.join(root.path, "project")
+        return Effect.promise(() => fs.mkdir(active)).pipe(
+          Effect.andThen(withTool(active, (registry) => executeTool(registry, call({ command: "pwd", workdir: ".." })))),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions.map((input) => input.action)).toEqual(["external_directory"])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      (root) => Effect.promise(() => root[Symbol.asyncDispose]()),
     ),
   )
 
@@ -848,6 +988,33 @@ describe("BashTool", () => {
         Effect.promise(() =>
           Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
         ),
+    ),
+  )
+
+  it.live("preserves typed permission and session failures through materialized settlement", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            const corrected = new PermissionV2.CorrectedError({ feedback: "use a safer command" })
+            afterPermission = (input) => (input.action === "bash" ? Effect.fail(corrected) : Effect.void)
+            expect(
+              yield* Effect.flip(settleTool(registry, call({ command: "pwd" }, "call-corrected-permission"))),
+            ).toBe(corrected)
+            expect(runs).toEqual([])
+
+            const missing = new SessionCommand.NotFoundError({ sessionID })
+            afterPermission = (input) => (input.action === "bash" ? Effect.fail(missing) : Effect.void)
+            expect(yield* Effect.flip(settleTool(registry, call({ command: "pwd" }, "call-missing-session")))).toBe(
+              missing,
+            )
+            expect(runs).toEqual([])
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
     ),
   )
 
@@ -1422,20 +1589,23 @@ describe("BashTool", () => {
     ),
   )
 
-  it.live("retains complete output through the managed output store", () =>
+  it.live("bounds process capture before managed output retention", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
       (tmp) => {
         reset()
-        result = { ...result, output: Buffer.from("HEAD\n" + "x".repeat(BashTool.MAX_CAPTURE_BYTES + 64) + "\nTAIL") }
+        runHandler = (_command, options) => {
+          expect(options).toMatchObject({ combineOutput: true, maxOutputBytes: BashTool.MAX_CAPTURE_BYTES })
+          return Effect.succeed({ ...result, output: Buffer.from("HEAD limited capture"), outputTruncated: true })
+        }
         return withTool(tmp.path, (registry) => settleTool(registry, call({ command: "verbose" }))).pipe(
           Effect.andThen((settled) =>
-            Effect.gen(function* () {
-              expect(settled.outputPaths).toHaveLength(1)
-              expect(yield* Effect.promise(() => fs.readFile(settled.outputPaths![0], "utf8"))).toContain("TAIL")
+            Effect.sync(() => {
+              expect(settled.outputPaths ?? []).toEqual([])
+              expect(settled.output?.structured).toMatchObject({ truncated: true })
               expect(settled.output?.content[0]).toMatchObject({
                 type: "text",
-                text: expect.stringContaining("full content saved to"),
+                text: expect.stringContaining("output capture truncated"),
               })
             }),
           ),
@@ -1480,6 +1650,10 @@ describe("BashTool", () => {
         return withTool(tmp.path, (registry) => settleTool(registry, call({ command: "verbose" }))).pipe(
           Effect.andThen((settled) =>
             Effect.sync(() => {
+              expect(runs[0]?.options).toMatchObject({
+                combineOutput: true,
+                maxOutputBytes: BashTool.MAX_CAPTURE_BYTES,
+              })
               expect(settled.output?.structured).toMatchObject({ truncated: true })
               expect(settled.output?.content[0]).toMatchObject({
                 type: "text",

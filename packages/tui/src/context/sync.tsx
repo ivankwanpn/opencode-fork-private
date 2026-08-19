@@ -15,7 +15,7 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useProject } from "./project"
-import { useEvent, useNativeEvent } from "./event"
+import { useNativeEvent } from "./event"
 import { useSDK } from "./sdk"
 import { useTuiStartup } from "./runtime"
 import { createSimpleContext } from "./helper"
@@ -110,7 +110,6 @@ export const {
       vcs: undefined,
     })
 
-    const event = useEvent()
     const nativeEvent = useNativeEvent()
     const project = useProject()
     const sdk = useSDK()
@@ -160,26 +159,24 @@ export const {
       )
     }
 
-    event.subscribe((event, { directory, workspace }) => {
+    nativeEvent.subscribe((event, location) => {
+      const workspace = location?.workspaceID
       switch (event.type) {
-        case "server.instance.disposed":
-          void bootstrap()
-          break
         case "todo.updated":
-          setStore("todo", event.properties.sessionID, event.properties.todos)
+          setStore("todo", event.data.sessionID, event.data.todos)
           break
 
         case "session.next.moved": {
-          const result = search(store.session, event.properties.sessionID, (s) => s.id)
+          const result = search(store.session, event.data.sessionID, (s) => s.id)
           if (!result.found) break
           setStore(
             "session",
             result.index,
             produce((session) => {
-              session.location.directory = event.properties.location.directory
-              session.subpath = event.properties.subdirectory
-              session.location.workspaceID = event.properties.location.workspaceID
-              session.time.updated = event.properties.timestamp
+              session.location.directory = event.data.location.directory
+              session.subpath = event.data.subdirectory
+              session.location.workspaceID = event.data.location.workspaceID
+              session.time.updated = event.data.timestamp
             }),
           )
           break
@@ -192,7 +189,7 @@ export const {
 
         case "vcs.branch.updated": {
           if (workspace === project.workspace.current()) {
-            setStore("vcs", { branch: event.properties.branch })
+            setStore("vcs", { branch: event.data.branch })
           }
           break
         }

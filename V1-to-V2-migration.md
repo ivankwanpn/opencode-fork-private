@@ -124,6 +124,10 @@ catalog、model、tokens與`location`。TUI的`native-v1-transcript/catalog`與�
 adapter回流；deprecated `api.command` shim、compatibility `api.event` bus與package export也已刪除，plugin只
 使用canonical `nativeEvent`，server-side plugin host共享同一V2 contract。
 
+**999.0.19 TUI event envelope hard cut**：TUI host的sync/app/prompt consumer全部直接使用`useNativeEvent()`與
+canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專用測試已刪除。不可達的
+`server.instance.disposed` native分支一併移除；worker與SSE皆只轉送EventV2 manifest事件。
+
 ---
 
 ## 1. 各区域现状总表
@@ -143,7 +147,7 @@ adapter回流；deprecated `api.command` shim、compatibility `api.event` bus與
 | TUI 插件 | plugin state/event/client/keymap均為V2 contract；舊state adapter與`api.command` shim已刪除 | **V2-only API** |
 | MCP | 单一 V2 runtime（`core/src/mcp/runtime.ts`）；`MCP.toolsNode` 注册进 V2 `Tools.Service`（direct/deferred/blocked） | **V2 已接管** |
 | Command | TUI 用 V2 `CommandV2`；V1 `@/command` 只服务 legacy instance API | **双路径** |
-| TUI 主体 | 全部走 V2 client與canonical plugin state；TUI `native-v1-*` adapter已刪除 | **V2 已接管** |
+| TUI 主体 | 全部走 V2 client、canonical plugin state與單一native event envelope；TUI `native-v1-*` adapter已刪除 | **V2 已接管** |
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
 | Config | V1 `ConfigV1.Info` + `ConfigMigrateV1`；httpapi config 组 V1-only | **V1-only** |
@@ -253,7 +257,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 
 - Client：`tui/src/context/sdk.tsx` 用 `@opencode-ai/client`（V2 effect client）
 - Session/消息/catalog：全部 `sdk.native.*`（V2 API，V2 类型）
-- 事件：`useNativeEvent()` 消费 V2 `OpenCodeEvent`；`useEvent()` 是 V1 词汇兼容层
+- 事件：`useNativeEvent()`是唯一event context，直接消費V2 `OpenCodeEvent`
 - TUI state 结构全 V2（`SessionV2Info`、`SessionMessage`、`PermissionV2Request`）
 
 **注意**：Codex提到的`session-compat`/`transcript-compat`/`catalog-compat`實際曾對應TUI的`plugin/native-v1-*`；該TUI adapter現已刪除。OpenCode的`compat/native-v1-*`仍供CLI/ACP protocol facade使用。

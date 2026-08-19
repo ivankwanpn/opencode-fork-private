@@ -1,12 +1,12 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
 import { ClientError, type OpenCodeEvent } from "@opencode-ai/client"
-import type { Event, SessionMessageAssistant } from "@opencode-ai/sdk/v2"
+import type { SessionMessageAssistant } from "@opencode-ai/sdk/v2"
 import { testRender } from "@opentui/solid"
 import { createEffect, onCleanup, onMount } from "solid-js"
 import { unwrap } from "solid-js/store"
 import { DataProvider, useData } from "../../../src/context/data"
-import { useEvent, useNativeEvent } from "../../../src/context/event"
+import { useNativeEvent } from "../../../src/context/event"
 import type { RecoveryError } from "../../../src/context/native-event-recovery"
 import { ProjectProvider } from "../../../src/context/project"
 import { SDKProvider } from "../../../src/context/sdk"
@@ -24,7 +24,6 @@ function deferred<T>() {
 test("delivers native-only events with their location metadata", async () => {
   const events = createEventSource()
   const seen: Array<{ event: OpenCodeEvent; location: OpenCodeEvent["location"] }> = []
-  const legacySeen: Event[] = []
   const delivered = deferred<void>()
   let ready!: () => void
   const mounted = new Promise<void>((resolve) => {
@@ -38,13 +37,9 @@ test("delivers native-only events with their location metadata", async () => {
   } as OpenCodeEvent
 
   function Probe() {
-    const legacyEvent = useEvent()
     const nativeEvent = useNativeEvent()
 
     onMount(() => {
-      legacyEvent.subscribe((event) => {
-        legacySeen.push(event)
-      })
       nativeEvent.on("catalog.updated", (event, location) => {
         seen.push({ event, location })
         delivered.resolve(undefined)
@@ -70,12 +65,18 @@ test("delivers native-only events with their location metadata", async () => {
 
     await delivered.promise
     expect(seen).toEqual([{ event, location: event.location }])
-    expect(legacySeen).toEqual([])
     expect(await Promise.race([reader.read(), Bun.sleep(25).then(() => undefined)])).toBeUndefined()
     await reader.cancel()
   } finally {
     app.renderer.destroy()
   }
+})
+
+test("TUI event context has no compatibility envelope", async () => {
+  const source = await Bun.file(new URL("../../../src/context/event.ts", import.meta.url)).text()
+  expect(source).not.toContain("useEvent")
+  expect(source).not.toContain("compatibilityEventTypes")
+  expect(source).not.toContain("properties: event.data")
 })
 
 test("converges buffered streaming and tool lifecycle events after rebuild", async () => {

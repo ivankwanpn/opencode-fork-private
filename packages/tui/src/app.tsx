@@ -31,7 +31,7 @@ import { ErrorComponent } from "./component/error-component"
 import { PluginRouteMissing } from "./component/plugin-route-missing"
 import { ProjectProvider, useProject } from "./context/project"
 import { EditorContextProvider } from "./context/editor"
-import { useEvent, useNativeEvent } from "./context/event"
+import { useNativeEvent } from "./context/event"
 import { SDKProvider, useSDK } from "./context/sdk"
 import { StartupLoading } from "./component/startup-loading"
 import { SyncProvider, useSync } from "./context/sync"
@@ -353,7 +353,6 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   const local = useLocal()
   const kv = useKV()
   const keymap = useOpencodeKeymap()
-  const event = useEvent()
   const nativeEvent = useNativeEvent()
   const sdk = useSDK()
   const toast = useToast()
@@ -960,26 +959,26 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     bindings: tuiConfig.keybinds.gather("app_exit", ["app.exit"]),
   }))
 
-  event.on("tui.command.execute", (evt, { workspace }) => {
-    if (workspace !== project.workspace.current()) return
-    keymap.dispatchCommand(evt.properties.command)
+  nativeEvent.on("tui.command.execute", (evt, location) => {
+    if (location?.workspaceID !== project.workspace.current()) return
+    keymap.dispatchCommand(evt.data.command)
   })
 
-  event.on("tui.toast.show", (evt, { workspace }) => {
-    if (workspace !== project.workspace.current()) return
+  nativeEvent.on("tui.toast.show", (evt, location) => {
+    if (location?.workspaceID !== project.workspace.current()) return
     toast.show({
-      title: evt.properties.title,
-      message: evt.properties.message,
-      variant: evt.properties.variant,
-      duration: evt.properties.duration,
+      title: evt.data.title,
+      message: evt.data.message,
+      variant: evt.data.variant,
+      duration: evt.data.duration,
     })
   })
 
-  event.on("tui.session.select", (evt, { workspace }) => {
-    if (workspace !== project.workspace.current()) return
+  nativeEvent.on("tui.session.select", (evt, location) => {
+    if (location?.workspaceID !== project.workspace.current()) return
     route.navigate({
       type: "session",
-      sessionID: evt.properties.sessionID,
+      sessionID: evt.data.sessionID,
     })
   })
 

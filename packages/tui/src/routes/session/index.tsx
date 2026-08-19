@@ -20,7 +20,7 @@ import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
 import { useData } from "../../context/data"
-import { useEvent, useNativeEvent } from "../../context/event"
+import { useNativeEvent } from "../../context/event"
 import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
 import { Spinner } from "../../component/spinner"
@@ -197,7 +197,6 @@ export function Session() {
   const { navigate } = useRoute()
   const sync = useSync()
   const data = useData()
-  const event = useEvent()
   const project = useProject()
   const paths = useTuiPaths()
   const tuiConfig = useTuiConfig()

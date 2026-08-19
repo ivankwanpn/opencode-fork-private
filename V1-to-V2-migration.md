@@ -121,7 +121,7 @@ HttpApi的URL/payload/response契約不變，handlers仍全部委派`SessionV2`�
 **999.0.19 TUI plugin state hard cut**：`TuiState`直接暴露`ProviderCatalogInfo`、`SessionV2Info`與
 `SessionMessage`，移除legacy `provider` array與`part()` view；內建home/sidebar/system plugins改讀canonical
 catalog、model、tokens與`location`。TUI的`native-v1-transcript/catalog`與對應測試已刪除，source gate阻止
-adapter回流；server-side plugin host共享同一V2 contract。
+adapter回流；deprecated `api.command` shim與package export也已刪除，server-side plugin host共享同一V2 contract。
 
 ---
 
@@ -139,7 +139,7 @@ adapter回流；server-side plugin host共享同一V2 contract。
 | Permission | V1 `@/permission` 为主（pending 表），`replyCompatible` 兜底 V2；V2 请求不出现在 `/permission` list | **V1 主，V2 兜底** |
 | Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
 | Plugin tools | 同一份 `Contribution` 双路：V1 registry（死）+ V2 `PluginToolCompatV2`（deferred，实际生效） | **V2 生效路径已通** |
-| TUI 插件 | plugin state/event/client均為V2 contract；僅deprecated `api.command` shim仍保留舊呼叫方式 | **V2 state，command shim待收** |
+| TUI 插件 | plugin state/event/client/keymap均為V2 contract；舊state adapter與`api.command` shim已刪除 | **V2-only API** |
 | MCP | 单一 V2 runtime（`core/src/mcp/runtime.ts`）；`MCP.toolsNode` 注册进 V2 `Tools.Service`（direct/deferred/blocked） | **V2 已接管** |
 | Command | TUI 用 V2 `CommandV2`；V1 `@/command` 只服务 legacy instance API | **双路径** |
 | TUI 主体 | 全部走 V2 client與canonical plugin state；TUI `native-v1-*` adapter已刪除 | **V2 已接管** |

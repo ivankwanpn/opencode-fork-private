@@ -45,10 +45,14 @@ const catalog = (providerID: string, input = 0): ProviderCatalogInfo => ({
 describe("canonical TUI provider catalog", () => {
   test("TUI plugin state does not restore native V1 adapters", async () => {
     const adapters = await Bun.file(new URL("../../src/plugin/adapters.tsx", import.meta.url)).text()
+    const contract = await Bun.file(new URL("../../../plugin/src/tui.ts", import.meta.url)).text()
     expect(adapters).not.toContain("legacyTranscriptFromNative")
     expect(adapters).not.toContain("legacyProvidersFromNative")
+    expect(adapters).not.toContain("createCommandShim")
+    expect(contract).not.toContain("TuiCommandApi")
     expect(await Bun.file(new URL("../../src/plugin/native-v1-transcript.ts", import.meta.url)).exists()).toBe(false)
     expect(await Bun.file(new URL("../../src/plugin/native-v1-catalog.ts", import.meta.url)).exists()).toBe(false)
+    expect(await Bun.file(new URL("../../src/plugin/command-shim.ts", import.meta.url)).exists()).toBe(false)
   })
 
   test("detects connected external providers and paid OpenCode models", () => {

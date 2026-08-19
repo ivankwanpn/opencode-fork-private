@@ -106,42 +106,6 @@ export type TuiModeApi = {
   push: (mode: string) => () => void
 }
 
-/**
- * Legacy `api.command` shape kept so v1 plugins can initialize. Remove in v2.
- *
- * @deprecated Use `api.keymap.registerLayer({ commands, bindings })` instead.
- */
-export type TuiCommand = {
-  title: string
-  value: string
-  description?: string
-  category?: string
-  keybind?: string
-  suggested?: boolean
-  hidden?: boolean
-  enabled?: boolean
-  slash?: {
-    name: string
-    aliases?: string[]
-  }
-  onSelect?: (dialog?: TuiDialogStack) => void | Promise<void>
-}
-
-/**
- * Legacy `api.command` API kept so v1 plugins can initialize. Remove in v2.
- *
- * @deprecated Use `api.keymap.registerLayer`, `api.keymap.dispatchCommand`, and
- * `api.keymap.dispatchCommand("command.palette.show")` instead.
- */
-export type TuiCommandApi = {
-  /** @deprecated Use `api.keymap.registerLayer({ commands, bindings })` instead. */
-  register: (cb: () => TuiCommand[]) => () => void
-  /** @deprecated Use `api.keymap.dispatchCommand(name)` instead. */
-  trigger: (value: string) => void
-  /** @deprecated Use `api.keymap.dispatchCommand("command.palette.show")` instead. */
-  show: () => void
-}
-
 export type TuiDialogProps = {
   size?: "medium" | "large" | "xlarge"
   onClose: () => void
@@ -617,13 +581,6 @@ export type TuiWorkspace = {
 export type TuiPluginApi = {
   app: TuiApp
   attention: TuiAttention
-  /**
-   * Legacy `api.command` API kept so v1 plugins can initialize. Remove in v2.
-   *
-   * @deprecated Use `api.keymap.registerLayer`, `api.keymap.dispatchCommand`, and
-   * `api.keymap.dispatchCommand("command.palette.show")` instead.
-   */
-  command?: TuiCommandApi
   keys: TuiKeys
   keymap: TuiKeymap
   mode: TuiModeApi

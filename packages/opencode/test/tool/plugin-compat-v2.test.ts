@@ -18,7 +18,6 @@ import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionMessage } from "@opencode-ai/core/session/message"
-import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { Tool } from "@opencode-ai/core/tool/tool"
@@ -32,10 +31,8 @@ import { Cause, Effect, Exit, Fiber, Layer, LayerMap, Schema, Scope } from "effe
 import { Config } from "@/config/config"
 import { WorkspaceRef } from "@/effect/instance-ref"
 import { InstanceState } from "@/effect/instance-state"
-import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Plugin } from "@/plugin"
 import { InstanceStore } from "@/project/instance-store"
-import { MessageID, SessionID } from "@/session/schema"
 import { PluginToolCompat } from "@/tool/plugin-compat"
 import { PluginToolCompatV2 } from "@/tool/plugin-compat-v2"
 import { TestConfig } from "../fixture/config"
@@ -63,8 +60,6 @@ type HarnessOptions = {
   readonly bounds?: BoundRecord[]
   readonly saved?: PermissionSaved.AddInput[]
 }
-
-const legacyRegistryModule = await import("@/tool/registry")
 
 const configLayer = TestConfig.layer({
   directories: () => InstanceState.directory.pipe(Effect.map((directory) => [path.join(directory, ".opencode")])),
@@ -199,27 +194,6 @@ function harness(options: HarnessOptions = {}) {
   )
 }
 
-function parityHarness() {
-  return testEffect(
-    LayerNode.compile(
-      LayerNode.group([
-        legacyRegistryModule.ToolRegistry.node,
-        PluginToolCompat.node,
-        PluginToolCompatV2.node,
-        LocationServiceMap.node,
-      ]),
-      [
-        [Config.node, configLayer],
-        [Plugin.node, pluginLayer([])],
-        [RuntimeFlags.node, RuntimeFlags.layer()],
-        [SessionExecution.node, SessionExecution.noopLayer],
-        [LocationServiceMap.node, locationServiceMapLayer([], [], [])],
-        [ToolProgress.node, progressLayer([])],
-      ],
-    ),
-  )
-}
-
 function locationRef(directory: string, workspaceID?: WorkspaceV2.ID) {
   return Location.Ref.make({ directory: AbsolutePath.make(directory), workspaceID })
 }
@@ -304,7 +278,6 @@ function writeTool(directory: string, folder: "tool" | "tools", filename: string
   })
 }
 
-const parity = parityHarness()
 const discovery = harness()
 
 const precedenceHooks: Hooks[] = [
@@ -602,7 +575,7 @@ describe("plugin tool compatibility v2", () => {
     }),
   )
 
-  parity.instance("materializes and executes aligned V1/V2 config tools from singular and plural directories", () =>
+  discovery.instance("materializes and executes canonical V2 config tools from singular and plural directories", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance
       yield* writeTool(
@@ -626,53 +599,99 @@ describe("plugin tool compatibility v2", () => {
         ].join("\n"),
       )
 
-      const legacyRegistry = yield* legacyRegistryModule.ToolRegistry.Service
-      const legacyTools = yield* legacyRegistry.all()
       yield* initialize()
+
+      const initial = yield* withLocation(
+        test.directory,
+        ToolRegistry.Service.use((registry) => registry.materialize()),
+      )
+      const names = ["plural", "plural_named", "singular", "singular_named"]
+      expect(
+        initial.deferred
+          .filter((item) => names.includes(item.name))
+          .map((item) => item.name)
+          .toSorted(),
+      ).toEqual(names)
+      expect(
+        initial.definitions
+          .filter((item) => names.includes(item.name))
+          .map((item) => item.name)
+          .toSorted(),
+      ).toEqual([])
 
       const materialized = yield* withLocation(
         test.directory,
         ToolRegistry.Service.use((registry) => materializeSelected(registry)),
       )
-      const names = ["plural", "plural_named", "singular", "singular_named"]
       expect(
-        legacyTools
-          .filter((item) => names.includes(item.id))
-          .map((item) => item.id)
-          .toSorted(),
-      ).toEqual(names)
+        names.map((name) => {
+          const definition = findMaterialized(materialized, name)
+          return {
+            name: definition?.name,
+            description: definition?.description,
+            inputSchema: definition?.inputSchema,
+          }
+        }),
+      ).toEqual([
+        {
+          name: "plural",
+          description: "plural default",
+          inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: {} },
+        },
+        {
+          name: "plural_named",
+          description: "plural named",
+          inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: {} },
+        },
+        {
+          name: "singular",
+          description: "singular default",
+          inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: {} },
+        },
+        {
+          name: "singular_named",
+          description: "singular named",
+          inputSchema: { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: {} },
+        },
+      ])
       expect(
-        [...materialized.definitions, ...materialized.deferred]
+        materialized.definitions
           .filter((item) => names.includes(item.name))
           .map((item) => item.name)
           .toSorted(),
       ).toEqual(names)
-
-      for (const name of names) {
-        const legacy = legacyTools.find((item) => item.id === name)
-        const definition = findMaterialized(materialized, name)
-        expect(definition?.description).toBe(legacy?.description)
-        expect(definition?.inputSchema as unknown).toEqual(legacy?.jsonSchema)
-      }
-
-      const legacyPlural = legacyTools.find((item) => item.id === "plural")
-      if (!legacyPlural) throw new Error("V1 plural tool was not materialized")
       expect(
-        yield* legacyPlural.execute(
-          {},
-          {
-            sessionID: SessionID.make("ses_plugin_compat_v1"),
-            messageID: MessageID.make("msg_plugin_compat_v1"),
-            callID: "call-plugin-compat-v1",
-            agent: "build",
-            abort: new AbortController().signal,
-            messages: [],
-            metadata: () => Effect.void,
-            ask: () => Effect.void,
-          },
-        ),
-      ).toMatchObject({ output: "default" })
+        materialized.catalog.tools
+          .filter((tool) => names.includes(tool.callableName))
+          .map((tool) => ({
+            name: tool.callableName,
+            type: tool.source.type,
+            displayName: tool.source.displayName,
+            sourceLocalID: tool.sourceLocalID,
+            namespace: tool.namespace,
+          }))
+          .toSorted((left, right) => left.name.localeCompare(right.name)),
+      ).toEqual([
+        { name: "plural", type: "plugin", displayName: "plural.ts", sourceLocalID: "default", namespace: "plural" },
+        { name: "plural_named", type: "plugin", displayName: "plural.ts", sourceLocalID: "named", namespace: "plural" },
+        { name: "singular", type: "plugin", displayName: "singular.ts", sourceLocalID: "default", namespace: "singular" },
+        {
+          name: "singular_named",
+          type: "plugin",
+          displayName: "singular.ts",
+          sourceLocalID: "named",
+          namespace: "singular",
+        },
+      ])
+      expect(
+        materialized.catalog.tools
+          .filter((tool) => names.includes(tool.callableName))
+          .every((tool) => tool.source.id.startsWith("file-tools:")),
+      ).toBe(true)
       expect((yield* materialized.settle(call("plural"))).result).toEqual({ type: "text", value: "default" })
+      expect((yield* materialized.settle(call("plural_named"))).result).toEqual({ type: "text", value: "named" })
+      expect((yield* materialized.settle(call("singular"))).result).toEqual({ type: "text", value: "default" })
+      expect((yield* materialized.settle(call("singular_named"))).result).toEqual({ type: "text", value: "named" })
     }),
   )
 

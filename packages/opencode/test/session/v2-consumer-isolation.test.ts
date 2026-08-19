@@ -54,6 +54,29 @@ test("legacy Session service module is deleted", async () => {
   expect(await Bun.file(new URL("../../src/session/session.ts", import.meta.url)).exists()).toBe(false)
 })
 
+test("legacy OpenCode ToolRegistry root is deleted and not mounted by production source", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter(
+      (entry) =>
+        entry.source.includes("@/tool/registry") ||
+        entry.source.includes("@opencode/ToolRegistry") ||
+        entry.source.includes('from "./registry"'),
+    )
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(await Bun.file(new URL("../../src/tool/registry.ts", import.meta.url)).exists()).toBe(false)
+  expect(offenders).toEqual([])
+})
+
 test("production status publishers do not emit the deprecated Session Idle event", async () => {
   const sources = await Promise.all(
     [

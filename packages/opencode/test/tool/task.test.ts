@@ -26,7 +26,6 @@ import { SessionRemoval } from "@/session/removal"
 
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
 import { Truncate } from "@/tool/truncate"
-import { ToolRegistry } from "@/tool/registry"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -65,7 +64,6 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.R
       SessionStatus.node,
       SessionRemoval.node,
       Truncate.node,
-      ToolRegistry.node,
       Database.node,
       RuntimeFlags.node,
       Ripgrep.node,
@@ -314,6 +312,27 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance(
+    "keeps the TaskTool description independent of configured subagent catalogs",
+    () =>
+      Effect.gen(function* () {
+        const tool = yield* TaskTool
+        const definition = yield* tool.init()
+
+        expect(definition.description).not.toContain("Alpha agent")
+      }),
+    {
+      config: {
+        agent: {
+          alpha: {
+            description: "Alpha agent",
+            mode: "subagent",
+          },
+        },
+      },
+    },
+  )
+
   it.instance("resolves specialized research and worker agents", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
@@ -393,89 +412,6 @@ describe("tool.task", () => {
 
       expect(yield* sessions.children(chat.id)).toHaveLength(0)
     }),
-  )
-
-  it.instance(
-    "description sorts subagents by name and is stable across calls",
-    () =>
-      Effect.gen(function* () {
-        const agent = yield* Agent.Service
-        const build = yield* agent.get("build")
-        const registry = yield* ToolRegistry.Service
-        const get = Effect.fnUntraced(function* () {
-          const tools = yield* registry.tools({ ...ref, agent: build })
-          return tools.find((tool) => tool.id === TaskTool.id)?.description ?? ""
-        })
-        const first = yield* get()
-        const second = yield* get()
-
-        expect(first).toBe(second)
-
-        const alpha = first.indexOf("- alpha: Alpha agent")
-        const explore = first.indexOf("- explore:")
-        const general = first.indexOf("- general:")
-        const zebra = first.indexOf("- zebra: Zebra agent")
-
-        expect(alpha).toBeGreaterThan(-1)
-        expect(explore).toBeGreaterThan(alpha)
-        expect(general).toBeGreaterThan(explore)
-        expect(zebra).toBeGreaterThan(general)
-      }),
-    {
-      config: {
-        agent: {
-          zebra: {
-            description: "Zebra agent",
-            mode: "subagent",
-          },
-          hidden: {
-            description: "Hidden agent",
-            hidden: true,
-            mode: "subagent",
-          },
-          alpha: {
-            description: "Alpha agent",
-            mode: "subagent",
-          },
-        },
-      },
-    },
-  )
-
-  it.instance(
-    "description hides denied subagents for the caller",
-    () =>
-      Effect.gen(function* () {
-        const agent = yield* Agent.Service
-        const build = yield* agent.get("build")
-        const registry = yield* ToolRegistry.Service
-        const description =
-          (yield* registry.tools({ ...ref, agent: build })).find((tool) => tool.id === TaskTool.id)?.description ?? ""
-
-        expect(description).toContain("- alpha: Alpha agent")
-        expect(description).not.toContain("- zebra: Zebra agent")
-        expect(description).not.toContain("- hidden: Hidden agent")
-      }),
-    {
-      config: {
-        permission: {
-          task: {
-            "*": "allow",
-            zebra: "deny",
-          },
-        },
-        agent: {
-          zebra: {
-            description: "Zebra agent",
-            mode: "subagent",
-          },
-          alpha: {
-            description: "Alpha agent",
-            mode: "subagent",
-          },
-        },
-      },
-    },
   )
 
   it.instance(

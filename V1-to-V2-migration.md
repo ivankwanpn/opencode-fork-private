@@ -146,6 +146,18 @@ production `@/command` import清零；當時仍獨立存在的command event相�
 live-only，public/durable inventory維持89/47。Core producer與Project `/init` consumer均改用current identity，
 V1 legacy-event modules已刪除。Client/OpenAPI wire無變更，V2 SDK generated diff只有definition ownership順序搬移。
 
+**999.0.19 Safe shell runtime hard cut**：Core新增reviewed `ShellCommand` analyzer與保守`BashArity`，支援
+Bash/PowerShell command拆分、redirect獨立resource、safe reusable saves、path hints與Node/Bun三WASM資產；
+BashTool接入canonical multi-resource PermissionV2、外部路徑union/canonicalization、Git Bash `cygpath`、plugin
+`shell.env`、relative external workdir與typed correction feedback。cmd/常見wrapper及未覆蓋語法以整條命令
+exact resource、`save=[]`保守執行；parser load/parse/size錯誤仍fail closed。process capture以1 MiB硬上限避免
+長任務無界記憶體增長。OpenCode V1 `ShellTool`、shell prompts/IDs、V1 BashArity與專用測試已刪除，Core成為
+唯一Tree-sitter shell grammar owner。
+
+**999.0.19 Empty-save permission UX closeout**：PermissionV2 request沒有可持久化`save` pattern時，App、TUI、
+CLI與ACP均不再顯示/接受Always allow；TUI與CLI對request/capability切換、stale selection與重複提交fail closed，
+ACP對陳舊always reply轉為reject。非空save仍保留原confirmation/persistence流程。
+
 ---
 
 ## 1. 各区域现状总表
@@ -155,11 +167,11 @@ V1 legacy-event modules已刪除。Client/OpenAPI wire無變更，V2 SDK generat
 | Session 执行（prompt/command/shell/init） | `LegacySessionExecution` 仅保留外部请求/响应形状，内部选择、权限、admission 与执行全部走 V2；V1 `SessionPrompt.loop` 已删除 | **V2-only 执行，wire 壳待收** |
 | Session CRUD（list/get/create/fork/title/metadata） | production consumer 與 Core projector 全部走 `SessionV2`；舊 repository/layer source 已刪除 | **V2-only runtime，wire schema 待收** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
-| Tool registry | production只掛載Core V2 `ToolRegistry`；OpenCode舊registry root已刪，legacy leaf definitions仍為test-only source | **V2-only runtime，leaf source待清** |
+| Tool registry | production只掛載Core V2 `ToolRegistry`；OpenCode舊registry與ShellTool/arity已刪，其餘legacy leaf definitions仍為test-only source | **V2-only runtime，剩餘leaf source待清** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
 | Agent | V1 `Agent`（`@/agent`）仍在 `LegacySessionExecution.select` 使用；V2 `AgentV2.Service` 独立 | **双路径** |
 | Subagent permission | V1 `subagent-permissions.ts` 只被test-only旧`TaskTool`/兼容测试引用；V2 runtime用Core `PermissionV2` + `SubagentPermit` | **V2 runtime，compat source待评估** |
-| Permission | V1 `@/permission` 为主（pending 表），`replyCompatible` 兜底 V2；V2 请求不出现在 `/permission` list | **V1 主，V2 兜底** |
+| Permission | V1 `@/permission` pending/config facade仍在；現役V2工具與四端UI直接使用PermissionV2，empty-save不再假裝可永久允許 | **V1 facade待刪，V2 runtime已通** |
 | Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
 | Plugin tools | V1格式由`PluginToolCompat`編譯後只註冊到V2 `PluginToolCompatV2`（deferred）；舊registry雙路已刪 | **V2-only runtime，作者格式相容** |
 | TUI 插件 | plugin state/event/client/keymap均為V2 contract；舊state adapter與`api.command` shim已刪除 | **V2-only API** |
@@ -213,9 +225,9 @@ V1 legacy-event modules已刪除。Client/OpenAPI wire無變更，V2 SDK generat
 | V1 loop/processor/compaction 对应测试 | 已删除或迁移到 V2 contract |
 
 `app-runtime.ts` 与 `httpapi/server.ts` 的 production layer 图已移除上述节点。其後
-`opencode/src/tool/registry.ts`也已刪除，plugin compatibility test不再使用V1 oracle；legacy leaf definitions
-仍暫留給專用測試，待closure import graph獨立確認後刪除。`Truncate`/`schema.ts`仍為現役output retention support，
-不屬於可隨leaf一起刪除的registry執行面。
+`opencode/src/tool/registry.ts`也已刪除，plugin compatibility test不再使用V1 oracle；ShellTool/arity closure隨後
+完成Core等價能力補齊並刪除。其餘legacy leaf definitions仍暫留給專用測試，待各自parity/closure確認後刪除。
+`Truncate`/`schema.ts`仍為現役output retention support，不屬於可隨leaf一起刪除的registry執行面。
 
 ### 2.3 刻意保留的 V1 出口（外部兼容，迁移完成后独立评估）
 
@@ -334,8 +346,9 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - 调查确认：TUI/run/acp 都走 `packages/server` 的 V2 handler（`server.permission.*`）；experimental httpapi 的 V1 permission group 无实际 HTTP 消费者（仅契约测试），已切 V2
 
 剩余（工具路径，批次 7 前保留）：
-1. `@/permission`（V1）仍被 V1 工具路径使用（`agent/agent.ts`、`tool/shell.ts`、`tool/code-mode.ts`、`session/llm.ts` 等 12 个文件）——`Permission.node` 保留在 layer 图
-2. V1 工具路径改走 `PermissionV2.ask`（依赖 V1 工具迁移）
+1. `@/permission`（V1）仍被V1 Agent與剩餘legacy tool/LLM compatibility引用；`Permission.node`保留在layer图，
+   但`tool/shell.ts`已刪，production BashTool只使用PermissionV2
+2. 剩餘V1工具路径改走`PermissionV2.ask`或隨test-only leaf closure刪除
 3. `replyCompatible` 兜底逻辑仍被 `test/permission/next.test.ts` 覆盖，保留
 4. `core/v1/permission.ts` 的运行时使用（session 数据模型的 permission 字段，批次 4）
 

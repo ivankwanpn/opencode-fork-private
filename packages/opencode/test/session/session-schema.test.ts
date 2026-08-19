@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { MessageID, SessionID } from "../../src/session/schema"
-import { Session } from "../../src/session/session"
+import { SessionWire } from "../../src/compat/session-wire"
 
 const info = {
   id: SessionID.descending(),
@@ -25,11 +25,11 @@ const info = {
   },
   permission: undefined,
   revert: undefined,
-} satisfies Session.Info
+} satisfies SessionWire.Info
 
 describe("Session schema", () => {
   test("encodes undefined optional session fields as omitted keys", () => {
-    const encoded = Schema.encodeUnknownSync(Session.Info)(info) as Record<string, unknown>
+    const encoded = Schema.encodeUnknownSync(SessionWire.Info)(info) as Record<string, unknown>
 
     for (const key of ["workspaceID", "parentID", "summary", "share", "permission", "revert"]) {
       expect(Object.hasOwn(encoded, key)).toBe(false)
@@ -40,7 +40,7 @@ describe("Session schema", () => {
   })
 
   test("encodes undefined optional global session project fields as omitted keys", () => {
-    const encoded = Schema.encodeUnknownSync(Session.GlobalInfo)({
+    const encoded = Schema.encodeUnknownSync(SessionWire.GlobalInfo)({
       ...info,
       project: {
         id: ProjectV2.ID.global,
@@ -54,7 +54,7 @@ describe("Session schema", () => {
   })
 
   test("encodes nested undefined optional session fields as omitted keys", () => {
-    const encoded = Schema.encodeUnknownSync(Session.Info)({
+    const encoded = Schema.encodeUnknownSync(SessionWire.Info)({
       ...info,
       summary: {
         additions: 1,

@@ -27,8 +27,9 @@ workspace/sync、share、TUI validation、legacy execution adapter、legacy task
 均改讀寫 `SessionV2`；新增 source gate 阻止 production graph 重新掛載舊 Session service。`SessionV2.list` 補齊
 archived 與 updated-time reporting filter，`SessionV2.move` 以 canonical `SessionEvent.Moved` 處理 workspace
 placement，share subscriber 改消費 V2 Updated/Diff/Deleted。舊 `Service`/`Interface`/`layer`/row
-repository/list/mutation implementation 與所有 V1 lifecycle publisher 已從 `session/session.ts` 刪除；該模組現在只保留明確的 legacy
-HTTP wire schema、event alias、BusyError、title/usage/background helpers。舊 repository 專用測試已刪除，仍在測
+repository/list/mutation implementation 與所有 V1 lifecycle publisher 已刪除；原`session/session.ts`也在wire
+boundary重構後整檔刪除。legacy DTO移到`compat/session-wire.ts`，title/usage/busy/background helper各自回到
+`session/title.ts`、`session/usage.ts`、`run-state.ts`與`removal.ts`。舊 repository 專用測試已刪除，仍在測
 現役 workspace/share/task/HttpApi 行為的 fixtures 全部改用 canonical V2。Core projector 的 V1
 Created/Updated/Deleted branches 與 `sessionRow(SessionV1.Info)` 已刪除，V1 import allowlist 同步縮小。
 
@@ -112,6 +113,11 @@ durable維持47；Client與SDK生成型別不再暴露這四項事件。
 `SessionV1.Event`、`PartDelta`、`Diff`與`Error` export已刪除；V1 Session模組只保留仍被legacy HTTP/ACP/
 CLI/TUI wire view使用的message/session資料型別與錯誤門面。這個批次不改public inventory或durable map。
 
+**999.0.19 Session wire boundary separation**：原`session/session.ts`已整檔刪除。legacy `/session` DTO集中到
+`compat/session-wire.ts`；title、usage、busy error與background cancellation分別移到其實際domain。Session
+HttpApi的URL/payload/response契約不變，handlers仍全部委派`SessionV2`、canonical transcript/execution、
+`SessionRunState`與`SessionRemoval`。完整session HttpApi 57項回歸通過。
+
 ---
 
 ## 1. 各区域现状总表
@@ -143,9 +149,9 @@ CLI/TUI wire view使用的message/session資料型別與錯誤門面。這個批
 
 ### 2.1 活跃 V1 入口（HTTP/CLI 实际使用，不能直接删）
 
-1. **V1 legacy Session 存储服务** — `opencode/src/session/session.ts`
-   httpapi 的 list/get/create/remove/update/fork/children、touch、title/metadata/archived/permission 更新。
-   与 V2 共享同一 `SessionTable`。**CRUD 端点迁移前不可移除。**
+1. **Legacy `/session` wire facade** — `compat/session-wire.ts` + HttpApi session group/handler
+   list/get/create/remove/update/fork/children與transcript routes均透過`SessionV2`/canonical services執行；
+   目前只保留舊URL、payload與response DTO。已無V1 Session repository/service。
 
 2. **V1 Config** — `opencode/src/config/config.ts` + `ConfigV1.Info`（`@opencode-ai/core/v1/config/config`）
    `config.get/update` 端点、config 组。此区域 V1 最彻底。
@@ -419,7 +425,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - `PermissionV2.configured` 与 CodeMode 执行期 catalog 过滤统一为 agent → Session → prompt overrides 三源合并（`evaluate` 的 last-match-wins 不变）；Session 级规则可通过 `setPermissions` 生效。
 >
 > **仍阻止实际删表/删目录的依赖** ⏸️：
-> - `session/session.ts` 已不含 repository/layer，只剩 legacy HTTP wire schema、BusyError、event alias 與通用 helpers；legacy route/plugin/CLI consumer 未遷移前仍不能整檔刪除。
+> - `session/session.ts` 的repository/layer先被清空，之後wire DTO與domain helper完成分離並整檔刪除；legacy `/session` route仍保留相容URL與DTO，但執行只走canonical services。
 > - Durable manifest 已 V2-only；`ServerDefinitions` 仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
 > - `session.error` 與 Session status producer 已 V2-only；舊 consumer 暫經 bridge 投影，dead `session.idle` / `session.compacted` definitions 已移除。
 > - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。

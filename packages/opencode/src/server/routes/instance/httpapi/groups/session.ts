@@ -2,7 +2,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 
-import { Session } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
 import { MessageV2 } from "@/session/message-v2"
 import { CommandInput, PromptInput, ShellInput } from "@/session/legacy-session-input"
 import { SessionRevert } from "@/session/revert"
@@ -48,15 +48,15 @@ export const MessagesQuery = Schema.Struct({
 export const StatusMap = Schema.Record(Schema.String, SessionStatus.Info)
 export const UpdatePayload = Schema.Struct({
   title: Schema.optional(Schema.String),
-  metadata: Schema.optional(Session.Metadata),
+  metadata: Schema.optional(SessionWire.Metadata),
   permission: Schema.optional(PermissionV1.Ruleset),
   time: Schema.optional(
     Schema.Struct({
-      archived: Schema.optional(Session.ArchivedTimestamp),
+      archived: Schema.optional(SessionWire.ArchivedTimestamp),
     }),
   ),
 })
-export const ForkPayload = Schema.Struct(Struct.omit(Session.ForkInput.fields, ["sessionID"]))
+export const ForkPayload = Schema.Struct(Struct.omit(SessionWire.ForkInput.fields, ["sessionID"]))
 export const InitPayload = Schema.Struct({
   modelID: ModelV2.ID,
   providerID: ProviderV2.ID,
@@ -110,7 +110,7 @@ export const SessionApi = HttpApi.make("session")
       .add(
         HttpApiEndpoint.get("list", SessionPaths.list, {
           query: ListQuery,
-          success: described(Schema.Array(Session.Info), "List of sessions"),
+          success: described(Schema.Array(SessionWire.Info), "List of sessions"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "session.list",
@@ -132,7 +132,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.get("get", SessionPaths.get, {
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
-          success: described(Session.Info, "Get session"),
+          success: described(SessionWire.Info, "Get session"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -144,7 +144,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.get("children", SessionPaths.children, {
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
-          success: described(Schema.Array(Session.Info), "List of children"),
+          success: described(Schema.Array(SessionWire.Info), "List of children"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -202,8 +202,8 @@ export const SessionApi = HttpApi.make("session")
         ),
         HttpApiEndpoint.post("create", SessionPaths.create, {
           query: WorkspaceRoutingQuery,
-          payload: [HttpApiSchema.NoContent, Session.CreateInput],
-          success: described(Session.Info, "Successfully created session"),
+          payload: [HttpApiSchema.NoContent, SessionWire.CreateInput],
+          success: described(SessionWire.Info, "Successfully created session"),
           error: HttpApiError.BadRequest,
         }).annotateMerge(
           OpenApi.annotations({
@@ -228,7 +228,7 @@ export const SessionApi = HttpApi.make("session")
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
           payload: UpdatePayload,
-          success: described(Session.Info, "Successfully updated session"),
+          success: described(SessionWire.Info, "Successfully updated session"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -241,7 +241,7 @@ export const SessionApi = HttpApi.make("session")
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
           payload: [HttpApiSchema.NoContent, ForkPayload],
-          success: described(Session.Info, "200"),
+          success: described(SessionWire.Info, "200"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -279,7 +279,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.post("share", SessionPaths.share, {
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
-          success: described(Session.Info, "Successfully shared session"),
+          success: described(SessionWire.Info, "Successfully shared session"),
           error: [HttpApiError.InternalServerError, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -291,7 +291,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.delete("unshare", SessionPaths.share, {
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
-          success: described(Session.Info, "Successfully unshared session"),
+          success: described(SessionWire.Info, "Successfully unshared session"),
           error: [HttpApiError.InternalServerError, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -370,7 +370,7 @@ export const SessionApi = HttpApi.make("session")
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
           payload: RevertPayload,
-          success: described(Session.Info, "Updated session"),
+          success: described(SessionWire.Info, "Updated session"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({
@@ -383,7 +383,7 @@ export const SessionApi = HttpApi.make("session")
         HttpApiEndpoint.post("unrevert", SessionPaths.unrevert, {
           params: { sessionID: SessionID },
           query: WorkspaceRoutingQuery,
-          success: described(Session.Info, "Updated session"),
+          success: described(SessionWire.Info, "Updated session"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
           OpenApi.annotations({

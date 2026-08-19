@@ -21,7 +21,7 @@ import { SessionID, MessageID } from "../../src/session/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Permission } from "@/permission"
 import { LLMAISDK } from "@/session/llm/ai-sdk"
-import { Session as SessionNs } from "@/session/session"
+import { SessionUsage } from "@/session/usage"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
@@ -525,7 +525,7 @@ describe("session.llm.ai-sdk adapter", () => {
   })
 
   // Anthropic emits cache write counts in providerMetadata.anthropic.cacheCreationInputTokens
-  // rather than usage.inputTokenDetails.cacheWriteTokens. Session.getUsage falls back to the
+  // rather than usage.inputTokenDetails.cacheWriteTokens. SessionUsage.calculate falls back to the
   // metadata path — but only if the adapter preserves providerMetadata on step-finish.
   test("preserves providerMetadata on step-finish so Anthropic cache writes survive getUsage", async () => {
     const events = await adapt([
@@ -554,7 +554,7 @@ describe("session.llm.ai-sdk adapter", () => {
     expect(stepFinish.usage?.cacheReadInputTokens).toBe(200)
 
     // End-to-end: with the metadata preserved, getUsage extracts cache.write from the fallback path.
-    const result = SessionNs.getUsage({
+    const result = SessionUsage.calculate({
       model: {
         id: "claude-3-5-sonnet",
         providerID: "anthropic",

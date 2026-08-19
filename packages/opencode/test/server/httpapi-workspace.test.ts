@@ -13,7 +13,7 @@ import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { Session } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
 import { Database } from "@opencode-ai/core/database/database"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Server } from "../../src/server/server"
@@ -325,29 +325,31 @@ describe("workspace HttpApi", () => {
     }),
   )
 
-  it.live("routes local workspace requests through the workspace target directory", () =>
-    Effect.gen(function* () {
-      Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
-      const dir = yield* tmpdirScoped({ git: true })
-      const workspaceDir = path.join(dir, ".workspace-local")
-      const project = yield* Project.use.fromDirectory(dir)
-      registerAdapter(project.project.id, "local-target", localAdapter(workspaceDir))
-      const created = yield* request(WorkspacePaths.list, dir, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "local-target", branch: null }),
-      })
-      const workspace = (yield* created.json) as Workspace.Info
+  it.live(
+    "routes local workspace requests through the workspace target directory",
+    () =>
+      Effect.gen(function* () {
+        Flag.OPENCODE_EXPERIMENTAL_WORKSPACES = true
+        const dir = yield* tmpdirScoped({ git: true })
+        const workspaceDir = path.join(dir, ".workspace-local")
+        const project = yield* Project.use.fromDirectory(dir)
+        registerAdapter(project.project.id, "local-target", localAdapter(workspaceDir))
+        const created = yield* request(WorkspacePaths.list, dir, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "local-target", branch: null }),
+        })
+        const workspace = (yield* created.json) as Workspace.Info
 
-      const url = new URL(`http://localhost${InstancePaths.path}`)
-      url.searchParams.set("workspace", workspace.id)
+        const url = new URL(`http://localhost${InstancePaths.path}`)
+        url.searchParams.set("workspace", workspace.id)
 
-      const response = yield* request(url.toString(), dir)
+        const response = yield* request(url.toString(), dir)
 
-      expect(response.status).toBe(200)
-      expect(yield* response.json).toMatchObject({ directory: workspaceDir })
-      yield* request(WorkspacePaths.remove.replace(":id", workspace.id), dir, { method: "DELETE" })
-    }),
+        expect(response.status).toBe(200)
+        expect(yield* response.json).toMatchObject({ directory: workspaceDir })
+        yield* request(WorkspacePaths.remove.replace(":id", workspace.id), dir, { method: "DELETE" })
+      }),
     30_000,
   )
 
@@ -472,7 +474,7 @@ describe("workspace HttpApi", () => {
       })
       const workspace = (yield* created.json) as Workspace.Info
       const sessionResponse = yield* requestDefault("/session", dir, { method: "POST" })
-      const session = (yield* sessionResponse.json) as Session.Info
+      const session = (yield* sessionResponse.json) as SessionWire.Info
       const warped = yield* requestDefault(WorkspacePaths.warp, dir, {
         method: "POST",
         headers: { "content-type": "application/json" },

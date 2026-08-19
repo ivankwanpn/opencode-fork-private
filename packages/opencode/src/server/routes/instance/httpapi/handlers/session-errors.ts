@@ -1,6 +1,6 @@
 import { NotFoundError as StorageNotFoundError } from "@/storage/storage"
 import { SessionV2 } from "@opencode-ai/core/session"
-import type { Session } from "@/session/session"
+import { SessionRunState } from "@/session/run-state"
 import { Effect, Schema } from "effect"
 import * as ApiError from "../errors"
 
@@ -18,7 +18,7 @@ export function mapSessionNotFound<A, E, R>(self: Effect.Effect<A, E | SessionV2
   )
 }
 
-export function mapBusy<A, R>(self: Effect.Effect<A, Session.BusyError, R>) {
+export function mapBusy<A, R>(self: Effect.Effect<A, SessionRunState.BusyError, R>) {
   return self.pipe(
     Effect.catchTag("SessionBusyError", (error) =>
       Effect.fail(

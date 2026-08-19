@@ -11,11 +11,12 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { toV2Rules } from "@opencode-ai/core/session/info"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Config } from "@/config/config"
+import { SessionWire } from "@/compat/session-wire"
 import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { SessionShare } from "@/share/session"
 import { ShareNext } from "@/share/share-next"
 import { LegacySessionExecution } from "@/session/legacy-session-execution"
-import { Session, childTitlePrefix } from "@/session/session"
+import { SessionTitle } from "@/session/title"
 import { SessionRemoval } from "@/session/removal"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionRunState } from "@/session/run-state"
@@ -204,7 +205,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const children = Effect.fn("SessionHttpApi.children")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
-      const kids = yield* canonical.children(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      const kids = yield* canonical
+        .children(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(SessionError.mapSessionNotFound)
       return kids.map(legacySessionFromV2)
     })
 
@@ -307,7 +310,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       })
     })
 
-    const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: Session.CreateInput }) {
+    const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: SessionWire.CreateInput }) {
       const payload = ctx.payload
       const ctxState = yield* InstanceState.context
       const workspaceID = yield* InstanceState.workspaceID
@@ -316,7 +319,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         ...(payload?.title === undefined
           ? payload?.parentID === undefined
             ? {}
-            : { title: `${childTitlePrefix}${new Date().toISOString()}` }
+            : { title: `${SessionTitle.childPrefix}${new Date().toISOString()}` }
           : { title: payload.title }),
         ...(payload?.agent === undefined ? {} : { agent: AgentV2.ID.make(payload.agent) }),
         ...(payload?.model === undefined
@@ -325,7 +328,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
               model: {
                 id: ModelV2.ID.make(payload.model.id),
                 providerID: ProviderV2.ID.make(payload.model.providerID),
-                ...(payload.model.variant === undefined ? {} : { variant: ModelV2.VariantID.make(payload.model.variant) }),
+                ...(payload.model.variant === undefined
+                  ? {}
+                  : { variant: ModelV2.VariantID.make(payload.model.variant) }),
                 ...(payload.model.protocol === undefined ? {} : { protocol: payload.model.protocol }),
               },
             }),
@@ -368,7 +373,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       if (body.trim().length === 0) return yield* create({})
 
       const json = yield* tryParseJson(body)
-      const decoded = yield* Schema.decodeUnknownEffect(Session.CreateInput)(json).pipe(
+      const decoded = yield* Schema.decodeUnknownEffect(SessionWire.CreateInput)(json).pipe(
         Effect.mapError(() => new HttpApiError.BadRequest({})),
       )
       const payload = decoded
@@ -421,10 +426,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload?: typeof ForkPayload.Type
     }) {
       const sessionID = SessionV2.ID.make(ctx.params.sessionID)
-      const history = yield* canonical.messages({ sessionID, order: "asc" }).pipe(
-        Effect.catchTag("Session.MessageDecodeError", Effect.die),
-        SessionError.mapSessionNotFound,
-      )
+      const history = yield* canonical
+        .messages({ sessionID, order: "asc" })
+        .pipe(Effect.catchTag("Session.MessageDecodeError", Effect.die), SessionError.mapSessionNotFound)
       const cutoff = ctx.payload?.messageID
       let messages = history
       if (cutoff !== undefined) {
@@ -504,11 +508,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
           model: { providerID: ctx.payload.providerID, id: ctx.payload.modelID },
           auto: ctx.payload.auto,
         })
-        .pipe(
-          SessionError.mapStorageNotFound,
-          SessionError.mapSessionNotFound,
-          SessionError.mapExecutionBusy,
-        )
+        .pipe(SessionError.mapStorageNotFound, SessionError.mapSessionNotFound, SessionError.mapExecutionBusy)
       return true
     })
 
@@ -663,14 +663,12 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const unrevert = Effect.fn("SessionHttpApi.unrevert")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* requireSession(ctx.params.sessionID)
-      yield* revertSvc.revert
-        .clear(SessionV2.ID.make(ctx.params.sessionID))
-        .pipe(
-          SessionError.mapSessionNotFound,
-          Effect.catchTag("Snapshot.Error", () =>
-            Effect.fail(new ApiNotFoundError({ name: "NotFoundError", data: { message: "Snapshot failed" } })),
-          ),
-        )
+      yield* revertSvc.revert.clear(SessionV2.ID.make(ctx.params.sessionID)).pipe(
+        SessionError.mapSessionNotFound,
+        Effect.catchTag("Snapshot.Error", () =>
+          Effect.fail(new ApiNotFoundError({ name: "NotFoundError", data: { message: "Snapshot failed" } })),
+        ),
+      )
       return yield* requireSession(ctx.params.sessionID)
     })
 
@@ -728,7 +726,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID; messageID: MessageID; partID: PartID }
     }) {
       yield* requireSession(ctx.params.sessionID)
-      const current = yield* revertSvc.get(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      const current = yield* revertSvc
+        .get(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(SessionError.mapSessionNotFound)
       const message = yield* revertSvc.message({
         sessionID: current.id,
         messageID: SessionMessage.ID.make(ctx.params.messageID),
@@ -777,7 +777,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       ) {
         return yield* new HttpApiError.BadRequest({})
       }
-      const current = yield* revertSvc.get(SessionV2.ID.make(ctx.params.sessionID)).pipe(SessionError.mapSessionNotFound)
+      const current = yield* revertSvc
+        .get(SessionV2.ID.make(ctx.params.sessionID))
+        .pipe(SessionError.mapSessionNotFound)
       const message = yield* revertSvc.message({
         sessionID: current.id,
         messageID: SessionMessage.ID.make(ctx.params.messageID),

@@ -1,6 +1,5 @@
 import { BackgroundJob } from "@/background/job"
 import { ShareNext } from "@/share/share-next"
-import { cancelBackgroundJobs } from "@/session/session"
 import { SessionID } from "@/session/schema"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionV2 } from "@opencode-ai/core/session"
@@ -45,7 +44,7 @@ const layer = Layer.effect(
 
     const remove = Effect.fn("SessionRemoval.remove")(function* (sessionID: SessionV2.ID) {
       const sessionIDs = yield* stage(sessionID)
-      yield* Effect.forEach(sessionIDs, (id) => cancelBackgroundJobs(background, SessionID.make(id)), {
+      yield* Effect.forEach(sessionIDs, (id) => cancelJobs(background, SessionID.make(id)), {
         concurrency: "unbounded",
         discard: true,
       })
@@ -56,6 +55,23 @@ const layer = Layer.effect(
     return Service.of({ remove, removeDurable })
   }),
 )
+
+const cancelJobs = Effect.fn("SessionRemoval.cancelJobs")(function* (
+  background: BackgroundJob.Interface,
+  sessionID: SessionID,
+) {
+  const jobs = yield* background.list()
+  yield* Effect.forEach(
+    jobs.filter((job) => {
+      if (job.status !== "running") return false
+      if (job.id === sessionID) return true
+      if (job.metadata?.sessionId === sessionID) return true
+      return job.metadata?.parentSessionId === sessionID
+    }),
+    (job) => background.cancel(job.id),
+    { concurrency: "unbounded", discard: true },
+  )
+})
 
 export const node = LayerNode.make({
   service: Service,

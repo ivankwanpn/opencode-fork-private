@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
-import { Session as SessionNs } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
@@ -43,7 +43,7 @@ describe("session action routes", () => {
         })
         expect(created.status).toBe(200)
 
-        const session = (yield* created.json) as SessionNs.Info
+        const session = (yield* created.json) as SessionWire.Info
         expect(session.metadata).toEqual({ source: "sdk", trace: { id: "abc" } })
 
         const updated = yield* requestInDirectory(`/session/${session.id}`, test.directory, {
@@ -53,12 +53,12 @@ describe("session action routes", () => {
         })
         expect(updated.status).toBe(200)
 
-        const next = (yield* updated.json) as SessionNs.Info
+        const next = (yield* updated.json) as SessionWire.Info
         expect(next.metadata).toEqual({ source: "sdk", trace: { id: "def" }, tags: ["one"] })
 
         const fetched = yield* requestInDirectory(`/session/${session.id}`, test.directory)
         expect(fetched.status).toBe(200)
-        expect(((yield* fetched.json) as SessionNs.Info).metadata).toEqual(next.metadata)
+        expect(((yield* fetched.json) as SessionWire.Info).metadata).toEqual(next.metadata)
 
         const forked = yield* requestInDirectory(`/session/${session.id}/fork`, test.directory, {
           method: "POST",
@@ -67,7 +67,7 @@ describe("session action routes", () => {
         })
         expect(forked.status).toBe(200)
 
-        const fork = (yield* forked.json) as SessionNs.Info
+        const fork = (yield* forked.json) as SessionWire.Info
         expect(fork.metadata).toEqual(next.metadata)
 
         const reset = yield* requestInDirectory(`/session/${session.id}`, test.directory, {
@@ -76,7 +76,7 @@ describe("session action routes", () => {
           body: JSON.stringify({ metadata: {} }),
         })
         expect(reset.status).toBe(200)
-        expect(((yield* reset.json) as SessionNs.Info).metadata).toEqual({})
+        expect(((yield* reset.json) as SessionWire.Info).metadata).toEqual({})
 
         yield* SessionV2.Service.use((svc) => svc.remove(SessionV2.ID.make(fork.id)).pipe(Effect.ignore))
         yield* SessionV2.Service.use((svc) => svc.remove(SessionV2.ID.make(session.id)).pipe(Effect.ignore))

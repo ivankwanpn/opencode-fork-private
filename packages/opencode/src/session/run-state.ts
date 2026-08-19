@@ -4,13 +4,16 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { TaskCancellation } from "@opencode-ai/core/session/task-cancellation"
 import { Runner } from "@/effect/runner"
 import { BackgroundJob } from "@/background/job"
-import { Effect, Latch, Layer, Scope, Context } from "effect"
-import { Session } from "./session"
+import { Effect, Latch, Layer, Scope, Context, Schema } from "effect"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
 
+export class BusyError extends Schema.TaggedErrorClass<BusyError>()("SessionBusyError", {
+  sessionID: SessionID,
+}) {}
+
 export interface Interface {
-  readonly assertNotBusy: (sessionID: SessionID) => Effect.Effect<void, Session.BusyError>
+  readonly assertNotBusy: (sessionID: SessionID) => Effect.Effect<void, BusyError>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly cancelIfRunning: (sessionID: SessionID) => Effect.Effect<boolean>
   readonly ensureRunning: (
@@ -23,7 +26,7 @@ export interface Interface {
     onInterrupt: Effect.Effect<SessionV1.WithParts>,
     work: Effect.Effect<SessionV1.WithParts>,
     ready?: Latch.Latch,
-  ) => Effect.Effect<SessionV1.WithParts, Session.BusyError>
+  ) => Effect.Effect<SessionV1.WithParts, BusyError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionRunState") {}
@@ -162,7 +165,7 @@ const cancelLegacyBackgroundJobs = Effect.fn("SessionRunState.cancelLegacyBackgr
 })
 
 function busyError(sessionID: SessionID) {
-  return new Session.BusyError({ sessionID })
+  return new BusyError({ sessionID })
 }
 
 export const node = LayerNode.make({

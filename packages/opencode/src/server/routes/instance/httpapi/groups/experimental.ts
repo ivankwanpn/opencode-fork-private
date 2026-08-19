@@ -1,7 +1,7 @@
 import { AccountID, OrgID } from "@/account/schema"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 
-import { Session } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
 import { SessionID } from "@/session/schema"
 import { Worktree } from "@/worktree"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
@@ -223,7 +223,7 @@ export const ExperimentalApi = HttpApi.make("experimental")
         ),
         HttpApiEndpoint.get("session", ExperimentalPaths.session, {
           query: SessionListQuery,
-          success: described(Schema.Array(Session.GlobalInfo), "List of sessions"),
+          success: described(Schema.Array(SessionWire.GlobalInfo), "List of sessions"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "experimental.session.list",

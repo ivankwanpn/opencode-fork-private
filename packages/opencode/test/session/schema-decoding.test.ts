@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 
-import { Session } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
 import { LegacySessionInput } from "../../src/session/legacy-session-input"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionStatus } from "../../src/session/status"
@@ -30,8 +30,8 @@ function decodeUnknown<S extends Schema.Top>(schema: S) {
   return (input: unknown): Schema.Schema.Type<S> => decode(input) as Schema.Schema.Type<S>
 }
 
-describe("Session.Info", () => {
-  const decode = decodeUnknown(Session.Info)
+describe("SessionWire.Info", () => {
+  const decode = decodeUnknown(SessionWire.Info)
 
   test("accepts minimal session", () => {
     const input = {
@@ -107,8 +107,8 @@ describe("Session.Info", () => {
   })
 })
 
-describe("Session.ProjectInfo", () => {
-  const decode = decodeUnknown(Session.ProjectInfo)
+describe("SessionWire.ProjectInfo", () => {
+  const decode = decodeUnknown(SessionWire.ProjectInfo)
 
   test("accepts with and without optional name", () => {
     const noName = { id: projectID, worktree: "/tmp/wt" }
@@ -118,8 +118,8 @@ describe("Session.ProjectInfo", () => {
   })
 })
 
-describe("Session.GlobalInfo", () => {
-  const decode = decodeUnknown(Session.GlobalInfo)
+describe("SessionWire.GlobalInfo", () => {
+  const decode = decodeUnknown(SessionWire.GlobalInfo)
 
   test("accepts null project", () => {
     const input = {
@@ -152,7 +152,7 @@ describe("Session.GlobalInfo", () => {
 
 describe("Session input schemas", () => {
   test("CreateInput accepts undefined and populated forms", () => {
-    const decode = decodeUnknown(Session.CreateInput)
+    const decode = decodeUnknown(SessionWire.CreateInput)
     expect(decode(undefined)).toBeUndefined()
 
     const populated = {
@@ -166,14 +166,13 @@ describe("Session input schemas", () => {
   })
 
   test("ForkInput round-trips", () => {
-    const decode = decodeUnknown(Session.ForkInput)
+    const decode = decodeUnknown(SessionWire.ForkInput)
     const input = { sessionID, messageID }
     expect(decode(input)).toEqual(input)
     // messageID is optional
     const bare = { sessionID }
     expect(decode(bare)).toEqual(bare)
   })
-
 })
 
 describe("SessionRevert.RevertInput", () => {

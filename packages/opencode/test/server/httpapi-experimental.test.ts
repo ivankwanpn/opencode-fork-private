@@ -5,7 +5,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
-import { Session } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { LocationServiceMap, locationServiceMapV2Layer } from "@opencode-ai/core/location-services"
@@ -35,7 +35,7 @@ function request(path: string, directory: string, init: RequestInit = {}) {
   return requestInDirectory(path, directory, init)
 }
 
-function createSession(input?: Session.CreateInput) {
+function createSession(input?: SessionWire.CreateInput) {
   return TestSessionV2.create(input ?? {})
 }
 
@@ -261,7 +261,7 @@ describe("experimental HttpApi", () => {
         expect(page.status).toBe(200)
         expect(page.headers["x-next-cursor"]).toBeTruthy()
 
-        const body = yield* json<Session.GlobalInfo[]>(page)
+        const body = yield* json<SessionWire.GlobalInfo[]>(page)
         expect(body.map((session) => session.id)).toEqual([second.id])
         expect(body[0].project?.id).toBe(second.projectID)
 
@@ -274,7 +274,7 @@ describe("experimental HttpApi", () => {
           tmp.directory,
         )
         expect(next.status).toBe(200)
-        expect((yield* json<Session.GlobalInfo[]>(next)).map((session) => session.id)).toContain(first.id)
+        expect((yield* json<SessionWire.GlobalInfo[]>(next)).map((session) => session.id)).toContain(first.id)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

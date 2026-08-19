@@ -50,14 +50,8 @@ test("production runtime does not resolve or mount the legacy Session service", 
   expect(offenders).toEqual([])
 })
 
-test("legacy Session wire module cannot recreate a repository or lifecycle producer", async () => {
-  const source = await Bun.file(new URL("../../src/session/session.ts", import.meta.url)).text()
-
-  expect(source).not.toContain("Context.Service")
-  expect(source).not.toContain("LayerNode.make")
-  expect(source).not.toContain("events.publish(SessionV1.Event.Created")
-  expect(source).not.toContain("events.publish(SessionV1.Event.Updated")
-  expect(source).not.toContain("events.publish(SessionV1.Event.Deleted")
+test("legacy Session service module is deleted", async () => {
+  expect(await Bun.file(new URL("../../src/session/session.ts", import.meta.url)).exists()).toBe(false)
 })
 
 test("production status publishers do not emit the deprecated Session Idle event", async () => {
@@ -79,9 +73,10 @@ test("production status publishers do not emit the deprecated Session Idle event
 
 test("legacy wire helpers do not re-export V1 Session events", async () => {
   const sources = await Promise.all(
-    [new URL("../../src/session/session.ts", import.meta.url), new URL("../../src/session/message-v2.ts", import.meta.url)].map(
-      async (file) => ({ file: file.pathname, source: await Bun.file(file).text() }),
-    ),
+    [
+      new URL("../../src/compat/session-wire.ts", import.meta.url),
+      new URL("../../src/session/message-v2.ts", import.meta.url),
+    ].map(async (file) => ({ file: file.pathname, source: await Bun.file(file).text() })),
   )
 
   expect(sources.filter((entry) => entry.source.includes("SessionV1.Event.")).map((entry) => entry.file)).toEqual([])

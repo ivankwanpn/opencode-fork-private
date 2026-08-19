@@ -25,7 +25,8 @@ import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import * as HttpSessionError from "../../src/server/routes/instance/httpapi/handlers/session-errors"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
-import { Session } from "@/session/session"
+import { SessionWire } from "@/compat/session-wire"
+import { SessionRunState } from "@/session/run-state"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
@@ -144,7 +145,7 @@ function expectWake(sessionID: string, inputID: string, kind: "promote" | "cance
   wakeExpectations.set(sessionID, { inputID, kind })
 }
 
-function createSession(input?: Session.CreateInput) {
+function createSession(input?: SessionWire.CreateInput) {
   return TestSessionV2.create(input ?? {})
 }
 
@@ -328,7 +329,9 @@ describe("session HttpApi", () => {
   it.effect("maps busy sessions to public session busy errors", () =>
     Effect.gen(function* () {
       const sessionID = SessionID.descending()
-      const exit = yield* HttpSessionError.mapBusy(Effect.fail(new Session.BusyError({ sessionID }))).pipe(Effect.exit)
+      const exit = yield* HttpSessionError.mapBusy(Effect.fail(new SessionRunState.BusyError({ sessionID }))).pipe(
+        Effect.exit,
+      )
 
       expect(Exit.isFailure(exit)).toBe(true)
       if (Exit.isFailure(exit)) {
@@ -417,18 +420,18 @@ describe("session HttpApi", () => {
         const message = yield* insertCanonicalUserMessage(parent.id, "hello", 1)
         yield* insertCanonicalUserMessage(parent.id, "world", 2)
 
-        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?roots=true`, { headers })
+        const listed = yield* requestJson<SessionWire.Info[]>(`${SessionPaths.list}?roots=true`, { headers })
         expect(listed.map((item) => item.id)).toContain(parent.id)
         expect(Object.hasOwn(listed[0]!, "parentID")).toBe(false)
 
         expect(yield* requestJson<Record<string, unknown>>(SessionPaths.status, { headers })).toEqual({})
 
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers }),
+          yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers }),
         ).toMatchObject({ id: parent.id, title: "parent" })
 
         expect(
-          (yield* requestJson<Session.Info[]>(pathFor(SessionPaths.children, { sessionID: parent.id }), {
+          (yield* requestJson<SessionWire.Info[]>(pathFor(SessionPaths.children, { sessionID: parent.id }), {
             headers,
           })).map((item) => item.id),
         ).toEqual([child.id])
@@ -1420,7 +1423,7 @@ describe("session HttpApi", () => {
           })}`,
           { headers },
         )
-        const sessionCursor = (yield* json<{ data: Session.Info[]; cursor: { next?: string } }>(sessionPage)).cursor
+        const sessionCursor = (yield* json<{ data: SessionWire.Info[]; cursor: { next?: string } }>(sessionPage)).cursor
           .next
         expect(sessionCursor).toBeTruthy()
         expect(JSON.parse(Buffer.from(sessionCursor!, "base64url").toString("utf8"))).toMatchObject({
@@ -1968,7 +1971,7 @@ describe("session HttpApi", () => {
         expect(response.status).toBe(200)
         // Ruling 1: summary is V1-only row data; the V2 projection omits it,
         // matching the production server surface.
-        expect((yield* json<Session.Info>(response)).summary).toBeUndefined()
+        expect((yield* json<SessionWire.Info>(response)).summary).toBeUndefined()
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -1980,33 +1983,33 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
 
-        const createdEmpty = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const createdEmpty = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
           method: "POST",
           headers,
         })
         expect(createdEmpty.id).toBeTruthy()
 
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "created" }),
         })
         expect(created.title).toBe("created")
 
-        const updated = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+        const updated = yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
           method: "PATCH",
           headers,
           body: JSON.stringify({ title: "updated", time: { archived: 1 } }),
         })
         expect(updated).toMatchObject({ id: created.id, title: "updated", time: { archived: 1 } })
 
-        const forked = yield* requestJson<Session.Info>(pathFor(SessionPaths.fork, { sessionID: created.id }), {
+        const forked = yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.fork, { sessionID: created.id }), {
           method: "POST",
           headers,
         })
         expect(forked.id).not.toBe(created.id)
 
-        const forkedWithoutContentType = yield* requestJson<Session.Info>(
+        const forkedWithoutContentType = yield* requestJson<SessionWire.Info>(
           pathFor(SessionPaths.fork, { sessionID: created.id }),
           {
             method: "POST",
@@ -2022,7 +2025,7 @@ describe("session HttpApi", () => {
         })
         expect(invalidFork.status).toBe(400)
 
-        const forkedWhitespace = yield* requestJson<Session.Info>(
+        const forkedWhitespace = yield* requestJson<SessionWire.Info>(
           pathFor(SessionPaths.fork, { sessionID: created.id }),
           {
             method: "POST",
@@ -2060,9 +2063,7 @@ describe("session HttpApi", () => {
           return yield* BackgroundJob.LocationService
         }).pipe(
           Effect.provide(
-            LocationServiceMap.Service.get(
-              Location.Ref.make({ directory: AbsolutePath.make(test.directory) }),
-            ),
+            LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(test.directory) })),
           ),
         )
         yield* Effect.gen(function* () {
@@ -2145,7 +2146,7 @@ describe("session HttpApi", () => {
           directory: path.join(test.directory, ".workspace-local"),
         })
 
-        const created = yield* requestJson<Session.Info>(`${SessionPaths.create}?workspace=${workspace.id}`, {
+        const created = yield* requestJson<SessionWire.Info>(`${SessionPaths.create}?workspace=${workspace.id}`, {
           method: "POST",
           headers: { "x-opencode-directory": test.directory, "content-type": "application/json" },
           body: JSON.stringify({ title: "workspace session" }),
@@ -2179,7 +2180,7 @@ describe("session HttpApi", () => {
           body,
         })
         expect(response.status).toBe(200)
-        expect((yield* json<Session.Info>(response)).time.archived).toBe(-1)
+        expect((yield* json<SessionWire.Info>(response)).time.archived).toBe(-1)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )
@@ -2210,7 +2211,7 @@ describe("session HttpApi", () => {
           directory: currentDir,
         })
         const headers = { "x-opencode-directory": test.directory }
-        const sessions = (yield* json<Session.Info[]>(
+        const sessions = (yield* json<SessionWire.Info[]>(
           yield* request(`${SessionPaths.list}?${query}`, { headers }),
         )).map((item) => item.id)
 
@@ -2227,18 +2228,20 @@ describe("session HttpApi", () => {
         const test = yield* TestInstance
         const hint = test.directory + path.sep
         const headers = { "x-opencode-directory": hint, "content-type": "application/json" }
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "hinted" }),
         })
 
         const query = new URLSearchParams({ directory: hint, roots: "true" })
-        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+        const listed = yield* requestJson<SessionWire.Info[]>(`${SessionPaths.list}?${query}`, { headers })
         expect(listed.map((item) => item.id)).toContain(created.id)
 
         const globalQuery = new URLSearchParams({ directory: hint })
-        const global = yield* requestJson<Session.Info[]>(`${ExperimentalPaths.session}?${globalQuery}`, { headers })
+        const global = yield* requestJson<SessionWire.Info[]>(`${ExperimentalPaths.session}?${globalQuery}`, {
+          headers,
+        })
         expect(global.map((item) => item.id)).toContain(created.id)
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
@@ -2251,7 +2254,7 @@ describe("session HttpApi", () => {
         if (process.platform !== "win32") return
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "windows spelling" }),
@@ -2262,7 +2265,7 @@ describe("session HttpApi", () => {
         const trailingSeparator = `${test.directory}\\`
         for (const spelling of [forwardSlashes, lowercaseDrive, trailingSeparator]) {
           const query = new URLSearchParams({ directory: spelling, roots: "true" })
-          const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+          const listed = yield* requestJson<SessionWire.Info[]>(`${SessionPaths.list}?${query}`, { headers })
           expect({ spelling, ids: listed.map((item) => item.id) }).toEqual({ spelling, ids: [created.id] })
         }
       }),
@@ -2277,7 +2280,7 @@ describe("session HttpApi", () => {
         if (process.platform !== "win32") return
         const globalWorktreeSentinel = "/"
         const headers = { "x-opencode-directory": globalWorktreeSentinel, "content-type": "application/json" }
-        const driveRootSession = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const driveRootSession = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "created at drive root" }),
@@ -2285,7 +2288,7 @@ describe("session HttpApi", () => {
         expect(driveRootSession.directory).toMatch(/^[A-Za-z]:\\$/)
 
         const query = new URLSearchParams({ directory: globalWorktreeSentinel, roots: "true" })
-        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+        const listed = yield* requestJson<SessionWire.Info[]>(`${SessionPaths.list}?${query}`, { headers })
         expect(listed.map((item) => item.id)).toContain(driveRootSession.id)
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
@@ -2335,13 +2338,24 @@ describe("session HttpApi", () => {
           {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ id: partID, sessionID: session.id, messageID: first.id, type: "text", text: "updated" }),
+            body: JSON.stringify({
+              id: partID,
+              sessionID: session.id,
+              messageID: first.id,
+              type: "text",
+              text: "updated",
+            }),
           },
         )
         expect(updated).toMatchObject({ id: partID, type: "text", text: "updated" })
         expect(
           yield* Database.Service.use(({ db }) =>
-            db.select({ data: SessionMessageTable.data }).from(SessionMessageTable).where(eq(SessionMessageTable.id, first.id)).get().pipe(Effect.orDie),
+            db
+              .select({ data: SessionMessageTable.data })
+              .from(SessionMessageTable)
+              .where(eq(SessionMessageTable.id, first.id))
+              .get()
+              .pipe(Effect.orDie),
           ),
         ).toMatchObject({ data: { content: [{ type: "text", id: "text_first", text: "updated" }] } })
 
@@ -2357,7 +2371,12 @@ describe("session HttpApi", () => {
         ).toBe(true)
         expect(
           yield* Database.Service.use(({ db }) =>
-            db.select({ data: SessionMessageTable.data }).from(SessionMessageTable).where(eq(SessionMessageTable.id, first.id)).get().pipe(Effect.orDie),
+            db
+              .select({ data: SessionMessageTable.data })
+              .from(SessionMessageTable)
+              .where(eq(SessionMessageTable.id, first.id))
+              .get()
+              .pipe(Effect.orDie),
           ),
         ).toMatchObject({ data: { content: [] } })
 
@@ -2486,7 +2505,7 @@ describe("session HttpApi", () => {
         const session = yield* createSession({ title: "remaining" })
 
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
+          yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
             method: "POST",
             headers,
             body: JSON.stringify({ messageID: MessageID.ascending() }),
@@ -2494,7 +2513,7 @@ describe("session HttpApi", () => {
         ).toMatchObject({ id: session.id })
 
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.unrevert, { sessionID: session.id }), {
+          yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.unrevert, { sessionID: session.id }), {
             method: "POST",
             headers,
           }),
@@ -2535,7 +2554,7 @@ describe("session HttpApi", () => {
         ])
         const partID = PartID.ascending(`prt_${message.id}_text_1`)
         expect(
-          yield* requestJson<Session.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
+          yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.revert, { sessionID: session.id }), {
             method: "POST",
             headers,
             body: JSON.stringify({ messageID: message.id, partID }),
@@ -2545,12 +2564,7 @@ describe("session HttpApi", () => {
         const committed = yield* request(`/api/session/${session.id}/revert/commit`, { method: "POST", headers })
         expect(committed.status).toBe(204)
         const row = yield* Database.Service.use(({ db }) =>
-          db
-            .select()
-            .from(SessionMessageTable)
-            .where(eq(SessionMessageTable.id, message.id))
-            .get()
-            .pipe(Effect.orDie),
+          db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, message.id)).get().pipe(Effect.orDie),
         )
         expect(row?.data).toMatchObject({ content: [{ type: "text", id: "text_keep", text: "keep" }] })
       }),
@@ -2563,14 +2577,14 @@ describe("session HttpApi", () => {
       Effect.gen(function* () {
         const test = yield* TestInstance
         const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+        const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
           method: "POST",
           headers,
           body: JSON.stringify({ title: "projected", metadata: { source: "sdk" } }),
         })
         expect(created.id).toBeTruthy()
 
-        const fetched = yield* requestJson<Session.Info>(pathFor(SessionPaths.get, { sessionID: created.id }), {
+        const fetched = yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.get, { sessionID: created.id }), {
           headers,
         })
 
@@ -2583,373 +2597,350 @@ describe("session HttpApi", () => {
     { git: true, config: { formatter: false, lsp: false } },
   )
 
-  it.instance(
-    "update persists through canonical V2 events only",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const { db } = yield* Database.Service
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "before" }),
-        })
+  it.instance("update persists through canonical V2 events only", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const { db } = yield* Database.Service
+      const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "before" }),
+      })
 
-        yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify({ title: "after", metadata: { a: 1 } }),
-        })
+      yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ title: "after", metadata: { a: 1 } }),
+      })
 
-        const v2Rows = yield* db
-          .select()
-          .from(EventTable)
-          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
-          .all()
+      const v2Rows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.updated.1")))
+        .all()
+        .pipe(Effect.orDie)
+      const v1Rows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.updated.1")))
+        .all()
+        .pipe(Effect.orDie)
+
+      expect(v2Rows.length).toBe(1)
+      expect(v1Rows.length).toBe(0)
+    }),
+  )
+
+  it.instance("update merges V1 permission payloads into the canonical V2 column", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "perm" }),
+      })
+
+      yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ permission: [{ permission: "bash", pattern: "*", action: "allow" }] }),
+      })
+      yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ permission: [{ permission: "bash", pattern: "src/**", action: "deny" }] }),
+      })
+
+      const canonical = yield* SessionV2.Service
+      const stored = yield* canonical.permissions(SessionV2.ID.make(created.id))
+      expect(stored).toEqual([
+        { action: "bash", resource: "*", effect: "allow" },
+        { action: "bash", resource: "src/**", effect: "deny" },
+      ])
+    }),
+  )
+
+  it.instance("create persists through canonical V2 events only", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const { db } = yield* Database.Service
+      const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "created" }),
+      })
+
+      const v2Rows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.created.1")))
+        .all()
+        .pipe(Effect.orDie)
+      const v1Rows = yield* db
+        .select()
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.created.1")))
+        .all()
+        .pipe(Effect.orDie)
+
+      expect(v2Rows.length).toBe(1)
+      expect(v1Rows.length).toBe(0)
+      expect(created.title).toBe("created")
+    }),
+  )
+
+  it.instance("remove persists through canonical V2 events and cleans up children", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "parent" }),
+      })
+      const child = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "child", parentID: parent.id }),
+      })
+
+      const removed = yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
+        method: "DELETE",
+        headers,
+      })
+      expect(removed).toBe(true)
+
+      // The tombstone is observed through a direct EventTable query, not
+      // the durable stream: the stream's cursor is strictly greater-than
+      // (`gt(seq, after)`, packages/core/src/event.ts), so whether a
+      // subscriber sees the Deleted event depends on where its cursor sits.
+      // Aggregate replacement preserves the sequence and commits the
+      // projection deletion, history purge, and next-sequence tombstone in
+      // one transaction. Query EventTable directly to pin the invariant:
+      // exactly one tombstone row of type session.next.deleted.1.
+      const { db } = yield* Database.Service
+      const rows = yield* db
+        .select()
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, parent.id))
+        .all()
+        .pipe(Effect.orDie)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]!.type).toBe(EventV2.versionedType(SessionEvent.Deleted.type, 1))
+
+      const parentGone = yield* request(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers })
+      expect(parentGone.status).toBe(404)
+      const childGone = yield* request(pathFor(SessionPaths.get, { sessionID: child.id }), { headers })
+      expect(childGone.status).toBe(404)
+    }),
+  )
+
+  it.instance("fork cuts the canonical transcript at the given message", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "fork source" }),
+      })
+      const first = yield* insertCanonicalUserMessage(parent.id, "hello", 1)
+      const second = yield* insertCanonicalUserMessage(parent.id, "world", 2)
+
+      const forked = yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ messageID: second.id }),
+      })
+      expect(forked.id).not.toBe(parent.id)
+
+      const canonical = yield* SessionV2.Service
+      const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
+      expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
+      expect(messages.length).toBe(1)
+    }),
+  )
+
+  it.instance("remove cancels background jobs owned by descendant sessions", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "parent" }),
+      })
+      const child = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "child", parentID: parent.id }),
+      })
+
+      const background = yield* BackgroundJob.Service
+      // BackgroundJob.start registers a job with status "running" (core
+      // packages/core/src/background-job.ts start); run: Effect.never keeps
+      // it running so cancelBackgroundJobs' status filter matches it.
+      const childJobID = `job_${child.id}`
+      yield* background.start({
+        id: childJobID,
+        type: "task",
+        metadata: { sessionId: child.id },
+        run: Effect.never,
+      })
+
+      yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
+        method: "DELETE",
+        headers,
+      })
+
+      const jobs = yield* background.list()
+      // The registry retains canceled entries (core cancel flips status to
+      // "cancelled" and keeps the map entry — no removal path exists in
+      // packages/core/src/background-job.ts), so assert the child's job is
+      // no longer running, which is exactly what cancelBackgroundJobs acts on.
+      expect(jobs.some((job) => job.id === childJobID && job.status === "running")).toBe(false)
+    }),
+  )
+
+  it.instance("native V2 remove uses the shared descendant cleanup lifecycle", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "native parent" }),
+      })
+      const child = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "native child", parentID: parent.id }),
+      })
+      const background = yield* BackgroundJob.Service
+      const childJobID = `job_native_${child.id}`
+      yield* background.start({
+        id: childJobID,
+        type: "task",
+        metadata: { sessionId: child.id },
+        run: Effect.never,
+      })
+
+      // The compatibility endpoint is /session/:id. The explicit /api
+      // prefix selects the Protocol V2 route and makes the 204 assertion a
+      // route-owner discriminator rather than a layer-order dependency.
+      const response = yield* request(`/api/session/${parent.id}`, { method: "DELETE", headers })
+
+      expect(response.status).toBe(204)
+      expect((yield* background.get(childJobID))?.status).toBe("cancelled")
+    }),
+  )
+
+  it.instance("create stores the payload workspaceID over the routed one", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const { db } = yield* Database.Service
+
+      const created = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "ws", workspaceID: "wrk_payload" }),
+      })
+      expect(created.id).toBeTruthy()
+
+      const row = yield* db
+        .select({ workspace_id: SessionTable.workspace_id })
+        .from(SessionTable)
+        .where(eq(SessionTable.id, created.id))
+        .get()
+        .pipe(Effect.orDie)
+      expect(row?.workspace_id).toBe(WorkspaceV2.ID.make("wrk_payload"))
+    }),
+  )
+
+  it.instance("fork cuts the transcript at the cutoff's transcript index", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "fork source" }),
+      })
+      // insertCanonicalUserMessage forces ascending IDs (SessionMessage.ID.create
+      // encodes the creation timestamp), which would make the lexicographic
+      // cutoff filter agree with transcript order — so seed SessionMessageTable
+      // rows directly with explicit ids whose lexical order is the reverse of
+      // the transcript order (mirrors the insert helper's row shape).
+      const { db } = yield* Database.Service
+      const seed = (id: string, text: string, seq: number, time: number) =>
+        db
+          .insert(SessionMessageTable)
+          .values({
+            id: SessionMessage.ID.make(id),
+            session_id: parent.id,
+            type: "user",
+            seq,
+            time_created: time,
+            data: {
+              text,
+              time: { created: time },
+            } as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+          })
+          .run()
           .pipe(Effect.orDie)
-        const v1Rows = yield* db
-          .select()
-          .from(EventTable)
-          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.updated.1")))
-          .all()
-          .pipe(Effect.orDie)
+      yield* seed("msg_zzz", "hello", 1, 1)
+      yield* seed("msg_aaa", "world", 2, 2)
 
-        expect(v2Rows.length).toBe(1)
-        expect(v1Rows.length).toBe(0)
-      }),
+      const forked = yield* requestJson<SessionWire.Info>(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ messageID: "msg_aaa" }),
+      })
+
+      const canonical = yield* SessionV2.Service
+      const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
+      expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
+    }),
   )
 
-  it.instance(
-    "update merges V1 permission payloads into the canonical V2 column",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "perm" }),
-        })
+  it.instance("fork rejects a cutoff that is not in the transcript", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "fork source" }),
+      })
 
-        yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify({ permission: [{ permission: "bash", pattern: "*", action: "allow" }] }),
-        })
-        yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify({ permission: [{ permission: "bash", pattern: "src/**", action: "deny" }] }),
-        })
-
-        const canonical = yield* SessionV2.Service
-        const stored = yield* canonical.permissions(SessionV2.ID.make(created.id))
-        expect(stored).toEqual([
-          { action: "bash", resource: "*", effect: "allow" },
-          { action: "bash", resource: "src/**", effect: "deny" },
-        ])
-      }),
+      const response = yield* request(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ messageID: "msg_nonexistent" }),
+      })
+      expect(response.status).toBe(400)
+    }),
   )
 
-  it.instance(
-    "create persists through canonical V2 events only",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const { db } = yield* Database.Service
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "created" }),
-        })
-
-        const v2Rows = yield* db
-          .select()
-          .from(EventTable)
-          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.next.created.1")))
-          .all()
-          .pipe(Effect.orDie)
-        const v1Rows = yield* db
-          .select()
-          .from(EventTable)
-          .where(and(eq(EventTable.aggregate_id, created.id), eq(EventTable.type, "session.created.1")))
-          .all()
-          .pipe(Effect.orDie)
-
-        expect(v2Rows.length).toBe(1)
-        expect(v1Rows.length).toBe(0)
-        expect(created.title).toBe("created")
-      }),
+  it.instance("create titles child sessions with the V1 child prefix", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+      const parent = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: "parent" }),
+      })
+      const child = yield* requestJson<SessionWire.Info>(SessionPaths.create, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ parentID: parent.id }),
+      })
+      expect(child.title.startsWith("Child session - ")).toBe(true)
+    }),
   )
-
-  it.instance(
-    "remove persists through canonical V2 events and cleans up children",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "parent" }),
-        })
-        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "child", parentID: parent.id }),
-        })
-
-        const removed = yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
-          method: "DELETE",
-          headers,
-        })
-        expect(removed).toBe(true)
-
-        // The tombstone is observed through a direct EventTable query, not
-        // the durable stream: the stream's cursor is strictly greater-than
-        // (`gt(seq, after)`, packages/core/src/event.ts), so whether a
-        // subscriber sees the Deleted event depends on where its cursor sits.
-        // Aggregate replacement preserves the sequence and commits the
-        // projection deletion, history purge, and next-sequence tombstone in
-        // one transaction. Query EventTable directly to pin the invariant:
-        // exactly one tombstone row of type session.next.deleted.1.
-        const { db } = yield* Database.Service
-        const rows = yield* db
-          .select()
-          .from(EventTable)
-          .where(eq(EventTable.aggregate_id, parent.id))
-          .all()
-          .pipe(Effect.orDie)
-        expect(rows).toHaveLength(1)
-        expect(rows[0]!.type).toBe(EventV2.versionedType(SessionEvent.Deleted.type, 1))
-
-        const parentGone = yield* request(pathFor(SessionPaths.get, { sessionID: parent.id }), { headers })
-        expect(parentGone.status).toBe(404)
-        const childGone = yield* request(pathFor(SessionPaths.get, { sessionID: child.id }), { headers })
-        expect(childGone.status).toBe(404)
-      }),
-  )
-
-  it.instance(
-    "fork cuts the canonical transcript at the given message",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "fork source" }),
-        })
-        const first = yield* insertCanonicalUserMessage(parent.id, "hello", 1)
-        const second = yield* insertCanonicalUserMessage(parent.id, "world", 2)
-
-        const forked = yield* requestJson<Session.Info>(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ messageID: second.id }),
-        })
-        expect(forked.id).not.toBe(parent.id)
-
-        const canonical = yield* SessionV2.Service
-        const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
-        expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
-        expect(messages.length).toBe(1)
-      }),
-  )
-
-  it.instance(
-    "remove cancels background jobs owned by descendant sessions",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "parent" }),
-        })
-        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "child", parentID: parent.id }),
-        })
-
-        const background = yield* BackgroundJob.Service
-        // BackgroundJob.start registers a job with status "running" (core
-        // packages/core/src/background-job.ts start); run: Effect.never keeps
-        // it running so cancelBackgroundJobs' status filter matches it.
-        const childJobID = `job_${child.id}`
-        yield* background.start({
-          id: childJobID,
-          type: "task",
-          metadata: { sessionId: child.id },
-          run: Effect.never,
-        })
-
-        yield* requestJson<boolean>(pathFor(SessionPaths.remove, { sessionID: parent.id }), {
-          method: "DELETE",
-          headers,
-        })
-
-        const jobs = yield* background.list()
-        // The registry retains canceled entries (core cancel flips status to
-        // "cancelled" and keeps the map entry — no removal path exists in
-        // packages/core/src/background-job.ts), so assert the child's job is
-        // no longer running, which is exactly what cancelBackgroundJobs acts on.
-        expect(jobs.some((job) => job.id === childJobID && job.status === "running")).toBe(false)
-      }),
-  )
-
-  it.instance(
-    "native V2 remove uses the shared descendant cleanup lifecycle",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "native parent" }),
-        })
-        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "native child", parentID: parent.id }),
-        })
-        const background = yield* BackgroundJob.Service
-        const childJobID = `job_native_${child.id}`
-        yield* background.start({
-          id: childJobID,
-          type: "task",
-          metadata: { sessionId: child.id },
-          run: Effect.never,
-        })
-
-        // The compatibility endpoint is /session/:id. The explicit /api
-        // prefix selects the Protocol V2 route and makes the 204 assertion a
-        // route-owner discriminator rather than a layer-order dependency.
-        const response = yield* request(`/api/session/${parent.id}`, { method: "DELETE", headers })
-
-        expect(response.status).toBe(204)
-        expect((yield* background.get(childJobID))?.status).toBe("cancelled")
-      }),
-  )
-
-  it.instance(
-    "create stores the payload workspaceID over the routed one",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const { db } = yield* Database.Service
-
-        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "ws", workspaceID: "wrk_payload" }),
-        })
-        expect(created.id).toBeTruthy()
-
-        const row = yield* db
-          .select({ workspace_id: SessionTable.workspace_id })
-          .from(SessionTable)
-          .where(eq(SessionTable.id, created.id))
-          .get()
-          .pipe(Effect.orDie)
-        expect(row?.workspace_id).toBe(WorkspaceV2.ID.make("wrk_payload"))
-      }),
-  )
-
-  it.instance(
-    "fork cuts the transcript at the cutoff's transcript index",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "fork source" }),
-        })
-        // insertCanonicalUserMessage forces ascending IDs (SessionMessage.ID.create
-        // encodes the creation timestamp), which would make the lexicographic
-        // cutoff filter agree with transcript order — so seed SessionMessageTable
-        // rows directly with explicit ids whose lexical order is the reverse of
-        // the transcript order (mirrors the insert helper's row shape).
-        const { db } = yield* Database.Service
-        const seed = (id: string, text: string, seq: number, time: number) =>
-          db
-            .insert(SessionMessageTable)
-            .values({
-              id: SessionMessage.ID.make(id),
-              session_id: parent.id,
-              type: "user",
-              seq,
-              time_created: time,
-              data: {
-                text,
-                time: { created: time },
-              } as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
-            })
-            .run()
-            .pipe(Effect.orDie)
-        yield* seed("msg_zzz", "hello", 1, 1)
-        yield* seed("msg_aaa", "world", 2, 2)
-
-        const forked = yield* requestJson<Session.Info>(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ messageID: "msg_aaa" }),
-        })
-
-        const canonical = yield* SessionV2.Service
-        const messages = yield* canonical.messages({ sessionID: SessionV2.ID.make(forked.id), order: "asc" })
-        expect(messages.map((message) => ("text" in message ? message.text : null))).toEqual(["hello"])
-      }),
-  )
-
-  it.instance(
-    "fork rejects a cutoff that is not in the transcript",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "fork source" }),
-        })
-
-        const response = yield* request(pathFor(SessionPaths.fork, { sessionID: parent.id }), {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ messageID: "msg_nonexistent" }),
-        })
-        expect(response.status).toBe(400)
-      }),
-  )
-
-  it.instance(
-    "create titles child sessions with the V1 child prefix",
-    () =>
-      Effect.gen(function* () {
-        const test = yield* TestInstance
-        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
-        const parent = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ title: "parent" }),
-        })
-        const child = yield* requestJson<Session.Info>(SessionPaths.create, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ parentID: parent.id }),
-        })
-        expect(child.title.startsWith("Child session - ")).toBe(true)
-      }),
-  )
-
 })

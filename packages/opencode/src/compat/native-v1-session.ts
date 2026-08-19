@@ -4,7 +4,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import type { Session } from "@opencode-ai/sdk/v2"
-import type { Session as LegacySession } from "@/session/session"
+import type { SessionWire } from "@/compat/session-wire"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 
 export type NativeSessionInfo = SessionsGetOutput
@@ -58,7 +58,7 @@ export function legacySessionFromNative(info: NativeSessionInfo): Session {
 // legacySessionFromNative), and no summary/permission (V1-only row data kept
 // separate from the public V2 Info — matching the production server surface).
 // This performs no storage reads: everything comes from the V2 values.
-export function legacySessionFromV2(info: SessionSchema.Info): LegacySession.Info {
+export function legacySessionFromV2(info: SessionSchema.Info): SessionWire.Info {
   const millis = (value: DateTime.Utc | undefined) => (value === undefined ? undefined : DateTime.toEpochMillis(value))
   return {
     id: SessionID.make(info.id),

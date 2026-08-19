@@ -578,6 +578,7 @@ describe("SessionV2.prompt", () => {
         resume: false,
       })
       const durableAfterFirst = yield* eventCount(EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1))
+      expect(durableAfterFirst).toBe(1)
       const retried = yield* session.command({
         id,
         sessionID,
@@ -589,7 +590,7 @@ describe("SessionV2.prompt", () => {
       expect(first.prompt).toEqual({ text: "Expanded /review: src tests [message-hook]" })
       expect(retried).toEqual(first)
       expect(yield* admittedCount).toBe(1)
-      expect(yield* eventCount(EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1))).toBe(durableAfterFirst)
+      expect(yield* eventCount(EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1))).toBe(1)
       expect(yield* eventCount(Command.Event.Executed.type)).toBe(0)
       expect(yield* eventCount(EventV2.versionedType(Command.Event.Executed.type, 1))).toBe(0)
       expect(executed.map((event) => ({ type: event.type, data: event.data })) as unknown).toEqual([

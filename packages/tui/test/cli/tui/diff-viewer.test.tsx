@@ -4,7 +4,7 @@ import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { DiffRenderable, type Renderable, ScrollBoxRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import type { TuiPluginApi, TuiPluginMeta, TuiRouteCurrent, TuiRouteDefinition } from "@opencode-ai/plugin/tui"
-import type { Session } from "@opencode-ai/sdk/v2"
+import type { SessionV2Info } from "@opencode-ai/sdk/v2"
 import { KVProvider } from "../../../src/context/kv"
 import { ThemeProvider } from "../../../src/context/theme"
 import { TuiConfigProvider } from "../../../src/config"
@@ -197,16 +197,16 @@ function containsDiff(root: Renderable): boolean {
 
 const session = {
   id: "session-1",
-  slug: "session-1",
   projectID: "project-1",
-  directory: "/repo/session",
+  location: { directory: "/repo/session" },
   title: "Session",
-  version: "1",
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   time: {
     created: 0,
     updated: 0,
   },
-} satisfies Session
+} satisfies SessionV2Info
 
 test("branch diff source requests branch VCS diff", async () => {
   const viewer = await renderDiffViewer([], 20, {

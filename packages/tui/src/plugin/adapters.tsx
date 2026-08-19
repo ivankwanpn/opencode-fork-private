@@ -18,9 +18,6 @@ import type { useToast } from "../ui/toast"
 import * as Keymap from "../keymap"
 import { createCommandShim } from "./command-shim"
 import type { PluginRoutes } from "./api"
-import type { Part, Session, SessionV2Info } from "@opencode-ai/sdk/v2"
-import { legacyProvidersFromNative } from "./native-v1-catalog"
-import { legacyTranscriptFromNative } from "./native-v1-transcript"
 export type { RouteMap } from "./api"
 export { createPluginRoutes, createTuiApi } from "./api"
 
@@ -101,53 +98,7 @@ function mapOptionCb<Value>(cb?: (item: TuiDialogSelectOption<Value>) => void) {
   return (item: SelectOption<Value>) => cb(pickOption(item))
 }
 
-function pluginSession(info: SessionV2Info): Session {
-  return {
-    id: info.id,
-    slug: info.id,
-    projectID: info.projectID,
-    workspaceID: info.location.workspaceID,
-    directory: info.location.directory,
-    path: info.subpath,
-    parentID: info.parentID,
-    cost: info.cost,
-    tokens: { ...info.tokens, cache: { ...info.tokens.cache } },
-    title: info.title,
-    share: info.share,
-    agent: info.agent,
-    model: info.model
-      ? {
-          id: info.model.id,
-          providerID: info.model.providerID,
-          variant: info.model.variant,
-        }
-      : undefined,
-    version: "2",
-    time: { ...info.time },
-    revert: info.revert
-      ? {
-          messageID: info.revert.messageID,
-          partID: info.revert.partID,
-          snapshot: info.revert.snapshot,
-          diff: info.revert.diff,
-        }
-      : undefined,
-  }
-}
-
 function stateApi(sync: ReturnType<typeof useSync>, data: ReturnType<typeof useData>): TuiPluginApi["state"] {
-  const parts = new Map<string, Part[]>()
-  const transcript = (sessionID: string) => {
-    const session = sync.session.get(sessionID)
-    if (!session) return []
-    const messages = legacyTranscriptFromNative({
-      session,
-      messages: data.session.message.list(sessionID) ?? [],
-    })
-    for (const message of messages) parts.set(message.info.id, message.parts)
-    return messages
-  }
-
   return {
     get ready() {
       return sync.ready
@@ -155,9 +106,8 @@ function stateApi(sync: ReturnType<typeof useSync>, data: ReturnType<typeof useD
     get config() {
       return sync.data.config
     },
-    get provider() {
-      const catalog = data.location.catalog.get()
-      return catalog ? legacyProvidersFromNative(catalog).providers : []
+    get catalog() {
+      return data.location.catalog.get()
     },
     get path() {
       return sync.path
@@ -174,8 +124,7 @@ function stateApi(sync: ReturnType<typeof useSync>, data: ReturnType<typeof useD
         return sync.data.session.length
       },
       get(sessionID) {
-        const session = sync.session.get(sessionID)
-        return session ? pluginSession(session) : undefined
+        return sync.session.get(sessionID)
       },
       diff(sessionID) {
         return (sync.data.session_diff[sessionID] ?? []).flatMap((item) =>
@@ -186,7 +135,7 @@ function stateApi(sync: ReturnType<typeof useSync>, data: ReturnType<typeof useD
         return sync.data.todo[sessionID] ?? []
       },
       messages(sessionID) {
-        return transcript(sessionID).map((message) => message.info)
+        return data.session.message.list(sessionID) ?? []
       },
       status(sessionID) {
         return sync.data.session_status[sessionID]
@@ -197,16 +146,6 @@ function stateApi(sync: ReturnType<typeof useSync>, data: ReturnType<typeof useD
       question(sessionID) {
         return sync.data.question[sessionID] ?? []
       },
-    },
-    part(messageID) {
-      const cached = parts.get(messageID)
-      if (cached) return cached
-      const session = sync.data.session.find((item) =>
-        data.session.message.list(item.id)?.some((message) => message.id === messageID),
-      )
-      if (!session) return []
-      transcript(session.id)
-      return parts.get(messageID) ?? []
     },
     lsp() {
       return sync.data.lsp.map((item) => ({ id: item.id, root: item.root, status: item.status }))

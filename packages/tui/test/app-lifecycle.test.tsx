@@ -120,6 +120,7 @@ test("app.exit prints the session epilogue after scoped cleanup", async () => {
       await Bun.sleep(10)
     }
     expect(api?.state.session.get("ses_dummy")?.title).toBe("Demo session")
+    expect(api?.state.session.get("ses_dummy")?.location.directory).toBe(directory)
     await setup.renderOnce()
     await setup.renderOnce()
     api?.keymap.dispatchCommand("app.exit")

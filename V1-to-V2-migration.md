@@ -118,6 +118,11 @@ CLI/TUI wire view使用的message/session資料型別與錯誤門面。這個批
 HttpApi的URL/payload/response契約不變，handlers仍全部委派`SessionV2`、canonical transcript/execution、
 `SessionRunState`與`SessionRemoval`。完整session HttpApi 57項回歸通過。
 
+**999.0.19 TUI plugin state hard cut**：`TuiState`直接暴露`ProviderCatalogInfo`、`SessionV2Info`與
+`SessionMessage`，移除legacy `provider` array與`part()` view；內建home/sidebar/system plugins改讀canonical
+catalog、model、tokens與`location`。TUI的`native-v1-transcript/catalog`與對應測試已刪除，source gate阻止
+adapter回流；server-side plugin host共享同一V2 contract。
+
 ---
 
 ## 1. 各区域现状总表
@@ -134,10 +139,10 @@ HttpApi的URL/payload/response契約不變，handlers仍全部委派`SessionV2`�
 | Permission | V1 `@/permission` 为主（pending 表），`replyCompatible` 兜底 V2；V2 请求不出现在 `/permission` list | **V1 主，V2 兜底** |
 | Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
 | Plugin tools | 同一份 `Contribution` 双路：V1 registry（死）+ V2 `PluginToolCompatV2`（deferred，实际生效） | **V2 生效路径已通** |
-| TUI 插件 | `plugin/tui/runtime.ts` 纯 V1 adapter，无 V2 运行时对应 | **V1-only** |
+| TUI 插件 | plugin state/event/client均為V2 contract；僅deprecated `api.command` shim仍保留舊呼叫方式 | **V2 state，command shim待收** |
 | MCP | 单一 V2 runtime（`core/src/mcp/runtime.ts`）；`MCP.toolsNode` 注册进 V2 `Tools.Service`（direct/deferred/blocked） | **V2 已接管** |
 | Command | TUI 用 V2 `CommandV2`；V1 `@/command` 只服务 legacy instance API | **双路径** |
-| TUI 主体 | 全部走 V2 client（`@opencode-ai/client`）；`native-v1-*` 仅用于 TUI plugin API 外部相容 | **V2 已接管** |
+| TUI 主体 | 全部走 V2 client與canonical plugin state；TUI `native-v1-*` adapter已刪除 | **V2 已接管** |
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
 | Config | V1 `ConfigV1.Info` + `ConfigMigrateV1`；httpapi config 组 V1-only | **V1-only** |
@@ -194,7 +199,6 @@ HttpApi的URL/payload/response契約不變，handlers仍全部委派`SessionV2`�
 ### 2.3 刻意保留的 V1 出口（外部兼容，迁移完成后独立评估）
 
 - `opencode/src/compat/native-v1-*.ts`（session/transcript/catalog）→ 供 `cli/cmd/run/native-compat.ts`（run 命令）与 `acp/client.ts`（opencode acp）消费
-- `tui/src/plugin/native-v1-transcript.ts`、`native-v1-catalog.ts` → 仅 TUI plugin API adapter（`adapters.tsx`）外部相容
 - `event-v2-bridge.ts`（`legacyEventPayloads`）→ 僅為舊`/event`與`/global/event`保留canonical `data -> properties` envelope；不再投影或改名Session事件
 
 ---
@@ -251,14 +255,12 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 - 事件：`useNativeEvent()` 消费 V2 `OpenCodeEvent`；`useEvent()` 是 V1 词汇兼容层
 - TUI state 结构全 V2（`SessionV2Info`、`SessionMessage`、`PermissionV2Request`）
 
-**注意**：Codex 提到的 `session-compat`/`transcript-compat`/`catalog-compat` **命名在仓库中不存在**。实际命名是 `native-v1-*`（TUI `plugin/native-v1-*.ts` 与 opencode `compat/native-v1-*.ts`）。
+**注意**：Codex提到的`session-compat`/`transcript-compat`/`catalog-compat`實際曾對應TUI的`plugin/native-v1-*`；該TUI adapter現已刪除。OpenCode的`compat/native-v1-*`仍供CLI/ACP protocol facade使用。
 
-### 4.2 V1 adapter 引用者（已确认仅外部相容）
+### 4.2 剩餘V1 adapter引用者
 
 | 文件 | 引用者 | 用途 |
 |---|---|---|
-| `tui/plugin/native-v1-transcript.ts` | 仅 `tui/plugin/adapters.tsx:23,142` | TUI plugin API `state.session` 外部投影 |
-| `tui/plugin/native-v1-catalog.ts` | `adapters.tsx:22,159` + 测试 | plugin API `state.provider` |
 | `opencode/compat/native-v1-*.ts`（3 个） | `cli/cmd/run/native-compat.ts`、`acp/client.ts` | run 命令 + ACP 外部协议 |
 
 ### 4.3 Plugin 双路径
@@ -388,7 +390,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 1. `run.ts` stdout/JSON 事件格式迁移到 V2 词汇（同步改 `--format json` 契约测试）
 2. `native-compat.ts` → 评估 V1 SDK 客户端的存续（插件 `client = createOpencodeClient(...)` 输入）
 3. `acp/client.ts` + `compat/native-v1-*` → 评估 ACP 协议是否保留 V1 形状
-4. `tui/plugin/native-v1-*` + `adapters.tsx` → TUI plugin API 是否提供 V2 state
+4. ~~`tui/plugin/native-v1-*` + `adapters.tsx`~~ → 已提供V2 state並刪除adapter
 
 ### 批次 8：删除 V1 目录（最终）
 

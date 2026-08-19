@@ -1,23 +1,23 @@
 import { describe, expect, test } from "bun:test"
 import Notifications from "../../../../src/feature-plugins/system/notifications"
-import type { Session } from "@opencode-ai/sdk/v2"
+import type { SessionV2Info } from "@opencode-ai/sdk/v2"
 import type { TuiAttentionNotifyInput, TuiNativeEvent } from "@opencode-ai/plugin/tui"
 import { createTuiPluginApi } from "../../../fixture/tui-plugin"
 
 async function setup() {
   const notifications: TuiAttentionNotifyInput[] = []
   const nativeHandlers = new Map<TuiNativeEvent["type"], ((event: TuiNativeEvent) => void)[]>()
-  const session = (id: string, title: string, parentID?: string): Session => ({
+  const session = (id: string, title: string, parentID?: string): SessionV2Info => ({
     id,
     title,
-    slug: id,
     projectID: "project",
-    directory: "/workspace",
+    location: { directory: "/workspace" },
     ...(parentID && { parentID }),
-    version: "0.0.0-test",
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: 0, updated: 0 },
   })
-  const sessions: Record<string, Session> = {
+  const sessions: Record<string, SessionV2Info> = {
     session: session("session", "Demo session"),
     subagent: session("subagent", "Subagent session", "session"),
     abort: session("abort", "Abort session"),
@@ -83,10 +83,10 @@ function question(id: string, sessionID = "session"): Extract<TuiNativeEvent, { 
   }
 }
 
-function permission(id: string, sessionID = "session"): Extract<
-  TuiNativeEvent,
-  { type: "permission.v2.asked" }
->["data"] {
+function permission(
+  id: string,
+  sessionID = "session",
+): Extract<TuiNativeEvent, { type: "permission.v2.asked" }>["data"] {
   return {
     id,
     sessionID,

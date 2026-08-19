@@ -5,13 +5,12 @@ import type {
   LspStatus,
   McpStatus,
   Todo,
-  Message,
-  Part,
-  Provider,
+  ProviderCatalogInfo,
   PermissionV2Request,
   QuestionV2Request,
-  Session,
+  SessionMessage,
   SessionNextStatusInfo,
+  SessionV2Info,
   TextPart,
   V2Event,
   Config as SdkConfig,
@@ -399,7 +398,7 @@ export type TuiKV = {
 export type TuiState = {
   readonly ready: boolean
   readonly config: SdkConfig
-  readonly provider: ReadonlyArray<Provider>
+  readonly catalog: ProviderCatalogInfo | undefined
   readonly path: {
     state: string
     config: string
@@ -409,15 +408,14 @@ export type TuiState = {
   readonly vcs: { branch?: string; default_branch?: string } | undefined
   session: {
     count: () => number
-    get: (sessionID: string) => Session | undefined
+    get: (sessionID: string) => SessionV2Info | undefined
     diff: (sessionID: string) => ReadonlyArray<TuiSidebarFileItem>
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>
-    messages: (sessionID: string) => ReadonlyArray<Message>
+    messages: (sessionID: string) => ReadonlyArray<SessionMessage>
     status: (sessionID: string) => SessionNextStatusInfo | undefined
     permission: (sessionID: string) => ReadonlyArray<PermissionV2Request>
     question: (sessionID: string) => ReadonlyArray<QuestionV2Request>
   }
-  part: (messageID: string) => ReadonlyArray<Part>
   lsp: () => ReadonlyArray<TuiSidebarLspItem>
   mcp: () => ReadonlyArray<TuiSidebarMcpItem>
 }

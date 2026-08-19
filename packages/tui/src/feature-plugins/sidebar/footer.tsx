@@ -3,24 +3,22 @@ import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, Show } from "solid-js"
 import { abbreviateHome } from "../../runtime"
 import { useTuiPaths } from "../../context/runtime"
+import { hasConnectedProvider } from "../catalog"
 
 const id = "internal:sidebar-footer"
 
 function View(props: { api: TuiPluginApi; sessionID: string }) {
   const paths = useTuiPaths()
   const theme = () => props.api.theme.current
-  const has = createMemo(() =>
-    props.api.state.provider.some(
-      (item) => item.id !== "opencode" || Object.values(item.models).some((model) => model.cost?.input !== 0),
-    ),
-  )
+  const has = createMemo(() => hasConnectedProvider(props.api.state.catalog))
   const done = createMemo(() => props.api.kv.get("dismissed_getting_started", false))
   const show = createMemo(() => !has() && !done())
   const path = createMemo(() => {
     const session = props.api.state.session.get(props.sessionID)
-    const dir = session?.directory || props.api.state.path.directory || paths.cwd
+    const dir = session?.location.directory || props.api.state.path.directory || paths.cwd
     const out = abbreviateHome(dir, paths.home)
-    const branch = session?.directory === props.api.state.path.directory ? props.api.state.vcs?.branch : undefined
+    const branch =
+      session?.location.directory === props.api.state.path.directory ? props.api.state.vcs?.branch : undefined
     const text = branch ? out + ":" + branch : out
     const list = text.split("/")
     return {

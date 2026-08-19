@@ -1,12 +1,13 @@
 import type { AgentSideConnection, Usage } from "@agentclientprotocol/sdk"
-import { InstanceRef } from "@/effect/instance-ref"
-import { InstanceBootstrap } from "@/project/bootstrap"
+import { Catalog } from "@opencode-ai/core/catalog"
 import { InstanceStore } from "@/project/instance-store"
 import { makeGlobalNode, Node } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { Provider } from "@/provider/provider"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Context, Effect, Layer, SynchronizedRef } from "effect"
 import type { ACPClient } from "./client"
 
@@ -36,7 +37,11 @@ export interface MessageLoaderInterface {
 }
 
 export interface ContextLimitLoaderInterface {
-  readonly providers: (directory: string) => Effect.Effect<Record<ProviderV2.ID, Provider.Info>, unknown>
+  readonly get: (input: {
+    readonly directory: string
+    readonly providerID: ProviderV2.ID
+    readonly modelID: ModelV2.ID
+  }) => Effect.Effect<number | undefined, unknown>
 }
 
 export type UsageConnection = Pick<AgentSideConnection, "sessionUpdate">
@@ -104,7 +109,9 @@ export function totalSessionCost(messages: readonly SessionMessage[]): number {
 }
 
 export function findContextLimit(
-  providers: Record<ProviderV2.ID, Provider.Info>,
+  providers: Readonly<
+    Record<string, { readonly models: Readonly<Record<string, { readonly limit: { readonly context: number } }>> }>
+  >,
   providerID: ProviderV2.ID,
   modelID: ModelV2.ID,
 ): number | undefined {
@@ -115,14 +122,17 @@ export const contextLimitLoaderLayer = Layer.effect(
   ContextLimitLoader,
   Effect.gen(function* () {
     const store = yield* InstanceStore.Service
-    const provider = yield* Provider.Service
+    const locations = yield* LocationServiceMap.Service
 
     return ContextLimitLoader.of({
-      providers: Effect.fn("ACPUsageContextLimitLoader.providers")(function* (directory) {
-        const ctx = yield* store.load({ directory })
-        return yield* Effect.gen(function* () {
-          return yield* provider.list()
-        }).pipe(Effect.provideService(InstanceRef, ctx))
+      get: Effect.fn("ACPUsageContextLimitLoader.get")(function* (input) {
+        const ctx = yield* store.load({ directory: input.directory })
+        const catalog = yield* Catalog.Service.pipe(
+          Effect.provide(
+            locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) })),
+          ),
+        )
+        return (yield* catalog.model.get(input.providerID, input.modelID))?.limit.context
       }),
     })
   }),
@@ -147,10 +157,9 @@ const layer = Layer.effect(
           const current = items.get(key)
           if (current) return [current, items] as const
           const next = yield* Effect.cached(
-            contextLimitLoader.providers(input.directory).pipe(
-              Effect.map((providers) => findContextLimit(providers, input.providerID, input.modelID)),
+            contextLimitLoader.get(input).pipe(
               Effect.catch((error) =>
-                Effect.logError("failed to get providers for usage context limit", { error: error }).pipe(
+                Effect.logError("failed to get model for usage context limit", { error: error }).pipe(
                   Effect.as(undefined),
                 ),
               ),
@@ -224,7 +233,7 @@ export const messageLoaderNode = LayerNode.unbound(MessageLoader, Node.tags.valu
 export const contextLimitLoaderNode = makeGlobalNode({
   service: ContextLimitLoader,
   layer: contextLimitLoaderLayer,
-  deps: [Provider.node, InstanceStore.node],
+  deps: [LocationServiceMap.node, InstanceStore.node],
 })
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [messageLoaderNode, contextLimitLoaderNode] })

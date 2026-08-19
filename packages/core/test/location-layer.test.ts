@@ -214,6 +214,40 @@ describe("LocationServiceMap", () => {
     30_000,
   )
 
+  it.live("keeps filtered providers in the V2 catalog while marking them unavailable", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            fs.writeFile(
+              path.join(dir.path, "opencode.json"),
+              JSON.stringify({
+                enabled_providers: ["anthropic"],
+                provider: { anthropic: {}, openai: {} },
+              }),
+            ),
+          )
+          const providers = yield* Effect.gen(function* () {
+            const catalog = yield* Catalog.Service
+            return yield* catalog.provider.all()
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(
+              LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(dir.path) })),
+            ),
+          )
+
+          expect(providers.find((provider) => provider.id === ProviderV2.ID.anthropic)?.disabled).not.toBe(true)
+          expect(providers.find((provider) => provider.id === ProviderV2.ID.openai)?.disabled).toBe(true)
+        }),
+      ),
+    ),
+    30_000,
+  )
+
   it.live("loads configured external plugins before location startup completes", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),

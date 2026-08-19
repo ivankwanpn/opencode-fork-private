@@ -5,9 +5,9 @@ import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { Effect, Exit, Layer, Option, Schema, Scope, Context, Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Account } from "@/account/account"
+import { Catalog } from "@opencode-ai/core/catalog"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
-import { Provider } from "@/provider/provider"
 import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { MessageV2 } from "@/session/message-v2"
 
@@ -18,6 +18,10 @@ import { Config } from "@/config/config"
 import { SessionShareRemovalTable, SessionShareRevocationTable, SessionShareTable } from "@opencode-ai/core/share/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { PluginV1Projection } from "@opencode-ai/core/plugin/v1-projection"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionV2 } from "@opencode-ai/core/session"
@@ -127,8 +131,37 @@ const layer = Layer.effect(
     const { db } = yield* Database.Service
     const http = yield* HttpClient.HttpClient
     const httpOk = HttpClient.filterStatusOk(http)
-    const provider = yield* Provider.Service
+    const locations = yield* LocationServiceMap.Service
     const session = yield* SessionV2.Service
+
+    const shareModels = Effect.fnUntraced(function* (
+      items: readonly { readonly providerID: string; readonly modelID: string }[],
+    ) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      const catalog = yield* Catalog.Service.pipe(
+        Effect.provide(
+          locations.get(
+            Location.Ref.make({
+              directory: AbsolutePath.make(ctx.directory),
+              ...(workspaceID === undefined ? {} : { workspaceID }),
+            }),
+          ),
+        ),
+      )
+      return yield* Effect.forEach(
+        items,
+        Effect.fnUntraced(function* (item) {
+          const model = yield* catalog.model.get(
+            ProviderV2.ID.make(item.providerID),
+            ModelV2.ID.make(item.modelID),
+          )
+          if (!model) return yield* Effect.fail(new Error(`Model not found: ${item.providerID}/${item.modelID}`))
+          return PluginV1Projection.model(model)
+        }),
+        { concurrency: 8 },
+      )
+    })
 
     function sync(sessionID: SessionID, data: Data[]) {
       return Effect.gen(function* () {
@@ -194,7 +227,7 @@ const layer = Layer.effect(
         ...messages.map((message) => ({ type: "message" as const, data: message.info })),
         ...messages.flatMap((message) => message.parts.map((part) => ({ type: "part" as const, data: part }))),
       ])
-      const models = yield* Effect.forEach(
+      const models = yield* shareModels(
         Array.from(
           new Map(
             messages
@@ -203,8 +236,6 @@ const layer = Layer.effect(
               .map((model) => [`${model.providerID}/${model.modelID}`, model] as const),
           ).values(),
         ),
-        (model) => provider.getModel(ProviderV2.ID.make(model.providerID), ModelV2.ID.make(model.modelID)),
-        { concurrency: 8 },
       ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("share model sync skipped", { sessionID, cause }).pipe(Effect.as([] as SDK.Model[])),
@@ -602,7 +633,7 @@ const layer = Layer.effect(
       const info = legacySessionFromV2(current)
       const diffs: SDK.SnapshotFileDiff[] = []
       const messages = MessageV2.toLegacy(current, canonical)
-      const models = yield* Effect.forEach(
+      const models = yield* shareModels(
         Array.from(
           new Map(
             messages
@@ -611,8 +642,6 @@ const layer = Layer.effect(
               .map((item) => [`${item.providerID}/${item.modelID}`, item] as const),
           ).values(),
         ),
-        (item) => provider.getModel(ProviderV2.ID.make(item.providerID), ModelV2.ID.make(item.modelID)),
-        { concurrency: 8 },
       )
 
       yield* sync(sessionID, [
@@ -793,7 +822,15 @@ const layer = Layer.effect(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Account.node, EventV2Bridge.node, Config.node, Database.node, httpClient, Provider.node, SessionV2.node],
+  deps: [
+    Account.node,
+    EventV2Bridge.node,
+    Config.node,
+    Database.node,
+    httpClient,
+    LocationServiceMap.node,
+    SessionV2.node,
+  ],
 })
 
 export * as ShareNext from "./share-next"

@@ -1,6 +1,7 @@
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { Catalog } from "@opencode-ai/core/catalog"
+import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
 import { CommandV2 } from "@opencode-ai/core/command"
-import { InstanceRef } from "@/effect/instance-ref"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { InstanceStore } from "@/project/instance-store"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -10,6 +11,7 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Provider } from "@/provider/provider"
+import { legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { Context, Effect, Layer, SynchronizedRef } from "effect"
 import type * as ACPError from "./error"
 
@@ -111,37 +113,41 @@ export const loaderLayer = Layer.effect(
   Loader,
   Effect.gen(function* () {
     const store = yield* InstanceStore.Service
-    const provider = yield* Provider.Service
     const locations = yield* LocationServiceMap.Service
 
     return Loader.of({
       load: Effect.fn("ACPDirectoryLoader.load")(function* (directory) {
         const ctx = yield* store.load({ directory })
-        return yield* Effect.gen(function* () {
-          const services = locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))
-          const agent = yield* AgentV2.Service.pipe(Effect.provide(services))
-          const command = yield* CommandV2.Service.pipe(Effect.provide(services))
-          const providers = yield* provider.list()
-          const [agents, defaultAgent, commands, defaultModel] = yield* Effect.all(
-            [agent.all(), agent.default(), command.list(), provider.defaultModel().pipe(Effect.option)],
-            { concurrency: "unbounded" },
-          )
-          if (!defaultAgent) return yield* Effect.die("no primary visible agent found")
-          return build({
-            directory,
-            providers,
-            modes: agents
-              .filter((item) => item.mode !== "subagent" && item.hidden !== true)
-              .map((item) => ({
-                id: item.id,
-                name: item.id,
-                ...(item.description ? { description: item.description } : {}),
-              })),
-            defaultModeID: defaultAgent.id,
-            commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
-            ...(defaultModel._tag === "Some" ? { defaultModel: defaultModel.value } : {}),
-          })
-        }).pipe(Effect.provideService(InstanceRef, ctx))
+        const services = locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))
+        const agent = yield* AgentV2.Service.pipe(Effect.provide(services))
+        const command = yield* CommandV2.Service.pipe(Effect.provide(services))
+        const catalog = yield* Catalog.Service.pipe(Effect.provide(services))
+        const snapshot = yield* CatalogSnapshot.Service.pipe(Effect.provide(services))
+        const [agents, defaultAgent, commands, providerCatalog, defaultModel] = yield* Effect.all(
+          [agent.all(), agent.default(), command.list(), snapshot.get(), catalog.model.default()],
+          { concurrency: "unbounded" },
+        )
+        if (!defaultAgent) return yield* Effect.die("no primary visible agent found")
+        const providers = legacyProvidersFromNative(providerCatalog).providers
+        return build({
+          directory,
+          providers: Object.fromEntries(providers.map((provider) => [provider.id, provider])) as Record<
+            ProviderV2.ID,
+            Provider.Info
+          >,
+          modes: agents
+            .filter((item) => item.mode !== "subagent" && item.hidden !== true)
+            .map((item) => ({
+              id: item.id,
+              name: item.id,
+              ...(item.description ? { description: item.description } : {}),
+            })),
+          defaultModeID: defaultAgent.id,
+          commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
+          ...(defaultModel
+            ? { defaultModel: { providerID: defaultModel.providerID, modelID: defaultModel.id } }
+            : {}),
+        })
       }),
     })
   }),
@@ -210,7 +216,7 @@ const layer = Layer.effect(
 export const loaderNode = LayerNode.make({
   service: Loader,
   layer: loaderLayer,
-  deps: [Provider.node, LocationServiceMap.node, InstanceStore.node],
+  deps: [LocationServiceMap.node, InstanceStore.node],
 })
 
 export const node = LayerNode.make({ service: Service, layer, deps: [loaderNode] })

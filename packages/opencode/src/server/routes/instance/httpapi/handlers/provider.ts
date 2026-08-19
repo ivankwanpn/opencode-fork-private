@@ -1,9 +1,12 @@
 import { ProviderAuth } from "@/provider/auth"
-import { Config } from "@/config/config"
-import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
+import { legacyAllProvidersFromNative } from "@/compat/native-v1-catalog"
+import { InstanceState } from "@/effect/instance-state"
+import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 
-import { mapValues } from "remeda"
 import { Effect, Schema } from "effect"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -33,29 +36,32 @@ function mapProviderAuthError<A, R>(self: Effect.Effect<A, ProviderAuth.Error, R
 
 export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider", (handlers) =>
   Effect.gen(function* () {
-    const cfg = yield* Config.Service
-    const provider = yield* Provider.Service
     const svc = yield* ProviderAuth.Service
+    const locations = yield* LocationServiceMap.Service
+
+    const location = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      return yield* effect.pipe(
+        Effect.provide(
+          locations.get(
+            Location.Ref.make({
+              directory: AbsolutePath.make(ctx.directory),
+              ...(workspaceID === undefined ? {} : { workspaceID }),
+            }),
+          ),
+        ),
+      )
+    })
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
-      const config = yield* cfg.get()
-      const all = yield* ModelsDev.Service.use((s) => s.get())
-      const disabled = new Set(config.disabled_providers ?? [])
-      const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
-      const filtered: Record<string, (typeof all)[string]> = {}
-      for (const [key, value] of Object.entries(all)) {
-        if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) filtered[key] = value
-      }
-      const connected = yield* provider.list()
-      const providers = Object.assign(
-        mapValues(filtered, (item) => Provider.fromModelsDevProvider(item)),
-        connected,
-      )
-      return {
-        all: Object.values(providers).map(Provider.toPublicInfo),
-        default: Provider.defaultModelIDs(providers),
-        connected: Object.keys(connected),
-      }
+      const catalog = yield* location(CatalogSnapshot.Service.use((snapshot) => snapshot.get()))
+      const providers = legacyAllProvidersFromNative(catalog)
+      return Schema.decodeUnknownSync(Provider.ListResult)({
+        all: providers.providers.map((provider) => Provider.toPublicInfo(provider as unknown as Provider.Info)),
+        default: providers.defaults,
+        connected: [...catalog.connected],
+      })
     })
 
     const auth = Effect.fn("ProviderHttpApi.auth")(function* () {

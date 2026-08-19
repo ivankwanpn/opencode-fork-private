@@ -3,6 +3,7 @@ import { AgentV2 } from "./agent"
 import { AISDK } from "./aisdk"
 import { BackgroundJob } from "./background-job"
 import { Catalog } from "./catalog"
+import { CatalogSnapshot } from "./catalog-snapshot"
 import { CommandV2 } from "./command"
 import { Config } from "./config"
 import { LayerNode } from "./effect/layer-node"
@@ -59,6 +60,7 @@ export const locationServices = LayerNode.group([
   Reference.node,
   Integration.node,
   Catalog.node,
+  CatalogSnapshot.node,
   AISDK.node,
   PluginRuntime.node,
   PluginV2.node,

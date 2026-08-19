@@ -105,6 +105,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
     description: "Ordered external plugin packages to load",
   }),
   experimental: ConfigExperimental.Experimental.pipe(Schema.optional),
+  provider_filter: ConfigProvider.Filter.pipe(Schema.optional).annotate({
+    description: "Restrict provider availability while preserving catalog entries for configuration",
+  }),
   providers: Schema.Record(Schema.String, ConfigProvider.Info).pipe(Schema.optional),
 }) {}
 

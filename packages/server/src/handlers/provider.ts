@@ -1,16 +1,13 @@
 import { Catalog } from "@opencode-ai/core/catalog"
-import { Integration } from "@opencode-ai/core/integration"
+import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
 import { Location } from "@opencode-ai/core/location"
 import { ProviderModelDiscovery } from "@opencode-ai/core/provider-discovery"
-import { ProviderV2 } from "@opencode-ai/core/provider"
-import { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import { ProviderModelDiscoveryError, ProviderNotFoundError } from "@opencode-ai/protocol/errors"
 import { ConfigCapability } from "../config-capability"
 import { response } from "../location"
-import { Credential } from "@opencode-ai/core/credential"
 
 export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (handlers) =>
   Effect.gen(function* () {
@@ -18,43 +15,8 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
       .handle(
         "provider.catalog",
         Effect.fn(function* () {
-          const catalog = yield* Catalog.Service
-          const integration = yield* Integration.Service
-          const credential = yield* Credential.Service
-          const providers = yield* catalog.provider.all()
-          const models = yield* catalog.model.all()
-          const available = yield* catalog.provider.available()
-          const integrations = new Map((yield* integration.list()).map((item) => [item.id, item]))
-          const credentials = new Map((yield* credential.all()).map((item) => [item.id, item.value.type]))
-          const defaultModel = yield* catalog.model.default()
-          const defaults = Object.fromEntries(
-            providers.flatMap((provider) => {
-              const model =
-                defaultModel?.providerID === provider.id
-                  ? defaultModel
-                  : models.find(
-                      (item) => item.providerID === provider.id && item.enabled && item.status !== "deprecated",
-                    )
-              return model ? [[provider.id, model.id]] : []
-            }),
-          )
-
-          return yield* response(
-            Effect.succeed({
-              providers: providers.map((provider) => {
-                const info = integrations.get(provider.integrationID ?? Integration.ID.make(provider.id))
-                return {
-                  info: provider,
-                  source: providerSource(provider, info),
-                  auth: providerAuth(info, credentials),
-                  env: info?.methods.flatMap((method) => (method.type === "env" ? method.names : [])) ?? [],
-                }
-              }),
-              models,
-              connected: available.map((provider) => provider.id),
-              default: defaults,
-            }),
-          )
+          const snapshot = yield* CatalogSnapshot.Service
+          return yield* response(snapshot.get())
         }),
       )
       .handle(
@@ -144,20 +106,3 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
       )
   }),
 )
-
-function providerSource(provider: ProviderV2.Info, integration: Integration.Info | undefined): ProviderCatalog.Source {
-  const connection = integration?.connections[0]
-  if (connection?.type === "env") return "env"
-  if (connection?.type === "credential") return "api"
-  if (ProviderV2.hasConfiguredCredentials(provider)) return "config"
-  return "custom"
-}
-
-function providerAuth(
-  integration: Integration.Info | undefined,
-  credentials: ReadonlyMap<Credential.ID, Credential.Value["type"]>,
-): ProviderCatalog.Auth | undefined {
-  const connection = integration?.connections[0]
-  if (connection?.type === "env") return "env"
-  if (connection?.type === "credential") return credentials.get(connection.id)
-}

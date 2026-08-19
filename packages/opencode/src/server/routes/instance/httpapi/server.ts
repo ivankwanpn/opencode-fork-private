@@ -185,6 +185,7 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
 
 const instanceRoutes = instanceApiRoutes.pipe(
   Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
+  Layer.provide(NativeProjectCopyName.layer),
 )
 const serverHandlers = handlers.pipe(
   Layer.provide(SessionRead.layer),

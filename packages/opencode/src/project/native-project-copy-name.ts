@@ -1,7 +1,14 @@
 import { ProjectCopyNameCapability } from "@opencode-ai/server/project-copy-name-capability"
 import { type LegacyAgentInfo } from "@/compat/agent-wire"
-import { Provider } from "@/provider/provider"
+import { InstanceState } from "@/effect/instance-state"
 import { LLM } from "@/session/llm"
+import { Catalog } from "@opencode-ai/core/catalog"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { PluginV1Projection } from "@opencode-ai/core/plugin/v1-projection"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { MessageID, SessionID } from "@/session/schema"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { LLMEvent } from "@opencode-ai/llm"
@@ -29,17 +36,32 @@ export const layer = Layer.effect(
   ProjectCopyNameCapability.Service,
   Effect.gen(function* () {
     const llm = yield* LLM.Service
-    const provider = yield* Provider.Service
+    const locations = yield* LocationServiceMap.Service
     return ProjectCopyNameCapability.Service.of({
       generate: (context) =>
         Effect.gen(function* () {
           const text = context?.trim()
           if (!text) return Slug.create()
-          const fallback = yield* provider.defaultModel().pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const ctx = yield* InstanceState.context
+          const workspaceID = yield* InstanceState.workspaceID
+          const catalog = yield* Catalog.Service.pipe(
+            Effect.provide(
+              locations.get(
+                Location.Ref.make({
+                  directory: AbsolutePath.make(ctx.directory),
+                  ...(workspaceID === undefined ? {} : { workspaceID }),
+                }),
+              ),
+            ),
+          )
+          const fallback = yield* catalog.model.default()
           if (!fallback) return Slug.create()
-          const model =
-            (yield* provider.getSmallModel(fallback.providerID)) ??
-            (yield* provider.getModel(fallback.providerID, fallback.modelID))
+          const projected = PluginV1Projection.model((yield* catalog.model.small(fallback.providerID)) ?? fallback)
+          const model = {
+            ...projected,
+            id: ModelV2.ID.make(projected.id),
+            providerID: ProviderV2.ID.make(projected.providerID),
+          }
           const sessionID = SessionID.descending()
           const result = yield* llm
             .stream({

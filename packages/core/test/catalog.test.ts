@@ -3,6 +3,7 @@ import type { MutableValue } from "@opencode-ai/plugin/v2/effect"
 import type { Model, Provider } from "@opencode-ai/sdk/v2/types"
 import { Effect, Fiber, Layer, Stream } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
+import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
 import { Integration } from "@opencode-ai/core/integration"
 import { Credential } from "@opencode-ai/core/credential"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -29,6 +30,7 @@ const locationLayer = Layer.succeed(
 const catalogLayer = AppNodeBuilder.build(
   LayerNode.group([
     Catalog.node,
+    CatalogSnapshot.node,
     EventV2.node,
     Credential.node,
     Integration.node,
@@ -82,6 +84,48 @@ describe("CatalogV2", () => {
       expect(required(yield* catalog.provider.get(ProviderV2.ID.make("test"))).request.body).toEqual({})
     }).pipe(Effect.provide(localCatalogLayer))
   })
+
+  it.effect("builds one provider catalog snapshot with connection metadata and defaults", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const credentials = yield* Credential.Service
+      const integrations = yield* Integration.Service
+      const snapshot = yield* CatalogSnapshot.Service
+      const providerID = ProviderV2.ID.make("snapshot")
+      const integrationID = Integration.ID.make(providerID)
+      const modelID = ModelV2.ID.make("model")
+
+      yield* integrations.transform((editor) =>
+        editor.method.update({ integrationID, method: { type: "key", label: "API key" } }),
+      )
+      yield* credentials.create({
+        integrationID,
+        value: Credential.Key.make({ type: "key", key: "secret" }),
+      })
+      yield* catalog.transform((editor) => {
+        editor.provider.update(providerID, (provider) => {
+          provider.name = "Snapshot Provider"
+        })
+        editor.model.update(providerID, modelID, (model) => {
+          model.name = "Snapshot Model"
+        })
+        editor.model.default.set(providerID, modelID)
+      })
+
+      expect(yield* snapshot.get()).toMatchObject({
+        providers: [
+          {
+            info: { id: providerID, name: "Snapshot Provider" },
+            source: "api",
+            auth: "key",
+            env: [],
+          },
+        ],
+        connected: [providerID],
+        default: { [providerID]: modelID },
+      })
+    }),
+  )
 
   it.effect("derives availability from a provider's integration", () => {
     const integrationID = Integration.ID.make("gateway")

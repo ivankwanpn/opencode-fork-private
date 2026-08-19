@@ -9,6 +9,8 @@ import type {
 } from "@opencode-ai/sdk/v2"
 import type { Command } from "@opencode-ai/sdk"
 import type { AgentV2 } from "@opencode-ai/core/agent"
+import type { ModelV2 } from "@opencode-ai/core/model"
+import type { ProviderCatalog } from "@opencode-ai/schema/provider-catalog"
 
 function projectLegacyAgent(info: AgentV2Info | AgentV2.Info) {
   const topP = info.request.body.topP
@@ -65,7 +67,7 @@ export function legacyCommandFromNative(info: CommandV2Info): Command & { hints:
   }
 }
 
-function legacyModelFromNative(info: ModelV2Info): Model {
+function legacyModelFromNative(info: ModelV2Info | ModelV2.Info): Model {
   const base = info.cost.find((item) => item.tier === undefined) ?? info.cost[0]
   const tiers = info.cost.flatMap((item) =>
     item.tier
@@ -130,23 +132,40 @@ function legacyModelFromNative(info: ModelV2Info): Model {
   }
 }
 
-export function legacyProvidersFromNative(catalog: ProviderCatalogInfo): {
+export function legacyProvidersFromNative(catalog: ProviderCatalogInfo | ProviderCatalog.Info): {
   providers: Provider[]
   defaults: Record<string, string>
 } {
+  return projectLegacyProviders(catalog, true)
+}
+
+export function legacyAllProvidersFromNative(catalog: ProviderCatalogInfo | ProviderCatalog.Info): {
+  providers: Provider[]
+  defaults: Record<string, string>
+} {
+  return projectLegacyProviders(catalog, false)
+}
+
+function projectLegacyProviders(catalog: ProviderCatalogInfo | ProviderCatalog.Info, connectedOnly: boolean) {
+  type LegacyModelInfo = ModelV2Info | ModelV2.Info
   const connected = new Set(catalog.connected)
+  const visible = new Set(
+    catalog.providers.flatMap((provider) =>
+      provider.info.disabled || (connectedOnly && !connected.has(provider.info.id)) ? [] : [provider.info.id],
+    ),
+  )
   const models = catalog.models
-    .filter((model) => connected.has(model.providerID) && model.enabled)
+    .filter((model) => visible.has(model.providerID) && model.enabled)
     .reduce((result, model) => {
       const list = result.get(model.providerID)
       if (list) list.push(model)
       if (!list) result.set(model.providerID, [model])
       return result
-    }, new Map<string, ModelV2Info[]>())
+    }, new Map<string, LegacyModelInfo[]>())
 
   return {
     providers: catalog.providers.flatMap((provider) => {
-      if (!connected.has(provider.info.id)) return []
+      if (!visible.has(provider.info.id)) return []
       return [
         {
           id: provider.info.id,
@@ -161,6 +180,8 @@ export function legacyProvidersFromNative(catalog: ProviderCatalogInfo): {
         },
       ]
     }),
-    defaults: Object.fromEntries(Object.entries(catalog.default).filter(([providerID]) => connected.has(providerID))),
+    defaults: Object.fromEntries(
+      Object.entries(catalog.default).filter(([providerID]) => visible.has(providerID)),
+    ),
   }
 }

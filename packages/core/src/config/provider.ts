@@ -70,3 +70,8 @@ export class Info extends Schema.Class<Info>("ConfigV2.Provider")({
   request: Request.pipe(Schema.optional),
   models: Schema.Record(Schema.String, Model).pipe(Schema.optional),
 }) {}
+
+export class Filter extends Schema.Class<Filter>("ConfigV2.Provider.Filter")({
+  enabled: ProviderV2.ID.pipe(Schema.Array, Schema.optional),
+  disabled: ProviderV2.ID.pipe(Schema.Array, Schema.optional),
+}) {}

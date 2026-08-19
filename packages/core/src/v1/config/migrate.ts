@@ -77,6 +77,13 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
       typeof plugin === "string" ? plugin : { package: plugin[0], options: plugin[1] },
     ),
     experimental: info.experimental?.policies && { policies: info.experimental.policies },
+    provider_filter:
+      info.enabled_providers === undefined && info.disabled_providers === undefined
+        ? undefined
+        : {
+            enabled: info.enabled_providers,
+            disabled: info.disabled_providers,
+          },
     providers: providers(info.provider),
   }
 }

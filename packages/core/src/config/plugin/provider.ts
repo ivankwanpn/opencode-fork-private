@@ -71,6 +71,16 @@ export const Plugin = define({
             project(catalog, id, item)
           }
         }
+        const filters = files.map((file) => file.info.provider_filter)
+        const enabled = filters.findLast((filter) => filter?.enabled !== undefined)?.enabled
+        const disabled = new Set(filters.findLast((filter) => filter?.disabled !== undefined)?.disabled ?? [])
+        const allowed = enabled === undefined ? undefined : new Set(enabled)
+        for (const record of catalog.provider.list()) {
+          if ((!allowed || allowed.has(record.provider.id)) && !disabled.has(record.provider.id)) continue
+          catalog.provider.update(record.provider.id, (provider) => {
+            provider.disabled = true
+          })
+        }
       }),
     )
   }),

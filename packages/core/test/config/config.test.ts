@@ -14,6 +14,7 @@ import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
 import { Policy } from "@opencode-ai/core/policy"
 import { Project } from "@opencode-ai/core/project"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { location } from "../fixture/location"
 import { tmpdir } from "../fixture/tmpdir"
@@ -116,6 +117,28 @@ describe("Config", () => {
     Effect.sync(() => {
       const migrated = ConfigMigrateV1.migrate({ subagent_depth: 3 })
       expect(Schema.decodeUnknownSync(Config.Info)(migrated).subagent_depth).toBe(3)
+    }),
+  )
+
+  it.effect("migrates v1 provider allow and deny lists into the V2 provider filter", () =>
+    Effect.sync(() => {
+      const migrated = ConfigMigrateV1.migrate({
+        enabled_providers: ["anthropic", "openai"],
+        disabled_providers: ["openai"],
+      })
+
+      expect(Schema.decodeUnknownSync(Config.Info)(migrated).provider_filter).toEqual({
+        enabled: [ProviderV2.ID.anthropic, ProviderV2.ID.openai],
+        disabled: [ProviderV2.ID.openai],
+      })
+    }),
+  )
+
+  it.effect("preserves an empty v1 provider allow list", () =>
+    Effect.sync(() => {
+      const migrated = ConfigMigrateV1.migrate({ enabled_providers: [] })
+
+      expect(Schema.decodeUnknownSync(Config.Info)(migrated).provider_filter).toEqual({ enabled: [] })
     }),
   )
 

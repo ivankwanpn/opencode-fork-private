@@ -1,6 +1,8 @@
 import { describe, expect } from "bun:test"
 import { Directory } from "@/acp/directory"
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { Catalog } from "@opencode-ai/core/catalog"
+import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
 import { InstanceStore } from "@/project/instance-store"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -126,6 +128,25 @@ describe("ACP directory snapshot", () => {
                 all: () => Effect.succeed([agent]),
                 default: () => Effect.succeed(agent),
               }),
+              Layer.mock(Catalog.Service, {
+                transform: () => Effect.succeed({ dispose: Effect.void }),
+                reload: () => Effect.void,
+                provider: {
+                  get: () => Effect.succeed(undefined),
+                  all: () => Effect.succeed([]),
+                  available: () => Effect.succeed([]),
+                },
+                model: {
+                  get: () => Effect.succeed(undefined),
+                  all: () => Effect.succeed([]),
+                  available: () => Effect.succeed([]),
+                  default: () => Effect.succeed(undefined),
+                  small: () => Effect.succeed(undefined),
+                },
+              }),
+              Layer.mock(CatalogSnapshot.Service, {
+                get: () => Effect.succeed({ providers: [], models: [], connected: [], default: {} }),
+              }),
             ) as unknown as Layer.Layer<LocationServices>
           },
           { idleTimeToLive: "1 minute" },
@@ -146,11 +167,6 @@ describe("ACP directory snapshot", () => {
               sandboxes: [],
             },
           }),
-      }),
-      Layer.mock(Provider.Service, {
-        list: () => Effect.succeed({}),
-        defaultModel: () =>
-          Effect.succeed({ providerID: ProviderV2.ID.make("provider"), modelID: ModelV2.ID.make("model") }),
       }),
       locationServices,
     )

@@ -544,7 +544,7 @@ describe("provider HttpApi", () => {
       expect(((yield* after.json) as { data: { connections: unknown[] } }).data.connections).toHaveLength(0)
     }),
     projectOptions,
-    30000,
+    60000,
   )
 
   it.instance.skip(

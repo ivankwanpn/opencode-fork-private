@@ -1,44 +1,28 @@
 import { describe, expect } from "bun:test"
 import path from "path"
-import { pathToFileURL } from "url"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect } from "effect"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { provideInstance, TestInstance, tmpdirScoped } from "../fixture/fixture"
-import { ProviderAuth } from "@/provider/auth"
+import { TestInstance } from "../fixture/fixture"
 
-import { RuntimeFlags } from "@/effect/runtime-flags"
-import { TestConfig } from "../fixture/config"
 import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { ProviderV2 } from "@opencode-ai/core/provider"
-import { SessionExecution } from "@opencode-ai/core/session/execution"
-import { Config } from "@/config/config"
+import { Integration } from "@opencode-ai/core/integration"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { Plugin } from "@/plugin"
+import { RuntimeFlags } from "@/effect/runtime-flags"
+import { InstanceState } from "@/effect/instance-state"
 
-const it = testEffect(LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node, FSUtil.node])))
-
-function providerAuthLayer(directory: string, plugins: string[]) {
-  return AppNodeBuilder.build(ProviderAuth.node, [
-    [
-      Config.node,
-      TestConfig.layer({
-        get: () =>
-          Effect.succeed({
-            plugin: plugins,
-            plugin_origins: plugins.map((plugin) => ({
-              spec: plugin,
-              source: path.join(directory, "opencode.json"),
-              scope: "local" as const,
-            })),
-          }),
-        directories: () => Effect.succeed([directory]),
-      }),
-    ],
+const it = testEffect(
+  AppNodeBuilder.build(LayerNode.group([Plugin.node, LocationServiceMap.node, CrossSpawnSpawner.node, FSUtil.node]), [
     [RuntimeFlags.node, RuntimeFlags.layer()],
-    [SessionExecution.node, SessionExecution.noopLayer],
-  ])
-}
+    [LocationServiceMap.node, locationServiceMapLayer],
+  ]),
+)
 
 describe("plugin.auth-override", () => {
   it.instance(
@@ -68,20 +52,25 @@ describe("plugin.auth-override", () => {
           ].join("\n"),
         )
 
-        const plain = yield* tmpdirScoped({ git: true })
-        const plugin = pathToFileURL(path.join(pluginDir, "custom-copilot-auth.ts")).href
-        const methods = yield* ProviderAuth.use
-          .methods()
-          .pipe(Effect.provide(providerAuthLayer(tmp.directory, [plugin])))
-        const plainMethods = yield* ProviderAuth.use
-          .methods()
-          .pipe(Effect.provide(providerAuthLayer(plain, [])), provideInstance(plain))
+        const plugins = yield* Plugin.Service
+        const locations = yield* LocationServiceMap.Service
+        const workspaceID = yield* InstanceState.workspaceID
+        yield* plugins.init()
+        const integration = yield* Integration.Service.use((service) =>
+          service.get(Integration.ID.make("github-copilot")),
+        ).pipe(
+          Effect.provide(
+            locations.get(
+              Location.Ref.make({
+                directory: AbsolutePath.make(tmp.directory),
+                ...(workspaceID === undefined ? {} : { workspaceID }),
+              }),
+            ),
+          ),
+        )
 
-        const copilot = methods[ProviderV2.ID.make("github-copilot")]
-        expect(copilot).toBeDefined()
-        expect(copilot.length).toBe(1)
-        expect(copilot[0].label).toBe("Test Override Auth")
-        expect(plainMethods[ProviderV2.ID.make("github-copilot")][0].label).not.toBe("Test Override Auth")
+        const key = integration?.methods.find((method) => method.type === "key")
+        expect(key?.label).toBe("Test Override Auth")
       }),
     { git: true },
     30000,
@@ -124,13 +113,8 @@ describe("plugin.config-hook-error-isolation", () => {
           ].join("\n"),
         )
 
-        yield* ProviderAuth.use
-          .methods()
-          .pipe(
-            Effect.provide(
-              providerAuthLayer(tmp.directory, [pathToFileURL(failing).href, pathToFileURL(succeeding).href]),
-            ),
-          )
+        const plugins = yield* Plugin.Service
+        yield* plugins.init()
 
         expect(yield* Effect.promise(() => Bun.file(marker).exists())).toBe(true)
       }),

@@ -1,4 +1,3 @@
-import { Auth } from "@/auth"
 import { Config } from "@/config/config"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { ConfigProviderPlugin } from "@opencode-ai/core/config/plugin/provider"
@@ -25,8 +24,6 @@ export interface ConfigurePorts {
   readonly builtInProviderIDs: () => Effect.Effect<ReadonlySet<string>>
   readonly readGlobalProvider: (providerID: string) => Effect.Effect<GlobalProviderState>
   readonly writeGlobalProvider: (providerID: string, state: GlobalProviderState) => Effect.Effect<void, unknown>
-  readonly readLegacyCredential: (providerID: string) => Effect.Effect<Auth.Info | undefined, unknown>
-  readonly writeLegacyCredential: (providerID: string, value?: Auth.Info) => Effect.Effect<void, unknown>
   readonly readNativeCredential: (providerID: string) => Effect.Effect<Credential.Info | undefined>
   readonly writeNativeCredential: (
     providerID: string,
@@ -42,7 +39,6 @@ export interface ConfigurePorts {
 export interface DisconnectPorts {
   readonly readGlobalProvider: (providerID: string) => Effect.Effect<GlobalProviderState>
   readonly writeGlobalProvider: (providerID: string, state: GlobalProviderState) => Effect.Effect<void, unknown>
-  readonly writeLegacyCredential: (providerID: string, value?: Auth.Info) => Effect.Effect<void, unknown>
   readonly writeNativeCredential: (
     providerID: string,
     value?: Pick<Credential.Info, "label" | "value">,
@@ -73,12 +69,15 @@ export function configureWith(
     if (builtIn.has(normalized.providerID)) return yield* conflict(normalized.providerID)
     if (updating && beforeGlobal.provider === undefined) return yield* conflict(normalized.providerID)
     const reconnectingDisabledGlobal =
-      beforeGlobal.provider !== undefined && (resolved.disabled_providers ?? []).includes(normalized.providerID)
-    if (resolved.provider?.[normalized.providerID] !== undefined && !reconnectingDisabledGlobal && !updating) {
+      beforeGlobal.provider !== undefined && (beforeGlobal.disabledProviders ?? []).includes(normalized.providerID)
+    if (
+      (beforeGlobal.provider !== undefined || resolved.provider?.[normalized.providerID] !== undefined) &&
+      !reconnectingDisabledGlobal &&
+      !updating
+    ) {
       return yield* conflict(normalized.providerID)
     }
 
-    const beforeLegacy = yield* stage("legacyCredential", ports.readLegacyCredential(normalized.providerID))
     const beforeNative = yield* stage("nativeCredential", ports.readNativeCredential(normalized.providerID))
     const configured = buildProviderConfig(normalized)
     const afterGlobal = {
@@ -89,12 +88,6 @@ export function configureWith(
       disabledProviders: beforeGlobal.disabledProviders?.filter((id) => id !== normalized.providerID),
     }
     const credential = parseCredential(normalized.apiKey)
-    const legacy =
-      updating && normalized.apiKey === undefined
-        ? beforeLegacy
-        : credential.key
-          ? new Auth.Api({ type: "api", key: credential.key })
-          : undefined
     const native =
       updating && normalized.apiKey === undefined
         ? beforeNative
@@ -109,7 +102,6 @@ export function configureWith(
 
     const transaction = Effect.gen(function* () {
       yield* stage("config", ports.writeGlobalProvider(normalized.providerID, afterGlobal))
-      yield* stage("legacyCredential", ports.writeLegacyCredential(normalized.providerID, legacy))
       yield* stage("nativeCredential", ports.writeNativeCredential(normalized.providerID, native))
       yield* stage(
         "catalogRefresh",
@@ -129,7 +121,7 @@ export function configureWith(
 
     return yield* transaction.pipe(
       Effect.catch((error) =>
-        rollback(ports, normalized.providerID, beforeGlobal, beforeLegacy, beforeNative).pipe(
+        rollback(ports, normalized.providerID, beforeGlobal, beforeNative).pipe(
           Effect.flatMap((recovered) =>
             recovered
               ? Effect.fail(error)
@@ -150,7 +142,6 @@ export function configureWith(
 export function disconnectWith(ports: DisconnectPorts, providerID: string): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const beforeGlobal = yield* ports.readGlobalProvider(providerID)
-    yield* ports.writeLegacyCredential(providerID, undefined)
     yield* ports.writeNativeCredential(providerID, undefined)
     yield* ports.writeGlobalProvider(providerID, {
       provider: removeInlineCredential(beforeGlobal.provider),
@@ -169,7 +160,6 @@ function removeInlineCredential(provider: ConfigProviderV1.Info | undefined) {
 
 export const make = Effect.gen(function* () {
   const config = yield* Config.Service
-  const auth = yield* Auth.Service
   const credentials = yield* Credential.Service
   const locations = yield* LocationServiceMap.Service
   const modelsDev = yield* ModelsDev.Service
@@ -192,8 +182,6 @@ export const make = Effect.gen(function* () {
           disabledProviders: state.disabledProviders,
         })
         .pipe(Effect.asVoid),
-    readLegacyCredential: (providerID) => auth.get(providerID),
-    writeLegacyCredential: (providerID, value) => (value ? auth.set(providerID, value) : auth.remove(providerID)),
     readNativeCredential: (providerID) =>
       credentials
         .list(Integration.ID.make(providerID))
@@ -265,7 +253,7 @@ export const configure = (
 ): Effect.Effect<
   CustomProvider.ConfigureResult,
   CustomProvider.ValidationError | CustomProvider.ConflictError | CustomProvider.ConfigureError,
-  Config.Service | Auth.Service | Credential.Service | LocationServiceMap.Service | ModelsDev.Service
+  Config.Service | Credential.Service | LocationServiceMap.Service | ModelsDev.Service
 > =>
   Effect.gen(function* () {
     const service = yield* make
@@ -278,7 +266,7 @@ export const disconnect = (
 ): Effect.Effect<
   void,
   unknown,
-  Config.Service | Auth.Service | Credential.Service | LocationServiceMap.Service | ModelsDev.Service
+  Config.Service | Credential.Service | LocationServiceMap.Service | ModelsDev.Service
 > =>
   Effect.gen(function* () {
     const service = yield* make
@@ -309,14 +297,12 @@ function rollback(
   ports: ConfigurePorts,
   providerID: string,
   beforeGlobal: GlobalProviderState,
-  beforeLegacy: Auth.Info | undefined,
   beforeNative: Credential.Info | undefined,
 ) {
   return Effect.gen(function* () {
     const results = yield* Effect.forEach(
       [
         () => ports.writeNativeCredential(providerID, beforeNative),
-        () => ports.writeLegacyCredential(providerID, beforeLegacy),
         () => ports.writeGlobalProvider(providerID, beforeGlobal),
         () =>
           ports.refresh(

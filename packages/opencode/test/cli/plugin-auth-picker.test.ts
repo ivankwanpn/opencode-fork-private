@@ -1,24 +1,29 @@
 import { test, expect, describe } from "bun:test"
 import { resolvePluginProviders } from "../../src/cli/cmd/providers"
-import type { Hooks } from "@opencode-ai/plugin"
+import { Integration } from "@opencode-ai/core/integration"
 
-function hookWithAuth(provider: string): Hooks {
-  return {
-    auth: {
-      provider,
-      methods: [],
-    },
-  }
+function integrationWithAuth(provider: string) {
+  return new Integration.Info({
+    id: Integration.ID.make(provider),
+    name: provider,
+    methods: [{ type: "key", label: "API key" }],
+    connections: [],
+  })
 }
 
-function hookWithoutAuth(): Hooks {
-  return {}
+function integrationWithoutAuth(provider: string) {
+  return new Integration.Info({
+    id: Integration.ID.make(provider),
+    name: provider,
+    methods: [{ type: "env", names: ["TEST_KEY"] }],
+    connections: [],
+  })
 }
 
 describe("resolvePluginProviders", () => {
   test("returns plugin providers not in models.dev", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(),
       providerNames: {},
@@ -28,7 +33,7 @@ describe("resolvePluginProviders", () => {
 
   test("skips providers already in models.dev", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("anthropic")],
+      integrations: [integrationWithAuth("anthropic")],
       existingProviders: { anthropic: {} },
       disabled: new Set(),
       providerNames: {},
@@ -38,7 +43,7 @@ describe("resolvePluginProviders", () => {
 
   test("deduplicates across plugins", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey"), hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey"), integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(),
       providerNames: {},
@@ -48,7 +53,7 @@ describe("resolvePluginProviders", () => {
 
   test("respects disabled_providers", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(["portkey"]),
       providerNames: {},
@@ -58,7 +63,7 @@ describe("resolvePluginProviders", () => {
 
   test("respects enabled_providers when provider is absent", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(),
       enabled: new Set(["anthropic"]),
@@ -69,7 +74,7 @@ describe("resolvePluginProviders", () => {
 
   test("includes provider when in enabled set", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(),
       enabled: new Set(["portkey"]),
@@ -80,7 +85,7 @@ describe("resolvePluginProviders", () => {
 
   test("resolves name from providerNames", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(),
       providerNames: { portkey: "Portkey AI" },
@@ -90,7 +95,7 @@ describe("resolvePluginProviders", () => {
 
   test("falls back to id when no name configured", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithAuth("portkey")],
+      integrations: [integrationWithAuth("portkey")],
       existingProviders: {},
       disabled: new Set(),
       providerNames: {},
@@ -98,9 +103,13 @@ describe("resolvePluginProviders", () => {
     expect(result).toEqual([{ id: "portkey", name: "portkey" }])
   })
 
-  test("skips hooks without auth", () => {
+  test("skips integrations without interactive auth", () => {
     const result = resolvePluginProviders({
-      hooks: [hookWithoutAuth(), hookWithAuth("portkey"), hookWithoutAuth()],
+      integrations: [
+        integrationWithoutAuth("env-one"),
+        integrationWithAuth("portkey"),
+        integrationWithoutAuth("env-two"),
+      ],
       existingProviders: {},
       disabled: new Set(),
       providerNames: {},
@@ -108,9 +117,9 @@ describe("resolvePluginProviders", () => {
     expect(result).toEqual([{ id: "portkey", name: "portkey" }])
   })
 
-  test("returns empty for no hooks", () => {
+  test("returns empty for no integrations", () => {
     const result = resolvePluginProviders({
-      hooks: [],
+      integrations: [],
       existingProviders: {},
       disabled: new Set(),
       providerNames: {},

@@ -9,7 +9,7 @@ import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { PluginV1Compat, type Hooks } from "@opencode-ai/core/plugin/v1-compat"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { Deferred, Effect, Exit } from "effect"
+import { Cause, Deferred, Effect, Exit } from "effect"
 import { testEffect } from "./lib/effect"
 import { PluginTestLayer } from "./plugin/fixture"
 
@@ -470,6 +470,7 @@ describe("PluginV1Compat", () => {
       yield* add(plugins, pluginID, {
         auth: {
           provider: providerID,
+          methods: [],
           loader: async (getAuth, provider) => {
             const initial = await getAuth()
             calls.push(`${initial.type}:${provider.models.model.id}`)
@@ -534,6 +535,133 @@ describe("PluginV1Compat", () => {
           options: {},
         })).options.loadedAs,
       ).toBeUndefined()
+    }),
+  )
+
+  it.effect("projects V1 auth methods, validates prompts, and stores redirected key credentials", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const integrations = yield* Integration.Service
+      const credentials = yield* Credential.Service
+      const sourceID = ProviderV2.ID.make("legacy-auth-methods")
+      const targetID = Integration.ID.make("legacy-auth-target")
+
+      yield* add(plugins, "v1-auth-methods", {
+        auth: {
+          provider: sourceID,
+          methods: [
+            {
+              type: "api",
+              label: "API token",
+              prompts: [
+                {
+                  type: "text",
+                  key: "tenant",
+                  message: "Tenant",
+                  placeholder: "acme",
+                  validate: (value) => (value === "acme" ? undefined : "Tenant must be acme"),
+                },
+                {
+                  type: "select",
+                  key: "region",
+                  message: "Region",
+                  options: [{ label: "US", value: "us" }],
+                },
+              ],
+            },
+            {
+              type: "oauth",
+              label: "Legacy OAuth",
+              prompts: [
+                {
+                  type: "text",
+                  key: "token",
+                  message: "Token",
+                  validate: (value) => (value === "ok" ? undefined : "Token must be ok"),
+                },
+              ],
+              authorize: async () => ({
+                method: "code" as const,
+                url: "https://example.com/authorize",
+                instructions: "Paste the code",
+                callback: async () => ({
+                  type: "success" as const,
+                  provider: targetID,
+                  key: "redirected-key",
+                  metadata: { tenant: "acme" },
+                }),
+              }),
+            },
+          ],
+        },
+      })
+
+      const integration = yield* integrations.get(Integration.ID.make(sourceID))
+      expect(integration?.methods).toEqual([
+        {
+          type: "key",
+          label: "API token",
+          prompts: [
+            { type: "text", key: "tenant", message: "Tenant", placeholder: "acme" },
+            {
+              type: "select",
+              key: "region",
+              message: "Region",
+              options: [{ label: "US", value: "us" }],
+            },
+          ],
+        },
+        expect.objectContaining({ type: "oauth", label: "Legacy OAuth" }),
+      ])
+      const oauth = integration?.methods.find((method) => method.type === "oauth")
+      if (!oauth || oauth.type !== "oauth") throw new Error("Expected projected OAuth method")
+
+      const invalidKey = yield* integrations.connection
+        .key({
+          integrationID: Integration.ID.make(sourceID),
+          key: "source-key",
+          inputs: { tenant: "other", region: "us" },
+        })
+        .pipe(Effect.flip)
+      expect(Cause.isCause(invalidKey.cause) ? Cause.squash(invalidKey.cause) : invalidKey.cause).toEqual(
+        new Integration.InputValidationError({ field: "tenant", message: "Tenant must be acme" }),
+      )
+      yield* integrations.connection.key({
+        integrationID: Integration.ID.make(sourceID),
+        key: "source-key",
+        inputs: { tenant: "acme", region: "us" },
+      })
+      expect((yield* credentials.list(Integration.ID.make(sourceID)))[0]?.value).toEqual(
+        Credential.Key.make({
+          type: "key",
+          key: "source-key",
+          metadata: { tenant: "acme", region: "us" },
+        }),
+      )
+
+      const invalid = yield* integrations.connection
+        .oauth({ integrationID: Integration.ID.make(sourceID), methodID: oauth.id, inputs: { token: "nope" } })
+        .pipe(Effect.flip)
+      expect(Cause.isCause(invalid.cause) ? Cause.squash(invalid.cause) : invalid.cause).toEqual(
+        new Integration.InputValidationError({ field: "token", message: "Token must be ok" }),
+      )
+
+      const attempt = yield* integrations.connection.oauth({
+        integrationID: Integration.ID.make(sourceID),
+        methodID: oauth.id,
+        inputs: { token: "ok" },
+      })
+      yield* integrations.attempt.complete({ attemptID: attempt.attemptID, code: "1234" })
+      expect(yield* credentials.list(targetID)).toEqual([
+        expect.objectContaining({
+          integrationID: targetID,
+          value: Credential.Key.make({
+            type: "key",
+            key: "redirected-key",
+            metadata: { tenant: "acme" },
+          }),
+        }),
+      ])
     }),
   )
 

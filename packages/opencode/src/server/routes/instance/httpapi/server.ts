@@ -6,7 +6,6 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Observability from "@opencode-ai/core/observability"
 import { Account } from "@/account/account"
 import { Auth } from "@/auth"
-import { AuthCredentialMigration } from "@/auth/credential-migration"
 import { BackgroundJob } from "@/background/job"
 import { Config } from "@/config/config"
 import { Workspace } from "@/control-plane/workspace"
@@ -22,7 +21,6 @@ import { PluginPtyEnvironment } from "@/plugin/pty-environment"
 import { InstanceStore } from "@/project/instance-store"
 import { Project } from "@/project/project"
 import { Vcs } from "@/project/vcs"
-import { ProviderAuth } from "@/provider/auth"
 import { Question } from "@/question"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
@@ -241,7 +239,6 @@ const hostNodes = [
   Database.node,
   Credential.node,
   Auth.node,
-  AuthCredentialMigration.node,
   Account.node,
   Config.node,
   Env.node,
@@ -251,7 +248,6 @@ const hostNodes = [
   Snapshot.node,
   Plugin.node,
   ModelsDev.node,
-  ProviderAuth.node,
   Skill.node,
   Discovery.node,
   Question.node,

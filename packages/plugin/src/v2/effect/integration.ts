@@ -8,21 +8,29 @@ import type {
   IntegrationMethod,
   IntegrationOAuthMethod,
   IntegrationRef,
+  IntegrationSelectPrompt,
+  IntegrationTextPrompt,
 } from "@opencode-ai/sdk/v2/types"
 import type { Effect, Scope } from "effect"
 import type { Hooks } from "./registration.js"
 
+export type IntegrationAuthorizedCredential =
+  | CredentialValue
+  | {
+      readonly integrationID: string
+      readonly value: CredentialValue
+    }
 export type IntegrationOAuthAuthorization = {
   readonly url: string
   readonly instructions: string
 } & (
   | {
       readonly mode: "auto"
-      readonly callback: Effect.Effect<CredentialOAuth, unknown>
+      readonly callback: Effect.Effect<IntegrationAuthorizedCredential, unknown>
     }
   | {
       readonly mode: "code"
-      readonly callback: (code: string) => Effect.Effect<CredentialOAuth, unknown>
+      readonly callback: (code: string) => Effect.Effect<IntegrationAuthorizedCredential, unknown>
     }
 )
 export type IntegrationOAuthMethodRegistration = {
@@ -32,12 +40,19 @@ export type IntegrationOAuthMethodRegistration = {
   readonly refresh?: (credential: CredentialOAuth) => Effect.Effect<CredentialOAuth, unknown>
   readonly label?: (credential: CredentialOAuth) => string | undefined
 }
+export type IntegrationKeyMethodRegistration = {
+  readonly integrationID: string
+  readonly method: IntegrationKeyMethod & {
+    readonly prompts?: readonly (IntegrationTextPrompt | IntegrationSelectPrompt)[]
+  }
+  readonly authorize?: (input: {
+    readonly key: string
+    readonly inputs: IntegrationInputs
+  }) => Effect.Effect<IntegrationAuthorizedCredential, unknown>
+}
 export type IntegrationMethodRegistration =
   | IntegrationOAuthMethodRegistration
-  | {
-      readonly integrationID: string
-      readonly method: IntegrationKeyMethod
-    }
+  | IntegrationKeyMethodRegistration
   | {
       readonly integrationID: string
       readonly method: IntegrationEnvMethod

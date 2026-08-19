@@ -1,6 +1,7 @@
 import { ConfigCapability } from "@opencode-ai/server/config-capability"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
-import { Auth } from "@/auth"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 import { Effect, Layer } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { discover } from "@/provider/custom-provider/discovery"
@@ -13,7 +14,7 @@ export const layer = Layer.effect(
   ConfigCapability.Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
-    const auth = yield* Auth.Service
+    const credentials = yield* Credential.Service
     const locations = yield* LocationServiceMap.Service
     const customProvider = yield* makeCustomProvider
     return ConfigCapability.Service.of({
@@ -36,12 +37,7 @@ export const layer = Layer.effect(
         }),
       discoverCustomProvider: (input) => discover(input),
       configureCustomProvider: (input, location) =>
-        Effect.gen(function* () {
-          const result = yield* customProvider.configure(input, location)
-          const bridge = yield* EffectBridge.make()
-          bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
-          return result
-        }),
+        customProvider.configure(input, location),
       disconnectCustomProvider: (providerID, location) =>
         customProvider.disconnect(providerID, location).pipe(
           Effect.mapError(
@@ -51,28 +47,11 @@ export const layer = Layer.effect(
                 service: "custom-provider",
               }),
           ),
-          Effect.tap(() =>
-            Effect.gen(function* () {
-              const bridge = yield* EffectBridge.make()
-              bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
-            }),
-          ),
         ),
       disconnectProvider: (providerID) =>
-        auth.remove(providerID).pipe(
-          Effect.mapError(
-            () =>
-              new ServiceUnavailableError({
-                message: "Failed to disconnect provider credentials",
-                service: "provider-credentials",
-              }),
-          ),
-          Effect.tap(() =>
-            Effect.gen(function* () {
-              const bridge = yield* EffectBridge.make()
-              bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
-            }),
-          ),
+        credentials.list(Integration.ID.make(providerID)).pipe(
+          Effect.flatMap((saved) => Effect.forEach(saved, (credential) => credentials.remove(credential.id))),
+          Effect.asVoid,
         ),
     })
   }),

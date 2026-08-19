@@ -1,4 +1,10 @@
 import type { PluginContext } from "@opencode-ai/plugin/v2/effect"
+import type {
+  IntegrationAuthorizedCredential,
+  IntegrationKeyMethodRegistration,
+  IntegrationMethodRegistration,
+  IntegrationOAuthMethodRegistration,
+} from "@opencode-ai/plugin/v2/effect/integration"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { Credential } from "@opencode-ai/core/credential"
@@ -9,6 +15,29 @@ import type { IntegrationEnvMethod, IntegrationKeyMethod, IntegrationOAuthMethod
 import { Effect, Stream } from "effect"
 
 type Overrides = Partial<Omit<PluginContext, "options">>
+
+function authorizedCredential(value: IntegrationAuthorizedCredential): Integration.AuthorizedCredential {
+  const credential = "value" in value ? value.value : value
+  const decoded =
+    credential.type === "oauth"
+      ? Credential.OAuth.make({
+          ...credential,
+          methodID: Integration.MethodID.make(credential.methodID),
+        })
+      : Credential.Key.make(credential)
+  if (!("value" in value)) return decoded
+  return { integrationID: Integration.ID.make(value.integrationID), value: decoded }
+}
+
+function isOAuthRegistration(
+  input: IntegrationMethodRegistration,
+): input is IntegrationOAuthMethodRegistration {
+  return input.method.type === "oauth"
+}
+
+function isKeyRegistration(input: IntegrationMethodRegistration): input is IntegrationKeyMethodRegistration {
+  return input.method.type === "key"
+}
 
 export function host(overrides: Overrides = {}): PluginContext {
   return {
@@ -181,39 +210,25 @@ export function integrationHost(integration: Integration.Interface): PluginConte
           method: {
             list: (id) => draft.method.list(Integration.ID.make(id)).map(method),
             update: (input) => {
-              if ("authorize" in input) {
+              if (isOAuthRegistration(input)) {
                 const methodID = Integration.MethodID.make(input.method.id)
                 const refresh = input.refresh
                 draft.method.update({
                   integrationID: Integration.ID.make(input.integrationID),
                   method: { ...input.method, id: methodID },
-                  authorize: (inputs) =>
+                  authorize: (inputs: Integration.Inputs) =>
                     input.authorize(inputs).pipe(
                       Effect.map((authorization) => {
                         if (authorization.mode === "auto") {
                           return {
                             ...authorization,
-                            callback: authorization.callback.pipe(
-                              Effect.map((credential) =>
-                                Credential.OAuth.make({
-                                  ...credential,
-                                  methodID: Integration.MethodID.make(credential.methodID),
-                                }),
-                              ),
-                            ),
+                            callback: authorization.callback.pipe(Effect.map(authorizedCredential)),
                           }
                         }
                         return {
                           ...authorization,
                           callback: (code: string) =>
-                            authorization.callback(code).pipe(
-                              Effect.map((credential) =>
-                                Credential.OAuth.make({
-                                  ...credential,
-                                  methodID: Integration.MethodID.make(credential.methodID),
-                                }),
-                              ),
-                            ),
+                            authorization.callback(code).pipe(Effect.map(authorizedCredential)),
                         }
                       }),
                     ),
@@ -241,9 +256,17 @@ export function integrationHost(integration: Integration.Interface): PluginConte
                 })
                 return
               }
+              if (!isKeyRegistration(input)) return
+              const authorize = input.authorize
               draft.method.update({
                 integrationID: Integration.ID.make(input.integrationID),
                 method: input.method,
+                ...(authorize
+                  ? {
+                      authorize: (event: { readonly key: string; readonly inputs: Integration.Inputs }) =>
+                        authorize(event).pipe(Effect.map(authorizedCredential)),
+                    }
+                  : {}),
               })
             },
             remove: (id, item) => draft.method.remove(Integration.ID.make(id), internalMethod(item)),
@@ -255,7 +278,7 @@ export function integrationHost(integration: Integration.Interface): PluginConte
 
 function method(value: Integration.Method) {
   if (value.type === "env") return { type: value.type, names: [...value.names] }
-  if (value.type === "key") return { type: value.type, label: value.label }
+  if (value.type === "key") return { type: value.type, label: value.label, prompts: value.prompts }
   return {
     type: value.type,
     id: value.id,

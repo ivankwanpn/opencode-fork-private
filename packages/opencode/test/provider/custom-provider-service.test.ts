@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test"
-import { Auth } from "@/auth"
 import {
   configureWith,
   disconnectWith,
@@ -33,7 +32,6 @@ const originalProvider = ConfigProviderV1.Info.make({
   options: { baseURL: "https://old.example/v1" },
   models: { old: { name: "Old" } },
 })
-const originalLegacy = new Auth.Api({ type: "api", key: "old-legacy-secret" })
 const originalNative = new Credential.Info({
   id: Credential.ID.create(),
   integrationID: Integration.ID.make("custom"),
@@ -41,20 +39,18 @@ const originalNative = new Credential.Info({
   value: { type: "key", key: "old-native-secret" },
 })
 
-type Failure = "config" | "legacyCredential" | "nativeCredential" | "catalogRefresh" | "rollbackNativeCredential"
+type Failure = "config" | "nativeCredential" | "catalogRefresh" | "rollbackNativeCredential"
 
 function harness(options: {
   provider?: ConfigProviderV1.Info
   disabledProviders?: string[]
   resolvedProvider?: ConfigProviderV1.Info
   builtIn?: string[]
-  legacy?: Auth.Info
   native?: Credential.Info
   failure?: Failure
 }) {
   const state: {
     global: GlobalProviderState
-    legacy?: Auth.Info
     native?: Credential.Info
     refreshes: (readonly string[] | undefined)[]
     order: string[]
@@ -63,14 +59,12 @@ function harness(options: {
       provider: options.provider,
       disabledProviders: options.disabledProviders,
     },
-    legacy: options.legacy,
     native: options.native,
     refreshes: [],
     order: [],
   }
   const initial = structuredClone(state)
   let globalWrites = 0
-  let legacyWrites = 0
   let nativeWrites = 0
   let refreshes = 0
   const fail = (failure: Failure, effect: Effect.Effect<void>) =>
@@ -93,19 +87,6 @@ function harness(options: {
         globalWrites === 1 ? "config" : "rollbackNativeCredential",
         Effect.sync(() => {
           state.global = structuredClone(value)
-        }),
-      )
-    },
-    readLegacyCredential: () => Effect.succeed(state.legacy),
-    writeLegacyCredential: (_providerID, value) => {
-      legacyWrites++
-      state.order.push(
-        value?.type === "api" && value.key === "old-legacy-secret" ? "rollbackLegacyCredential" : "legacyCredential",
-      )
-      return fail(
-        legacyWrites === 1 ? "legacyCredential" : "rollbackNativeCredential",
-        Effect.sync(() => {
-          state.legacy = value
         }),
       )
     },
@@ -144,13 +125,12 @@ function harness(options: {
 }
 
 describe("configureWith", () => {
-  it.effect("persists a literal credential in both stores and reconnects a disabled custom provider", () =>
+  it.effect("persists a literal credential and reconnects a disabled custom provider", () =>
     Effect.gen(function* () {
       const test = harness({
         provider: originalProvider,
         resolvedProvider: originalProvider,
         disabledProviders: ["other", "custom"],
-        legacy: originalLegacy,
         native: originalNative,
       })
       const result = yield* configureWith(test.ports, input)
@@ -164,60 +144,53 @@ describe("configureWith", () => {
       expect(test.state.global.disabledProviders).toEqual(["other"])
       expect(test.state.global.provider?.env).toBeUndefined()
       expect(test.state.global.provider?.options?.baseURL).toBe("https://custom.example/v1")
-      expect(test.state.legacy).toEqual(new Auth.Api({ type: "api", key: "new-secret" }))
       expect(test.state.native?.label).toBe("Custom")
       expect(test.state.native?.value).toEqual({ type: "key", key: "new-secret" })
-      expect(test.state.order).toEqual(["config", "legacyCredential", "nativeCredential", "catalogRefresh"])
+      expect(test.state.order).toEqual(["config", "nativeCredential", "catalogRefresh"])
     }),
   )
 
   it.effect("uses env references only in config and removes prior credentials", () =>
     Effect.gen(function* () {
-      const test = harness({ legacy: originalLegacy, native: originalNative })
+      const test = harness({ native: originalNative })
       yield* configureWith(test.ports, { ...input, apiKey: "{env:CUSTOM_KEY}" })
       expect(test.state.global.provider?.env).toEqual(["CUSTOM_KEY"])
-      expect(test.state.legacy).toBeUndefined()
       expect(test.state.native).toBeUndefined()
     }),
   )
 
   it.effect("blank credentials remove prior literal credentials", () =>
     Effect.gen(function* () {
-      const test = harness({ legacy: originalLegacy, native: originalNative })
+      const test = harness({ native: originalNative })
       yield* configureWith(test.ports, { ...input, apiKey: "   " })
       expect(test.state.global.provider?.env).toBeUndefined()
-      expect(test.state.legacy).toBeUndefined()
       expect(test.state.native).toBeUndefined()
     }),
   )
 
-  it.effect("blank credentials preserve every existing credential during an explicit update", () =>
+  it.effect("blank credentials preserve the existing credential during an explicit update", () =>
     Effect.gen(function* () {
       const test = harness({
         provider: originalProvider,
         resolvedProvider: originalProvider,
-        legacy: originalLegacy,
         native: originalNative,
       })
       yield* configureWith(test.ports, { ...input, update: true, apiKey: "   " })
       expect(test.state.global.provider?.env).toEqual(["OLD_ENV"])
-      expect(test.state.legacy).toEqual(originalLegacy)
       expect(test.state.native?.label).toBe("original label")
       expect(test.state.native?.value).toEqual(originalNative.value)
     }),
   )
 
-  it.effect("a new update credential replaces env, legacy, and native credential state", () =>
+  it.effect("a new update credential replaces env and credential state", () =>
     Effect.gen(function* () {
       const test = harness({
         provider: originalProvider,
         resolvedProvider: originalProvider,
-        legacy: originalLegacy,
         native: originalNative,
       })
       yield* configureWith(test.ports, { ...input, update: true, apiKey: "replacement-secret" })
       expect(test.state.global.provider?.env).toBeUndefined()
-      expect(test.state.legacy).toEqual(new Auth.Api({ type: "api", key: "replacement-secret" }))
       expect(test.state.native?.label).toBe("Custom")
       expect(test.state.native?.value).toEqual({ type: "key", key: "replacement-secret" })
     }),
@@ -236,13 +209,12 @@ describe("configureWith", () => {
     }),
   )
 
-  for (const stage of ["config", "legacyCredential", "nativeCredential", "catalogRefresh"] as const) {
+  for (const stage of ["config", "nativeCredential", "catalogRefresh"] as const) {
     it.effect(`restores every snapshot after a ${stage} defect`, () =>
       Effect.gen(function* () {
         const test = harness({
           provider: originalProvider,
           disabledProviders: ["custom", "other"],
-          legacy: originalLegacy,
           native: originalNative,
           failure: stage,
         })
@@ -254,12 +226,10 @@ describe("configureWith", () => {
           expect(JSON.stringify(error)).not.toContain("new-secret")
         }
         expect(test.state.global).toEqual(test.initial.global)
-        expect(test.state.legacy).toEqual(test.initial.legacy)
         expect(test.state.native?.label).toBe("original label")
         expect(test.state.native?.value).toEqual(test.initial.native?.value)
-        expect(test.state.order.slice(-4)).toEqual([
+        expect(test.state.order.slice(-3)).toEqual([
           "rollbackNativeCredential",
-          "rollbackLegacyCredential",
           "rollbackConfig",
           "rollbackCatalogRefresh",
         ])
@@ -272,7 +242,6 @@ describe("configureWith", () => {
       const test = harness({
         provider: originalProvider,
         disabledProviders: ["custom"],
-        legacy: originalLegacy,
         native: originalNative,
         failure: "rollbackNativeCredential",
       })
@@ -294,13 +263,11 @@ describe("configureWith", () => {
         expect(JSON.stringify(error)).not.toContain("new-secret")
         expect(JSON.stringify(error)).not.toContain("old-native-secret")
       }
-      expect(test.state.order.slice(-4)).toEqual([
+      expect(test.state.order.slice(-3)).toEqual([
         "rollbackNativeCredential",
-        "rollbackLegacyCredential",
         "rollbackConfig",
         "rollbackCatalogRefresh",
       ])
-      expect(test.state.legacy).toEqual(originalLegacy)
       expect(test.state.global).toEqual(test.initial.global)
       expect(test.state.refreshes.at(-1)).toEqual(["old"])
     }),
@@ -318,7 +285,6 @@ describe("disconnectWith", () => {
             apiKey: "expired-inline-secret",
           },
         }),
-        legacy: originalLegacy,
         native: originalNative,
       })
 
@@ -330,12 +296,11 @@ describe("disconnectWith", () => {
     }),
   )
 
-  it.effect("disables the custom provider and removes every credential store", () =>
+  it.effect("disables the custom provider and removes its credential", () =>
     Effect.gen(function* () {
       const test = harness({
         provider: originalProvider,
         disabledProviders: ["custom", "other"],
-        legacy: originalLegacy,
         native: originalNative,
       })
 
@@ -343,9 +308,8 @@ describe("disconnectWith", () => {
 
       expect(test.state.global.provider).toEqual(originalProvider)
       expect(test.state.global.disabledProviders).toEqual(["custom", "other"])
-      expect(test.state.legacy).toBeUndefined()
       expect(test.state.native).toBeUndefined()
-      expect(test.state.order).toEqual(["legacyCredential", "nativeCredential", "config", "catalogRefresh"])
+      expect(test.state.order).toEqual(["nativeCredential", "config", "catalogRefresh"])
       expect(test.state.refreshes.at(-1)).toBeUndefined()
     }),
   )

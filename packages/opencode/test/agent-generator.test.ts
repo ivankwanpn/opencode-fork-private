@@ -166,6 +166,7 @@ function makeLayer(options: Options = {}) {
                 status: () => Effect.die("not implemented"),
                 complete: () => Effect.die("not implemented"),
                 cancel: () => Effect.void,
+                latest: () => Effect.succeed(undefined),
               },
             })),
             Layer.mock(AgentV2.Service, {

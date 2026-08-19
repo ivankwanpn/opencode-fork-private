@@ -8,6 +8,12 @@ import type {
   ShellHookSpec,
   ToolHookSpec,
 } from "@opencode-ai/plugin/v2/effect"
+import type {
+  IntegrationAuthorizedCredential,
+  IntegrationKeyMethodRegistration,
+  IntegrationMethodRegistration,
+  IntegrationOAuthMethodRegistration,
+} from "@opencode-ai/plugin/v2/effect/integration"
 import { EventManifest } from "@opencode-ai/schema/event-manifest"
 import { Effect, Schema, Stream } from "effect"
 import { AgentV2 } from "../agent"
@@ -27,6 +33,32 @@ import { SkillV2 } from "../skill"
 
 const mutable = <T>(value: T) => value as DeepMutable<T>
 const runtimes = new WeakMap<object, PluginRuntime.Interface>()
+
+function authorizedCredential(value: IntegrationAuthorizedCredential): Integration.AuthorizedCredential {
+  const credential = "value" in value ? value.value : value
+  const decoded =
+    credential.type === "oauth"
+      ? Credential.OAuth.make({
+          ...credential,
+          methodID: Integration.MethodID.make(credential.methodID),
+        })
+      : Credential.Key.make(credential)
+  if (!("value" in value)) return decoded
+  return {
+    integrationID: Integration.ID.make(value.integrationID),
+    value: decoded,
+  }
+}
+
+function isOAuthRegistration(
+  input: IntegrationMethodRegistration,
+): input is IntegrationOAuthMethodRegistration {
+  return input.method.type === "oauth"
+}
+
+function isKeyRegistration(input: IntegrationMethodRegistration): input is IntegrationKeyMethodRegistration {
+  return input.method.type === "key"
+}
 
 export function runtimeOf(host: Interface) {
   const runtime = runtimes.get(host)
@@ -211,39 +243,25 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
             method: {
               list: (id) => mutable(draft.method.list(Integration.ID.make(id))),
               update: (input) => {
-                if ("authorize" in input) {
+                if (isOAuthRegistration(input)) {
                   const methodID = Integration.MethodID.make(input.method.id)
                   const refresh = input.refresh
                   draft.method.update({
                     integrationID: Integration.ID.make(input.integrationID),
                     method: { ...input.method, id: methodID },
-                    authorize: (inputs) =>
+                    authorize: (inputs: Integration.Inputs) =>
                       input.authorize(inputs).pipe(
                         Effect.map((authorization) => {
                           if (authorization.mode === "auto") {
                             return {
                               ...authorization,
-                              callback: authorization.callback.pipe(
-                                Effect.map((credential) =>
-                                  Credential.OAuth.make({
-                                    ...credential,
-                                    methodID: Integration.MethodID.make(credential.methodID),
-                                  }),
-                                ),
-                              ),
+                              callback: authorization.callback.pipe(Effect.map(authorizedCredential)),
                             }
                           }
                           return {
                             ...authorization,
                             callback: (code: string) =>
-                              authorization.callback(code).pipe(
-                                Effect.map((credential) =>
-                                  Credential.OAuth.make({
-                                    ...credential,
-                                    methodID: Integration.MethodID.make(credential.methodID),
-                                  }),
-                                ),
-                              ),
+                              authorization.callback(code).pipe(Effect.map(authorizedCredential)),
                           }
                         }),
                       ),
@@ -271,9 +289,21 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
                   })
                   return
                 }
+                if (!isKeyRegistration(input)) return
+                const authorize = input.authorize
                 draft.method.update({
                   integrationID: Integration.ID.make(input.integrationID),
-                  method: { type: "key", label: input.method.label },
+                  method: {
+                    type: "key",
+                    label: input.method.label,
+                    prompts: input.method.prompts,
+                  },
+                  ...(authorize
+                    ? {
+                        authorize: (event: { readonly key: string; readonly inputs: Integration.Inputs }) =>
+                          authorize(event).pipe(Effect.map(authorizedCredential)),
+                      }
+                    : {}),
                 })
               },
               remove: (id, method) =>

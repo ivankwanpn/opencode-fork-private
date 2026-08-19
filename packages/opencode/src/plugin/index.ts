@@ -179,7 +179,7 @@ const layer = Layer.effect(
           .get(
             Location.Ref.make({
               directory: AbsolutePath.make(ctx.directory),
-              workspaceID,
+              ...(workspaceID === undefined ? {} : { workspaceID }),
             }),
           )
           .pipe(Layer.orDie)

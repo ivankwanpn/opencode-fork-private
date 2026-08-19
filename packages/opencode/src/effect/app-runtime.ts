@@ -5,7 +5,6 @@ import * as Observability from "@opencode-ai/core/observability"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Database } from "@opencode-ai/core/database/database"
 import { Auth } from "@/auth"
-import { AuthCredentialMigration } from "@/auth/credential-migration"
 import { Account } from "@/account/account"
 import { Config } from "@/config/config"
 import { Git } from "@/git"
@@ -14,7 +13,6 @@ import { Storage } from "@/storage/storage"
 import { Snapshot } from "@/snapshot"
 import { Plugin } from "@/plugin"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
-import { ProviderAuth } from "@/provider/auth"
 import { AgentGenerator } from "@/agent/generator"
 import { Skill } from "@/skill"
 import { Discovery } from "@/skill/discovery"
@@ -63,7 +61,6 @@ export const AppLayer = AppNodeBuilderV1.build(
     Database.node,
     Credential.node,
     Auth.node,
-    AuthCredentialMigration.node,
     Account.node,
     Config.node,
     Git.node,
@@ -71,7 +68,6 @@ export const AppLayer = AppNodeBuilderV1.build(
     Snapshot.node,
     Plugin.node,
     ModelsDev.node,
-    ProviderAuth.node,
     AgentGenerator.node,
     Skill.node,
     Discovery.node,

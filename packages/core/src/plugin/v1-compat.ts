@@ -3,6 +3,8 @@ export * as PluginV1Compat from "./v1-compat"
 import { define, type MutableValue, type PluginContext, type ProviderContext } from "@opencode-ai/plugin/v2/effect"
 import type { Auth, Model, ModelV2Info, Provider } from "@opencode-ai/sdk/v2/types"
 import { Effect, Stream } from "effect"
+import { Credential } from "../credential"
+import { Integration } from "../integration"
 import { ModelV2 } from "../model"
 import { PluginHost } from "./host"
 import { PluginRuntime } from "./runtime"
@@ -11,13 +13,48 @@ import { ProviderV2 } from "../provider"
 
 type RuntimeHook = (input: any, output: any) => Promise<void>
 
+type LegacyAuthPrompt =
+  | {
+      readonly type: "text"
+      readonly key: string
+      readonly message: string
+      readonly placeholder?: string
+      readonly validate?: (value: string) => string | undefined
+      readonly condition?: (inputs: Record<string, string>) => boolean
+      readonly when?: { readonly key: string; readonly op: "eq" | "neq"; readonly value: string }
+    }
+  | {
+      readonly type: "select"
+      readonly key: string
+      readonly message: string
+      readonly options: readonly { readonly label: string; readonly value: string; readonly hint?: string }[]
+      readonly condition?: (inputs: Record<string, string>) => boolean
+      readonly when?: { readonly key: string; readonly op: "eq" | "neq"; readonly value: string }
+    }
+
+type LegacyAuthHook = {
+  readonly provider: string
+  readonly loader?: (auth: () => Promise<Auth>, provider: Provider) => Promise<Record<string, any>>
+  readonly methods?: readonly (
+    | {
+        readonly type: "oauth"
+        readonly label: string
+        readonly prompts?: readonly LegacyAuthPrompt[]
+        readonly authorize: (inputs?: Record<string, string>) => Promise<LegacyOAuthAuthorization>
+      }
+    | {
+      readonly type: "api"
+      readonly label: string
+      readonly prompts?: readonly LegacyAuthPrompt[]
+      readonly authorize?: (inputs?: Record<string, string>) => Promise<LegacyAPIResult>
+      }
+  )[]
+}
+
 export interface Hooks {
   readonly dispose?: () => Promise<void>
   readonly event?: (input: { event: any }) => Promise<void>
-  readonly auth?: {
-    readonly provider: string
-    readonly loader?: (auth: () => Promise<Auth>, provider: Provider) => Promise<Record<string, any>>
-  }
+  readonly auth?: LegacyAuthHook
   readonly provider?: {
     readonly id: string
     readonly models?: (provider: Provider, context: { auth?: Auth }) => Promise<Record<string, Model>>
@@ -81,6 +118,110 @@ export function fromHooks(id: string, hooks: Hooks) {
         }
 
         const auth = hooks.auth
+        if (auth) {
+          yield* host.integration.transform((integrations) => {
+            integrations.update(auth.provider, (integration) => {
+              if (integration.name === auth.provider) integration.name = auth.provider
+            })
+            for (const [index, method] of (auth.methods ?? []).entries()) {
+              const prompts = method.prompts?.map((prompt) => {
+                if (prompt.type === "select") {
+                  return {
+                    type: "select" as const,
+                    key: prompt.key,
+                    message: prompt.message,
+                    options: prompt.options.map((option) => ({ ...option })),
+                    ...(prompt.when ? { when: prompt.when } : {}),
+                  }
+                }
+                return {
+                  type: "text" as const,
+                  key: prompt.key,
+                  message: prompt.message,
+                  ...(prompt.placeholder ? { placeholder: prompt.placeholder } : {}),
+                  ...(prompt.when ? { when: prompt.when } : {}),
+                }
+              })
+              if (method.type === "api") {
+                integrations.method.update({
+                  integrationID: auth.provider,
+                  method: { type: "key", label: method.label, prompts },
+                  authorize: (input: { readonly key: string; readonly inputs: Record<string, string> }) =>
+                    Effect.gen(function* () {
+                      yield* validateLegacyPrompts(method.prompts, input.inputs)
+                      if (!method.authorize) {
+                        return Credential.Key.make({
+                          type: "key",
+                          key: input.key,
+                          metadata: input.inputs,
+                        })
+                      }
+                      const result = yield* Effect.tryPromise({
+                        try: () => method.authorize!(input.inputs),
+                        catch: (cause) => cause,
+                      })
+                      if (result.type === "failed") {
+                        return yield* Effect.fail(new Error(`Authorization failed: ${auth.provider}`))
+                      }
+                      const metadata = { ...input.inputs, ...(result.metadata ?? {}) }
+                      return {
+                        integrationID: Integration.ID.make(result.provider ?? auth.provider),
+                        value: Credential.Key.make({
+                          type: "key",
+                          key: result.key ?? input.key,
+                          ...(Object.keys(metadata).length ? { metadata } : {}),
+                        }),
+                      }
+                    }),
+                })
+                continue
+              }
+              if (
+                integrations.method
+                  .list(auth.provider)
+                  .some((candidate) => candidate.type === "oauth" && candidate.label === method.label)
+              ) {
+                continue
+              }
+              const methodID = `legacy:${id}:${index}`
+              integrations.method.update({
+                integrationID: auth.provider,
+                method: { id: methodID, type: "oauth", label: method.label, prompts },
+                authorize: (inputs: Record<string, string>) =>
+                  Effect.gen(function* () {
+                    yield* validateLegacyPrompts(method.prompts, inputs)
+                    const authorization = yield* Effect.tryPromise({
+                      try: () => method.authorize(inputs),
+                      catch: (cause) => cause,
+                    })
+                    const complete = (result: LegacyOAuthResult) =>
+                      legacyOAuthCredential(auth.provider, Integration.MethodID.make(methodID), result)
+                    if (authorization.method === "auto") {
+                      return {
+                        mode: "auto" as const,
+                        url: authorization.url,
+                        instructions: authorization.instructions,
+                        callback: Effect.tryPromise({
+                          try: () => authorization.callback(),
+                          catch: (cause) => cause,
+                        }).pipe(Effect.flatMap(complete)),
+                      }
+                    }
+                    return {
+                      mode: "code" as const,
+                      url: authorization.url,
+                      instructions: authorization.instructions,
+                      callback: (code: string) =>
+                        Effect.tryPromise({
+                          try: () => authorization.callback(code),
+                          catch: (cause) => cause,
+                        }).pipe(Effect.flatMap(complete)),
+                    }
+                  }),
+              })
+            }
+          })
+        }
         if (auth?.loader) {
           const loaded = new Map<Auth["type"], Promise<Record<string, any>>>()
           yield* host.aisdk.options((event) => {
@@ -413,6 +554,89 @@ export function fromHooks(id: string, hooks: Hooks) {
           })
         }
       }),
+  })
+}
+
+type LegacyOAuthResult =
+  | {
+      readonly type: "failed"
+    }
+  | {
+      readonly type: "success"
+      readonly provider?: string
+      readonly refresh: string
+      readonly access: string
+      readonly expires: number
+      readonly accountId?: string
+      readonly enterpriseUrl?: string
+    }
+  | {
+      readonly type: "success"
+      readonly provider?: string
+      readonly key: string
+      readonly metadata?: Record<string, string>
+    }
+
+type LegacyAPIResult =
+  | { readonly type: "failed" }
+  | {
+      readonly type: "success"
+      readonly provider?: string
+      readonly key?: string
+      readonly metadata?: Record<string, string>
+    }
+
+type LegacyOAuthAuthorization = {
+  readonly url: string
+  readonly instructions: string
+} & (
+  | {
+      readonly method: "auto"
+      readonly callback: () => Promise<LegacyOAuthResult>
+    }
+  | {
+      readonly method: "code"
+      readonly callback: (code: string) => Promise<LegacyOAuthResult>
+    }
+)
+
+function legacyOAuthCredential(
+  providerID: string,
+  methodID: Integration.MethodID,
+  result: LegacyOAuthResult,
+): Effect.Effect<Integration.AuthorizedCredential, Error> {
+  if (result.type === "failed") return Effect.fail(new Error(`Authorization failed: ${providerID}`))
+  const integrationID = Integration.ID.make(result.provider ?? providerID)
+  if ("key" in result) {
+    return Effect.succeed({
+      integrationID,
+      value: Credential.Key.make({ type: "key", key: result.key, metadata: result.metadata }),
+    })
+  }
+  const metadata = {
+    ...(result.accountId ? { accountId: result.accountId } : {}),
+    ...(result.enterpriseUrl ? { enterpriseUrl: result.enterpriseUrl } : {}),
+  }
+  return Effect.succeed({
+    integrationID,
+    value: Credential.OAuth.make({
+      type: "oauth",
+      methodID,
+      refresh: result.refresh,
+      access: result.access,
+      expires: result.expires,
+      ...(Object.keys(metadata).length ? { metadata } : {}),
+    }),
+  })
+}
+
+function validateLegacyPrompts(prompts: readonly LegacyAuthPrompt[] | undefined, inputs: Record<string, string>) {
+  return Effect.gen(function* () {
+    for (const prompt of prompts ?? []) {
+      if (prompt.type !== "text" || !prompt.validate || inputs[prompt.key] === undefined) continue
+      const error = prompt.validate(inputs[prompt.key])
+      if (error) return yield* new Integration.InputValidationError({ field: prompt.key, message: error })
+    }
   })
 }
 

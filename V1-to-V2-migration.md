@@ -21,8 +21,9 @@ legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；
 也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。Agent catalog、
 selection、ACP/CLI/HTTP catalog reads已hard cut到Location-scoped `AgentV2`，舊Agent service/source已刪除。
 Provider catalog、模型執行、agent generator與CLI agent也已hard cut到Location-scoped `Catalog` / `AISDK` /
-`Integration`，production graph不再掛載V1 `Provider.Service`。下一阻塞點是Config、legacy Auth/provider static
-shape與HTTP/plugin/CLI/ACP wire schema；V1 event definitions已從
+`Integration`，production graph不再掛載V1 `Provider.Service`。ProviderAuth pending/runtime service亦已刪除，
+legacy HTTP與V1 plugin auth只在明確compat boundary投影到V2 Integration。下一阻塞點是Config、剩餘legacy Auth/
+provider static shape與control-plane/LLM/HTTP wire schema；V1 event definitions已從
 replay/public manifest與Schema export移除。整個
 V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
@@ -510,7 +511,17 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > specialization → user override/filter」兩階段，保留V1 override順序而不恢復V1 service。V1 plugin provider/auth
 > hooks已在Core plugin host投影到V2 AISDK options；legacy provider static types/DTO仍待移到明確compat模組後再刪整檔。
 >
-> **批次 8 下一步**：Session與Provider runtime hard cut均已完成。接下来盤點並拆除Config/Auth runtime facade，
+> **999.0.19 ProviderAuth / Credential hard cut** ✅：V2 `Integration`補齊key prompts、key authorize/validator、
+> credential metadata、OAuth-to-key、integration redirect、attempt latest lookup與automatic attempt冪等完成；V1
+> plugin `auth.methods`只在`PluginV1Compat`註冊成canonical Integration method，CLI不再直接執行hook。
+> `packages/opencode/src/provider/auth.ts`、`ProviderAuth.node`與舊`auth.json -> credential` migration已刪除；
+> legacy `/provider/auth`、`/provider/:id/oauth/*`只保留URL/DTO/error名稱，handler透過Location-scoped
+> Integration執行。CLI provider login/list/logout改用Integration/Credential；custom provider configure/disconnect
+> 停止雙寫legacy auth store，standard disconnect也直接刪除canonical credential。configure/disconnect不再以
+> request內全域instance dispose刷新，避免斷線後下一個request卡在自我關閉競態。`login <url>`的remote
+> well-known token因尚無V2等價credential種類，暫保留唯一最小`Auth.Service`寫入邊界。
+>
+> **批次 8 下一步**：Session與Provider/ProviderAuth runtime hard cut均已完成。接下来盤點並拆除Config/Auth runtime facade，
 > 再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。

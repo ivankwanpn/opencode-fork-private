@@ -66,13 +66,20 @@ export type OAuthAuthorization = {
 } & (
   | {
       readonly mode: "auto"
-      readonly callback: Effect.Effect<Credential.OAuth, unknown>
+      readonly callback: Effect.Effect<AuthorizedCredential, unknown>
     }
   | {
       readonly mode: "code"
-      readonly callback: (code: string) => Effect.Effect<Credential.OAuth, unknown>
+      readonly callback: (code: string) => Effect.Effect<AuthorizedCredential, unknown>
     }
 )
+
+export type AuthorizedCredential =
+  | Credential.Value
+  | {
+      readonly integrationID: ID
+      readonly value: Credential.Value
+    }
 
 export interface OAuthImplementation {
   readonly integrationID: ID
@@ -85,6 +92,10 @@ export interface OAuthImplementation {
 export interface KeyImplementation {
   readonly integrationID: ID
   readonly method: KeyMethod
+  readonly authorize?: (input: {
+    readonly key: string
+    readonly inputs: Inputs
+  }) => Effect.Effect<AuthorizedCredential, unknown>
 }
 
 export interface EnvImplementation {
@@ -108,6 +119,11 @@ export class AuthorizationError extends Schema.TaggedErrorClass<AuthorizationErr
   cause: Schema.Defect(),
 }) {}
 
+export class InputValidationError extends Schema.TaggedErrorClass<InputValidationError>()("Integration.InputValidation", {
+  field: Schema.String,
+  message: Schema.String,
+}) {}
+
 export type Error = CodeRequiredError | AuthorizationError
 
 export const Event = Integration.Event
@@ -119,6 +135,7 @@ type Entry = {
   ref: Types.DeepMutable<Ref>
   methods: Types.DeepMutable<Method>[]
   implementations: Map<MethodID, Types.DeepMutable<OAuthImplementation>>
+  key?: Types.DeepMutable<KeyImplementation>
 }
 
 type Data = {
@@ -163,6 +180,10 @@ export interface Interface extends State.Transformable<Draft> {
       readonly key: string
       /** User-facing label for the stored credential. */
       readonly label?: string
+      /** Additional values collected by the key method's prompts. */
+      readonly metadata?: Readonly<Record<string, unknown>>
+      /** String prompt answers passed to an optional key authorization implementation. */
+      readonly inputs?: Inputs
     }) => Effect.Effect<void, AuthorizationError>
     /** Starts a stateful OAuth attempt. */
     readonly oauth: (input: {
@@ -195,6 +216,8 @@ export interface Interface extends State.Transformable<Draft> {
     }) => Effect.Effect<void, CodeRequiredError | AuthorizationError>
     /** Cancels an attempt and releases its resources. */
     readonly cancel: (attemptID: AttemptID) => Effect.Effect<void>
+    /** Returns the newest retained attempt for an integration. */
+    readonly latest: (integrationID: ID) => Effect.Effect<AttemptID | undefined>
   }
 }
 
@@ -217,6 +240,8 @@ type PendingAttempt = {
 }
 type TerminalAttempt = {
   status: "complete" | "failed" | "expired"
+  integrationID: ID
+  methodID: MethodID
   message?: string
   removeAt: number
   time: AttemptTime
@@ -273,6 +298,9 @@ export const locationLayer = Layer.effect(
                 implementation as Types.DeepMutable<OAuthImplementation>,
               )
             }
+            if (implementation.method.type === "key") {
+              current.key = implementation as Types.DeepMutable<KeyImplementation>
+            }
           },
           remove: (integrationID, method) => {
             const current = draft.integrations.get(integrationID)
@@ -284,6 +312,7 @@ export const locationLayer = Layer.effect(
             })
             if (index !== -1) current.methods.splice(index, 1)
             if (method.type === "oauth") current.implementations.delete(method.id)
+            if (method.type === "key") current.key = undefined
           },
         },
       }),
@@ -324,25 +353,41 @@ export const locationLayer = Layer.effect(
       return error instanceof Error ? error.message : String(error)
     }
 
-    const settle = Effect.fnUntraced(function* (attemptID: AttemptID, exit: Exit.Exit<Credential.OAuth, unknown>) {
+    const settle = Effect.fnUntraced(function* (attemptID: AttemptID, exit: Exit.Exit<AuthorizedCredential, unknown>) {
       const now = yield* Clock.currentTimeMillis
       const result = yield* SynchronizedRef.modify(attempts, (current) => {
         const attempt = current.get(attemptID)
         if (!attempt || attempt.status !== "pending") return [undefined, current]
         const terminal: TerminalAttempt = Exit.isSuccess(exit)
-          ? { status: "complete", time: attempt.time, removeAt: now + terminalRetention }
-          : { status: "failed", message: message(exit.cause), time: attempt.time, removeAt: now + terminalRetention }
+          ? {
+              status: "complete",
+              integrationID: attempt.integrationID,
+              methodID: attempt.methodID,
+              time: attempt.time,
+              removeAt: now + terminalRetention,
+            }
+          : {
+              status: "failed",
+              integrationID: attempt.integrationID,
+              methodID: attempt.methodID,
+              message: message(exit.cause),
+              time: attempt.time,
+              removeAt: now + terminalRetention,
+            }
         return [attempt, new Map(current).set(attemptID, terminal)]
       })
       if (!result) return
       if (Exit.isSuccess(exit)) {
+        const authorized = "value" in exit.value ? exit.value : { integrationID: result.integrationID, value: exit.value }
         const implementation = state.get().integrations.get(result.integrationID)?.implementations.get(result.methodID)
         yield* credentials.create({
-          integrationID: result.integrationID,
-          label: result.label ?? implementation?.label?.(exit.value),
-          value: exit.value,
+          integrationID: authorized.integrationID,
+          label:
+            result.label ??
+            (authorized.value.type === "oauth" ? implementation?.label?.(authorized.value) : undefined),
+          value: authorized.value,
         })
-        yield* events.publish(Event.ConnectionUpdated, { integrationID: result.integrationID })
+        yield* events.publish(Event.ConnectionUpdated, { integrationID: authorized.integrationID })
         yield* events.publish(Event.Updated, {})
       }
       yield* close(result.scope)
@@ -356,7 +401,13 @@ export const locationLayer = Layer.effect(
         for (const [id, attempt] of current) {
           if (attempt.status === "pending" && attempt.time.expires <= now) {
             scopes.push(attempt.scope)
-            next.set(id, { status: "expired", time: attempt.time, removeAt: now + terminalRetention })
+            next.set(id, {
+              status: "expired",
+              integrationID: attempt.integrationID,
+              methodID: attempt.methodID,
+              time: attempt.time,
+              removeAt: now + terminalRetention,
+            })
             continue
           }
           if (attempt.status !== "pending" && attempt.removeAt <= now) next.delete(id)
@@ -415,12 +466,20 @@ export const locationLayer = Layer.effect(
           const entry = state.get().integrations.get(input.integrationID)
           const method = entry?.methods.some((method) => method.type === "key")
           if (entry && !method) return yield* Effect.die(`Key method not found: ${input.integrationID}`)
+          const result = entry?.key?.authorize
+            ? yield* authorize(entry.key.authorize({ key: input.key, inputs: input.inputs ?? {} }))
+            : Credential.Key.make({
+                type: "key",
+                key: input.key,
+                metadata: input.metadata ?? input.inputs,
+              })
+          const authorized = "value" in result ? result : { integrationID: input.integrationID, value: result }
           yield* credentials.create({
-            integrationID: input.integrationID,
+            integrationID: authorized.integrationID,
             label: input.label,
-            value: Credential.Key.make({ type: "key", key: input.key }),
+            value: authorized.value,
           })
-          yield* events.publish(Event.ConnectionUpdated, { integrationID: input.integrationID })
+          yield* events.publish(Event.ConnectionUpdated, { integrationID: authorized.integrationID })
           yield* events.publish(Event.Updated, {})
         }),
         oauth: Effect.fn("Integration.connection.oauth")(function* (input) {
@@ -501,7 +560,7 @@ export const locationLayer = Layer.effect(
           if (attempt.authorization.mode === "code" && input.code === undefined) {
             return yield* new CodeRequiredError({ attemptID: input.attemptID })
           }
-          if (attempt.completing) return yield* Effect.die(`OAuth attempt already completing: ${input.attemptID}`)
+          if (attempt.completing) return
           const callback =
             attempt.authorization.mode === "auto"
               ? attempt.authorization.callback
@@ -519,6 +578,11 @@ export const locationLayer = Layer.effect(
             return [match, next]
           })
           if (attempt) yield* Scope.close(attempt.scope, Exit.void)
+        }),
+        latest: Effect.fn("Integration.attempt.latest")(function* (integrationID) {
+          return Array.from((yield* SynchronizedRef.get(attempts)).entries())
+            .filter(([, attempt]) => attempt.integrationID === integrationID)
+            .toSorted((a, b) => b[1].time.created - a[1].time.created)[0]?.[0]
         }),
       },
     })

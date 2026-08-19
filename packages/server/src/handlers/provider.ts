@@ -86,7 +86,7 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
           const location = yield* Location.Service
           const ref = Location.Ref.make({
             directory: location.directory,
-            workspaceID: location.workspaceID,
+            ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
           })
           return yield* response(capability.configureCustomProvider(ctx.payload, ref))
         }),
@@ -98,7 +98,7 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
           const location = yield* Location.Service
           const ref = Location.Ref.make({
             directory: location.directory,
-            workspaceID: location.workspaceID,
+            ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
           })
           yield* capability.disconnectCustomProvider(ctx.params.providerID, ref)
           return yield* response(Effect.succeed(true))

@@ -119,13 +119,14 @@ describe("Integration", () => {
         integrationID,
         key: "secret",
         label: "Work",
+        metadata: { region: "us-east" },
       })
 
       expect(yield* credentials.list(integrationID)).toEqual([
         expect.objectContaining({
           integrationID,
           label: "Work",
-          value: Credential.Key.make({ type: "key", key: "secret" }),
+          value: Credential.Key.make({ type: "key", key: "secret", metadata: { region: "us-east" } }),
         }),
       ])
       expect((yield* Fiber.join(updated)).length).toBe(1)
@@ -224,6 +225,7 @@ describe("Integration", () => {
         label: "Personal",
       })
       expect(attempt.mode).toBe("code")
+      expect(yield* integrations.attempt.latest(integrationID)).toBe(attempt.attemptID)
       yield* integrations.attempt.complete({ attemptID: attempt.attemptID, code: "1234" })
 
       expect((yield* credentials.list(integrationID))[0]).toEqual(
@@ -240,6 +242,52 @@ describe("Integration", () => {
           }),
         }),
       )
+    }),
+  )
+
+  it.effect("stores key credentials returned by OAuth under the authorized integration", () =>
+    Effect.gen(function* () {
+      const integrations = yield* Integration.Service
+      const credentials = yield* Credential.Service
+      const sourceID = Integration.ID.make("source")
+      const targetID = Integration.ID.make("target")
+      const methodID = Integration.MethodID.make("legacy")
+      yield* integrations.transform((editor) =>
+        editor.method.update({
+          integrationID: sourceID,
+          method: { id: methodID, type: "oauth", label: "Legacy" },
+          authorize: () =>
+            Effect.succeed({
+              mode: "code" as const,
+              url: "https://example.com/authorize",
+              instructions: "Paste the code",
+              callback: () =>
+                Effect.succeed({
+                  integrationID: targetID,
+                  value: Credential.Key.make({
+                    type: "key",
+                    key: "authorized-key",
+                    metadata: { tenant: "acme" },
+                  }),
+                }),
+            }),
+        }),
+      )
+
+      const attempt = yield* integrations.connection.oauth({ integrationID: sourceID, methodID, inputs: {} })
+      yield* integrations.attempt.complete({ attemptID: attempt.attemptID, code: "1234" })
+
+      expect(yield* credentials.list(sourceID)).toEqual([])
+      expect(yield* credentials.list(targetID)).toEqual([
+        expect.objectContaining({
+          integrationID: targetID,
+          value: Credential.Key.make({
+            type: "key",
+            key: "authorized-key",
+            metadata: { tenant: "acme" },
+          }),
+        }),
+      ])
     }),
   )
 

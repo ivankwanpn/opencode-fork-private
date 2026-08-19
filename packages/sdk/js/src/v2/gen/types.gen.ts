@@ -6036,6 +6036,7 @@ export type IntegrationOAuthMethod = {
 export type IntegrationKeyMethod = {
   type: "key"
   label?: string
+  prompts?: Array<IntegrationTextPrompt | IntegrationSelectPrompt>
 }
 
 export type IntegrationEnvMethod = {

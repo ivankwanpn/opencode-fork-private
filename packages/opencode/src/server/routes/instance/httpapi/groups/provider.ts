@@ -1,4 +1,4 @@
-import { ProviderAuth } from "@/provider/auth"
+import { ProviderAuthCompat } from "@/compat/provider-auth"
 import { Provider } from "@/provider/provider"
 
 import { Schema } from "effect"
@@ -47,7 +47,7 @@ export const ProviderApi = HttpApi.make("provider")
         ),
         HttpApiEndpoint.get("auth", `${root}/auth`, {
           query: WorkspaceRoutingQuery,
-          success: described(ProviderAuth.Methods, "Provider auth methods"),
+          success: described(ProviderAuthCompat.Methods, "Provider auth methods"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "provider.auth",
@@ -58,8 +58,8 @@ export const ProviderApi = HttpApi.make("provider")
         HttpApiEndpoint.post("authorize", `${root}/:providerID/oauth/authorize`, {
           params: { providerID: ProviderV2.ID },
           query: WorkspaceRoutingQuery,
-          payload: ProviderAuth.AuthorizeInput,
-          success: described(Schema.UndefinedOr(ProviderAuth.Authorization), "Authorization URL and method"),
+          payload: ProviderAuthCompat.AuthorizeInput,
+          success: described(Schema.UndefinedOr(ProviderAuthCompat.Authorization), "Authorization URL and method"),
           error: ProviderAuthApiError,
         }).annotateMerge(
           OpenApi.annotations({
@@ -71,7 +71,7 @@ export const ProviderApi = HttpApi.make("provider")
         HttpApiEndpoint.post("callback", `${root}/:providerID/oauth/callback`, {
           params: { providerID: ProviderV2.ID },
           query: WorkspaceRoutingQuery,
-          payload: ProviderAuth.CallbackInput,
+          payload: ProviderAuthCompat.CallbackInput,
           success: described(Schema.Boolean, "OAuth callback processed successfully"),
           error: ProviderAuthApiError,
         }).annotateMerge(

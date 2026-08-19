@@ -1,6 +1,7 @@
 export * as BashTool from "./bash"
 
-import path from "path"
+import os from "node:os"
+import path from "node:path"
 import { ToolFailure } from "@opencode-ai/llm"
 import { Cause, Clock, Duration, Effect, Exit, Layer, Ref, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
@@ -22,6 +23,7 @@ import { SessionInput } from "../session/input"
 import { SessionMessage } from "../session/message"
 import { Shell } from "../shell"
 import { ToolRegistry } from "./registry"
+import { ShellCommand } from "./shell-command"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
@@ -99,9 +101,6 @@ const processCommand = (shell: string, input: string, cwd: string, env: Record<s
  * the foreground tool waiter so user steering can release the agent without
  * terminating the command.
  */
-// TODO: Port tree-sitter bash / PowerShell parser-based approval reduction.
-// TODO: Port BashArity reusable command-prefix approvals.
-// TODO: Replace token-based command-argument path detection with parser-based detection.
 // TODO: Persist shell task status and output manifests if cross-restart process adoption is implemented.
 // TODO: Add HTTP background-job observation only after durable status, restart recovery, and authorization are defined.
 // TODO: Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.
@@ -111,21 +110,25 @@ const processCommand = (shell: string, input: string, cwd: string, env: Record<s
 
 const shellTokens = (command: string) => command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
 const unquote = (value: string) => value.replace(/^(['"])(.*)\1$/, "$2")
-const externalCommandDirectories = Effect.fn("BashTool.externalCommandDirectories")(function* (
-  fs: FSUtil.Interface,
-  command: string,
-  cwd: string,
-) {
-  const directories = new Set<string>()
-  for (const token of shellTokens(command)) {
-    const value = unquote(token).replace(/[;,|&]+$/, "")
-    if (!path.isAbsolute(value)) continue
-    const resolved = yield* fs.resolve(value)
-    if (FSUtil.contains(cwd, resolved)) continue
-    directories.add(yield* fs.resolve(path.dirname(resolved)))
-  }
-  return [...directories]
-})
+const scannerPaths = (command: string) =>
+  shellTokens(command).flatMap((token): ShellCommand.PathCandidate[] => {
+    const value = unquote(token).replace(/^[<>]+|[;,|&]+$/g, "")
+    if (!value) return []
+    if (
+      !path.isAbsolute(FSUtil.windowsPath(value)) &&
+      !/^\.\.?[\\/]/.test(value) &&
+      value !== "~" &&
+      !/^~[\\/]/.test(value)
+    )
+      return []
+    return [{ value, kind: "file" }]
+  })
+
+const shellKind = (shell: string): ShellCommand.Kind | undefined => {
+  if (Shell.ps(shell)) return "powershell"
+  if (Shell.posix(shell)) return "bash"
+  if (Shell.name(shell) === "cmd") return "cmd"
+}
 
 const foregroundOutput = (info: BackgroundJob.Info) => {
   if (info.status === "error")
@@ -169,6 +172,54 @@ const layer = Layer.effectDiscard(
     const permission = yield* PermissionV2.Service
     const plugins = yield* PluginRuntime.Service
 
+    const nativePath = Effect.fn("BashTool.nativePath")(function* (
+      value: string,
+      shell: string,
+      kind: ShellCommand.Kind,
+    ) {
+      const expanded =
+        value === "~"
+          ? os.homedir()
+          : value.startsWith("~/") || value.startsWith("~\\")
+            ? path.join(os.homedir(), value.slice(2))
+            : value
+      if (process.platform !== "win32") return expanded
+      if (
+        kind === "powershell" &&
+        (/^[A-Za-z]:[^\\/]/.test(expanded) ||
+          expanded.includes("::") ||
+          (/^[A-Za-z][A-Za-z0-9.-]*:/.test(expanded) && !/^[A-Za-z]:[\\/]/.test(expanded)))
+      )
+        return yield* new ToolFailure({ message: `Unsupported PowerShell path: ${value}` })
+      const translated = FSUtil.windowsPath(expanded)
+      if (translated !== expanded) return translated
+      if (/^[A-Za-z]:[\\/]/.test(expanded) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(expanded)) return expanded
+      if (!expanded.startsWith("/")) return expanded
+      if (Shell.name(shell) !== "bash")
+        return yield* new ToolFailure({ message: `Cannot safely translate shell path: ${value}` })
+
+      const converted = yield* appProcess
+        .run(
+          ChildProcess.make(shell, ["--noprofile", "--norc", "-c", 'cygpath -w -- "$1"', "opencode", expanded], {
+            stdin: "ignore",
+            detached: false,
+            forceKillAfter: Duration.seconds(1),
+          }),
+          { maxOutputBytes: 4096, maxErrorBytes: 4096, timeout: Duration.seconds(2) },
+        )
+        .pipe(
+          Effect.flatMap(AppProcess.requireSuccess),
+          Effect.catchTag("AppProcessError", () =>
+            Effect.fail(new ToolFailure({ message: `Cannot safely translate shell path: ${value}` })),
+          ),
+        )
+      const output = converted.stdout.toString("utf8").replace(/\r?\n$/, "")
+      const native = FSUtil.windowsPath(output)
+      if (converted.stdoutTruncated || !output || /[\r\n\0]/.test(output) || !path.win32.isAbsolute(native))
+        return yield* new ToolFailure({ message: `Cannot safely translate shell path: ${value}` })
+      return native
+    })
+
     yield* tools
       .register({
         [name]: Tool.make({
@@ -194,32 +245,50 @@ const layer = Layer.effectDiscard(
                 messageID: context.assistantMessageID,
                 callID: context.toolCallID,
               }
-              const target = yield* mutation.resolve({ path: input.workdir ?? ".", kind: "directory" })
-              const external = target.externalDirectory
-              if (external)
-                yield* permission.assert({
-                  ...LocationMutation.externalDirectoryPermission(external),
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source,
+              const shell = Shell.acceptable(Config.latest(yield* config.entries(), "shell"))
+              const kind = shellKind(shell)
+              if (!kind)
+                return yield* new ToolFailure({
+                  message: `Unsupported configured shell: ${Shell.name(shell) || shell}`,
                 })
-              const externalDirectories = yield* externalCommandDirectories(fs, input.command, target.canonical)
-              for (const directory of externalDirectories) {
-                const resource = path.join(directory, "*").replaceAll("\\", "/")
-                yield* permission.assert({
-                  action: "external_directory",
-                  resources: [resource],
-                  save: [resource],
-                  metadata: { command: input.command, directory },
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source,
-                })
+              const analysis = yield* ShellCommand.analyze({ command: input.command, kind }).pipe(
+                Effect.catchTag("ShellCommand.AnalysisError", (error) =>
+                  Effect.fail(
+                    new ToolFailure({
+                      message: `Unable to safely analyze ${error.kind} command (${error.reason})`,
+                    }),
+                  ),
+                ),
+              )
+              const workdir = yield* nativePath(input.workdir ?? ".", shell, kind)
+              const target = yield* mutation.resolve({ path: workdir, kind: "directory" })
+              const candidates = [...analysis.pathHints, ...scannerPaths(input.command)]
+              const resolved = yield* Effect.forEach(candidates, (candidate) =>
+                nativePath(candidate.value, shell, kind).pipe(
+                  Effect.map((value) => (path.isAbsolute(value) ? value : path.resolve(target.canonical, value))),
+                  Effect.flatMap((value) => mutation.resolve({ path: value, kind: candidate.kind })),
+                ),
+              )
+              const targets = new Map<string, LocationMutation.Target>()
+              targets.set(target.canonical, target)
+              for (const item of resolved) targets.set(item.canonical, item)
+              const external = new Map<string, LocationMutation.ExternalDirectoryAuthorization>()
+              for (const item of targets.values()) {
+                if (!item.externalDirectory || external.has(item.externalDirectory.resource)) continue
+                external.set(item.externalDirectory.resource, item.externalDirectory)
               }
+              for (const item of external.values())
+                yield* permission.assert({
+                  ...LocationMutation.externalDirectoryPermission(item),
+                  metadata: { command: input.command, directory: item.directory },
+                  sessionID: context.sessionID,
+                  agent: context.agent,
+                  source,
+                })
               yield* permission.assert({
                 action: name,
-                resources: [input.command],
-                save: [input.command],
+                resources: analysis.resources.length > 0 ? analysis.resources : [input.command],
+                save: Shell.name(shell) === "bash" ? analysis.save : [],
                 sessionID: context.sessionID,
                 agent: context.agent,
                 source,
@@ -246,7 +315,6 @@ const layer = Layer.effectDiscard(
                 callID: context.toolCallID,
                 env: environment.value,
               })
-              const shell = Shell.acceptable(Config.latest(yield* config.entries(), "shell"))
               const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
               const taskID = Identifier.ascending("job")
               const progress = yield* Ref.make({ tail: Buffer.alloc(0), bytes: 0, lastOutputAt: undefined as number | undefined })

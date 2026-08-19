@@ -39,6 +39,7 @@ const sessionID = SessionV2.ID.make("ses_bash_tool_test")
 const assertions: PermissionV2.AssertInput[] = []
 const runs: Array<{
   readonly command: string
+  readonly args: ReadonlyArray<string>
   readonly cwd?: string
   readonly shell?: string | boolean
   readonly env?: ChildProcess.CommandOptions["env"]
@@ -46,7 +47,9 @@ const runs: Array<{
   readonly options?: AppProcess.RunOptions
 }> = []
 let denyAction: string | undefined
+let denyResource: string | undefined
 let configuredShell: string | undefined
+const jobOperations: string[] = []
 let result: AppProcess.RunResult = {
   command: "mock",
   exitCode: 0,
@@ -73,7 +76,9 @@ const permission = Layer.succeed(
       Effect.sync(() => assertions.push(input)).pipe(
         Effect.andThen(Effect.suspend(() => afterPermission(input))),
         Effect.andThen(
-          input.action === denyAction ? Effect.fail(new PermissionV2.BlockedError({ rules: [] })) : Effect.void,
+          input.action === denyAction || input.resources.includes(denyResource ?? "\u0000")
+            ? Effect.fail(new PermissionV2.BlockedError({ rules: [] }))
+            : Effect.void,
         ),
       ),
     ask: () => Effect.die("unused"),
@@ -91,6 +96,7 @@ const appProcess = Layer.succeed(
         if (command._tag !== "StandardCommand") throw new Error("expected standard command")
         runs.push({
           command: command.command,
+          args: command.args,
           cwd: command.options.cwd,
           shell: command.options.shell,
           env: command.options.env,
@@ -113,11 +119,23 @@ const config = Layer.succeed(
       ),
   }),
 )
+const backgroundJobs = Layer.effect(
+  BackgroundJob.Service,
+  Effect.map(BackgroundJob.make, (jobs) =>
+    BackgroundJob.Service.of({
+      ...jobs,
+      list: () => Effect.sync(() => jobOperations.push("list")).pipe(Effect.andThen(jobs.list())),
+      start: (input) => Effect.sync(() => jobOperations.push("start")).pipe(Effect.andThen(jobs.start(input))),
+    }),
+  ),
+)
 
 const reset = () => {
   assertions.length = 0
   runs.length = 0
+  jobOperations.length = 0
   denyAction = undefined
+  denyResource = undefined
   configuredShell = undefined
   runFailure = undefined
   runHandler = undefined
@@ -174,6 +192,7 @@ const withTool = <A, E>(
           [Location.node, activeLocation],
           [PermissionV2.node, permission],
           [AppProcess.node, processLayer],
+          [BackgroundJob.node, backgroundJobs],
           [Config.node, config],
           [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
         ],
@@ -307,8 +326,182 @@ describe("BashTool", () => {
               combineOutput: true,
             })
             expect(runs[0]?.options).not.toHaveProperty("maxOutputBytes")
-            expect(assertions).toMatchObject([{ sessionID, action: "bash", resources: ["pwd"], save: ["pwd"] }])
+            expect(assertions).toMatchObject([{ sessionID, action: "bash", resources: ["pwd"], save: [] }])
           }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("authorizes compound Bash commands once with independent resources and only safe saves", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry) =>
+          executeTool(registry, call({ command: "echo safe > result.txt && rm -rf build" })),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "bash",
+                  resources: ["echo safe", "redirect > result.txt", "rm -rf build"],
+                  save: ["echo *"],
+                },
+              ])
+              expect(runs).toHaveLength(1)
+            }),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("uses an exact Bash resource with no reusable save for a pure cwd command", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry) => executeTool(registry, call({ command: "cd ." }))).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([{ action: "bash", resources: ["cd ."], save: [] }])
+            }),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("never exposes reusable saves for non-Bash POSIX shells", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "sh"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "sh") return Effect.void
+        return withTool(tmp.path, (registry) => executeTool(registry, call({ command: "echo safe" }))).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([{ action: "bash", resources: ["echo safe"], save: [] }])
+            }),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("does not expose reusable saves for assignments, unknown commands, or destructive commands", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            for (const command of ["PATH=/tmp/evil git status", "project-script deploy", "rm -rf build"]) {
+              yield* executeTool(registry, call({ command }, `call-${assertions.length}`))
+            }
+            expect(assertions.map((input) => ({ resources: input.resources, save: input.save }))).toEqual([
+              { resources: ["PATH=/tmp/evil git status"], save: [] },
+              { resources: ["project-script deploy"], save: [] },
+              { resources: ["rm -rf build"], save: [] },
+            ])
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("fails analyzer syntax and unsupported commands before permission, jobs, shell.env, or process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry, _jobs, _database, _events, plugins) =>
+          Effect.gen(function* () {
+            const hooks: string[] = []
+            yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, () => {
+              hooks.push("shell.env")
+            })
+            for (const command of ['echo "unterminated', 'bash -c "echo hidden"']) {
+              const settled = yield* settleTool(registry, call({ command }, `call-fail-${hooks.length}`))
+              expect(settled.result).toMatchObject({
+                type: "error",
+                value: expect.stringContaining("Unable to safely analyze bash command"),
+              })
+            }
+            expect(assertions).toEqual([])
+            expect(jobOperations).toEqual([])
+            expect(hooks).toEqual([])
+            expect(runs).toEqual([])
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  if (process.platform === "win32") {
+    it.live("fails cmd before permission, jobs, shell.env, or process", () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => tmpdir()),
+        (tmp) => {
+          reset()
+          configuredShell = "cmd.exe"
+          return withTool(tmp.path, (registry, _jobs, _database, _events, plugins) =>
+            Effect.gen(function* () {
+              const hooks: string[] = []
+              yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, () => {
+                hooks.push("shell.env")
+              })
+              const settled = yield* settleTool(registry, call({ command: "dir" }))
+              expect(settled.result).toMatchObject({ type: "error", value: expect.stringContaining("cmd") })
+              expect(assertions).toEqual([])
+              expect(jobOperations).toEqual([])
+              expect(hooks).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          )
+        },
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      ),
+    )
+  }
+
+  it.live("blocks a whole compound command when one Bash resource is denied", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        configuredShell = "bash"
+        denyResource = "rm -rf build"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(tmp.path, (registry) =>
+          executeTool(registry, call({ command: "echo safe && rm -rf build" })),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                { action: "bash", resources: ["echo safe", "rm -rf build"], save: ["echo *"] },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
         )
       },
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
@@ -414,6 +607,124 @@ describe("BashTool", () => {
         (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
       ),
     )
+
+    if (Shell.gitbash()) {
+      it.live("translates Git Bash rooted paths with fixed bounded cygpath invocation", () =>
+        Effect.acquireUseRelease(
+          Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+          ([active, outside]) => {
+            reset()
+            configuredShell = "bash"
+            const native = realpathSync(outside.path)
+            runHandler = (command) =>
+              command._tag === "StandardCommand" && command.args[3] === 'cygpath -w -- "$1"'
+                ? Effect.succeed({ ...result, output: undefined, stdout: Buffer.from(`${native}\n`) })
+                : Effect.succeed(result)
+            return withTool(active.path, (registry) =>
+              executeTool(registry, call({ command: "pwd", workdir: "/tmp" })),
+            ).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  expect(runs[0]).toMatchObject({
+                    command: Shell.gitbash(),
+                    args: ["--noprofile", "--norc", "-c", 'cygpath -w -- "$1"', "opencode", "/tmp"],
+                    options: { maxOutputBytes: 4096, maxErrorBytes: 4096 },
+                  })
+                  expect(runs[0]?.options?.timeout).toBeDefined()
+                  expect(runs[1]).toMatchObject({ cwd: native, shell: Shell.gitbash() })
+                  expect(assertions.map((input) => input.action)).toEqual(["external_directory", "bash"])
+                }),
+              ),
+            )
+          },
+          ([active, outside]) =>
+            Effect.promise(() =>
+              Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+            ),
+        ),
+      )
+
+      it.live("fails closed on nonzero, empty, multiline, invalid, and truncated cygpath output", () =>
+        Effect.acquireUseRelease(
+          Effect.promise(() => tmpdir()),
+          (active) =>
+            withTool(active.path, (registry) =>
+              Effect.gen(function* () {
+                for (const scenario of [
+                  { exitCode: 1, stdout: "C:/tmp\n" },
+                  { exitCode: 0, stdout: "" },
+                  { exitCode: 0, stdout: "C:/one\nC:/two\n" },
+                  { exitCode: 0, stdout: "relative/path\n" },
+                  { exitCode: 0, stdout: "C:/truncated\n", stdoutTruncated: true },
+                ]) {
+                  reset()
+                  configuredShell = "bash"
+                  runHandler = () =>
+                    Effect.succeed({
+                      ...result,
+                      exitCode: scenario.exitCode,
+                      output: undefined,
+                      stdout: Buffer.from(scenario.stdout),
+                      stdoutTruncated: scenario.stdoutTruncated ?? false,
+                    })
+                  const settled = yield* settleTool(
+                    registry,
+                    call(
+                      { command: "pwd", workdir: "/tmp" },
+                      `call-cygpath-${scenario.stdout.length}-${scenario.exitCode}`,
+                    ),
+                  )
+                  expect(settled.result).toMatchObject({
+                    type: "error",
+                    value: expect.stringContaining("Cannot safely translate shell path"),
+                  })
+                  expect(assertions).toEqual([])
+                  expect(jobOperations).toEqual([])
+                  expect(runs).toHaveLength(1)
+                }
+              }),
+            ),
+          (active) => Effect.promise(() => active[Symbol.asyncDispose]()),
+        ),
+      )
+    }
+
+    it.live("rejects PowerShell drive-relative and provider paths before authorization", () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+        ([active, outside]) => {
+          reset()
+          configuredShell = "powershell"
+          if (!Shell.ps(Shell.acceptable(configuredShell))) return Effect.void
+          return withTool(active.path, (registry) =>
+            Effect.gen(function* () {
+              for (const input of [
+                { command: "pwd", workdir: "C:relative" },
+                { command: "Remove-Item Registry::HKEY_CURRENT_USER/Test", workdir: outside.path },
+                { command: "Remove-Item HKLM:\\Software\\Test", workdir: outside.path },
+                {
+                  command: "Remove-Item Microsoft.PowerShell.Core\\Registry::HKEY_CURRENT_USER/Test",
+                  workdir: outside.path,
+                },
+              ]) {
+                const settled = yield* settleTool(registry, call(input, `call-powershell-path-${assertions.length}`))
+                expect(settled.result).toMatchObject({
+                  type: "error",
+                  value: expect.stringContaining("Unsupported PowerShell path"),
+                })
+                expect(assertions).toEqual([])
+                expect(jobOperations).toEqual([])
+                expect(runs).toEqual([])
+              }
+            }),
+          )
+        },
+        ([active, outside]) =>
+          Effect.promise(() =>
+            Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+          ),
+      ),
+    )
   }
 
   it.live("approves an explicit external workdir before bash execution", () =>
@@ -431,6 +742,37 @@ describe("BashTool", () => {
                 resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
               })
               expect(runs).toHaveLength(1)
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("resolves every path candidate before the first external permission", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        return Effect.promise(() => fs.writeFile(path.join(outside.path, "blocker"), "not a directory")).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              settleTool(
+                registry,
+                call({ command: "cat blocker/child", workdir: outside.path }, "call-resolve-before-permission"),
+              ),
+            ),
+          ),
+          Effect.andThen((settled) =>
+            Effect.sync(() => {
+              expect(settled.result).toMatchObject({ type: "error" })
+              expect(assertions).toEqual([])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
             }),
           ),
         )
@@ -484,6 +826,158 @@ describe("BashTool", () => {
               })
               expect(assertions[0]).toMatchObject({
                 resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
+              })
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("resolves relative redirect hints from the selected workdir and denies before Bash", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const workdir = path.join(active.path, "nested")
+        const target = path.join(outside.path, "result.txt")
+        const relative = path.relative(workdir, target).replaceAll("\\", "/")
+        return Effect.promise(() => fs.mkdir(workdir)).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              executeTool(registry, call({ command: `echo safe > "${relative}"`, workdir: "nested" })),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("resolves relative cwd hints from the selected workdir and denies before Bash", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const workdir = path.join(active.path, "nested")
+        const relative = path.relative(workdir, outside.path).replaceAll("\\", "/")
+        return Effect.promise(() => fs.mkdir(workdir)).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              executeTool(registry, call({ command: `cd "${relative}"`, workdir: "nested" })),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("keeps scanner-only absolute and relative outside paths in stable external authorization order", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir(), tmpdir()])),
+      ([active, first, second]) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const workdir = path.join(active.path, "nested")
+        const absolute = path.join(first.path, "absolute.txt").replaceAll("\\", "/")
+        const relative = path.relative(workdir, path.join(second.path, "relative.txt")).replaceAll("\\", "/")
+        return Effect.promise(() => fs.mkdir(workdir)).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              executeTool(registry, call({ command: `project-script "${absolute}" "${relative}"`, workdir: "nested" })),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions.map((input) => ({ action: input.action, resources: input.resources }))).toEqual([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(first.path), "*").replaceAll("\\", "/")],
+                },
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(second.path), "*").replaceAll("\\", "/")],
+                },
+                { action: "bash", resources: [`project-script "${absolute}" "${relative}"`] },
+              ])
+            }),
+          ),
+        )
+      },
+      ([active, first, second]) =>
+        Effect.promise(() =>
+          Promise.all([
+            active[Symbol.asyncDispose](),
+            first[Symbol.asyncDispose](),
+            second[Symbol.asyncDispose](),
+          ]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("deduplicates analyzer and scanner candidates without widening an external root", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const first = path.join(outside.path, "first.txt").replaceAll("\\", "/")
+        const second = path.join(outside.path, "second.txt").replaceAll("\\", "/")
+        return withTool(active.path, (registry) =>
+          executeTool(registry, call({ command: `cat "${first}" && project-script "${second}"` })),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions.filter((input) => input.action === "external_directory")).toMatchObject([
+                { resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")] },
+              ])
+              expect(assertions.at(-1)).toMatchObject({
+                action: "bash",
+                resources: [`cat "${first}"`, `project-script "${second}"`],
+                save: ["cat *"],
               })
             }),
           ),
@@ -783,9 +1277,6 @@ describe("BashTool", () => {
 test("keeps remaining deferred parity TODOs visible", async () => {
   const source = await fs.readFile(new URL("../src/tool/bash.ts", import.meta.url), "utf8")
   for (const todo of [
-    "Port tree-sitter bash / PowerShell parser-based approval reduction.",
-    "Port BashArity reusable command-prefix approvals.",
-    "Replace token-based command-argument path detection with parser-based detection.",
     "Persist shell task status and output manifests if cross-restart process adoption is implemented.",
     "Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.",
     "Revisit binary output handling if stdout/stderr decoding is text-only.",

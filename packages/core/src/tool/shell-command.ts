@@ -126,11 +126,12 @@ async function wasmAsset(load: () => Promise<{ readonly default: unknown }>, spe
   return resolvePackage.resolve(specifier)
 }
 
-// Integration blocker: Parser.init owns module-global state also initialized by V1 ShellTool.
-// Do not connect this analyzer until shell parsing has one shared runtime owner or V1 is removed.
 const runtime = lazy(async () => {
   const { Parser, Language } = await import("web-tree-sitter")
-  const treeWasm = await wasmAsset(() => import("web-tree-sitter/tree-sitter.wasm"), "web-tree-sitter/tree-sitter.wasm")
+  const treeWasm = await wasmAsset(
+    () => import("web-tree-sitter/tree-sitter.wasm" as string),
+    "web-tree-sitter/tree-sitter.wasm",
+  )
   await Parser.init({ wasmBinary: await readFile(treeWasm) })
   return { Parser, Language }
 })
@@ -138,7 +139,7 @@ const runtime = lazy(async () => {
 const bashLanguage = lazy(async () => {
   const { Language } = await runtime()
   const wasm = await wasmAsset(
-    () => import("tree-sitter-bash/tree-sitter-bash.wasm"),
+    () => import("tree-sitter-bash/tree-sitter-bash.wasm" as string),
     "tree-sitter-bash/tree-sitter-bash.wasm",
   )
   return Language.load(await readFile(wasm))
@@ -147,7 +148,7 @@ const bashLanguage = lazy(async () => {
 const powershellLanguage = lazy(async () => {
   const { Language } = await runtime()
   const wasm = await wasmAsset(
-    () => import("tree-sitter-powershell/tree-sitter-powershell.wasm"),
+    () => import("tree-sitter-powershell/tree-sitter-powershell.wasm" as string),
     "tree-sitter-powershell/tree-sitter-powershell.wasm",
   )
   return Language.load(await readFile(wasm))

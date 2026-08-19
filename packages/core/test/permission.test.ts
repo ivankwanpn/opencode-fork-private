@@ -370,6 +370,62 @@ describe("PermissionV2", () => {
     }),
   )
 
+  it.effect("does not let a saved echo prefix approve redirects, assignments, compound rm, or nested rm", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const saved = yield* PermissionSaved.Service
+      yield* saved.add({ projectID: Project.ID.global, action: "bash", resources: ["echo *"] })
+
+      const service = yield* PermissionV2.Service
+      expect(
+        yield* service.ask(
+          assertion({
+            id: PermissionV2.ID.create("per_saved_echo_scope"),
+            action: "bash",
+            resources: [
+              "echo safe",
+              "redirect > output.txt",
+              "PATH=/tmp/evil git status",
+              "rm -rf build",
+              "cat $(rm -rf build)",
+            ],
+          }),
+        ),
+      ).toEqual({ id: PermissionV2.ID.create("per_saved_echo_scope"), effect: "ask" })
+    }),
+  )
+
+  it.effect("denies one configured member of an otherwise allowed multi-resource Bash request", () =>
+    Effect.gen(function* () {
+      yield* setup([
+        { action: "bash", resource: "*", effect: "allow" },
+        { action: "bash", resource: "rm -rf build", effect: "deny" },
+      ])
+      const service = yield* PermissionV2.Service
+      expect(yield* service.ask(assertion({ action: "bash", resources: ["echo safe", "rm -rf build"] }))).toEqual({
+        id: PermissionV2.ID.create("per_test"),
+        effect: "deny",
+      })
+    }),
+  )
+
+  it.effect("does not persist or reuse an always reply when save is empty", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const { service, fiber, request } = yield* waitForRequest()
+      expect(request.save ?? []).toEqual([])
+      yield* service.reply({ requestID: request.id, reply: "always" })
+      yield* Fiber.join(fiber)
+      expect(yield* (yield* PermissionSaved.Service).list()).toEqual([])
+
+      expect(
+        yield* service.ask(
+          assertion({ id: PermissionV2.ID.create("per_empty_save_later"), resources: ["src/later.ts"], save: [] }),
+        ),
+      ).toEqual({ id: PermissionV2.ID.create("per_empty_save_later"), effect: "ask" })
+    }),
+  )
+
   it.effect("resolves an asked permission once", () =>
     Effect.gen(function* () {
       yield* setup()

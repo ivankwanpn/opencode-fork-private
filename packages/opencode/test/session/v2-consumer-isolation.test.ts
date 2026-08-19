@@ -77,6 +77,51 @@ test("legacy OpenCode ToolRegistry root is deleted and not mounted by production
   expect(offenders).toEqual([])
 })
 
+test("legacy shell parser and arity closure is deleted and cannot be imported", async () => {
+  const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const repositoryRoot = path.resolve(sourceRoot, "../../..")
+  const deleted = [
+    "packages/opencode/src/tool/shell.ts",
+    "packages/opencode/src/tool/shell/id.ts",
+    "packages/opencode/src/tool/shell/prompt.ts",
+    "packages/opencode/src/tool/shell/shell.txt",
+    "packages/opencode/src/permission/arity.ts",
+    "packages/opencode/test/tool/shell.test.ts",
+    "packages/opencode/test/permission/arity.test.ts",
+  ]
+  const aliases = new Set(["@/tool/shell", "@/tool/shell/id", "@/tool/shell/prompt", "@/permission/arity"])
+  const modules = new Set(
+    deleted
+      .filter((file) => file.startsWith("packages/opencode/src/") && file.endsWith(".ts"))
+      .map((file) => path.resolve(repositoryRoot, file).slice(0, -3).replaceAll("\\", "/")),
+  )
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("packages/**/*.{ts,tsx}").scanSync(repositoryRoot)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(repositoryRoot, file)).text(),
+      })),
+    )
+  )
+    .flatMap((entry) =>
+      [...entry.source.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g)].flatMap((match) => {
+        const specifier = match[1]!
+        if (aliases.has(specifier)) return [entry.file]
+        if (!specifier.startsWith(".")) return []
+        const resolved = path
+          .resolve(repositoryRoot, path.dirname(entry.file), specifier.replace(/\.ts$/, ""))
+          .replaceAll("\\", "/")
+        return modules.has(resolved) ? [entry.file] : []
+      }),
+    )
+    .sort()
+
+  expect(
+    await Promise.all(deleted.map(async (file) => [file, await Bun.file(path.join(repositoryRoot, file)).exists()])),
+  ).toEqual(deleted.map((file) => [file, false]))
+  expect(offenders).toEqual([])
+})
+
 test("production status publishers do not emit the deprecated Session Idle event", async () => {
   const sources = await Promise.all(
     [

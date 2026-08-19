@@ -232,6 +232,34 @@ const setupSession = (db: Database.Interface["db"], directory: string) =>
       .pipe(Effect.orDie)
   })
 
+const denyRelativeParentBoundary = (command: string, id: string) =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => tmpdir()),
+    (root) => {
+      reset()
+      configuredShell = "bash"
+      denyAction = "external_directory"
+      if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+      const active = path.join(root.path, "project")
+      return Effect.promise(() => fs.mkdir(active)).pipe(
+        Effect.andThen(withTool(active, (registry) => executeTool(registry, call({ command }, id)))),
+        Effect.andThen(
+          Effect.sync(() => {
+            expect(assertions).toMatchObject([
+              {
+                action: "external_directory",
+                resources: [path.join(realpathSync(root.path), "*").replaceAll("\\", "/")],
+              },
+            ])
+            expect(jobOperations).toEqual([])
+            expect(runs).toEqual([])
+          }),
+        ),
+      )
+    },
+    (root) => Effect.promise(() => root[Symbol.asyncDispose]()),
+  )
+
 describe("BashTool", () => {
   it.live("applies canonical plugin shell environment once before starting the process", () =>
     Effect.acquireUseRelease(
@@ -1084,6 +1112,49 @@ describe("BashTool", () => {
         )
       },
       (root) => Effect.promise(() => root[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("denies a suffixed relative variable at the exact parent boundary", () =>
+    denyRelativeParentBoundary("project-script ../outside-$TARGET", "call-relative-suffixed-variable"),
+  )
+
+  it.live("denies a relative variable at the exact parent boundary", () =>
+    denyRelativeParentBoundary("project-script ../$TARGET", "call-relative-variable"),
+  )
+
+  it.live("denies a relative question glob at the exact parent boundary", () =>
+    denyRelativeParentBoundary("project-script ../outside?.json", "call-relative-question-glob"),
+  )
+
+  it.live("keeps an exact current-directory dynamic boundary internal with no reusable save", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (active) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(active.path, (registry) =>
+          executeTool(registry, call({ command: "project-script ./inside-$TARGET" }, "call-current-variable")),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "bash",
+                  resources: ["project-script ./inside-$TARGET"],
+                  save: [],
+                },
+              ])
+              expect(assertions.some((input) => input.action === "external_directory")).toBe(false)
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      (active) => Effect.promise(() => active[Symbol.asyncDispose]()),
     ),
   )
 

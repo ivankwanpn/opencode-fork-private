@@ -217,7 +217,7 @@ const scannerPaths = (command: string, kind: ShellCommand.Kind) =>
       process.platform === "win32" &&
       (/^[A-Za-z]:[\\/]/.test(value) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(value))
     const absolute = kind === "bash" ? value.startsWith("/") || native : path.isAbsolute(FSUtil.windowsPath(value))
-    const relative = kind === "bash" ? /^\.\.?\//.test(value) : /^\.\.?[\\/]/.test(value)
+    const relative = kind === "bash" ? /^\.{1,2}(?:\/|$)/.test(value) : /^\.\.?[\\/]/.test(value)
     const home = token.home && (value === "~" || value.startsWith("~/") || (kind !== "bash" && value.startsWith("~\\")))
     if (!absolute && !relative && !home) return []
     return [{ value, kind: token.kind }]

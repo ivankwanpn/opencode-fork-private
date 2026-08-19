@@ -12,8 +12,17 @@ import { SkillV2 } from "./skill"
 export const Info = Command.Info
 export type Info = Command.Info
 
+export const INIT = "init"
+export const REVIEW = "review"
+
+export interface Source {
+  readonly list: () => Effect.Effect<readonly Info[]>
+  readonly get: (name: string) => Effect.Effect<Info | undefined>
+}
+
 export type Data = {
   commands: Map<string, Types.DeepMutable<Info>>
+  sources: Source[]
 }
 
 export type Draft = {
@@ -21,6 +30,7 @@ export type Draft = {
   get: (name: string) => Info | undefined
   update: (name: string, update: (command: Types.DeepMutable<Info>) => void) => void
   remove: (name: string) => void
+  source: (source: Source) => void
 }
 
 export interface Interface extends State.Transformable<Draft> {
@@ -42,7 +52,7 @@ const layer = Layer.effect(
     const plugins = yield* PluginRuntime.Service
     const skills = yield* SkillV2.Service
     const state = State.create<Data, Draft>({
-      initial: () => ({ commands: new Map() }),
+      initial: () => ({ commands: new Map(), sources: [] }),
       draft: (draft) => ({
         list: () => Array.from(draft.commands.values()) as Info[],
         get: (name) => draft.commands.get(name),
@@ -55,6 +65,9 @@ const layer = Layer.effect(
         remove: (name) => {
           draft.commands.delete(name)
         },
+        source: (source) => {
+          draft.sources.push(source)
+        },
       }),
     })
 
@@ -62,16 +75,25 @@ const layer = Layer.effect(
       reload: state.reload,
       transform: state.transform,
       get: Effect.fn("CommandV2.get")(function* (name) {
-        const command = state.get().commands.get(name)
+        const current = state.get()
+        for (const source of current.sources.toReversed()) {
+          const command = yield* source.get(name)
+          if (command) return command
+        }
+        const command = current.commands.get(name)
         if (command) return command
         const skill = (yield* skills.list()).find((item) => item.name === name && item.slash !== false)
         return skill && fromSkill(skill)
       }),
       list: Effect.fn("CommandV2.list")(function* () {
-        const commands = Array.from(state.get().commands.values())
-        const names = new Set(commands.map((command) => command.name))
+        const current = state.get()
+        const commands = new Map(current.commands)
+        for (const source of current.sources) {
+          for (const command of yield* source.list()) commands.set(command.name, command as Types.DeepMutable<Info>)
+        }
+        const names = new Set(commands.keys())
         return [
-          ...commands,
+          ...commands.values(),
           ...(yield* skills.list()).filter((skill) => skill.slash !== false && !names.has(skill.name)).map(fromSkill),
         ]
       }),

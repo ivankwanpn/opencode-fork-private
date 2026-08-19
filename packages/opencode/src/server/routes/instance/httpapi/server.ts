@@ -9,7 +9,6 @@ import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
 import { AuthCredentialMigration } from "@/auth/credential-migration"
 import { BackgroundJob } from "@/background/job"
-import { Command } from "@/command"
 import { Config } from "@/config/config"
 import { Workspace } from "@/control-plane/workspace"
 import { Env } from "@/env"
@@ -274,7 +273,6 @@ const hostNodes = [
   LSP.node,
   MCP.node,
   McpAuth.node,
-  Command.node,
   Truncate.node,
   Format.node,
   Project.node,

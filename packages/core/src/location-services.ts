@@ -82,6 +82,7 @@ export const locationServices = LayerNode.group([
   ToolRegistry.node,
   ToolRegistry.toolsNode,
   MCP.node,
+  MCP.commandsNode,
   MCP.toolsNode,
   Image.node,
   SkillGuidance.node,

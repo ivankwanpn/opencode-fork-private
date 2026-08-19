@@ -1,9 +1,12 @@
 import { Agent } from "@/agent/agent"
-import { Command } from "@/command"
+import { CommandV2 } from "@opencode-ai/core/command"
 import { InstanceRef } from "@/effect/instance-ref"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { InstanceStore } from "@/project/instance-store"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Provider } from "@/provider/provider"
@@ -37,7 +40,7 @@ export type Snapshot = {
   readonly variantsByModel: Readonly<Record<string, ModelVariants>>
   readonly availableModes: readonly ModeOption[]
   readonly defaultModeID: string
-  readonly availableCommands: readonly Command.Info[]
+  readonly availableCommands: readonly CommandV2.Info[]
   readonly defaultModel?: DefaultModel
 }
 
@@ -64,7 +67,7 @@ export const build = (input: {
   readonly providers: Record<ProviderV2.ID, Provider.Info>
   readonly modes: readonly ModeOption[]
   readonly defaultModeID: string
-  readonly commands: readonly Command.Info[]
+  readonly commands: readonly CommandV2.Info[]
   readonly defaultModel?: DefaultModel
 }): Snapshot => {
   const modelOptions = Provider.sort(
@@ -110,12 +113,15 @@ export const loaderLayer = Layer.effect(
     const store = yield* InstanceStore.Service
     const provider = yield* Provider.Service
     const agent = yield* Agent.Service
-    const command = yield* Command.Service
+    const locations = yield* LocationServiceMap.Service
 
     return Loader.of({
       load: Effect.fn("ACPDirectoryLoader.load")(function* (directory) {
         const ctx = yield* store.load({ directory })
         return yield* Effect.gen(function* () {
+          const command = yield* CommandV2.Service.pipe(
+            Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))),
+          )
           const providers = yield* provider.list()
           const [agents, defaultAgent, commands, defaultModel] = yield* Effect.all(
             [agent.list(), agent.defaultInfo(), command.list(), provider.defaultModel().pipe(Effect.option)],
@@ -204,7 +210,7 @@ const layer = Layer.effect(
 export const loaderNode = LayerNode.make({
   service: Loader,
   layer: loaderLayer,
-  deps: [Provider.node, Agent.node, Command.node, InstanceStore.node],
+  deps: [Provider.node, Agent.node, LocationServiceMap.node, InstanceStore.node],
 })
 
 export const node = LayerNode.make({ service: Service, layer, deps: [loaderNode] })

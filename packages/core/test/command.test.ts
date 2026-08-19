@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import type { CommandRuntimeHookSpec } from "@opencode-ai/plugin/v2/effect"
-import { Effect, Layer } from "effect"
+import { Effect, Exit, Layer, Scope } from "effect"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -158,6 +158,74 @@ describe("CommandV2", () => {
       yield* registration.dispose
       expect(yield* command.get("brainstorming")).toBeUndefined()
       expect((yield* command.list()).map((item) => item.name)).toEqual(["review"])
+    }),
+  )
+
+  it.effect("resolves scoped dynamic sources by precedence without materializing during listing", () =>
+    Effect.gen(function* () {
+      const command = yield* CommandV2.Service
+      yield* command.transform((draft) =>
+        draft.update("shared", (item) => {
+          item.template = "static"
+        }),
+      )
+
+      const calls: string[] = []
+      const firstScope = yield* Scope.make()
+      yield* command
+        .transform((draft) =>
+          draft.source({
+            list: () =>
+              Effect.sync(() => {
+                calls.push("first:list")
+                return [
+                  CommandV2.Info.make({ name: "shared", description: "first metadata", template: "" }),
+                  CommandV2.Info.make({ name: "first", template: "" }),
+                ]
+              }),
+            get: (name) =>
+              Effect.sync(() => {
+                calls.push(`first:get:${name}`)
+                if (name === "shared") return CommandV2.Info.make({ name, template: "first resolved" })
+                if (name === "first") return CommandV2.Info.make({ name, template: "first only" })
+                return undefined
+              }),
+          }),
+        )
+        .pipe(Effect.provideService(Scope.Scope, firstScope))
+
+      const secondScope = yield* Scope.make()
+      yield* command
+        .transform((draft) =>
+          draft.source({
+            list: () =>
+              Effect.sync(() => {
+                calls.push("second:list")
+                return [CommandV2.Info.make({ name: "shared", description: "second metadata", template: "" })]
+              }),
+            get: (name) =>
+              Effect.sync(() => {
+                calls.push(`second:get:${name}`)
+                return name === "shared" ? CommandV2.Info.make({ name, template: "second resolved" }) : undefined
+              }),
+          }),
+        )
+        .pipe(Effect.provideService(Scope.Scope, secondScope))
+
+      expect(yield* command.list()).toEqual([
+        CommandV2.Info.make({ name: "shared", description: "second metadata", template: "" }),
+        CommandV2.Info.make({ name: "first", template: "" }),
+      ])
+      expect(calls).toEqual(["first:list", "second:list"])
+      expect(yield* command.get("shared")).toEqual(CommandV2.Info.make({ name: "shared", template: "second resolved" }))
+      expect(calls).toEqual(["first:list", "second:list", "second:get:shared"])
+
+      yield* Scope.close(secondScope, Exit.void)
+      expect(yield* command.get("shared")).toEqual(CommandV2.Info.make({ name: "shared", template: "first resolved" }))
+
+      yield* Scope.close(firstScope, Exit.void)
+      expect(yield* command.get("shared")).toEqual(CommandV2.Info.make({ name: "shared", template: "static" }))
+      expect(yield* command.get("first")).toBeUndefined()
     }),
   )
 })

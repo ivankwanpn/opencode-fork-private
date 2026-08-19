@@ -18,6 +18,7 @@ import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope, Semaphore, S
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { Config } from "../config"
 import { ConfigMCP } from "../config/mcp"
+import { CommandV2 } from "../command"
 import { CrossSpawnSpawner } from "../cross-spawn-spawner"
 import { makeLocationNode } from "../effect/app-node"
 import { EventV2 } from "../event"
@@ -874,6 +875,51 @@ export const node = makeLocationNode({
     McpBrowser.node,
     McpOAuthCallback.node,
   ],
+})
+
+const commandsLayer = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const mcp = yield* Service
+    const commands = yield* CommandV2.Service
+    yield* commands.transform((draft) =>
+      draft.source({
+        list: Effect.fn("MCP.commandList")(function* () {
+          return Object.entries(yield* mcp.prompts()).map(([name, prompt]) =>
+            CommandV2.Info.make({
+              name,
+              template: "",
+              ...(prompt.description === undefined ? {} : { description: prompt.description }),
+            }),
+          )
+        }),
+        get: Effect.fn("MCP.commandGet")(function* (name) {
+          const prompt = (yield* mcp.prompts())[name]
+          if (!prompt) return undefined
+          const materialized = yield* mcp
+            .getPrompt(
+              prompt.client,
+              prompt.name,
+              Object.fromEntries((prompt.arguments ?? []).map((argument, index) => [argument.name, `$${index + 1}`])),
+            )
+            .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          return CommandV2.Info.make({
+            name,
+            template:
+              materialized?.messages
+                .flatMap((message) => (message.content.type === "text" ? [message.content.text] : []))
+                .join("\n") ?? "",
+            ...(prompt.description === undefined ? {} : { description: prompt.description }),
+          })
+        }),
+      }),
+    )
+  }),
+)
+
+export const commandsNode = makeLocationNode({
+  name: "mcp-commands",
+  layer: commandsLayer,
+  deps: [node, CommandV2.node],
 })
 
 const toolsLayer = Layer.effectDiscard(

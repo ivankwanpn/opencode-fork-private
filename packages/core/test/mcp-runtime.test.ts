@@ -13,6 +13,7 @@ import {
   type Tool as MCPToolDefinition,
 } from "@modelcontextprotocol/sdk/types.js"
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { CommandV2 } from "@opencode-ai/core/command"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -25,8 +26,10 @@ import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
 import { MCP } from "@opencode-ai/core/mcp"
 import { PermissionV2 } from "@opencode-ai/core/permission"
+import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SkillV2 } from "@opencode-ai/core/skill"
 import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
@@ -99,6 +102,11 @@ const permissionLayer = Layer.mock(PermissionV2.Service, {
   list: () => Effect.die("unused"),
 })
 
+const commandRuntime = PluginRuntime.make()
+const skillLayer = Layer.mock(SkillV2.Service, {
+  list: () => Effect.succeed([]),
+})
+
 const isolatedGlobalLayer = Layer.unwrap(
   Effect.acquireRelease(
     Effect.promise(() => tmpdir()),
@@ -114,15 +122,20 @@ const isolatedGlobalLayer = Layer.unwrap(
   ),
 )
 
-const layer = AppNodeBuilder.build(LayerNode.group([MCP.node, MCP.toolsNode, ToolRegistry.node, Location.node]), [
-  [Config.node, configLayer],
-  [EventV2.node, eventLayer],
-  [Global.node, isolatedGlobalLayer],
-  [Location.node, tempLocationLayer],
-  [CrossSpawnSpawner.node, spawnerLayer],
-  [PermissionV2.node, permissionLayer],
-  [ToolOutputStore.node, outputStoreLayer],
-])
+const layer = AppNodeBuilder.build(
+  LayerNode.group([MCP.node, MCP.toolsNode, MCP.commandsNode, CommandV2.node, ToolRegistry.node, Location.node]),
+  [
+    [Config.node, configLayer],
+    [EventV2.node, eventLayer],
+    [Global.node, isolatedGlobalLayer],
+    [Location.node, tempLocationLayer],
+    [CrossSpawnSpawner.node, spawnerLayer],
+    [PermissionV2.node, permissionLayer],
+    [ToolOutputStore.node, outputStoreLayer],
+    [PluginRuntime.node, Layer.succeed(PluginRuntime.Service, commandRuntime)],
+    [SkillV2.node, skillLayer],
+  ],
+)
 
 const it = testEffect(layer)
 
@@ -165,6 +178,8 @@ type TestServer = {
   readonly url: string
   readonly tools: MCPToolDefinition[]
   readonly requests: Headers[]
+  readonly promptRequests: Array<{ readonly name: string; readonly arguments?: Record<string, string> }>
+  failPrompt: boolean
   roots?: ReadonlyArray<{ uri: string; name?: string }>
   readonly changed: () => Promise<void>
   readonly restart: () => Promise<void>
@@ -187,6 +202,8 @@ const server = Effect.acquireRelease(
         },
       ],
       requests: [],
+      promptRequests: [],
+      failPrompt: false,
       changed: () => current.protocol.sendToolListChanged(),
       restart: async () => {
         current = await makeProtocol()
@@ -213,11 +230,30 @@ const server = Effect.acquireRelease(
         }),
       )
       protocol.setRequestHandler(ListPromptsRequestSchema, () =>
-        Promise.resolve({ prompts: [{ name: "review", description: "Review work" }] }),
+        Promise.resolve({
+          prompts: [
+            {
+              name: "review",
+              description: "Review work",
+              arguments: [
+                { name: "topic", required: true },
+                { name: "detail", required: false },
+              ],
+            },
+          ],
+        }),
       )
-      protocol.setRequestHandler(GetPromptRequestSchema, () =>
-        Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "review prompt" } }] }),
-      )
+      protocol.setRequestHandler(GetPromptRequestSchema, (request) => {
+        state.promptRequests.push(request.params)
+        if (state.failPrompt) return Promise.reject(new Error("prompt unavailable"))
+        return Promise.resolve({
+          messages: [
+            { role: "user", content: { type: "text", text: "review prompt" } },
+            { role: "user", content: { type: "image", data: "aW1hZ2U=", mimeType: "image/png" } },
+            { role: "user", content: { type: "text", text: "review details" } },
+          ],
+        })
+      })
       protocol.setRequestHandler(ListResourcesRequestSchema, () =>
         Promise.resolve({ resources: [{ name: "guide", uri: "file:///guide.txt", mimeType: "text/plain" }] }),
       )
@@ -282,6 +318,7 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
     const remote = yield* server
     const location = yield* Location.Service
     const mcp = yield* MCP.Service
+    const commands = yield* CommandV2.Service
     const registry = yield* ToolRegistry.Service
 
     expect(yield* mcp.status()).toEqual({})
@@ -315,11 +352,29 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
       { name: "demo server", instructions: "Use test tools.", tools: ["demo_server_echo"] },
     ])
     expect(Object.keys(yield* mcp.prompts())).toEqual(["demo_server:review"])
+    expect(yield* commands.list()).toContainEqual(
+      CommandV2.Info.make({ name: "demo_server:review", description: "Review work", template: "" }),
+    )
+    expect(remote.promptRequests).toEqual([])
+    expect(yield* commands.get("demo_server:review")).toEqual(
+      CommandV2.Info.make({
+        name: "demo_server:review",
+        description: "Review work",
+        template: "review prompt\nreview details",
+      }),
+    )
+    expect(remote.promptRequests).toEqual([{ name: "review", arguments: { topic: "$1", detail: "$2" } }])
     expect(Object.keys(yield* mcp.resources())).toEqual(["demo server:file:///guide.txt"])
     expect(Object.keys(yield* mcp.resourceTemplates())).toEqual(["demo server:file:///items/{id}"])
-    expect(yield* mcp.getPrompt("demo server", "review")).toMatchObject({
-      messages: [{ role: "user", content: { type: "text", text: "review prompt" } }],
+    expect((yield* mcp.getPrompt("demo server", "review"))?.messages[0]).toMatchObject({
+      role: "user",
+      content: { type: "text", text: "review prompt" },
     })
+    remote.failPrompt = true
+    expect(yield* commands.get("demo_server:review")).toEqual(
+      CommandV2.Info.make({ name: "demo_server:review", description: "Review work", template: "" }),
+    )
+    remote.failPrompt = false
     expect(yield* mcp.readResource("demo server", "file:///guide.txt")).toMatchObject({
       contents: [{ uri: "file:///guide.txt", text: "resource body" }],
     })

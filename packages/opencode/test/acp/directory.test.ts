@@ -1,19 +1,21 @@
 import { describe, expect } from "bun:test"
 import { Directory } from "@/acp/directory"
-import { Command } from "@/command"
+import { Agent } from "@/agent/agent"
+import { InstanceStore } from "@/project/instance-store"
+import { CommandV2 } from "@opencode-ai/core/command"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import type { LocationServices } from "@opencode-ai/core/location-services"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Provider } from "@/provider/provider"
-import { Effect, Layer } from "effect"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { ProjectV2 } from "@opencode-ai/core/project"
+import { Effect, Layer, LayerMap } from "effect"
 import { it } from "../lib/effect"
 
-const command = (name: string): Command.Info => ({
-  name,
-  source: "command",
-  template: `run ${name}`,
-  hints: [],
-})
+const command = (name: string) => CommandV2.Info.make({ name, template: `run ${name}` })
 
 const model = (providerID: ProviderV2.ID, id: string, variants?: Directory.ModelVariants): Provider.Model => ({
   id: ModelV2.ID.make(id),
@@ -101,6 +103,64 @@ const fakeLayer = (calls: string[]) =>
   ])
 
 describe("ACP directory snapshot", () => {
+  it.effect("loads sorted V2 commands from the directory location service map", () => {
+    const loaded: Location.Ref[] = []
+    const locationServices = Layer.effect(
+      LocationServiceMap.Service,
+      Effect.map(
+        LayerMap.make(
+          (ref: Location.Ref) => {
+            loaded.push(ref)
+            return Layer.mock(CommandV2.Service, {
+              list: () => Effect.succeed([command("zeta"), command("alpha")]),
+            }) as unknown as Layer.Layer<LocationServices>
+          },
+          { idleTimeToLive: "1 minute" },
+        ),
+        LocationServiceMap.Service.of,
+      ),
+    )
+    const agent = {
+      name: "build",
+      mode: "primary",
+      permission: [],
+      options: {},
+    } satisfies Agent.Info
+    const dependencies = Layer.mergeAll(
+      Layer.mock(InstanceStore.Service, {
+        load: ({ directory }) =>
+          Effect.succeed({
+            directory,
+            worktree: directory,
+            project: {
+              id: ProjectV2.ID.make("project"),
+              worktree: directory,
+              time: { created: 0, updated: 0 },
+              sandboxes: [],
+            },
+          }),
+      }),
+      Layer.mock(Provider.Service, {
+        list: () => Effect.succeed({}),
+        defaultModel: () =>
+          Effect.succeed({ providerID: ProviderV2.ID.make("provider"), modelID: ModelV2.ID.make("model") }),
+      }),
+      Layer.mock(Agent.Service, {
+        list: () => Effect.succeed([agent]),
+        defaultInfo: () => Effect.succeed(agent),
+      }),
+      locationServices,
+    )
+
+    return Effect.gen(function* () {
+      const loader = yield* Directory.Loader
+      const result = yield* loader.load("/workspace/project")
+
+      expect(result.availableCommands.map((item) => item.name)).toEqual(["alpha", "zeta"])
+      expect(loaded).toEqual([Location.Ref.make({ directory: AbsolutePath.make("/workspace/project") })])
+    }).pipe(Effect.provide(Directory.loaderLayer.pipe(Layer.provide(dependencies))))
+  })
+
   it.effect("two concurrent callers share one load", () => {
     const calls: string[] = []
     return Effect.gen(function* () {

@@ -15,9 +15,10 @@ import {
   type ToolPart,
 } from "@opencode-ai/sdk/v2"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import type { Command } from "@/command"
+import { CommandV2 } from "@opencode-ai/core/command"
+import { ModelV2 } from "@opencode-ai/core/model"
 import type { Provider } from "@/provider/provider"
-import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
+import { legacyAgentFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
 import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"
 import type { PromptPart } from "./content"
@@ -67,7 +68,7 @@ export type Catalog = {
     readonly hidden?: boolean
     readonly description?: string
   }>
-  readonly commands: readonly Command.Info[]
+  readonly commands: readonly CommandV2.Info[]
   readonly configuredModel?: string
 }
 
@@ -372,7 +373,29 @@ function catalog(native: GeneratedClients["native"]): Interface["catalog"] {
         agents: agents.data.map((agent) =>
           legacyAgentFromNative(agent as unknown as Parameters<typeof legacyAgentFromNative>[0]),
         ),
-        commands: commands.data.map(legacyCommandFromNative).toSorted((a, b) => a.name.localeCompare(b.name)),
+        commands: commands.data
+          .map((command) =>
+            CommandV2.Info.make({
+              name: command.name,
+              template: command.template,
+              ...(command.description === undefined ? {} : { description: command.description }),
+              ...(command.agent === undefined ? {} : { agent: command.agent }),
+              ...(command.subtask === undefined ? {} : { subtask: command.subtask }),
+              ...(command.model
+                ? {
+                    model: {
+                      id: ModelV2.ID.make(command.model.id),
+                      providerID: ProviderV2.ID.make(command.model.providerID),
+                      ...(command.model.variant === undefined
+                        ? {}
+                        : { variant: ModelV2.VariantID.make(command.model.variant) }),
+                      ...(command.model.protocol === undefined ? {} : { protocol: command.model.protocol }),
+                    },
+                  }
+                : {}),
+            }),
+          )
+          .toSorted((a, b) => a.name.localeCompare(b.name)),
         configuredModel: configured.model,
       }
     },

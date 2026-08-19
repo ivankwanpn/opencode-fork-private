@@ -1,5 +1,5 @@
 import { Agent } from "@/agent/agent"
-import { Command } from "@/command"
+import { CommandV2 } from "@opencode-ai/core/command"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -194,7 +194,7 @@ const make = Effect.gen(function* () {
     yield* canonical.command({
       id: input.messageID,
       sessionID: current.id,
-      command: Command.Default.INIT,
+      command: CommandV2.INIT,
       arguments: "",
       model: { providerID: input.providerID, id: input.modelID },
       resume: false,

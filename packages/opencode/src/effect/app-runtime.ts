@@ -30,7 +30,6 @@ import { LLM } from "@/session/llm"
 import { LSP } from "@/lsp/lsp"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { McpAuth } from "@opencode-ai/core/mcp"
-import { Command } from "@/command"
 import { Truncate } from "@/tool/truncate"
 import { Format } from "@/format"
 import { InstanceStore } from "@/project/instance-store"
@@ -101,7 +100,6 @@ export const AppLayer = AppNodeBuilderV1.build(
     LSP.node,
     MCP.node,
     McpAuth.node,
-    Command.node,
     Truncate.node,
     Format.node,
     InstanceStore.node,

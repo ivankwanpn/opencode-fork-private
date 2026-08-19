@@ -8,7 +8,7 @@ import { WorkspaceTable } from "@opencode-ai/core/control-plane/workspace.sql"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { GlobalBus } from "@/bus/global"
 import { which } from "@opencode-ai/core/util/which"
-import { Command } from "@/command"
+import { CommandV2 } from "@opencode-ai/core/command"
 import { InstanceState } from "@/effect/instance-state"
 import { Effect, Layer, Scope, Context, Stream, Types, Schema } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -22,6 +22,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Project } from "@opencode-ai/schema/project"
+import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
 
 export const Info = Project.Info
 export type Info = Types.DeepMutable<Schema.Schema.Type<typeof Info>>
@@ -386,10 +387,10 @@ const layer = Layer.effect(
     const initState = yield* InstanceState.make(
       Effect.fn("Project.initState")(function* (ctx) {
         const unsubscribe = yield* events.listen((event) => {
-          if (event.type !== Command.Event.Executed.type || event.location?.directory !== ctx.directory)
+          if (event.type !== LegacyEvent.CommandExecuted.type || event.location?.directory !== ctx.directory)
             return Effect.void
-          const data = event.data as EventV2.Data<typeof Command.Event.Executed>
-          return data.name === Command.Default.INIT ? setInitialized(ctx.project.id) : Effect.void
+          const data = event.data as EventV2.Data<typeof LegacyEvent.CommandExecuted>
+          return data.name === CommandV2.INIT ? setInitialized(ctx.project.id) : Effect.void
         })
         yield* Effect.addFinalizer(() => unsubscribe)
       }),

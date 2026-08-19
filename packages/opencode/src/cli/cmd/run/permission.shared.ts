@@ -3,7 +3,7 @@
 // Lives outside the JSX component so it can be tested independently. The
 // machine has three stages:
 //
-//   permission → initial view with Allow once / Always / Reject options
+//   permission → initial view with Allow once / Reject and optional Always
 //   always     → confirmation step (Confirm / Cancel)
 //   reject     → text input for rejection message
 //
@@ -24,6 +24,7 @@ export type PermissionOption = "once" | "always" | "reject" | "confirm" | "cance
 
 export type PermissionBodyState = {
   requestID: string
+  canSave: boolean
   stage: PermissionStage
   selected: PermissionOption
   message: string
@@ -67,9 +68,10 @@ function patterns(request: PermissionV2Request): string[] {
   return request.resources.filter((item): item is string => typeof item === "string")
 }
 
-export function createPermissionBodyState(requestID: string): PermissionBodyState {
+export function createPermissionBodyState(request: Pick<PermissionV2Request, "id" | "save">): PermissionBodyState {
   return {
-    requestID,
+    requestID: request.id,
+    canSave: (request.save?.length ?? 0) > 0,
     stage: "permission",
     selected: "once",
     message: "",
@@ -77,12 +79,21 @@ export function createPermissionBodyState(requestID: string): PermissionBodyStat
   }
 }
 
-export function permissionOptions(stage: PermissionStage): PermissionOption[] {
-  if (stage === "permission") {
-    return ["once", "always", "reject"]
+export function syncPermissionBodyState(
+  state: PermissionBodyState,
+  request: Pick<PermissionV2Request, "id" | "save">,
+): PermissionBodyState {
+  const canSave = (request.save?.length ?? 0) > 0
+  if (state.requestID === request.id && state.canSave === canSave) return state
+  return createPermissionBodyState(request)
+}
+
+export function permissionOptions(state: Pick<PermissionBodyState, "stage" | "canSave">): PermissionOption[] {
+  if (state.stage === "permission") {
+    return state.canSave ? ["once", "always", "reject"] : ["once", "reject"]
   }
 
-  if (stage === "always") {
+  if (state.stage === "always" && state.canSave) {
     return ["confirm", "cancel"]
   }
 
@@ -151,7 +162,7 @@ export function permissionReply(requestID: string, reply: PermissionReply["reply
 }
 
 export function permissionShift(state: PermissionBodyState, dir: -1 | 1): PermissionBodyState {
-  const list = permissionOptions(state.stage)
+  const list = permissionOptions(state)
   if (list.length === 0) {
     return state
   }
@@ -165,6 +176,7 @@ export function permissionShift(state: PermissionBodyState, dir: -1 | 1): Permis
 }
 
 export function permissionHover(state: PermissionBodyState, option: PermissionOption): PermissionBodyState {
+  if (!permissionOptions(state).includes(option)) return state
   return {
     ...state,
     selected: option,
@@ -172,9 +184,7 @@ export function permissionHover(state: PermissionBodyState, option: PermissionOp
 }
 
 export function permissionRun(state: PermissionBodyState, requestID: string, option: PermissionOption): PermissionStep {
-  if (state.submitting) {
-    return { state }
-  }
+  if (state.submitting || state.requestID !== requestID || !permissionOptions(state).includes(option)) return { state }
 
   if (state.stage === "permission") {
     if (option === "always") {

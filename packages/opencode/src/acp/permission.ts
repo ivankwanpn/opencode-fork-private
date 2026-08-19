@@ -17,11 +17,9 @@ type PermissionEvent = Extract<ACPClient.NativeEvent, { type: "permission.v2.ask
 type Reply = "once" | "always" | "reject"
 type Connection = Partial<Pick<AgentSideConnection, "requestPermission" | "writeTextFile">>
 
-const permissionOptions: PermissionOption[] = [
-  { optionId: "once", kind: "allow_once", name: "Allow once" },
-  { optionId: "always", kind: "allow_always", name: "Always allow" },
-  { optionId: "reject", kind: "reject_once", name: "Reject" },
-]
+const allowOnce = { optionId: "once", kind: "allow_once", name: "Allow once" } satisfies PermissionOption
+const allowAlways = { optionId: "always", kind: "allow_always", name: "Always allow" } satisfies PermissionOption
+const reject = { optionId: "reject", kind: "reject_once", name: "Reject" } satisfies PermissionOption
 
 export class Handler {
   private readonly queues = new Map<string, Promise<void>>()
@@ -50,6 +48,7 @@ export class Handler {
 
   private async process(event: PermissionEvent) {
     const permission = event.data
+    const canSave = (permission.save?.length ?? 0) > 0
     const session = await Effect.runPromise(this.input.session.tryGet(permission.sessionID))
     if (!session) return
 
@@ -66,7 +65,7 @@ export class Handler {
           toolName: permission.action,
           input: permission.metadata ?? {},
         }),
-        options: permissionOptions,
+        options: canSave ? [allowOnce, allowAlways, reject] : [allowOnce, reject],
       })
       .catch(async () => {
         await this.reply(permission.sessionID, permission.id, "reject")
@@ -75,7 +74,7 @@ export class Handler {
 
     if (!result) return
 
-    const reply = selectedReply(result)
+    const reply = selectedReply(result, canSave)
     if (reply !== "once" && reply !== "always") {
       await this.reply(permission.sessionID, permission.id, "reject")
       return
@@ -216,9 +215,10 @@ async function diffContentForPatch(filepath: string, diff: string, displayPath =
   }
 }
 
-function selectedReply(result: RequestPermissionResponse): Reply {
+function selectedReply(result: RequestPermissionResponse, canSave: boolean): Reply {
   if (result.outcome.outcome !== "selected") return "reject"
-  if (result.outcome.optionId === "once" || result.outcome.optionId === "always") return result.outcome.optionId
+  if (result.outcome.optionId === "once") return "once"
+  if (result.outcome.optionId === "always" && canSave) return "always"
   return "reject"
 }
 

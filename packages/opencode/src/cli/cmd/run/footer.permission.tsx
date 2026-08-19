@@ -3,7 +3,7 @@
 // Renders inside the footer when the reducer pushes a FooterView of type
 // "permission". Uses a three-stage state machine (permission.shared.ts):
 //
-//   permission → shows the request with Allow once / Always / Reject buttons
+//   permission → shows the request with Allow once / Reject and optional Always
 //   always     → confirmation step before granting permanent access
 //   reject     → text field for the rejection message
 //
@@ -27,6 +27,7 @@ import {
   permissionReject,
   permissionRun,
   permissionShift,
+  syncPermissionBodyState,
   type PermissionOption,
 } from "./permission.shared"
 import { footerWidthPolicy } from "./footer.width"
@@ -137,11 +138,11 @@ export function RunPermissionBody(props: {
   onReply: (input: PermissionReply) => void | Promise<void>
 }) {
   const dims = useTerminalDimensions()
-  const [state, setState] = createSignal(createPermissionBodyState(props.request.id))
+  const [state, setState] = createSignal(createPermissionBodyState(props.request))
   const info = createMemo(() => permissionInfo(props.request))
   const ft = createMemo(() => toolFiletype(info().file))
   const narrow = createMemo(() => footerWidthPolicy(dims().width).dialog.narrow)
-  const opts = createMemo(() => permissionOptions(state().stage))
+  const opts = createMemo(() => permissionOptions(state()))
   const busy = createMemo(() => state().submitting)
   const title = createMemo(() => {
     if (state().stage === "always") {
@@ -156,12 +157,10 @@ export function RunPermissionBody(props: {
   })
 
   createEffect(() => {
-    const id = props.request.id
-    if (state().requestID === id) {
-      return
-    }
-
-    setState(createPermissionBodyState(id))
+    const current = state()
+    const next = syncPermissionBodyState(current, props.request)
+    if (next === current) return
+    setState(next)
   })
 
   const shift = (dir: -1 | 1) => {

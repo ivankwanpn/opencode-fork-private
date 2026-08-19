@@ -106,6 +106,7 @@ function permissionAsked(
   input: {
     permission?: string
     metadata?: Record<string, unknown>
+    save?: readonly string[]
     tool?: { messageID: string; callID: string }
   } = {},
 ) {
@@ -118,7 +119,7 @@ function permissionAsked(
       action: input.permission ?? "bash",
       resources: ["*"],
       metadata: input.metadata ?? { command: "printf hello" },
-      save: [],
+      ...(input.save === undefined ? {} : { save: input.save }),
       ...(input.tool ? { source: { type: "tool" as const, ...input.tool } } : {}),
     },
   } as PermissionEvent
@@ -162,7 +163,9 @@ describe("acp permissions", () => {
     const harness = createHarness()
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_1", { tool: { messageID: "msg_1", callID: "call_1" } }))
+    harness.subscription.handle(
+      permissionAsked("ses_a", "perm_1", { save: ["printf *"], tool: { messageID: "msg_1", callID: "call_1" } }),
+    )
 
     await pollUntil(() => harness.replies.length === 1, "permission was never replied")
 
@@ -183,6 +186,34 @@ describe("acp permissions", () => {
       ],
     })
     expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_1", reply: "once" }])
+  })
+
+  it("omits always allow when save patterns are missing or empty", async () => {
+    for (const [id, save] of [
+      ["missing", undefined],
+      ["empty", []],
+    ] as const) {
+      const harness = createHarness()
+      await createSession(harness.session, `ses_${id}`)
+
+      harness.subscription.handle(permissionAsked(`ses_${id}`, `perm_${id}`, { save }))
+
+      await pollUntil(() => harness.replies.length === 1, `${id} save permission was never replied`)
+      expect(harness.requests[0]?.options).toEqual([
+        { optionId: "once", kind: "allow_once", name: "Allow once" },
+        { optionId: "reject", kind: "reject_once", name: "Reject" },
+      ])
+    }
+  })
+
+  it("rejects a stale always selection when the request cannot be saved", async () => {
+    const harness = createHarness(() => Promise.resolve({ outcome: { outcome: "selected", optionId: "always" } }))
+    await createSession(harness.session, "ses_stale")
+
+    harness.subscription.handle(permissionAsked("ses_stale", "perm_stale"))
+
+    await pollUntil(() => harness.replies.length === 1, "stale always permission was never replied")
+    expect(harness.replies).toEqual([{ sessionID: "ses_stale", requestID: "perm_stale", reply: "reject" }])
   })
 
   it("uses permission metadata for non-shell titles", async () => {
@@ -362,7 +393,7 @@ describe("acp permissions", () => {
     const harness = createHarness(() => Promise.resolve({ outcome: { outcome: "selected", optionId: "reject" } }))
     await createSession(harness.session, "ses_a")
 
-    harness.subscription.handle(permissionAsked("ses_a", "perm_reject"))
+    harness.subscription.handle(permissionAsked("ses_a", "perm_reject", { save: ["*"] }))
 
     await pollUntil(() => harness.replies.length === 1, "selected reject permission was never replied")
 
@@ -424,7 +455,7 @@ describe("acp permissions", () => {
     await createSession(harness.session, "ses_a")
 
     harness.subscription.handle(permissionAsked("ses_a", "perm_1"))
-    harness.subscription.handle(permissionAsked("ses_a", "perm_2"))
+    harness.subscription.handle(permissionAsked("ses_a", "perm_2", { save: ["*"] }))
 
     await pollUntil(() => harness.requests.length === 1, "first permission was never requested")
     expect(harness.requests.map((request) => request.toolCall.toolCallId)).toEqual(["perm_1"])

@@ -83,4 +83,34 @@ describe("SessionPermissionDock", () => {
     const hint = document.querySelector('[data-slot="permission-hint"]')
     expect(hint?.textContent).toBe("Run shell commands")
   })
+
+  test("only offers always allow when the request has save patterns", () => {
+    const actions = (next: PermissionV2Request) => {
+      dispose?.()
+      dispose = createRoot((disposeRoot) => {
+        const cleanup = render(
+          () => (
+            <PlatformProvider value={platform}>
+              <LanguageProvider>
+                <SessionPermissionDock request={next} responding={false} onDecide={() => {}} />
+              </LanguageProvider>
+            </PlatformProvider>
+          ),
+          document.body,
+        )
+        return () => {
+          cleanup()
+          disposeRoot()
+        }
+      })
+
+      return Array.from(document.querySelectorAll('[data-slot="permission-footer-actions"] button')).map(
+        (button) => button.textContent,
+      )
+    }
+
+    expect(actions({ ...request, save: undefined })).toEqual(["Deny", "Allow once"])
+    expect(actions({ ...request, save: [] })).toEqual(["Deny", "Allow once"])
+    expect(actions({ ...request, save: ["git status *"] })).toEqual(["Deny", "Allow always", "Allow once"])
+  })
 })

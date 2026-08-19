@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store"
 import { dirname } from "node:path"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
+import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useTheme, selectedForeground } from "../../context/theme"
@@ -17,8 +17,18 @@ import { useTuiConfig } from "../../config"
 import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut } from "../../keymap"
 import { usePathFormatter } from "../../context/path-format"
 import { toolInput } from "../../util/native-transcript"
-
-type PermissionStage = "permission" | "always" | "reject"
+import {
+  beginPermissionSubmission,
+  createPermissionPromptNavigationState,
+  createPermissionPromptState,
+  failPermissionSubmission,
+  permissionPromptKeys,
+  permissionPromptIdentity,
+  permissionPromptOptions,
+  permissionStageForSelection,
+  syncPermissionPromptNavigationState,
+  syncPermissionPromptState,
+} from "./permission.shared"
 
 function EditBody(props: { request: PermissionV2Request }) {
   const themeState = useTheme()
@@ -113,19 +123,42 @@ export function PermissionPrompt(props: { request: PermissionV2Request; director
   const sdk = useSDK()
   const sync = useSync()
   const data = useData()
-  const [store, setStore] = createStore({
-    stage: "permission" as PermissionStage,
-  })
+  const [store, setStore] = createStore(createPermissionPromptState(props.request.id))
   const pathFormatter = usePathFormatter()
-  const reply = (value: "once" | "always" | "reject", message?: string) =>
-    sdk.native.permissions.reply({
-      sessionID: props.request.sessionID,
-      requestID: props.request.id,
-      reply: value,
-      message,
-    })
+  const reply = async (value: "once" | "always" | "reject", message?: string) => {
+    const requestID = props.request.id
+    const sessionID = props.request.sessionID
+    const started = beginPermissionSubmission(store, requestID)
+    if (!started) return
+    setStore(started)
+
+    const succeeded = await Promise.resolve()
+      .then(() =>
+        sdk.native.permissions.reply({
+          sessionID,
+          requestID,
+          reply: value,
+          message,
+        }),
+      )
+      .then(
+        () => true,
+        () => false,
+      )
+    if (succeeded) return
+
+    const failed = failPermissionSubmission(store, requestID)
+    if (failed) setStore(failed)
+  }
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
+  const canSave = createMemo(() => (props.request.save?.length ?? 0) > 0)
+  const options = createMemo(() => permissionPromptOptions(props.request.save))
+
+  createEffect(() => {
+    const next = syncPermissionPromptState(store, props.request.id, canSave())
+    if (next !== store) setStore(next)
+  })
 
   const input = createMemo(() => {
     const source = props.request.source
@@ -142,9 +175,11 @@ export function PermissionPrompt(props: { request: PermissionV2Request; director
 
   return (
     <Switch>
-      <Match when={store.stage === "always"}>
+      <Match when={store.stage === "always" && canSave()}>
         <Prompt
           title="Always allow"
+          identity={permissionPromptIdentity(props.request.id, "always", canSave())}
+          disabled={store.submitting}
           body={
             <Switch>
               <Match when={props.request.save?.length === 1 && props.request.save[0] === "*"}>
@@ -170,18 +205,21 @@ export function PermissionPrompt(props: { request: PermissionV2Request; director
           options={{ confirm: "Confirm", cancel: "Cancel" }}
           escapeKey="cancel"
           onSelect={(option) => {
+            if (store.submitting) return
             setStore("stage", "permission")
-            if (option === "cancel") return
+            if (option === "cancel" || !canSave()) return
             void reply("always")
           }}
         />
       </Match>
       <Match when={store.stage === "reject"}>
         <RejectPrompt
+          disabled={store.submitting}
           onConfirm={(message) => {
             void reply("reject", message || undefined)
           }}
           onCancel={() => {
+            if (store.submitting) return
             setStore("stage", "permission")
           }}
         />
@@ -335,7 +373,9 @@ export function PermissionPrompt(props: { request: PermissionV2Request; director
 
               const raw = parent ?? filepath ?? derived
               const dir = pathFormatter.format(raw)
-              const patterns = props.request.resources.filter((pattern): pattern is string => typeof pattern === "string")
+              const patterns = props.request.resources.filter(
+                (pattern): pattern is string => typeof pattern === "string",
+              )
 
               return {
                 icon: "←",
@@ -396,21 +436,22 @@ export function PermissionPrompt(props: { request: PermissionV2Request; director
           const body = (
             <Prompt
               title="Permission required"
+              identity={permissionPromptIdentity(props.request.id, "permission", canSave())}
+              disabled={store.submitting}
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
+              options={options()}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {
-                if (option === "always") {
-                  setStore("stage", "always")
+                if (store.submitting) return
+                const stage = permissionStageForSelection(option, props.request.save, !!session()?.parentID)
+                if (stage !== "permission") {
+                  setStore("stage", stage)
                   return
                 }
+                if (option === "always") return
                 if (option === "reject") {
-                  if (session()?.parentID) {
-                    setStore("stage", "reject")
-                    return
-                  }
                   void reply("reject")
                   return
                 }
@@ -426,7 +467,7 @@ export function PermissionPrompt(props: { request: PermissionV2Request; director
   )
 }
 
-function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void }) {
+function RejectPrompt(props: { disabled: boolean; onConfirm: (message: string) => void; onCancel: () => void }) {
   let input: TextareaRenderable
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
@@ -440,18 +481,28 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         title: "Cancel permission rejection",
         category: "Permission",
         run() {
+          if (props.disabled) return
           props.onCancel()
         },
       },
     ],
     bindings: [
-      { key: "escape", desc: "Cancel permission rejection", group: "Permission", cmd: () => props.onCancel() },
+      {
+        key: "escape",
+        desc: "Cancel permission rejection",
+        group: "Permission",
+        cmd: () => {
+          if (!props.disabled) props.onCancel()
+        },
+      },
       ...tuiConfig.keybinds.get("app.exit"),
       {
         key: "return",
         desc: "Confirm permission rejection",
         group: "Permission",
-        cmd: () => props.onConfirm(input.plainText),
+        cmd: () => {
+          if (!props.disabled) props.onConfirm(input.plainText)
+        },
       },
     ],
   }))
@@ -489,7 +540,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
             input = val
             val.traits = { status: "REJECT" }
           }}
-          focused
+          focused={!props.disabled}
           textColor={theme.text}
           focusedTextColor={theme.text}
           cursorColor={theme.primary}
@@ -509,23 +560,56 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
 
 function Prompt<const T extends Record<string, string>>(props: {
   title: string
+  identity: string
   header?: JSX.Element
   body: JSX.Element
   options: T
-  escapeKey?: keyof T
+  escapeKey?: keyof T & string
   fullscreen?: boolean
-  onSelect: (option: keyof T) => void
+  disabled?: boolean
+  onSelect: (option: keyof T & string) => void
 }) {
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
   const dimensions = useTerminalDimensions()
-  const keys = Object.keys(props.options) as (keyof T)[]
-  const [store, setStore] = createStore({
-    selected: keys[0],
-    expanded: false,
-  })
+  type Option = keyof T & string
+  const keys = createMemo(() => permissionPromptKeys(props.options))
+  const [store, setStore] = createStore(createPermissionPromptNavigationState<Option>(props.identity, keys()))
   const narrow = createMemo(() => dimensions().width < 80)
   const fullscreenHint = useCommandShortcut("permission.prompt.fullscreen")
+
+  const syncNavigation = () => {
+    const identityChanged = store.identity !== props.identity
+    const next = syncPermissionPromptNavigationState(store, props.identity, keys())
+    if (next !== store) setStore(next)
+    return { state: next, identityChanged }
+  }
+
+  createEffect(() => {
+    syncNavigation()
+  })
+
+  const shift = (direction: -1 | 1) => {
+    const navigation = syncNavigation()
+    if (navigation.identityChanged || props.disabled) return
+    const current = keys()
+    const selected = navigation.state.selected
+    if (!selected) return
+    const index = current.indexOf(selected)
+    setStore("selected", current[(index + direction + current.length) % current.length])
+  }
+
+  const hover = (option: Option) => {
+    const navigation = syncNavigation()
+    if (navigation.identityChanged || props.disabled || !keys().includes(option)) return
+    setStore("selected", option)
+  }
+
+  const select = (option: Option | undefined) => {
+    const navigation = syncNavigation()
+    if (navigation.identityChanged || props.disabled || !option || !keys().includes(option)) return
+    props.onSelect(option)
+  }
 
   useBindings(() => ({
     mode: OPENCODE_BASE_MODE,
@@ -535,8 +619,7 @@ function Prompt<const T extends Record<string, string>>(props: {
         title: "Reject permission",
         category: "Permission",
         run() {
-          if (!props.escapeKey) return
-          props.onSelect(props.escapeKey)
+          select(props.escapeKey)
         },
       },
       {
@@ -544,7 +627,8 @@ function Prompt<const T extends Record<string, string>>(props: {
         title: "Toggle permission fullscreen",
         category: "Permission",
         run() {
-          if (!props.fullscreen) return
+          const navigation = syncNavigation()
+          if (navigation.identityChanged || !props.fullscreen) return
           setStore("expanded", (v) => !v)
         },
       },
@@ -554,47 +638,31 @@ function Prompt<const T extends Record<string, string>>(props: {
         key: "left",
         desc: "Previous permission option",
         group: "Permission",
-        cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx - 1 + keys.length) % keys.length]
-          setStore("selected", next)
-        },
+        cmd: () => shift(-1),
       },
       {
         key: "h",
         desc: "Previous permission option",
         group: "Permission",
-        cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx - 1 + keys.length) % keys.length]
-          setStore("selected", next)
-        },
+        cmd: () => shift(-1),
       },
       {
         key: "right",
         desc: "Next permission option",
         group: "Permission",
-        cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx + 1) % keys.length]
-          setStore("selected", next)
-        },
+        cmd: () => shift(1),
       },
       {
         key: "l",
         desc: "Next permission option",
         group: "Permission",
-        cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx + 1) % keys.length]
-          setStore("selected", next)
-        },
+        cmd: () => shift(1),
       },
       {
         key: "return",
         desc: "Select permission option",
         group: "Permission",
-        cmd: () => props.onSelect(store.selected),
+        cmd: () => select(store.selected),
       },
       ...(props.escapeKey
         ? [
@@ -602,7 +670,7 @@ function Prompt<const T extends Record<string, string>>(props: {
               key: "escape",
               desc: "Reject permission",
               group: "Permission",
-              cmd: () => props.onSelect(props.escapeKey!),
+              cmd: () => select(props.escapeKey),
             },
           ]
         : []),
@@ -660,17 +728,14 @@ function Prompt<const T extends Record<string, string>>(props: {
         alignItems={narrow() ? "flex-start" : "center"}
       >
         <box flexDirection="row" gap={1} flexShrink={0}>
-          <For each={keys}>
+          <For each={keys()}>
             {(option) => (
               <box
                 paddingLeft={1}
                 paddingRight={1}
                 backgroundColor={option === store.selected ? theme.warning : theme.backgroundMenu}
-                onMouseOver={() => setStore("selected", option)}
-                onMouseUp={() => {
-                  setStore("selected", option)
-                  props.onSelect(option)
-                }}
+                onMouseOver={() => hover(option)}
+                onMouseUp={() => select(option)}
               >
                 <text fg={option === store.selected ? selectedForeground(theme, theme.warning) : theme.textMuted}>
                   {props.options[option]}

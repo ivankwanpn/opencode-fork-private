@@ -5,9 +5,13 @@ import {
   permissionAlwaysLines,
   permissionCancel,
   permissionEscape,
+  permissionHover,
   permissionInfo,
+  permissionOptions,
   permissionReject,
   permissionRun,
+  permissionShift,
+  syncPermissionBodyState,
 } from "@/cli/cmd/run/permission.shared"
 
 function req(input: Partial<PermissionV2Request> = {}): PermissionV2Request {
@@ -24,7 +28,7 @@ function req(input: Partial<PermissionV2Request> = {}): PermissionV2Request {
 
 describe("run permission shared", () => {
   test("replies immediately for allow once", () => {
-    const out = permissionRun(createPermissionBodyState("perm-1"), "perm-1", "once")
+    const out = permissionRun(createPermissionBodyState(req()), "perm-1", "once")
 
     expect(out.reply).toEqual({
       requestID: "perm-1",
@@ -33,7 +37,10 @@ describe("run permission shared", () => {
   })
 
   test("requires confirmation for allow always", () => {
-    const next = permissionRun(createPermissionBodyState("perm-1"), "perm-1", "always")
+    const initial = createPermissionBodyState(req({ save: ["*"] }))
+    expect(initial.canSave).toBe(true)
+
+    const next = permissionRun(initial, "perm-1", "always")
     expect(next.state.stage).toBe("always")
     expect(next.state.selected).toBe("confirm")
     expect(next.reply).toBeUndefined()
@@ -50,7 +57,7 @@ describe("run permission shared", () => {
   })
 
   test("builds trimmed reject replies and stage transitions", () => {
-    const next = permissionRun(createPermissionBodyState("perm-1"), "perm-1", "reject")
+    const next = permissionRun(createPermissionBodyState(req()), "perm-1", "reject")
     expect(next.state.stage).toBe("reject")
 
     const out = permissionReject({ ...next.state, message: "  use rg  " }, "perm-1")
@@ -65,7 +72,7 @@ describe("run permission shared", () => {
       selected: "reject",
     })
 
-    expect(permissionEscape(createPermissionBodyState("perm-1"))).toMatchObject({
+    expect(permissionEscape(createPermissionBodyState(req()))).toMatchObject({
       stage: "reject",
       selected: "reject",
     })
@@ -74,6 +81,66 @@ describe("run permission shared", () => {
       stage: "permission",
       selected: "always",
     })
+  })
+
+  test("cannot select or enter always without save patterns", () => {
+    for (const request of [req({ save: undefined }), req({ save: [] })]) {
+      const state = createPermissionBodyState(request)
+
+      expect(state.canSave).toBe(false)
+      expect(permissionOptions(state)).toEqual(["once", "reject"])
+      expect(permissionShift(state, 1).selected).toBe("reject")
+      expect(permissionShift(permissionShift(state, 1), 1).selected).toBe("once")
+      expect(permissionRun(state, request.id, "always")).toEqual({ state })
+    }
+  })
+
+  test("resets navigation when the permission request or save capability changes", () => {
+    const always = permissionRun(createPermissionBodyState(req({ save: ["*"] })), "perm-1", "always").state
+
+    expect(syncPermissionBodyState(always, req({ id: "perm-2", save: [] }))).toEqual({
+      requestID: "perm-2",
+      canSave: false,
+      stage: "permission",
+      selected: "once",
+      message: "",
+      submitting: false,
+    })
+    expect(syncPermissionBodyState(always, req({ save: [] }))).toMatchObject({
+      requestID: "perm-1",
+      canSave: false,
+      stage: "permission",
+      selected: "once",
+    })
+    expect(syncPermissionBodyState(always, req({ save: ["git *"] }))).toBe(always)
+  })
+
+  test("ignores stale requests and options unavailable in the current stage", () => {
+    const permission = createPermissionBodyState(req({ save: ["*"] }))
+    const always = permissionRun(permission, permission.requestID, "always").state
+    const reject = permissionRun(permission, permission.requestID, "reject").state
+
+    for (const option of ["once", "always", "reject", "confirm", "cancel"] as const) {
+      const stale = permissionRun(permission, "perm-stale", option)
+      expect(stale.state).toBe(permission)
+      expect(stale.reply).toBeUndefined()
+    }
+
+    for (const [state, invalid] of [
+      [permission, ["confirm", "cancel"]],
+      [always, ["once", "always", "reject"]],
+      [reject, ["once", "always", "reject", "confirm", "cancel"]],
+    ] as const) {
+      for (const option of invalid) {
+        const result = permissionRun(state, state.requestID, option)
+        expect(result.state).toBe(state)
+        expect(result.reply).toBeUndefined()
+      }
+    }
+
+    expect(permissionHover(permission, "confirm")).toBe(permission)
+    expect(permissionHover(always, "reject")).toBe(always)
+    expect(permissionHover(permission, "always")).toMatchObject({ selected: "always" })
   })
 
   test("maps supported permission types into display info", () => {

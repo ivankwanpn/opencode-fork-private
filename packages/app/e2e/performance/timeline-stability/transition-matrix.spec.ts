@@ -12,6 +12,7 @@ import {
   completedAssistantInfo,
   event,
   messageUpdated,
+  partRemoved,
   partUpdated,
   setupTimeline,
   shell,
@@ -42,7 +43,7 @@ test("keeps unchanged siblings stable while a middle part is inserted and remove
   await timeline.send(partUpdated(textPart(middleID, "Inserted middle row. ".repeat(12))), 350)
   await expect(page.locator(`[data-timeline-part-id="${middleID}"]`)).toBeVisible()
   await timeline.send(
-    event("message.part.removed", { sessionID: "ses_timeline_stability", messageID: assistantID, partID: middleID }),
+    partRemoved(middleID),
     500,
   )
   await expect(page.locator(`[data-timeline-part-id="${middleID}"]`)).toHaveCount(0)
@@ -234,10 +235,21 @@ test("reducer-hardening: removes a historical turn one message at a time without
   })
   await startVisualProbe(page, regions)
   await timeline.send(
-    event("message.removed", { sessionID: "ses_timeline_stability", messageID: removeAssistantID }),
+    event("session.next.transcript.message.removed", {
+      timestamp: 1700000003000,
+      sessionID: "ses_timeline_stability",
+      messageID: removeAssistantID,
+    }),
     200,
   )
-  await timeline.send(event("message.removed", { sessionID: "ses_timeline_stability", messageID: removeUserID }), 500)
+  await timeline.send(
+    event("session.next.transcript.message.removed", {
+      timestamp: 1700000003001,
+      sessionID: "ses_timeline_stability",
+      messageID: removeUserID,
+    }),
+    500,
+  )
   const trace = await stopVisualProbe<keyof typeof regions>(page)
   await reportVisualStability(
     testInfo,

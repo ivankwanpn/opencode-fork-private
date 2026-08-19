@@ -349,7 +349,7 @@ describe("server session", () => {
       },
     ])
     ctx.store.apply({
-      type: "message.updated",
+      type: "view.message.upsert",
       properties: {
         info: {
           id: "msg_z_older",
@@ -405,7 +405,7 @@ describe("server session", () => {
       userMessage("msg_a_late", { time: { created: 10 } }),
     ])
     ctx.store.apply({
-      type: "message.removed",
+      type: "view.message.remove",
       properties: { sessionID: "child", messageID: "msg_a_late" },
     })
     expect(ctx.store.data.message.child?.map((message) => message.id)).toEqual(["msg_z_early"])
@@ -419,7 +419,7 @@ describe("server session", () => {
       userMessage("msg_a_late", { time: { created: 10 } }),
     ])
     ctx.store.apply({
-      type: "message.part.updated",
+      type: "view.part.upsert",
       properties: {
         sessionID: "child",
         part: textPart("msg_a_late", { id: "part_a_late", text: "late" }),
@@ -1017,10 +1017,10 @@ describe("server session", () => {
     ])
 
     const next = userMessage("message-3", { sessionID: "root" })
-    store.apply({ type: "message.updated", properties: { info: next } })
+    store.apply({ type: "view.message.upsert", properties: { info: next } })
     expect(store.data.session_message.root.map((message) => message.id)).toEqual([user.id, assistant.id, next.id])
 
-    store.apply({ type: "message.removed", properties: { sessionID: "root", messageID: next.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "root", messageID: next.id } })
     expect(store.data.session_message.root.map((message) => message.id)).toEqual([user.id, assistant.id])
   })
 
@@ -1203,7 +1203,7 @@ describe("server session", () => {
     const store = createServerSession(client)
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: user } })
+    store.apply({ type: "view.message.upsert", properties: { info: user } })
     pending.resolve(response([{ info: assistant, parts: [] }], "older"))
     await loading
 
@@ -1229,7 +1229,7 @@ describe("server session", () => {
     const loading = store.sync("child")
     await client.rootRequested(1)
 
-    store.apply({ type: "message.updated", properties: { info: live } })
+    store.apply({ type: "view.message.upsert", properties: { info: live } })
     failed.reject(new Error("retry"))
     await loading
 
@@ -1251,7 +1251,7 @@ describe("server session", () => {
     const loading = store.sync("child")
     await client.rootRequested(1)
 
-    store.apply({ type: "message.updated", properties: { info: live } })
+    store.apply({ type: "view.message.upsert", properties: { info: live } })
     failed.reject(new Error("retry"))
     await loading
 
@@ -1271,7 +1271,7 @@ describe("server session", () => {
     const loading = store.sync("child")
     await client.rootRequested(1)
 
-    store.apply({ type: "message.updated", properties: { info: live } })
+    store.apply({ type: "view.message.upsert", properties: { info: live } })
     failed.reject(new Error("retry"))
     await loading
 
@@ -1292,7 +1292,7 @@ describe("server session", () => {
     const loading = store.sync("child")
     await client.rootRequested(1)
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: live, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: live, time: 2 } })
     failed.reject(new Error("retry"))
     await loading
 
@@ -1307,8 +1307,8 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: live } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: livePart, time: 2 } })
+    store.apply({ type: "view.message.upsert", properties: { info: live } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: livePart, time: 2 } })
     pending.resolve(response([{ info: user, parts: [] }]))
     await loading
 
@@ -1325,8 +1325,8 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: live } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: livePart, time: 2 } })
+    store.apply({ type: "view.message.upsert", properties: { info: live } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: livePart, time: 2 } })
     pending.resolve(response([{ info: fetched, parts: [fetchedPart] }]))
     await loading
 
@@ -1342,9 +1342,9 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: removed.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: removed.id } })
     store.apply({
-      type: "message.part.removed",
+      type: "view.part.remove",
       properties: { sessionID: "child", messageID: kept.id, partID: part.id },
     })
     pending.resolve(
@@ -1366,7 +1366,7 @@ describe("server session", () => {
     const store = createServerSession(messageClient(firstResponse.promise, secondResponse.promise))
     const first = store.sync("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
     store.applyV2({
       id: "evt_deleted_1",
       type: "session.next.deleted",
@@ -1395,7 +1395,7 @@ describe("server session", () => {
     } as unknown as V2Event)
     const second = store.sync("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
     firstResponse.resolve(response())
     await first
     secondResponse.resolve(response([{ info: message, parts: [] }]))
@@ -1411,8 +1411,8 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({ type: "message.updated", properties: { info: message } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.upsert", properties: { info: message } })
     pending.resolve(response())
     await refreshing
 
@@ -1427,8 +1427,8 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({ type: "message.updated", properties: { info: message } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.upsert", properties: { info: message } })
     pending.resolve(response([{ info: message, parts: [part] }]))
     await refreshing
 
@@ -1447,7 +1447,7 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
     pending.resolve(response([{ info: message, parts: [stale] }]))
     await refreshing
@@ -1463,7 +1463,7 @@ describe("server session", () => {
   test("drops stale event content omitted by a complete initial page", async () => {
     const stale = userMessage("stale")
     const store = createServerSession(messageClient(response()))
-    store.apply({ type: "message.updated", properties: { info: stale } })
+    store.apply({ type: "view.message.upsert", properties: { info: stale } })
 
     await store.sync("child")
 
@@ -1474,7 +1474,7 @@ describe("server session", () => {
     const live = userMessage("message-1")
     const fetched = userMessage("message-2", { time: { created: 2 } })
     const store = createServerSession(messageClient(response([{ info: fetched, parts: [] }], "older")))
-    store.apply({ type: "message.updated", properties: { info: live } })
+    store.apply({ type: "view.message.upsert", properties: { info: live } })
 
     await store.sync("child")
 
@@ -1490,9 +1490,9 @@ describe("server session", () => {
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
     store.optimistic.add({ sessionID: "child", message: kept, parts: [keptPart] })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
     store.apply({
-      type: "message.part.removed",
+      type: "view.part.remove",
       properties: { sessionID: "child", messageID: kept.id, partID: keptPart.id },
     })
     await store.sync("child", { force: true })
@@ -1572,7 +1572,7 @@ describe("server session", () => {
     store.optimistic.add({ sessionID: "child", message, parts: [confirmed, pendingPart] })
     await store.sync("child")
     store.apply({
-      type: "message.part.removed",
+      type: "view.part.remove",
       properties: { sessionID: "child", messageID: message.id, partID: confirmed.id },
     })
 
@@ -1586,7 +1586,7 @@ describe("server session", () => {
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({ type: "message.updated", properties: { sessionID: "child", info: message } })
+    store.apply({ type: "view.message.upsert", properties: { sessionID: "child", info: message } })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
 
@@ -1599,8 +1599,8 @@ describe("server session", () => {
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({ type: "message.updated", properties: { sessionID: "child", info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "view.message.upsert", properties: { sessionID: "child", info: message } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 2 } })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
 
@@ -1613,7 +1613,7 @@ describe("server session", () => {
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 2 } })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
 
@@ -1626,8 +1626,8 @@ describe("server session", () => {
     const message = userMessage("message")
     const part = textPart(message.id, { text: "stale" })
     const store = createServerSession(messageClient(pending.promise))
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 1 } })
+    store.apply({ type: "view.message.upsert", properties: { info: message } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 1 } })
     const loading = store.sync("child")
 
     pending.resolve(response([{ info: message, parts: [] }]))
@@ -1645,11 +1645,11 @@ describe("server session", () => {
     const fetched = { ...stale, text: "fetched" }
     const client = messageClient(failed.promise, retried.promise)
     const store = createServerSession(client, { retry: retryImmediately })
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: stale, time: 1 } })
+    store.apply({ type: "view.message.upsert", properties: { info: message } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: stale, time: 1 } })
     const loading = store.sync("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: intermediate, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: intermediate, time: 2 } })
     failed.reject(new Error("failed to fetch"))
     await client.requested(2)
     retried.resolve(response([{ info: message, parts: [fetched] }]))
@@ -1669,7 +1669,7 @@ describe("server session", () => {
     const loading = store.sync("child", { force: true })
 
     store.apply({
-      type: "message.part.removed",
+      type: "view.part.remove",
       properties: { sessionID: "child", messageID: message.id, partID: part.id },
     })
     failed.reject(new Error("failed to fetch"))
@@ -1690,7 +1690,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
     failed.reject(new Error("failed to fetch"))
     await client.requested(3)
     retried.resolve(response([{ info: message, parts: [part] }]))
@@ -1711,7 +1711,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
     store.optimistic.add({ sessionID: "child", message, parts: [optimistic] })
     failed.reject(new Error("failed to fetch"))
     await client.requested(3)
@@ -1732,7 +1732,7 @@ describe("server session", () => {
     const store = createServerSession(client, { retry: retryImmediately })
     const loading = store.sync("child").catch((error) => error)
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 2 } })
     first.reject(new Error("failed to fetch"))
     await client.requested(2)
     second.reject(new Error("failed to fetch"))
@@ -1752,7 +1752,7 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: live, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: live, time: 2 } })
     pending.resolve(response())
     await refreshing
 
@@ -1767,9 +1767,9 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "view.message.upsert", properties: { info: message } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 2 } })
     pending.resolve(response([{ info: message, parts: [part] }]))
     await loading
 
@@ -1781,10 +1781,10 @@ describe("server session", () => {
     const message = userMessage("message")
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "view.message.upsert", properties: { info: message } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: message.id } })
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 2 } })
 
     expect(store.data.part[message.id]).toBeUndefined()
   })
@@ -1796,7 +1796,11 @@ describe("server session", () => {
       messageClient(response([{ info: message, parts: [part] }]), response([{ info: message, parts: [part] }])),
     )
     await store.sync("child")
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.applyV2({
+      id: "evt_message_removed",
+      type: "session.next.transcript.message.removed",
+      data: { timestamp: 2, sessionID: "child", messageID: message.id },
+    } as unknown as V2Event)
 
     await store.sync("child", { force: true })
 
@@ -1812,7 +1816,7 @@ describe("server session", () => {
     )
     await store.sync("child")
     store.apply({
-      type: "message.part.removed",
+      type: "view.part.remove",
       properties: { sessionID: "child", messageID: message.id, partID: part.id },
     })
 
@@ -1859,7 +1863,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.history.loadMore("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: older.id } })
+    store.apply({ type: "view.message.remove", properties: { sessionID: "child", messageID: older.id } })
     pending.resolve(response([{ info: older, parts: [] }]))
     await loading
 
@@ -1979,7 +1983,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.history.loadMore("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: live, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part: live, time: 2 } })
     pending.resolve(response([{ info: older, parts: [stale] }]))
     await loading
 
@@ -1996,10 +2000,10 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.history.loadMore("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 3 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 3 } })
     pending.resolve(response([{ info: older, parts: [] }]))
     await loading
-    store.apply({ type: "message.updated", properties: { sessionID: "child", info: newer } })
+    store.apply({ type: "view.message.upsert", properties: { sessionID: "child", info: newer } })
 
     expect(store.data.part[newer.id]).toEqual([part])
   })
@@ -2013,7 +2017,7 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise, history.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "view.part.upsert", properties: { sessionID: "child", part, time: 2 } })
     pending.resolve(response([{ info: latest, parts: [] }], "older"))
     await loading
 
@@ -2036,7 +2040,7 @@ describe("server session", () => {
     const loading = store.sync("child")
 
     store.apply({
-      type: "message.part.removed",
+      type: "view.part.remove",
       properties: { sessionID: "child", messageID: older.id, partID: part.id },
     })
     initial.resolve(response([{ info: latest, parts: [] }], "older"))

@@ -174,15 +174,6 @@ async function collectEvents(iterable: AsyncIterable<EventEnvelope>) {
   return result
 }
 
-type ProjectedEvent = {
-  readonly type: string
-  readonly properties: Readonly<Record<string, unknown>>
-}
-
-function projected(events: readonly EventEnvelope[]) {
-  return events.map((event) => event.payload) as unknown as readonly ProjectedEvent[]
-}
-
 afterAll(() => {
   expect(
     suiteRequests
@@ -406,11 +397,7 @@ describe("ACP client transcript projection", () => {
 
     const messages = await recording.client.session.messages({ sessionID: "ses_pairs" })
 
-    expect(messages.map((message) => message.info.id)).toEqual([
-      "msg_pair_user",
-      "msg_pair_first",
-      "msg_pair_second",
-    ])
+    expect(messages.map((message) => message.info.id)).toEqual(["msg_pair_user", "msg_pair_first", "msg_pair_second"])
     expect(messages[1]?.info).toMatchObject({ parentID: "msg_pair_user" })
     expect(messages[2]?.info).toMatchObject({ parentID: "msg_pair_user" })
   })
@@ -836,7 +823,7 @@ describe("ACP client completion boundary", () => {
 })
 
 describe("ACP client EventV2 boundary", () => {
-  test("each subscription has isolated projection state", async () => {
+  test("each subscription receives the canonical stream without projection state", async () => {
     const streams = [
       [
         canonicalEvent("session.next.prompted", {
@@ -868,17 +855,19 @@ describe("ACP client EventV2 boundary", () => {
       return eventStream(streams.shift() ?? [])
     })
 
-    const first = projected(await collectEvents(recording.client.events.subscribe()))
-    const second = projected(await collectEvents(recording.client.events.subscribe()))
-    const firstInfo = first.find((event) => event.type === "message.updated")?.properties.info
-    const secondInfo = second.find((event) => event.type === "message.updated")?.properties.info
+    const first = await collectEvents(recording.client.events.subscribe())
+    const second = await collectEvents(recording.client.events.subscribe())
 
-    expect(firstInfo).toMatchObject({ parentID: "msg_first_user" })
-    expect(secondInfo).toMatchObject({ parentID: "msg_shared_assistant" })
+    expect(first.map((event) => event.payload.type)).toEqual(["session.next.prompted", "session.next.step.started"])
+    expect(second.map((event) => event.payload.type)).toEqual(["session.next.step.started"])
+    expect(first[1]?.payload).toMatchObject({
+      type: "session.next.step.started",
+      data: { assistantMessageID: "msg_shared_assistant" },
+    })
     expect(recording.requests.map((request) => request.url.pathname)).toEqual(["/api/event", "/api/event"])
   })
 
-  test("malformed projection is skipped and a following valid event reaches the same iterator", async () => {
+  test("the facade does not reinterpret or suppress canonical payloads", async () => {
     const recording = makeFacade((request) => {
       if (request.url.pathname !== "/api/event") {
         throw new Error(`Unexpected request: ${request.method} ${request.url}`)
@@ -900,13 +889,59 @@ describe("ACP client EventV2 boundary", () => {
       ])
     })
 
-    const events = projected(await collectEvents(recording.client.events.subscribe()))
+    const events = await collectEvents(recording.client.events.subscribe())
 
-    expect(events.some((event) => event.type === "session.next.step.started")).toBe(false)
-    expect(events.filter((event) => event.type === "permission.v2.asked")).toHaveLength(1)
+    expect(events.map((event) => event.payload.type)).toEqual(["session.next.step.started", "permission.v2.asked"])
+    expect(events[0]?.payload).toMatchObject({
+      type: "session.next.step.started",
+      data: { timestamp: null },
+    })
   })
 
-  test("text, reasoning, tool progress/completion, attachment, permission, and error project once", async () => {
+  test("tool, text, and reasoning lifecycle events retain canonical data", async () => {
+    const step = { sessionID: "ses_events", assistantMessageID: "msg_assistant" }
+    const source = [
+      canonicalEvent("session.next.text.delta", {
+        ...step,
+        textID: "text",
+        delta: "hello",
+        timestamp: 1,
+      }),
+      canonicalEvent("session.next.reasoning.delta", {
+        ...step,
+        reasoningID: "reasoning",
+        delta: "think",
+        timestamp: 2,
+      }),
+      canonicalEvent("session.next.tool.called", {
+        ...step,
+        callID: "call",
+        tool: "read",
+        input: { path: "file.txt" },
+        provider: { executed: false },
+        timestamp: 3,
+      }),
+      canonicalEvent("session.next.tool.success", {
+        ...step,
+        callID: "call",
+        structured: { title: "Read" },
+        content: [{ type: "text", text: "done" }],
+        provider: { executed: false },
+        timestamp: 4,
+      }),
+    ]
+    const recording = makeFacade((request) => {
+      if (request.url.pathname === "/api/event") return eventStream(source)
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`)
+    })
+
+    const events = await collectEvents(recording.client.events.subscribe())
+
+    expect(events.map((event) => JSON.stringify(event.payload))).toEqual(source.map((event) => JSON.stringify(event)))
+    expect(events.every((event) => event.directory === directory && event.workspace === "workspace")).toBe(true)
+  })
+
+  test("the full ACP event sequence remains canonical", async () => {
     const step = { sessionID: "ses_events", assistantMessageID: "msg_assistant" }
     const recording = makeFacade((request) => {
       if (request.url.pathname !== "/api/event") {
@@ -1008,138 +1043,18 @@ describe("ACP client EventV2 boundary", () => {
     })
 
     const envelopes = await collectEvents(recording.client.events.subscribe())
-    const events = projected(envelopes)
-    const partEvents = events.filter((event) => event.type === "message.part.updated") as unknown as ReadonlyArray<{
-      readonly type: "message.part.updated"
-      readonly properties: {
-        readonly sessionID: string
-        readonly time: number
-        readonly part: {
-          readonly [key: string]: unknown
-          readonly type: string
-          readonly text?: string
-          readonly state?: {
-            readonly [key: string]: unknown
-            readonly status?: string
-            readonly title?: string
-            readonly attachments?: readonly unknown[]
-          }
-        }
-      }
-    }>
-    const updatedParts = partEvents.map((event) => event.properties.part)
+    const events = envelopes.map((event) => event.payload)
 
     expect(envelopes.every((event) => event.directory === directory && event.workspace === "workspace")).toBe(true)
-    expect(
-      partEvents
-        .filter((event) => event.properties.part.type === "text")
-        .map((event) => ({ type: event.type, properties: event.properties })),
-    ).toEqual([
-      {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "ses_events",
-          part: {
-            id: "prt_msg_assistant_text_0",
-            sessionID: "ses_events",
-            messageID: "msg_assistant",
-            type: "text",
-            text: "",
-            time: { start: 11 },
-          },
-          time: 11,
-        },
-      },
-      {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "ses_events",
-          part: {
-            id: "prt_msg_assistant_text_0",
-            sessionID: "ses_events",
-            messageID: "msg_assistant",
-            type: "text",
-            text: "hello",
-            time: { start: 11, end: 13 },
-          },
-          time: 13,
-        },
-      },
-    ])
-    expect(
-      partEvents
-        .filter((event) => event.properties.part.type === "reasoning")
-        .map((event) => ({ type: event.type, properties: event.properties })),
-    ).toEqual([
-      {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "ses_events",
-          part: {
-            id: "prt_msg_assistant_reasoning_1",
-            sessionID: "ses_events",
-            messageID: "msg_assistant",
-            type: "reasoning",
-            text: "",
-            time: { start: 14 },
-          },
-          time: 14,
-        },
-      },
-      {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "ses_events",
-          part: {
-            id: "prt_msg_assistant_reasoning_1",
-            sessionID: "ses_events",
-            messageID: "msg_assistant",
-            type: "reasoning",
-            text: "think",
-            time: { start: 14, end: 16 },
-          },
-          time: 16,
-        },
-      },
-    ])
-    expect(
-      partEvents
-        .filter((event) => event.properties.time === 19)
-        .map((event) => ({ type: event.type, properties: event.properties })),
-    ).toEqual([
-      {
-        type: "message.part.updated",
-        properties: {
-          sessionID: "ses_events",
-          part: {
-            id: "prt_msg_assistant_tool_2",
-            sessionID: "ses_events",
-            messageID: "msg_assistant",
-            type: "tool",
-            callID: "call",
-            tool: "read",
-            state: {
-              status: "running",
-              input: { path: "file.txt" },
-              title: "Reading",
-              metadata: { title: "Reading" },
-              time: { start: 18 },
-            },
-          },
-          time: 19,
-        },
-      },
-    ])
+    expect(events.some((event) => event.type.startsWith("message."))).toBe(false)
     expect(
       events
-        .filter(
-          (event) => event.type === "session.next.text.delta" || event.type === "session.next.reasoning.delta",
-        )
-        .map((event) => ({ type: event.type, properties: event.properties })),
+        .filter((event) => event.type === "session.next.text.delta" || event.type === "session.next.reasoning.delta")
+        .map((event) => ({ type: event.type, data: event.data })),
     ).toEqual([
       {
         type: "session.next.text.delta",
-        properties: {
+        data: {
           timestamp: 12,
           sessionID: "ses_events",
           assistantMessageID: "msg_assistant",
@@ -1149,7 +1064,7 @@ describe("ACP client EventV2 boundary", () => {
       },
       {
         type: "session.next.reasoning.delta",
-        properties: {
+        data: {
           timestamp: 15,
           sessionID: "ses_events",
           assistantMessageID: "msg_assistant",
@@ -1158,37 +1073,7 @@ describe("ACP client EventV2 boundary", () => {
         },
       },
     ])
-    const completed = updatedParts.filter((part) => part.type === "tool" && part.state?.status === "completed")
-    expect(completed).toEqual([
-      {
-        id: "prt_msg_assistant_tool_2",
-        sessionID: "ses_events",
-        messageID: "msg_assistant",
-        type: "tool",
-        callID: "call",
-        tool: "read",
-        state: {
-          status: "completed",
-          input: { path: "file.txt" },
-          output: "done\nfile:///result.txt",
-          title: "Read",
-          metadata: { title: "Read" },
-          time: { start: 18, end: 20 },
-          attachments: [
-            {
-              id: "prt_msg_assistant_tool-file-2_0",
-              sessionID: "ses_events",
-              messageID: "msg_assistant",
-              type: "file",
-              mime: "text/plain",
-              filename: "result.txt",
-              url: "file:///result.txt",
-            },
-          ],
-        },
-      },
-    ])
-    expect(events.filter((event) => event.type === "permission.v2.asked").map((event) => event.properties)).toEqual([
+    expect(events.filter((event) => event.type === "permission.v2.asked").map((event) => event.data)).toEqual([
       {
         id: "per_test",
         sessionID: "ses_events",
@@ -1198,7 +1083,7 @@ describe("ACP client EventV2 boundary", () => {
         save: ["*.txt"],
       },
     ])
-    expect(events.filter((event) => event.type === "session.next.error").map((event) => event.properties)).toEqual([
+    expect(events.filter((event) => event.type === "session.next.error").map((event) => event.data)).toEqual([
       {
         timestamp: 21,
         sessionID: "ses_events",

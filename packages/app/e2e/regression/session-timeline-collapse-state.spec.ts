@@ -119,13 +119,7 @@ test.describe("regression: session timeline local row state", () => {
     await wrapper.locator('[data-slot="collapsible-trigger"]').first().click()
     await expectExpanded(wrapper, false)
 
-    events.push({
-      directory,
-      payload: {
-        type: "message.part.updated",
-        properties: { part: streamedTextPart },
-      },
-    })
+    events.push(contentUpdated(streamedTextPart, 1))
 
     await expect(page.locator(`[data-timeline-part-id="${textPartID}"]`).first()).toBeVisible({ timeout: 10_000 })
 
@@ -151,13 +145,7 @@ test.describe("regression: session timeline local row state", () => {
     await expectAppVisible(file)
     await markDiffProbe(page)
 
-    events.push({
-      directory,
-      payload: {
-        type: "message.part.updated",
-        properties: { part: streamedTextPart },
-      },
-    })
+    events.push(contentUpdated(streamedTextPart, 1))
 
     await expect(page.locator(`[data-timeline-part-id="${textPartID}"]`).first()).toBeVisible({ timeout: 10_000 })
     const siblingProbe = await readDiffProbe(page)
@@ -171,13 +159,7 @@ test.describe("regression: session timeline local row state", () => {
     })
 
     await markDiffProbe(page)
-    events.push({
-      directory,
-      payload: {
-        type: "message.part.updated",
-        properties: { part: editPartWithAdditions(2) },
-      },
-    })
+    events.push(contentUpdated(editPartWithAdditions(2), 0))
 
     await expect(wrapper.locator('[data-slot="diff-changes-additions"]').filter({ hasText: "+2" }).first()).toBeVisible(
       { timeout: 10_000 },
@@ -366,6 +348,38 @@ function editPartWithAdditions(additions: number) {
           ...editPart.state.metadata.filediff,
           additions,
         },
+      },
+    },
+  }
+}
+
+function contentUpdated(part: typeof streamedTextPart | typeof editPart, contentIndex: number): EventPayload {
+  const content =
+    part.type === "text"
+      ? { type: "text", id: part.id, text: part.text }
+      : {
+          type: "tool",
+          id: part.id,
+          name: part.tool,
+          state: {
+            status: "completed",
+            input: part.state.input,
+            structured: part.state.metadata,
+            content: [{ type: "text", text: part.state.output }],
+          },
+          time: { created: part.state.time.start, completed: part.state.time.end },
+        }
+  return {
+    directory,
+    payload: {
+      type: "session.next.transcript.content.updated",
+      properties: {
+        timestamp: 1700000002000,
+        sessionID,
+        assistantMessageID,
+        contentIndex,
+        partID: part.id,
+        content,
       },
     },
   }

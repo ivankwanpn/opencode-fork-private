@@ -1,8 +1,6 @@
 import { Binary } from "@opencode-ai/core/util/binary"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type {
-  Message,
-  Part,
   PermissionV2Request,
   Project,
   QuestionV2Request,
@@ -16,18 +14,13 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { State, VcsCache } from "./types"
 import { trimSessions } from "./session-trim"
 import { dropSessionCaches } from "./session-cache"
-import { diffs as list, message as clean } from "@/utils/diffs"
+import { diffs as list } from "@/utils/diffs"
 import { projectSessionInfo } from "@/utils/session-snapshot"
 
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const SESSION_CONTENT_EVENTS = new Set([
   "session.next.diff",
   "todo.updated",
   "session.next.status",
-  "message.updated",
-  "message.removed",
-  "message.part.updated",
-  "message.part.removed",
   "permission.v2.asked",
   "permission.v2.replied",
   "question.v2.asked",
@@ -282,98 +275,6 @@ export function applyDirectoryEvent(input: {
     case "session.next.status": {
       const props = event.properties as { sessionID: string; status: SessionNextStatusInfo }
       input.setStore("session_status", props.sessionID, reconcile(props.status))
-      break
-    }
-    case "message.updated": {
-      const info = clean((event.properties as { info: Message }).info)
-      const messages = input.store.message[info.sessionID]
-      if (!messages) {
-        input.setStore("message", info.sessionID, [info])
-        break
-      }
-      const result = Binary.search(messages, info.id, (m) => m.id)
-      if (result.found) {
-        input.setStore("message", info.sessionID, result.index, reconcile(info))
-        break
-      }
-      input.setStore(
-        "message",
-        info.sessionID,
-        produce((draft) => {
-          draft.splice(result.index, 0, info)
-        }),
-      )
-      break
-    }
-    case "message.removed": {
-      const props = event.properties as { sessionID: string; messageID: string }
-      input.setStore(
-        produce((draft) => {
-          const messages = draft.message[props.sessionID]
-          if (messages) {
-            const result = Binary.search(messages, props.messageID, (m) => m.id)
-            if (result.found) messages.splice(result.index, 1)
-          }
-          const parts = draft.part[props.messageID]
-          if (parts) {
-            for (const part of parts) {
-              delete draft.part_text_accum_delta[part.id]
-            }
-          }
-          delete draft.part[props.messageID]
-        }),
-      )
-      break
-    }
-    case "message.part.updated": {
-      const part = (event.properties as { part: Part }).part
-      if (SKIP_PARTS.has(part.type)) break
-      input.setStore(
-        produce((draft) => {
-          delete draft.part_text_accum_delta[part.id]
-        }),
-      )
-      const parts = input.store.part[part.messageID]
-      if (!parts) {
-        input.setStore("part", part.messageID, [part])
-        break
-      }
-      const result = Binary.search(parts, part.id, (p) => p.id)
-      if (result.found) {
-        input.setStore("part", part.messageID, result.index, reconcile(part))
-        break
-      }
-      input.setStore(
-        "part",
-        part.messageID,
-        produce((draft) => {
-          draft.splice(result.index, 0, part)
-        }),
-      )
-      break
-    }
-    case "message.part.removed": {
-      const props = event.properties as { messageID: string; partID: string }
-      input.setStore(
-        produce((draft) => {
-          delete draft.part_text_accum_delta[props.partID]
-        }),
-      )
-      const parts = input.store.part[props.messageID]
-      if (!parts) break
-      const result = Binary.search(parts, props.partID, (p) => p.id)
-      if (result.found) {
-        input.setStore(
-          produce((draft) => {
-            const list = draft.part[props.messageID]
-            if (!list) return
-            const next = Binary.search(list, props.partID, (p) => p.id)
-            if (!next.found) return
-            list.splice(next.index, 1)
-            if (list.length === 0) delete draft.part[props.messageID]
-          }),
-        )
-      }
       break
     }
     case "vcs.branch.updated": {

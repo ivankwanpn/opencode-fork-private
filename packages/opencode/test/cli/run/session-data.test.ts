@@ -13,69 +13,102 @@ function reduce(data: ReturnType<typeof createSessionData>, event: unknown, thin
   })
 }
 
-function assistant(id: string, extra: Record<string, unknown> = {}) {
+function assistant(id: string) {
   return {
-    type: "message.updated",
+    type: "session.next.step.started",
     properties: {
+      timestamp: 1,
       sessionID: "session-1",
-      info: {
-        id,
-        role: "assistant",
-        providerID: "openai",
-        modelID: "gpt-5",
-        tokens: {
-          input: 1,
-          output: 1,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-        ...extra,
-      },
+      assistantMessageID: id,
+      agent: "build",
+      model: { providerID: "openai", id: "gpt-5" },
     },
   }
 }
 
 function user(id: string) {
   return {
-    type: "message.updated",
+    type: "session.next.transcript.user-text.updated",
     properties: {
+      timestamp: 1,
       sessionID: "session-1",
-      info: {
-        id,
-        role: "user",
-      },
+      messageID: id,
+      partID: id.replace("msg", "txt"),
+      text: "HELLO",
     },
   }
 }
 
 function text(input: { id: string; messageID: string; text: string; time?: Record<string, number> }) {
-  return {
-    type: "message.part.updated",
-    properties: {
-      part: {
-        id: input.id,
-        messageID: input.messageID,
+  if (input.time?.end) {
+    return {
+      type: "session.next.text.ended",
+      properties: {
+        timestamp: input.time.end,
         sessionID: "session-1",
-        type: "text",
+        assistantMessageID: input.messageID,
+        textID: input.id,
         text: input.text,
-        ...(input.time ? { time: input.time } : {}),
       },
+    }
+  }
+  if (!input.text) {
+    return {
+      type: "session.next.text.started",
+      properties: {
+        timestamp: input.time?.start ?? 1,
+        sessionID: "session-1",
+        assistantMessageID: input.messageID,
+        textID: input.id,
+      },
+    }
+  }
+  return {
+    type: "session.next.transcript.content.updated",
+    properties: {
+      timestamp: input.time?.start ?? 1,
+      sessionID: "session-1",
+      assistantMessageID: input.messageID,
+      contentIndex: 0,
+      partID: input.id,
+      content: { type: "text", id: input.id, text: input.text },
     },
   }
 }
 
 function reasoning(input: { id: string; messageID: string; text: string; time?: Record<string, number> }) {
-  return {
-    type: "message.part.updated",
-    properties: {
-      part: {
-        id: input.id,
-        messageID: input.messageID,
+  if (input.time?.end) {
+    return {
+      type: "session.next.reasoning.ended",
+      properties: {
+        timestamp: input.time.end,
         sessionID: "session-1",
-        type: "reasoning",
+        assistantMessageID: input.messageID,
+        reasoningID: input.id,
         text: input.text,
-        ...(input.time ? { time: input.time } : {}),
       },
+    }
+  }
+  if (!input.text) {
+    return {
+      type: "session.next.reasoning.started",
+      properties: {
+        timestamp: input.time?.start ?? 1,
+        sessionID: "session-1",
+        assistantMessageID: input.messageID,
+        reasoningID: input.id,
+      },
+    }
+  }
+  return {
+    type: "session.next.transcript.content.updated",
+    properties: {
+      timestamp: input.time?.start ?? 1,
+      sessionID: "session-1",
+      assistantMessageID: input.messageID,
+      contentIndex: 0,
+      partID: input.id,
+      content: { type: "reasoning", id: input.id, text: input.text },
     },
   }
 }
@@ -107,36 +140,69 @@ function reasoningDelta(messageID: string, partID: string, value: string) {
 }
 
 function tool(input: { id: string; messageID: string; tool: string; state: Record<string, unknown>; callID?: string }) {
+  const status = input.state.status
+  const body = (input.state.input as Record<string, unknown> | undefined) ?? {}
+  const metadata = (input.state.metadata as Record<string, unknown> | undefined) ?? {}
+  const time = (input.state.time as Record<string, number> | undefined) ?? {}
+  const state =
+    status === "completed"
+      ? {
+          status,
+          input: body,
+          content:
+            typeof input.state.output === "string" && input.state.output
+              ? [{ type: "text" as const, text: input.state.output }]
+              : [],
+          structured: { ...metadata, ...(typeof input.state.title === "string" ? { title: input.state.title } : {}) },
+        }
+      : status === "error"
+        ? {
+            status,
+            input: body,
+            content: [],
+            structured: metadata,
+            error: { type: "unknown" as const, message: String(input.state.error ?? "unknown error") },
+          }
+        : {
+            status: "running" as const,
+            input: body,
+            content: [],
+            structured: metadata,
+          }
   return {
-    type: "message.part.updated",
+    type: "session.next.transcript.content.updated",
     properties: {
-      part: {
-        id: input.id,
-        messageID: input.messageID,
-        sessionID: "session-1",
+      timestamp: time.end ?? time.start ?? 1,
+      sessionID: "session-1",
+      assistantMessageID: input.messageID,
+      contentIndex: 0,
+      partID: input.id,
+      content: {
         type: "tool",
-        tool: input.tool,
-        ...(input.callID ? { callID: input.callID } : {}),
-        state: input.state,
+        id: input.callID ?? input.id,
+        name: input.tool,
+        state,
+        time: { created: time.start ?? 1, ran: time.start, completed: time.end },
       },
     },
   }
 }
 
 describe("run session data", () => {
-  test("buffers delayed assistant text until the role is known", () => {
+  test("streams canonical assistant text as soon as its lifecycle starts", () => {
     let data = createSessionData()
     data = reduce(data, text({ id: "txt-1", messageID: "msg-1", text: "", time: { start: 1 } })).data
-    data = reduce(data, delta("msg-1", "txt-1", "hello")).data
-    const announced = reduce(data, assistant("msg-1"))
+    const streamed = reduce(data, delta("msg-1", "txt-1", "hello"))
 
-    expect(announced.commits).toEqual([
+    expect(streamed.commits).toEqual([
       expect.objectContaining({
         kind: "assistant",
         text: "hello",
         partID: "txt-1",
       }),
     ])
+    const announced = reduce(streamed.data, assistant("msg-1"))
+    expect(announced.commits).toEqual([])
 
     const ended = reduce(
       announced.data,
@@ -576,10 +642,7 @@ describe("run session data", () => {
 
     const first: StreamCommit[] = []
     flushInterrupted(data, first)
-    expect(first).toEqual([
-      expect.objectContaining({ kind: "assistant", text: "unfinished", phase: "progress" }),
-      expect.objectContaining({ kind: "assistant", phase: "final", interrupted: true }),
-    ])
+    expect(first).toEqual([expect.objectContaining({ kind: "assistant", phase: "final", interrupted: true })])
 
     const next: StreamCommit[] = []
     flushInterrupted(data, next)

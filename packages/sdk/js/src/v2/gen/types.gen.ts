@@ -11,10 +11,6 @@ export type Event =
   | EventCatalogUpdated
   | EventLspUpdated
   | EventVcsBranchUpdated
-  | EventMessageUpdated
-  | EventMessageRemoved
-  | EventMessagePartUpdated
-  | EventMessagePartRemoved
   | EventSessionNextCreated
   | EventSessionNextUpdated
   | EventSessionNextDeleted
@@ -143,22 +139,6 @@ export type MoveSessionError = {
   }
 }
 
-export type OutputFormatText = {
-  type: "text"
-}
-
-export type JsonSchema = {
-  [key: string]: unknown
-}
-
-export type OutputFormatJsonSchema = {
-  type: "json_schema"
-  schema: JsonSchema
-  retryCount?: number
-}
-
-export type OutputFormat = OutputFormatText | OutputFormatJsonSchema
-
 export type SnapshotFileDiff = {
   file?: string
   patch?: string
@@ -166,409 +146,6 @@ export type SnapshotFileDiff = {
   deletions: number
   status?: "added" | "deleted" | "modified"
 }
-
-export type UserMessage = {
-  id: string
-  sessionID: string
-  role: "user"
-  time: {
-    created: number
-  }
-  format?: OutputFormat
-  summary?: {
-    title?: string
-    body?: string
-    diffs: Array<SnapshotFileDiff>
-  }
-  agent: string
-  model: {
-    providerID: string
-    modelID: string
-    variant?: string
-    protocol?: CustomProviderProtocol
-  }
-  system?: string
-  tools?: {
-    [key: string]: boolean
-  }
-}
-
-export type ProviderAuthError = {
-  name: "ProviderAuthError"
-  data: {
-    providerID: string
-    message: string
-  }
-}
-
-export type UnknownError = {
-  name: "UnknownError"
-  data: {
-    message: string
-    ref?: string
-  }
-}
-
-export type MessageOutputLengthError = {
-  name: "MessageOutputLengthError"
-  data: {
-    [key: string]: unknown
-  }
-}
-
-export type MessageAbortedError = {
-  name: "MessageAbortedError"
-  data: {
-    message: string
-  }
-}
-
-export type StructuredOutputError = {
-  name: "StructuredOutputError"
-  data: {
-    message: string
-    retries: number
-  }
-}
-
-export type ContextOverflowError = {
-  name: "ContextOverflowError"
-  data: {
-    message: string
-    responseBody?: string
-  }
-}
-
-export type ContentFilterError = {
-  name: "ContentFilterError"
-  data: {
-    message: string
-  }
-}
-
-export type ApiError = {
-  name: "APIError"
-  data: {
-    message: string
-    statusCode?: number
-    isRetryable: boolean
-    responseHeaders?: {
-      [key: string]: string
-    }
-    responseBody?: string
-    metadata?: {
-      [key: string]: string
-    }
-  }
-}
-
-export type AssistantMessage = {
-  id: string
-  sessionID: string
-  role: "assistant"
-  time: {
-    created: number
-    completed?: number
-  }
-  error?:
-    | ProviderAuthError
-    | UnknownError
-    | MessageOutputLengthError
-    | MessageAbortedError
-    | StructuredOutputError
-    | ContextOverflowError
-    | ContentFilterError
-    | ApiError
-  parentID: string
-  modelID: string
-  providerID: string
-  mode: string
-  agent: string
-  path: {
-    cwd: string
-    root: string
-  }
-  summary?: boolean
-  cost: number
-  tokens: {
-    total?: number
-    input: number
-    output: number
-    reasoning: number
-    cache: {
-      read: number
-      write: number
-    }
-  }
-  structured?: unknown
-  variant?: string
-  finish?: string
-}
-
-export type Message = UserMessage | AssistantMessage
-
-export type TextPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "text"
-  text: string
-  synthetic?: boolean
-  ignored?: boolean
-  time?: {
-    start: number
-    end?: number
-  }
-  metadata?: {
-    [key: string]: unknown
-  }
-}
-
-export type SubtaskPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "subtask"
-  prompt: string
-  description: string
-  agent: string
-  model?: {
-    providerID: string
-    modelID: string
-  }
-  command?: string
-}
-
-export type ReasoningPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "reasoning"
-  text: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  time: {
-    start: number
-    end?: number
-  }
-}
-
-export type FilePartSourceText = {
-  value: string
-  start: number
-  end: number
-}
-
-export type FileSource = {
-  text: FilePartSourceText
-  type: "file"
-  path: string
-}
-
-export type Range = {
-  start: {
-    line: number
-    character: number
-  }
-  end: {
-    line: number
-    character: number
-  }
-}
-
-export type SymbolSource = {
-  text: FilePartSourceText
-  type: "symbol"
-  path: string
-  range: Range
-  name: string
-  kind: number
-}
-
-export type ResourceSource = {
-  text: FilePartSourceText
-  type: "resource"
-  clientName: string
-  uri: string
-}
-
-export type FilePartSource = FileSource | SymbolSource | ResourceSource
-
-export type FilePart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "file"
-  mime: string
-  filename?: string
-  url: string
-  source?: FilePartSource
-}
-
-export type ToolStatePending = {
-  status: "pending"
-  input: {
-    [key: string]: unknown
-  }
-  raw: string
-}
-
-export type ToolStateRunning = {
-  status: "running"
-  input: {
-    [key: string]: unknown
-  }
-  title?: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  time: {
-    start: number
-  }
-}
-
-export type ToolStateCompleted = {
-  status: "completed"
-  input: {
-    [key: string]: unknown
-  }
-  output: string
-  title: string
-  metadata: {
-    [key: string]: unknown
-  }
-  time: {
-    start: number
-    end: number
-    compacted?: number
-  }
-  attachments?: Array<FilePart>
-}
-
-export type ToolStateError = {
-  status: "error"
-  input: {
-    [key: string]: unknown
-  }
-  error: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  time: {
-    start: number
-    end: number
-  }
-}
-
-export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
-
-export type ToolPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "tool"
-  callID: string
-  tool: string
-  state: ToolState
-  metadata?: {
-    [key: string]: unknown
-  }
-}
-
-export type StepStartPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "step-start"
-  snapshot?: string
-}
-
-export type StepFinishPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "step-finish"
-  reason: string
-  snapshot?: string
-  cost: number
-  tokens: {
-    total?: number
-    input: number
-    output: number
-    reasoning: number
-    cache: {
-      read: number
-      write: number
-    }
-  }
-}
-
-export type SnapshotPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "snapshot"
-  snapshot: string
-}
-
-export type PatchPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "patch"
-  hash: string
-  files: Array<string>
-}
-
-export type AgentPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "agent"
-  name: string
-  source?: {
-    value: string
-    start: number
-    end: number
-  }
-}
-
-export type RetryPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "retry"
-  attempt: number
-  error: ApiError
-  time: {
-    created: number
-  }
-}
-
-export type CompactionPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "compaction"
-  auto: boolean
-  overflow?: boolean
-  tail_start_id?: string
-}
-
-export type Part =
-  | TextPart
-  | SubtaskPart
-  | ReasoningPart
-  | FilePart
-  | ToolPart
-  | StepStartPart
-  | StepFinishPart
-  | SnapshotPart
-  | PatchPart
-  | AgentPart
-  | RetryPart
-  | CompactionPart
 
 export type Prompt = {
   text: string
@@ -653,40 +230,6 @@ export type GlobalEvent = {
         type: "vcs.branch.updated"
         properties: {
           branch?: string
-        }
-      }
-    | {
-        id: string
-        type: "message.updated"
-        properties: {
-          sessionID: string
-          info: Message
-        }
-      }
-    | {
-        id: string
-        type: "message.removed"
-        properties: {
-          sessionID: string
-          messageID: string
-        }
-      }
-    | {
-        id: string
-        type: "message.part.updated"
-        properties: {
-          sessionID: string
-          part: Part
-          time: number
-        }
-      }
-    | {
-        id: string
-        type: "message.part.removed"
-        properties: {
-          sessionID: string
-          messageID: string
-          partID: string
         }
       }
     | {
@@ -1570,10 +1113,6 @@ export type GlobalEvent = {
         }
       }
     | EventServerInstanceDisposed
-    | SyncEventMessageUpdated
-    | SyncEventMessageRemoved
-    | SyncEventMessagePartUpdated
-    | SyncEventMessagePartRemoved
     | SyncEventSessionNextCreated
     | SyncEventSessionNextUpdated
     | SyncEventSessionNextDeleted
@@ -2247,6 +1786,17 @@ export type McpResource = {
   client: string
 }
 
+export type Range = {
+  start: {
+    line: number
+    character: number
+  }
+  end: {
+    line: number
+    character: number
+  }
+}
+
 export type Symbol = {
   name: string
   kind: number
@@ -2473,7 +2023,7 @@ export type ProviderAuthAuthorization = {
   instructions: string
 }
 
-export type ProviderAuthError1 = {
+export type ProviderAuthError = {
   name:
     | "BadRequest"
     | "ProviderAuthOauthMissing"
@@ -2548,6 +2098,414 @@ export type NotFoundError = {
     message: string
   }
 }
+
+export type OutputFormatText = {
+  type: "text"
+}
+
+export type JsonSchema = {
+  [key: string]: unknown
+}
+
+export type OutputFormatJsonSchema = {
+  type: "json_schema"
+  schema: JsonSchema
+  retryCount?: number
+}
+
+export type OutputFormat = OutputFormatText | OutputFormatJsonSchema
+
+export type UserMessage = {
+  id: string
+  sessionID: string
+  role: "user"
+  time: {
+    created: number
+  }
+  format?: OutputFormat
+  summary?: {
+    title?: string
+    body?: string
+    diffs: Array<SnapshotFileDiff>
+  }
+  agent: string
+  model: {
+    providerID: string
+    modelID: string
+    variant?: string
+    protocol?: CustomProviderProtocol
+  }
+  system?: string
+  tools?: {
+    [key: string]: boolean
+  }
+}
+
+export type ProviderAuthError1 = {
+  name: "ProviderAuthError"
+  data: {
+    providerID: string
+    message: string
+  }
+}
+
+export type UnknownError = {
+  name: "UnknownError"
+  data: {
+    message: string
+    ref?: string
+  }
+}
+
+export type MessageOutputLengthError = {
+  name: "MessageOutputLengthError"
+  data: {
+    [key: string]: unknown
+  }
+}
+
+export type MessageAbortedError = {
+  name: "MessageAbortedError"
+  data: {
+    message: string
+  }
+}
+
+export type StructuredOutputError = {
+  name: "StructuredOutputError"
+  data: {
+    message: string
+    retries: number
+  }
+}
+
+export type ContextOverflowError = {
+  name: "ContextOverflowError"
+  data: {
+    message: string
+    responseBody?: string
+  }
+}
+
+export type ContentFilterError = {
+  name: "ContentFilterError"
+  data: {
+    message: string
+  }
+}
+
+export type ApiError = {
+  name: "APIError"
+  data: {
+    message: string
+    statusCode?: number
+    isRetryable: boolean
+    responseHeaders?: {
+      [key: string]: string
+    }
+    responseBody?: string
+    metadata?: {
+      [key: string]: string
+    }
+  }
+}
+
+export type AssistantMessage = {
+  id: string
+  sessionID: string
+  role: "assistant"
+  time: {
+    created: number
+    completed?: number
+  }
+  error?:
+    | ProviderAuthError1
+    | UnknownError
+    | MessageOutputLengthError
+    | MessageAbortedError
+    | StructuredOutputError
+    | ContextOverflowError
+    | ContentFilterError
+    | ApiError
+  parentID: string
+  modelID: string
+  providerID: string
+  mode: string
+  agent: string
+  path: {
+    cwd: string
+    root: string
+  }
+  summary?: boolean
+  cost: number
+  tokens: {
+    total?: number
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
+  structured?: unknown
+  variant?: string
+  finish?: string
+}
+
+export type Message = UserMessage | AssistantMessage
+
+export type TextPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "text"
+  text: string
+  synthetic?: boolean
+  ignored?: boolean
+  time?: {
+    start: number
+    end?: number
+  }
+  metadata?: {
+    [key: string]: unknown
+  }
+}
+
+export type SubtaskPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "subtask"
+  prompt: string
+  description: string
+  agent: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
+  command?: string
+}
+
+export type ReasoningPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "reasoning"
+  text: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  time: {
+    start: number
+    end?: number
+  }
+}
+
+export type FilePartSourceText = {
+  value: string
+  start: number
+  end: number
+}
+
+export type FileSource = {
+  text: FilePartSourceText
+  type: "file"
+  path: string
+}
+
+export type SymbolSource = {
+  text: FilePartSourceText
+  type: "symbol"
+  path: string
+  range: Range
+  name: string
+  kind: number
+}
+
+export type ResourceSource = {
+  text: FilePartSourceText
+  type: "resource"
+  clientName: string
+  uri: string
+}
+
+export type FilePartSource = FileSource | SymbolSource | ResourceSource
+
+export type FilePart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "file"
+  mime: string
+  filename?: string
+  url: string
+  source?: FilePartSource
+}
+
+export type ToolStatePending = {
+  status: "pending"
+  input: {
+    [key: string]: unknown
+  }
+  raw: string
+}
+
+export type ToolStateRunning = {
+  status: "running"
+  input: {
+    [key: string]: unknown
+  }
+  title?: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  time: {
+    start: number
+  }
+}
+
+export type ToolStateCompleted = {
+  status: "completed"
+  input: {
+    [key: string]: unknown
+  }
+  output: string
+  title: string
+  metadata: {
+    [key: string]: unknown
+  }
+  time: {
+    start: number
+    end: number
+    compacted?: number
+  }
+  attachments?: Array<FilePart>
+}
+
+export type ToolStateError = {
+  status: "error"
+  input: {
+    [key: string]: unknown
+  }
+  error: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  time: {
+    start: number
+    end: number
+  }
+}
+
+export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
+
+export type ToolPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "tool"
+  callID: string
+  tool: string
+  state: ToolState
+  metadata?: {
+    [key: string]: unknown
+  }
+}
+
+export type StepStartPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "step-start"
+  snapshot?: string
+}
+
+export type StepFinishPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "step-finish"
+  reason: string
+  snapshot?: string
+  cost: number
+  tokens: {
+    total?: number
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
+}
+
+export type SnapshotPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "snapshot"
+  snapshot: string
+}
+
+export type PatchPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "patch"
+  hash: string
+  files: Array<string>
+}
+
+export type AgentPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "agent"
+  name: string
+  source?: {
+    value: string
+    start: number
+    end: number
+  }
+}
+
+export type RetryPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "retry"
+  attempt: number
+  error: ApiError
+  time: {
+    created: number
+  }
+}
+
+export type CompactionPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "compaction"
+  auto: boolean
+  overflow?: boolean
+  tail_start_id?: string
+}
+
+export type Part =
+  | TextPart
+  | SubtaskPart
+  | ReasoningPart
+  | FilePart
+  | ToolPart
+  | StepStartPart
+  | StepFinishPart
+  | SnapshotPart
+  | PatchPart
+  | AgentPart
+  | RetryPart
+  | CompactionPart
 
 export type SessionBusyError = {
   _tag: "SessionBusyError"
@@ -3015,16 +2973,6 @@ export type ManagedMcpRemoteConfig = {
   timeout?: ManagedMcpTimeout
 }
 
-export type OutputFormat1 =
-  | {
-      type: "text"
-    }
-  | {
-      type: "json_schema"
-      schema: JsonSchema
-      retryCount?: number
-    }
-
 export type V2Event =
   | ModelsDevRefreshed
   | IntegrationUpdated
@@ -3032,10 +2980,6 @@ export type V2Event =
   | CatalogUpdated
   | LspUpdated
   | VcsBranchUpdated
-  | MessageUpdated
-  | MessageRemoved
-  | MessagePartUpdated
-  | MessagePartRemoved
   | SessionNextCreated
   | SessionNextUpdated
   | SessionNextDeleted
@@ -3758,68 +3702,6 @@ export type EventServerInstanceDisposed = {
   type: "server.instance.disposed"
   properties: {
     directory: string
-  }
-}
-
-export type SyncEventMessageUpdated = {
-  type: "sync"
-  id: string
-  syncEvent: {
-    type: "message.updated.1"
-    id: string
-    seq: number
-    aggregateID: string
-    data: {
-      sessionID: string
-      info: Message
-    }
-  }
-}
-
-export type SyncEventMessageRemoved = {
-  type: "sync"
-  id: string
-  syncEvent: {
-    type: "message.removed.1"
-    id: string
-    seq: number
-    aggregateID: string
-    data: {
-      sessionID: string
-      messageID: string
-    }
-  }
-}
-
-export type SyncEventMessagePartUpdated = {
-  type: "sync"
-  id: string
-  syncEvent: {
-    type: "message.part.updated.1"
-    id: string
-    seq: number
-    aggregateID: string
-    data: {
-      sessionID: string
-      part: Part
-      time: number
-    }
-  }
-}
-
-export type SyncEventMessagePartRemoved = {
-  type: "sync"
-  id: string
-  syncEvent: {
-    type: "message.part.removed.1"
-    id: string
-    seq: number
-    aggregateID: string
-    data: {
-      sessionID: string
-      messageID: string
-      partID: string
-    }
   }
 }
 
@@ -6408,80 +6290,6 @@ export type VcsBranchUpdated = {
   }
 }
 
-export type MessageUpdated = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "message.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    info: Message
-  }
-}
-
-export type MessageRemoved = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "message.removed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    messageID: string
-  }
-}
-
-export type MessagePartUpdated = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "message.part.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    part: Part
-    time: number
-  }
-}
-
-export type MessagePartRemoved = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "message.part.removed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    messageID: string
-    partID: string
-  }
-}
-
 export type SessionNextError = {
   id: string
   metadata?: {
@@ -7253,44 +7061,6 @@ export type EventVcsBranchUpdated = {
   type: "vcs.branch.updated"
   properties: {
     branch?: string
-  }
-}
-
-export type EventMessageUpdated = {
-  id: string
-  type: "message.updated"
-  properties: {
-    sessionID: string
-    info: Message
-  }
-}
-
-export type EventMessageRemoved = {
-  id: string
-  type: "message.removed"
-  properties: {
-    sessionID: string
-    messageID: string
-  }
-}
-
-export type EventMessagePartUpdated = {
-  id: string
-  type: "message.part.updated"
-  properties: {
-    sessionID: string
-    part: Part
-    time: number
-  }
-}
-
-export type EventMessagePartRemoved = {
-  id: string
-  type: "message.part.removed"
-  properties: {
-    sessionID: string
-    messageID: string
-    partID: string
   }
 }
 
@@ -10535,7 +10305,7 @@ export type ProviderOauthAuthorizeErrors = {
   /**
    * ProviderAuthError | InvalidRequestError
    */
-  400: ProviderAuthError1 | InvalidRequestError
+  400: ProviderAuthError | InvalidRequestError
 }
 
 export type ProviderOauthAuthorizeError = ProviderOauthAuthorizeErrors[keyof ProviderOauthAuthorizeErrors]
@@ -10571,7 +10341,7 @@ export type ProviderOauthCallbackErrors = {
   /**
    * ProviderAuthError | InvalidRequestError
    */
-  400: ProviderAuthError1 | InvalidRequestError
+  400: ProviderAuthError | InvalidRequestError
 }
 
 export type ProviderOauthCallbackError = ProviderOauthCallbackErrors[keyof ProviderOauthCallbackErrors]

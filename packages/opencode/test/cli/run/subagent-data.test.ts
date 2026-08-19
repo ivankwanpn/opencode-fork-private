@@ -293,67 +293,50 @@ describe("run subagent data", () => {
     })
 
     reduce(data, {
-      type: "message.part.updated",
+      type: "session.next.transcript.user-text.updated",
       properties: {
-        part: {
-          id: "txt-user-1",
-          messageID: "msg-user-1",
-          sessionID: "child-1",
-          type: "text",
-          text: "Inspect footer tabs",
-        },
-      },
-    })
-    reduce(data, {
-      type: "message.updated",
-      properties: {
+        timestamp: 1,
         sessionID: "child-1",
-        info: {
-          id: "msg-user-1",
-          role: "user",
-        },
+        messageID: "msg-user-1",
+        partID: "txt-user-1",
+        text: "Inspect footer tabs",
       },
     })
     reduce(data, {
-      type: "message.updated",
+      type: "session.next.step.started",
       properties: {
+        timestamp: 1,
         sessionID: "child-1",
-        info: {
-          id: "msg-assistant-1",
-          role: "assistant",
-        },
+        assistantMessageID: "msg-assistant-1",
+        agent: "build",
+        model: { providerID: "openai", id: "gpt-5" },
       },
     })
     reduce(data, {
-      type: "message.part.updated",
+      type: "session.next.transcript.content.updated",
       properties: {
-        part: {
-          id: "reason-1",
-          messageID: "msg-assistant-1",
-          sessionID: "child-1",
-          type: "reasoning",
-          text: "planning next steps",
-          time: { start: 1 },
-        },
+        timestamp: 1,
+        sessionID: "child-1",
+        assistantMessageID: "msg-assistant-1",
+        contentIndex: 0,
+        partID: "reason-1",
+        content: { type: "reasoning", id: "reason-1", text: "planning next steps" },
       },
     })
     reduce(data, {
-      type: "message.part.updated",
+      type: "session.next.transcript.content.updated",
       properties: {
-        part: {
-          id: "tool-1",
-          messageID: "msg-assistant-1",
-          sessionID: "child-1",
+        timestamp: 1,
+        sessionID: "child-1",
+        assistantMessageID: "msg-assistant-1",
+        contentIndex: 1,
+        partID: "tool-1",
+        content: {
           type: "tool",
-          callID: "call-1",
-          tool: "bash",
-          state: {
-            status: "running",
-            input: {
-              command: "git status --short",
-            },
-            time: { start: 1 },
-          },
+          id: "call-1",
+          name: "bash",
+          state: { status: "running", input: { command: "git status --short" }, structured: {}, content: [] },
+          time: { created: 1, ran: 1 },
         },
       },
     })
@@ -374,15 +357,14 @@ describe("run subagent data", () => {
       },
     })
     reduce(data, {
-      type: "message.part.updated",
+      type: "session.next.transcript.content.updated",
       properties: {
-        part: {
-          id: "txt-1",
-          messageID: "msg-assistant-1",
-          sessionID: "child-1",
-          type: "text",
-          text: "hello",
-        },
+        timestamp: 1,
+        sessionID: "child-1",
+        assistantMessageID: "msg-assistant-1",
+        contentIndex: 2,
+        partID: "txt-1",
+        content: { type: "text", id: "txt-1", text: "hello" },
       },
     })
     reduce(data, {
@@ -524,44 +506,12 @@ describe("run subagent data", () => {
     })
 
     reduce(data, {
-      type: "message.updated",
+      type: "session.next.step.failed",
       properties: {
+        timestamp: 2,
         sessionID: "child-1",
-        info: {
-          id: "msg-assistant-1",
-          sessionID: "child-1",
-          role: "assistant",
-          time: {
-            created: 1,
-            completed: 2,
-          },
-          error: {
-            name: "MessageAbortedError",
-            data: {
-              message: "Aborted",
-            },
-          },
-          parentID: "msg-user-1",
-          providerID: "openai",
-          modelID: "gpt-5",
-          mode: "default",
-          agent: "explore",
-          path: {
-            cwd: "/tmp",
-            root: "/tmp",
-          },
-          cost: 0,
-          tokens: {
-            input: 1,
-            output: 1,
-            reasoning: 0,
-            cache: {
-              read: 0,
-              write: 0,
-            },
-          },
-          finish: "error",
-        },
+        assistantMessageID: "msg-assistant-1",
+        error: { type: "unknown", message: "Provider turn interrupted" },
       },
     })
 
@@ -571,5 +521,50 @@ describe("run subagent data", () => {
         status: "cancelled",
       }),
     ])
+  })
+
+  test("removes a live task tab when its canonical transcript content is removed", () => {
+    const data = createSubagentData()
+    reduce(data, {
+      type: "session.next.tool.called",
+      properties: {
+        timestamp: 1,
+        sessionID: "parent-1",
+        assistantMessageID: "msg-assistant-1",
+        callID: "call-1",
+        tool: "task",
+        input: { description: "Inspect reducer", subagent_type: "explore" },
+        provider: { executed: false },
+      },
+    })
+    expect(
+      reduce(data, {
+        type: "session.next.tool.progress",
+        properties: {
+          timestamp: 2,
+          sessionID: "parent-1",
+          assistantMessageID: "msg-assistant-1",
+          callID: "call-1",
+          structured: { sessionId: "child-1", title: "Inspect reducer" },
+          content: [],
+        },
+      }),
+    ).toBe(true)
+    expect(snapshotSubagentData(data).tabs).toEqual([expect.objectContaining({ sessionID: "child-1" })])
+
+    expect(
+      reduce(data, {
+        type: "session.next.transcript.content.removed",
+        properties: {
+          timestamp: 3,
+          sessionID: "parent-1",
+          assistantMessageID: "msg-assistant-1",
+          contentIndex: 0,
+          partID: "prt_msg-assistant-1_tool_0",
+        },
+      }),
+    ).toBe(true)
+    expect(snapshotSubagentData(data)).toMatchObject({ tabs: [], details: {} })
+    expect(data.toolParts.size).toBe(0)
   })
 })

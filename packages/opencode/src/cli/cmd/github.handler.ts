@@ -23,9 +23,10 @@ import { SessionShare } from "@/share/session"
 import type { SessionID } from "../../session/schema"
 import { Provider } from "@/provider/provider"
 import { MessageV2 } from "../../session/message-v2"
-import type { SessionV1 } from "@opencode-ai/core/v1/session"
-import { EventV2Bridge, legacyEventProjection } from "@/event-v2-bridge"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { EventV2 } from "@opencode-ai/core/event"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -840,34 +841,48 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
         )
       }
 
-      let text = ""
-      const project = legacyEventProjection()
+      const tools = new Map<string, { name: string; input: Record<string, unknown> }>()
       await runLocalEffect(
         events.listen((evt) => {
-          for (const projected of project(evt)) {
-            if (projected.type !== "message.part.updated") continue
-            const part = projected.properties.part as SessionV1.Part
-            if (part.sessionID !== session.id) continue
-
-            if (part.type === "tool" && part.state.status === "completed") {
-              const [tool, color] = TOOL[part.tool] ?? [part.tool, UI.Style.TEXT_INFO_BOLD]
-              const title =
-                part.state.title || Object.keys(part.state.input).length > 0
-                  ? JSON.stringify(part.state.input)
-                  : "Unknown"
-              console.log()
-              printEvent(color, tool, title)
-            }
-
-            if (part.type === "text") {
-              text = part.text
-              if (!part.time?.end) continue
-              UI.empty()
-              UI.println(UI.markdown(text))
-              UI.empty()
-              text = ""
-            }
+          if (evt.type === SessionEvent.Tool.Called.type) {
+            const data = evt.data as EventV2.Data<typeof SessionEvent.Tool.Called>
+            if (data.sessionID !== session.id) return Effect.void
+            tools.set(`${data.assistantMessageID}:${data.callID}`, {
+              name: data.tool,
+              input: data.input,
+            })
+            return Effect.void
           }
+          if (evt.type === SessionEvent.Tool.Failed.type) {
+            const data = evt.data as EventV2.Data<typeof SessionEvent.Tool.Failed>
+            if (data.sessionID !== session.id) return Effect.void
+            tools.delete(`${data.assistantMessageID}:${data.callID}`)
+            return Effect.void
+          }
+          if (evt.type === SessionEvent.Tool.Success.type) {
+            const data = evt.data as EventV2.Data<typeof SessionEvent.Tool.Success>
+            if (data.sessionID !== session.id) return Effect.void
+            const key = `${data.assistantMessageID}:${data.callID}`
+            const called = tools.get(key)
+            tools.delete(key)
+            if (!called) return Effect.void
+            const [tool, color] = TOOL[called.name] ?? [called.name, UI.Style.TEXT_INFO_BOLD]
+            const title =
+              typeof data.structured.title === "string"
+                ? data.structured.title
+                : Object.keys(called.input).length > 0
+                  ? JSON.stringify(called.input)
+                  : "Unknown"
+            console.log()
+            printEvent(color, tool, title)
+            return Effect.void
+          }
+          if (evt.type !== SessionEvent.Text.Ended.type) return Effect.void
+          const data = evt.data as EventV2.Data<typeof SessionEvent.Text.Ended>
+          if (data.sessionID !== session.id) return Effect.void
+          UI.empty()
+          UI.println(UI.markdown(data.text))
+          UI.empty()
           return Effect.void
         }),
       )

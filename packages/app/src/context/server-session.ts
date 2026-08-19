@@ -240,6 +240,11 @@ type ProjectedSessionClient = {
 }
 
 type V2InputEvent = OpenCodeEvent | LegacyV2Event | V2Event | SessionLifecycleEvent | SessionStatusEvent
+type ViewProjection =
+  | { type: "view.message.upsert"; properties: { sessionID: string; info: Message } }
+  | { type: "view.message.remove"; properties: { sessionID: string; messageID: string } }
+  | { type: "view.part.upsert"; properties: { sessionID: string; part: Part } }
+  | { type: "view.part.remove"; properties: { sessionID: string; messageID: string; partID: string } }
 
 type PendingV2Hydration = {
   events: V2InputEvent[]
@@ -1044,6 +1049,9 @@ export function createServerSession(
   const projectV2 = (reduction: V2SessionReduction) => {
     reduction.touched.forEach((messageID) => messageLoads.get(reduction.sessionID)?.touchedSource.add(messageID))
     setData("session_message", reduction.sessionID, reconcile(reduction.messages))
+    reduction.removed.forEach((messageID) =>
+      applyView({ type: "view.message.remove", properties: { sessionID: reduction.sessionID, messageID } }),
+    )
     if (reduction.touched.length === 0) return
 
     const touched = new Set(reduction.touched)
@@ -1063,18 +1071,18 @@ export function createServerSession(
     batch(() => {
       for (const message of normalized.messages) {
         if (!touched.has(message.id)) continue
-        apply({ type: "message.updated", properties: { sessionID: reduction.sessionID, info: message } })
+        applyView({ type: "view.message.upsert", properties: { sessionID: reduction.sessionID, info: message } })
       }
       for (const messageID of touched) {
         const next = normalized.parts.get(messageID) ?? []
         const nextIDs = new Set(next.map((part) => part.id))
         for (const part of next) {
-          apply({ type: "message.part.updated", properties: { sessionID: reduction.sessionID, part } })
+          applyView({ type: "view.part.upsert", properties: { sessionID: reduction.sessionID, part } })
         }
         for (const part of data.part[messageID] ?? []) {
           if (nextIDs.has(part.id)) continue
-          apply({
-            type: "message.part.removed",
+          applyView({
+            type: "view.part.remove",
             properties: { sessionID: reduction.sessionID, messageID, partID: part.id },
           })
         }
@@ -1117,7 +1125,7 @@ export function createServerSession(
         if (generations.get(sessionID) !== active) return
         const current = data.session_message[sessionID] ?? []
         const messages = [...current.filter((item) => item.id !== message.id), message].sort(compareMessages)
-        projectV2({ sessionID, messages, touched: [message.id] })
+        projectV2({ sessionID, messages, touched: [message.id], removed: [] })
         const pending = pendingV2Hydrations.get(sessionID)
         pendingV2Hydrations.delete(sessionID)
         if (pending?.events.length) retryMessageID = replayV2Events(sessionID, pending.events)
@@ -1375,7 +1383,7 @@ export function createServerSession(
       void refreshContext(sessionID).catch(() => {})
   }
 
-  const apply = (event: { type: string; properties?: unknown }) => {
+  const applyEvent = (event: { type: string; properties?: unknown } | ViewProjection) => {
     const eventID = eventSessionID(event)
     if (eventID) {
       touch(eventID)
@@ -1393,7 +1401,7 @@ export function createServerSession(
         setData("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
         return
       }
-      case "message.updated": {
+      case "view.message.upsert": {
         const info = cleanMessage((event.properties as { info: Message }).info)
         indexLegacyMessage(info)
         const load = messageLoads.get(info.sessionID)
@@ -1429,7 +1437,7 @@ export function createServerSession(
         })
         return
       }
-      case "message.removed": {
+      case "view.message.remove": {
         const props = event.properties as { sessionID: string; messageID: string }
         setData("session_message", props.sessionID, (messages) =>
           messages?.filter((message) => message.id !== props.messageID),
@@ -1460,7 +1468,7 @@ export function createServerSession(
         )
         return
       }
-      case "message.part.updated": {
+      case "view.part.upsert": {
         const part = (event.properties as { part: Part }).part
         if (SKIP_PARTS.has(part.type)) return
         const messages = data.message[part.sessionID]
@@ -1518,7 +1526,7 @@ export function createServerSession(
           })
         return
       }
-      case "message.part.removed": {
+      case "view.part.remove": {
         const props = event.properties as { sessionID: string; messageID: string; partID: string }
         // Part removal is event-only on the server, so its tombstone lasts until a later update or eviction.
         const pending = pendingParts.get(props.sessionID) ?? new Map<string, Set<string>>()
@@ -1618,6 +1626,9 @@ export function createServerSession(
       }
     }
   }
+
+  const apply = (event: { type: string; properties?: unknown }) => applyEvent(event)
+  const applyView = (event: ViewProjection) => applyEvent(event)
 
   return {
     data,

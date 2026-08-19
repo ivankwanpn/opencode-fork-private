@@ -111,11 +111,11 @@ function createHarness(messages: Record<string, ACPClient.LegacySessionMessage> 
   return { calls, client, connection, events, session, subscription, updates }
 }
 
-function textDelta(sessionID: string, messageID: string, partID: string, delta: string): ACPClient.LegacyEvent {
+function textDelta(sessionID: string, messageID: string, partID: string, delta: string): ACPClient.NativeEvent {
   return {
     id: `evt_${sessionID}_${messageID}_${partID}_${delta}`,
     type: "session.next.text.delta",
-    properties: {
+    data: {
       timestamp: 1,
       sessionID,
       assistantMessageID: messageID,
@@ -125,11 +125,11 @@ function textDelta(sessionID: string, messageID: string, partID: string, delta: 
   }
 }
 
-function reasoningDelta(sessionID: string, messageID: string, partID: string, delta: string): ACPClient.LegacyEvent {
+function reasoningDelta(sessionID: string, messageID: string, partID: string, delta: string): ACPClient.NativeEvent {
   return {
     id: `evt_${sessionID}_${messageID}_${partID}_${delta}`,
     type: "session.next.reasoning.delta",
-    properties: {
+    data: {
       timestamp: 1,
       sessionID,
       assistantMessageID: messageID,
@@ -139,48 +139,18 @@ function reasoningDelta(sessionID: string, messageID: string, partID: string, de
   }
 }
 
-function partUpdated(
-  sessionID: string,
-  messageID: string,
-  partID: string,
-  type: DeltaPartType,
-): ACPClient.LegacyEvent {
+function partStarted(sessionID: string, messageID: string, partID: string, type: DeltaPartType): ACPClient.NativeEvent {
+  if (type === "text") {
+    return {
+      id: `evt_${sessionID}_${messageID}_${partID}`,
+      type: "session.next.text.started",
+      data: { timestamp: 1, sessionID, assistantMessageID: messageID, textID: partID },
+    }
+  }
   return {
     id: `evt_${sessionID}_${messageID}_${partID}`,
-    type: "message.part.updated",
-    properties: {
-      sessionID,
-      time: Date.now(),
-      part:
-        type === "text"
-          ? {
-              id: partID,
-              sessionID,
-              messageID,
-              type: "text",
-              text: "",
-            }
-          : {
-              id: partID,
-              sessionID,
-              messageID,
-              type: "reasoning",
-              text: "",
-              time: { start: Date.now() },
-            },
-    },
-  }
-}
-
-function toolUpdated(part: ACPClient.LegacyToolPart): ACPClient.LegacyEvent {
-  return {
-    id: `evt_${part.sessionID}_${part.messageID}_${part.id}_${part.state.status}`,
-    type: "message.part.updated",
-    properties: {
-      sessionID: part.sessionID,
-      time: Date.now(),
-      part,
-    },
+    type: "session.next.reasoning.started",
+    data: { timestamp: 1, sessionID, assistantMessageID: messageID, reasoningID: partID },
   }
 }
 
@@ -312,6 +282,81 @@ function errorTool(sessionID: string, callID: string) {
   } satisfies ACPClient.LegacyToolPart
 }
 
+async function handleToolSnapshot(subscription: ACPEvent.Subscription, part: ACPClient.LegacyToolPart) {
+  const base = {
+    timestamp: Date.now(),
+    sessionID: part.sessionID,
+    assistantMessageID: part.messageID,
+    callID: part.callID,
+  }
+  await subscription.handle({
+    id: `evt_${part.callID}_input_started`,
+    type: "session.next.tool.input.started",
+    data: { ...base, name: part.tool },
+  })
+  await subscription.handle({
+    id: `evt_${part.callID}_input_ended`,
+    type: "session.next.tool.input.ended",
+    data: { ...base, text: JSON.stringify(part.state.input) },
+  })
+  if (part.state.status === "pending") return
+
+  await subscription.handle({
+    id: `evt_${part.callID}_called`,
+    type: "session.next.tool.called",
+    data: {
+      ...base,
+      tool: part.tool,
+      input: part.state.input,
+      provider: { executed: false },
+    },
+  })
+  if (part.state.status === "running") {
+    await subscription.handle({
+      id: `evt_${part.callID}_progress`,
+      type: "session.next.tool.progress",
+      data: {
+        ...base,
+        structured: part.state.metadata ?? { title: part.state.title },
+        content:
+          typeof part.state.metadata?.output === "string" ? [{ type: "text", text: part.state.metadata.output }] : [],
+      },
+    })
+    return
+  }
+  if (part.state.status === "completed") {
+    await subscription.handle({
+      id: `evt_${part.callID}_success`,
+      type: "session.next.tool.success",
+      data: {
+        ...base,
+        structured: part.state.metadata ?? { title: part.state.title },
+        content: [
+          { type: "text", text: part.state.output },
+          ...(part.state.attachments ?? []).map((attachment) => ({
+            type: "file" as const,
+            uri: attachment.url,
+            mime: attachment.mime,
+            name: attachment.filename,
+          })),
+        ],
+        provider: { executed: false },
+      },
+    })
+    return
+  }
+  await subscription.handle({
+    id: `evt_${part.callID}_failed`,
+    type: "session.next.tool.failed",
+    data: {
+      ...base,
+      error: { type: "unknown", message: part.state.error },
+      result: part.state.metadata,
+      provider: { executed: false },
+    },
+  })
+}
+
 function toolUpdates(updates: SessionUpdateParams[]) {
   return updates.filter((item): item is ToolSessionUpdateParams => {
     return item.update.sessionUpdate === "tool_call" || item.update.sessionUpdate === "tool_call_update"
@@ -437,7 +482,7 @@ describe("acp event routing", () => {
     })
     await Effect.runPromise(harness.session.create({ id: "ses_a", cwd: "/workspace" }))
 
-    await harness.subscription.handle(partUpdated("ses_a", "msg_a", "part_a", "text"))
+    await harness.subscription.handle(partStarted("ses_a", "msg_a", "part_a", "text"))
     await harness.subscription.handle(textDelta("ses_a", "msg_a", "part_a", "a"))
     await harness.subscription.handle(textDelta("ses_a", "msg_a", "part_a", "b"))
 
@@ -532,7 +577,7 @@ describe("acp event routing", () => {
     })
 
     await harness.subscription.handle(textDelta("ses_missing", "msg_missing", "part_missing", "ignored"))
-    await harness.subscription.handle(partUpdated("ses_user", "msg_user", "part_live", "text"))
+    await harness.subscription.handle(partStarted("ses_user", "msg_user", "part_live", "text"))
 
     expect(harness.updates).toHaveLength(0)
   })
@@ -541,10 +586,11 @@ describe("acp event routing", () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_tool", cwd: "/workspace" }))
 
-    await harness.subscription.handle(toolUpdated(runningTool("ses_tool", "call_1", "hello")))
+    await handleToolSnapshot(harness.subscription, runningTool("ses_tool", "call_1", "hello"))
 
     expect(toolUpdates(harness.updates).map((item) => item.update.sessionUpdate)).toEqual([
       "tool_call",
+      "tool_call_update",
       "tool_call_update",
     ])
     expect(harness.updates[0]?.update).toMatchObject({
@@ -555,35 +601,33 @@ describe("acp event routing", () => {
       locations: [{ path: "/workspace" }],
       rawInput: { cmd: "printf hello", cwd: "/workspace" },
     })
-    expect(harness.updates[1]?.update).toMatchObject({ status: "in_progress", toolCallId: "call_1" })
+    expect(harness.updates[2]?.update).toMatchObject({ status: "in_progress", toolCallId: "call_1" })
   })
 
   it("includes available input in the synthetic pending tool call", async () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_pending_input", cwd: "/workspace" }))
 
-    await harness.subscription.handle(
-      toolUpdated({
-        id: "part_call_read",
-        sessionID: "ses_pending_input",
-        messageID: "msg_call_read",
-        type: "tool",
-        callID: "call_read",
-        tool: "read",
-        state: {
-          status: "running",
-          input: { filePath: "/workspace/file.ts" },
-          title: "Read file.ts",
-          time: { start: Date.now() },
-        },
-      } satisfies ACPClient.LegacyToolPart),
-    )
+    await handleToolSnapshot(harness.subscription, {
+      id: "part_call_read",
+      sessionID: "ses_pending_input",
+      messageID: "msg_call_read",
+      type: "tool",
+      callID: "call_read",
+      tool: "read",
+      state: {
+        status: "running",
+        input: { filePath: "/workspace/file.ts" },
+        title: "Read file.ts",
+        time: { start: Date.now() },
+      },
+    } satisfies ACPClient.LegacyToolPart)
 
     expect(harness.updates[0]?.update).toMatchObject({
       sessionUpdate: "tool_call",
       toolCallId: "call_read",
       status: "pending",
-      title: "Read file.ts",
+      title: "read",
       kind: "read",
       rawInput: { filePath: "/workspace/file.ts" },
       locations: [{ path: "/workspace/file.ts" }],
@@ -595,7 +639,18 @@ describe("acp event routing", () => {
     await Effect.runPromise(harness.session.create({ id: "ses_replay", cwd: "/workspace" }))
 
     await harness.subscription.replayMessage(assistantToolMessage(runningTool("ses_replay", "call_replay", "first")))
-    await harness.subscription.handle(toolUpdated(runningTool("ses_replay", "call_replay", "second")))
+    await harness.subscription.handle({
+      id: "evt_call_replay_progress",
+      type: "session.next.tool.progress",
+      data: {
+        timestamp: Date.now(),
+        sessionID: "ses_replay",
+        assistantMessageID: "msg_call_replay",
+        callID: "call_replay",
+        structured: { output: "second" },
+        content: [{ type: "text", text: "second" }],
+      },
+    })
 
     expect(toolUpdates(harness.updates).filter((item) => item.update.sessionUpdate === "tool_call")).toHaveLength(1)
     expect(toolUpdates(harness.updates).map((item) => item.update.sessionUpdate)).toEqual([
@@ -609,44 +664,54 @@ describe("acp event routing", () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_shell", cwd: "/workspace" }))
 
-    await harness.subscription.handle(toolUpdated(runningTool("ses_shell", "call_shell", "same")))
-    await harness.subscription.handle(toolUpdated(runningTool("ses_shell", "call_shell", "same")))
+    await handleToolSnapshot(harness.subscription, runningTool("ses_shell", "call_shell", "same"))
+    await harness.subscription.handle({
+      id: "evt_call_shell_progress_again",
+      type: "session.next.tool.progress",
+      data: {
+        timestamp: Date.now(),
+        sessionID: "ses_shell",
+        assistantMessageID: "msg_call_shell",
+        callID: "call_shell",
+        structured: { output: "same" },
+        content: [{ type: "text", text: "same" }],
+      },
+    })
 
     const updates = toolUpdates(harness.updates)
-    expect(updates).toHaveLength(3)
-    expect(updates[1]?.update).toMatchObject({
+    expect(updates).toHaveLength(4)
+    expect(updates[2]?.update).toMatchObject({
       sessionUpdate: "tool_call_update",
       content: [{ type: "content", content: { type: "text", text: "same" } }],
     })
-    expect(updates[2]?.update).toMatchObject({ sessionUpdate: "tool_call_update", status: "in_progress" })
-    expect("content" in updates[2]!.update).toBe(false)
+    expect(updates[3]?.update).toMatchObject({ sessionUpdate: "tool_call_update", status: "in_progress" })
+    expect("content" in updates[3]!.update).toBe(false)
   })
 
   it("clears shell snapshot marker when a tool returns to pending", async () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_pending", cwd: "/workspace" }))
 
-    await harness.subscription.handle(toolUpdated(runningTool("ses_pending", "call_pending", "repeat")))
-    await harness.subscription.handle(
-      toolUpdated({
-        id: "part_call_pending",
-        sessionID: "ses_pending",
-        messageID: "msg_call_pending",
-        type: "tool",
-        callID: "call_pending",
-        tool: "bash",
-        state: {
-          status: "pending",
-          input: { cmd: "printf repeat" },
-          raw: '{"cmd":"printf repeat"}',
-        },
-      }),
-    )
-    await harness.subscription.handle(toolUpdated(runningTool("ses_pending", "call_pending", "repeat")))
+    await handleToolSnapshot(harness.subscription, runningTool("ses_pending", "call_pending", "repeat"))
+    await handleToolSnapshot(harness.subscription, {
+      id: "part_call_pending",
+      sessionID: "ses_pending",
+      messageID: "msg_call_pending",
+      type: "tool",
+      callID: "call_pending",
+      tool: "bash",
+      state: {
+        status: "pending",
+        input: { cmd: "printf repeat" },
+        raw: '{"cmd":"printf repeat"}',
+      },
+    })
+    await handleToolSnapshot(harness.subscription, runningTool("ses_pending", "call_pending", "repeat"))
 
     expect(
       toolUpdates(harness.updates)
         .filter((item) => item.update.sessionUpdate === "tool_call_update")
+        .filter((item) => "content" in item.update)
         .map((item) => ("content" in item.update ? item.update.content : undefined)),
     ).toEqual([
       [{ type: "content", content: { type: "text", text: "repeat" } }],
@@ -658,7 +723,7 @@ describe("acp event routing", () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_done", cwd: "/workspace" }))
 
-    await harness.subscription.handle(toolUpdated(completedTool("ses_done", "call_done", "finished")))
+    await handleToolSnapshot(harness.subscription, completedTool("ses_done", "call_done", "finished"))
 
     expect(harness.updates.at(-1)?.update).toMatchObject({
       sessionUpdate: "tool_call_update",
@@ -694,14 +759,13 @@ describe("acp event routing", () => {
       },
     }
 
-    await harness.subscription.handle(
-      toolUpdated(
-        completedTool("ses_read", "call_read", output, [], {
-          tool: "read",
-          input: { filePath: "/workspace/file.ts" },
-          metadata,
-        }),
-      ),
+    await handleToolSnapshot(
+      harness.subscription,
+      completedTool("ses_read", "call_read", output, [], {
+        tool: "read",
+        input: { filePath: "/workspace/file.ts" },
+        metadata,
+      }),
     )
 
     expect(harness.updates.at(-1)?.update).toMatchObject({
@@ -722,7 +786,7 @@ describe("acp event routing", () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_error", cwd: "/workspace" }))
 
-    await harness.subscription.handle(toolUpdated(errorTool("ses_error", "call_error")))
+    await handleToolSnapshot(harness.subscription, errorTool("ses_error", "call_error"))
 
     expect(harness.updates.at(-1)?.update).toMatchObject({
       sessionUpdate: "tool_call_update",
@@ -747,7 +811,7 @@ describe("acp event routing", () => {
     } as const
     await Effect.runPromise(harness.session.create({ id: "ses_image", cwd: "/workspace" }))
 
-    await harness.subscription.handle(toolUpdated(completedTool("ses_image", "call_live", "live", [attachment])))
+    await handleToolSnapshot(harness.subscription, completedTool("ses_image", "call_live", "live", [attachment]))
     await harness.subscription.replayMessage(
       assistantToolMessage(completedTool("ses_image", "call_replayed", "replayed", [attachment])),
     )

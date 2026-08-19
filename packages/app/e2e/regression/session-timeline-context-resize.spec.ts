@@ -76,25 +76,22 @@ test.describe("regression: session timeline context group resize", () => {
     })
     await startVisualProbe(page, regions)
     for (const [index, delay] of [120, 350, 80, 500].entries()) {
-      events.push({
-        directory,
-        payload: {
-          type: "message.part.updated",
-          properties: {
-            part: contextTool(
-              contextIDs[index]!,
-              id("msg_assistant", 10),
-              ["read", "glob", "grep", "list"][index]!,
-              [
-                { filePath: "src/recent-a.ts" },
-                { path: directory, pattern: "**/*.ts" },
-                { path: directory, pattern: "Explored" },
-                { path: "src" },
-              ][index]!,
-            ),
-          },
-        },
-      })
+      events.push(
+        contentUpdated(
+          contextTool(
+            contextIDs[index]!,
+            id("msg_assistant", 10),
+            ["read", "glob", "grep", "list"][index]!,
+            [
+              { filePath: "src/recent-a.ts" },
+              { path: directory, pattern: "**/*.ts" },
+              { path: directory, pattern: "Explored" },
+              { path: "src" },
+            ][index]!,
+          ),
+          index,
+        ),
+      )
       await page.waitForTimeout(delay)
     }
 
@@ -305,6 +302,38 @@ function contextTool(
       title: input.filePath || input.path || input.pattern || "completed",
       metadata: {},
       time: { start: 1700000000000, end: 1700000000100 },
+    },
+  }
+}
+
+function contentUpdated(part: ReturnType<typeof contextTool>, contentIndex: number) {
+  const structured = { ...part.state.metadata, title: part.state.title }
+  return {
+    directory,
+    payload: {
+      type: "session.next.transcript.content.updated",
+      properties: {
+        timestamp: 1700000000200,
+        sessionID,
+        assistantMessageID: part.messageID,
+        contentIndex,
+        partID: part.id,
+        content: {
+          type: "tool",
+          id: part.id,
+          name: part.tool,
+          state:
+            part.state.status === "running"
+              ? { status: "running", input: part.state.input, structured, content: [] }
+              : {
+                  status: "completed",
+                  input: part.state.input,
+                  structured,
+                  content: [{ type: "text", text: part.state.output }],
+                },
+          time: { created: part.state.time.start, completed: part.state.time.end },
+        },
+      },
     },
   }
 }

@@ -1,5 +1,11 @@
-import type { Event, PermissionV2Request, QuestionV2Request } from "@opencode-ai/sdk/v2"
-import { bootstrapSessionData, createSessionData, reduceSessionData, type SessionData } from "./session-data"
+import type { PermissionV2Request, QuestionV2Request } from "@opencode-ai/sdk/v2"
+import {
+  bootstrapSessionData,
+  createSessionData,
+  reduceSessionMessageSnapshot,
+  reduceSessionPartSnapshot,
+  type SessionData,
+} from "./session-data"
 import { messagePrompt, type SessionMessages } from "./session.shared"
 import { messageTurnSummaryCommit } from "./turn-summary"
 import type { FooterPatch, LocalReplayRow, RunProvider, StreamCommit } from "./types"
@@ -31,16 +37,6 @@ type ReplayMessage = {
 }
 
 const SHELL_SYNTHETIC_USER_TEXT = "The following tool was executed by the user"
-
-function apply(data: SessionData, event: Event, sessionID: string, thinking: boolean, limits: Record<string, number>) {
-  return reduceSessionData({
-    data,
-    event,
-    sessionID,
-    thinking,
-    limits,
-  })
-}
 
 function mergePatch(left: FooterPatch | undefined, right: FooterPatch | undefined) {
   if (!left) {
@@ -180,39 +176,12 @@ function replayMessage(
   const commits: StreamCommit[] = []
   let patch: FooterPatch | undefined
 
-  const info = apply(
-    data,
-    {
-      id: `bootstrap:message:${message.info.id}`,
-      type: "message.updated",
-      properties: {
-        sessionID: message.info.sessionID,
-        info: message.info,
-      },
-    },
-    message.info.sessionID,
-    thinking,
-    config.limits,
-  )
+  const info = reduceSessionMessageSnapshot({ data, info: message.info, thinking, limits: config.limits })
   commits.push(...info.commits)
   patch = mergePatch(patch, info.footer?.patch)
 
   for (const part of message.parts) {
-    const next = apply(
-      data,
-      {
-        id: `bootstrap:part:${part.id}`,
-        type: "message.part.updated",
-        properties: {
-          sessionID: part.sessionID,
-          part,
-          time: 0,
-        },
-      },
-      message.info.sessionID,
-      thinking,
-      config.limits,
-    )
+    const next = reduceSessionPartSnapshot({ data, part, thinking })
     patch = mergePatch(patch, next.footer?.patch)
     commits.push(...next.commits)
   }

@@ -122,3 +122,31 @@ test("production Session lifecycle consumers use canonical V2 event names", asyn
 
   expect(offenders).toEqual([])
 })
+
+test("production consumers do not reintroduce V1 message snapshot events", async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const roots = [
+    ["opencode", path.resolve(here, "../../src")],
+    ["app", path.resolve(here, "../../../app/src")],
+    ["tui", path.resolve(here, "../../../tui/src")],
+    ["plugin", path.resolve(here, "../../../plugin/src")],
+    ["slack", path.resolve(here, "../../../slack/src")],
+    ["session-ui", path.resolve(here, "../../../session-ui/src")],
+  ] as const
+  const pattern = /["'](?:message\.updated|message\.removed|message\.part\.updated|message\.part\.removed)["']/
+  const offenders = (
+    await Promise.all(
+      roots.flatMap(([name, root]) =>
+        [...new Bun.Glob("**/*.{ts,tsx}").scanSync(root)].map(async (file) => ({
+          file: `${name}/${file.replaceAll("\\", "/")}`,
+          source: await Bun.file(path.join(root, file)).text(),
+        })),
+      ),
+    )
+  )
+    .filter((entry) => pattern.test(entry.source))
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(offenders).toEqual([])
+})

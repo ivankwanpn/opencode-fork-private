@@ -16,6 +16,7 @@ export type V2SessionReduction = {
   sessionID: string
   messages: SessionMessageInfo[]
   touched: string[]
+  removed: string[]
   missing?: string
 }
 
@@ -39,10 +40,15 @@ export function createV2SessionReducer() {
   ): V2SessionReduction | undefined => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
     const sessionID = event.data.sessionID
-    const result = (messages: SessionMessageInfo[], touched: string[] = []): V2SessionReduction => ({
+    const result = (
+      messages: SessionMessageInfo[],
+      touched: string[] = [],
+      removed: string[] = [],
+    ): V2SessionReduction => ({
       sessionID,
       messages,
       touched,
+      removed,
     })
     const append = (message: SessionMessageInfo) =>
       result(source.some((item) => item.id === message.id) ? [...source] : [...source, message], [message.id])
@@ -54,6 +60,63 @@ export function createV2SessionReducer() {
         return source.some((item) => item.id === event.data.message.id)
           ? result([...source])
           : { ...result([...source]), missing: event.data.message.id }
+      case "session.next.transcript.message.removed":
+        return result(
+          source.filter((message) => message.id !== event.data.messageID),
+          [event.data.messageID],
+          [event.data.messageID],
+        )
+      case "session.next.transcript.user-text.updated":
+        return updateUser(source, event.data.messageID, sessionID, (message) => ({
+          ...message,
+          text: event.data.text,
+        }))
+      case "session.next.transcript.user-text.removed":
+        return updateUser(source, event.data.messageID, sessionID, (message) => ({ ...message, text: "" }))
+      case "session.next.transcript.content.updated": {
+        const message = source.find(
+          (item): item is Assistant => item.id === event.data.assistantMessageID && item.type === "assistant",
+        )
+        if (!message || event.data.contentIndex > message.content.length)
+          return {
+            ...result([...source]),
+            missing: event.data.assistantMessageID,
+          }
+        return result(
+          update(source, message.id, (item) =>
+            item.type === "assistant"
+              ? {
+                  ...item,
+                  content:
+                    event.data.contentIndex === item.content.length
+                      ? [...item.content, legacyAssistantContent(event.data.content)]
+                      : item.content.map((content, index) =>
+                          index === event.data.contentIndex ? legacyAssistantContent(event.data.content) : content,
+                        ),
+                }
+              : item,
+          ),
+          [message.id],
+        )
+      }
+      case "session.next.transcript.content.removed": {
+        const message = source.find(
+          (item): item is Assistant => item.id === event.data.assistantMessageID && item.type === "assistant",
+        )
+        if (!message?.content[event.data.contentIndex])
+          return {
+            ...result([...source]),
+            missing: event.data.assistantMessageID,
+          }
+        return result(
+          update(source, message.id, (item) =>
+            item.type === "assistant"
+              ? { ...item, content: item.content.filter((_, index) => index !== event.data.contentIndex) }
+              : item,
+          ),
+          [message.id],
+        )
+      }
       case "session.next.context.updated":
         return append({
           id: event.data.messageID,
@@ -818,11 +881,28 @@ function updateMessage<T extends SessionMessageInfo>(
   sessionID: string,
 ): V2SessionReduction {
   const current = source.findLast(matches)
-  if (!current) return { sessionID, messages: [...source], touched: [] }
+  if (!current) return { sessionID, messages: [...source], touched: [], removed: [] }
   return {
     sessionID,
     messages: update(source, current.id, (item) => (matches(item) ? apply(item) : item)),
     touched: [current.id],
+    removed: [],
+  }
+}
+
+function updateUser(
+  source: readonly SessionMessageInfo[],
+  id: string,
+  sessionID: string,
+  apply: (item: Extract<SessionMessageInfo, { type: "user" }>) => Extract<SessionMessageInfo, { type: "user" }>,
+): V2SessionReduction {
+  if (!source.some((item) => item.id === id && item.type === "user"))
+    return { sessionID, messages: [...source], touched: [], removed: [], missing: id }
+  return {
+    sessionID,
+    messages: update(source, id, (item) => (item.type === "user" ? apply(item) : item)),
+    touched: [id],
+    removed: [],
   }
 }
 
@@ -833,11 +913,12 @@ function updateAssistant(
   apply: (item: Assistant) => Assistant,
 ): V2SessionReduction {
   if (!source.some((item) => item.id === id && item.type === "assistant"))
-    return { sessionID, messages: [...source], touched: [], missing: id }
+    return { sessionID, messages: [...source], touched: [], removed: [], missing: id }
   return {
     sessionID,
     messages: update(source, id, (item) => (item.type === "assistant" ? apply(item) : item)),
     touched: [id],
+    removed: [],
   }
 }
 
@@ -892,6 +973,62 @@ function legacyJsonValue(value: unknown) {
   return value as JsonValue | undefined
 }
 
+function legacyAssistantContent(
+  content: Extract<V2Event, { type: "session.next.transcript.content.updated" }>["data"]["content"],
+): Assistant["content"][number] {
+  if (content.type === "text") {
+    const text = { type: "text" as const, id: content.id, text: content.text }
+    return text
+  }
+  if (content.type === "reasoning") {
+    const reasoning = {
+      type: "reasoning" as const,
+      id: content.id,
+      text: content.text,
+      state: legacyJsonRecord(content.providerMetadata),
+      time: content.time,
+    }
+    return reasoning
+  }
+
+  const base = {
+    type: "tool" as const,
+    id: content.id,
+    name: content.name,
+    executed: content.provider?.executed,
+    providerState: legacyJsonRecord(content.provider?.metadata),
+    providerResultState: legacyJsonRecord(content.provider?.resultMetadata),
+    time: content.time,
+  }
+  if (content.state.status === "pending")
+    return { ...base, state: { status: "streaming", input: content.state.input } }
+
+  const state = {
+    input: legacyJsonRecord(content.state.input) ?? {},
+    structured: legacyJsonRecord(content.state.structured) ?? {},
+    content: content.state.content.map((item) =>
+      item.type === "text"
+        ? { type: "text" as const, text: item.text }
+        : { type: "file" as const, uri: item.uri, mime: item.mime, name: item.name },
+    ),
+  }
+  if (content.state.status === "running") return { ...base, state: { status: "running", ...state } }
+  if (content.state.status === "completed")
+    return {
+      ...base,
+      state: { status: "completed", ...state, result: legacyJsonValue(content.state.result) },
+    }
+  return {
+    ...base,
+    state: {
+      status: "error",
+      ...state,
+      error: content.state.error,
+      result: legacyJsonValue(content.state.result),
+    },
+  }
+}
+
 function updateTool(
   source: readonly SessionMessageInfo[],
   messageID: string,
@@ -903,7 +1040,7 @@ function updateTool(
 ) {
   const assistant = source.find((item): item is Assistant => item.type === "assistant" && item.id === messageID)
   if (assistant && !assistant.content.some((item) => item.type === "tool" && item.id === callID))
-    return { sessionID, messages: [...source], touched: [], missing: messageID }
+    return { sessionID, messages: [...source], touched: [], removed: [], missing: messageID }
   return updateAssistant(source, messageID, sessionID, (assistant) => ({
     ...assistant,
     content: assistant.content.map((item) => (item.type === "tool" && item.id === callID ? apply(item) : item)),

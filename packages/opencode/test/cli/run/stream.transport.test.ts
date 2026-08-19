@@ -87,17 +87,16 @@ function retry(sessionID: string, attempt: number, message: string) {
   } satisfies SdkEvent
 }
 
-function assistant(id: string) {
+function assistant(id: string, sessionID = "session-1") {
   return {
     id: `evt-${id}`,
-    type: "message.updated",
+    type: "session.next.step.started",
     properties: {
-      sessionID: "session-1",
-      info: assistantMessage({
-        sessionID: "session-1",
-        id,
-        parts: [],
-      }).info,
+      timestamp: 1,
+      sessionID,
+      assistantMessageID: id,
+      agent: "build",
+      model: { providerID: "openai", id: "gpt-5" },
     },
   } satisfies SdkEvent
 }
@@ -291,13 +290,28 @@ function textPart(id: string, messageID: string, text: string, sessionID = "sess
 }
 
 function textUpdated(part: TextPart): SdkEvent {
+  if (!part.text) {
+    return {
+      id: `evt-${part.id}-started`,
+      type: "session.next.text.started",
+      properties: {
+        timestamp: 1,
+        sessionID: part.sessionID,
+        assistantMessageID: part.messageID,
+        textID: part.id,
+      },
+    }
+  }
   return {
     id: `evt-${part.id}-updated`,
-    type: "message.part.updated",
+    type: "session.next.transcript.content.updated",
     properties: {
+      timestamp: 1,
       sessionID: part.sessionID,
-      part,
-      time: 1,
+      assistantMessageID: part.messageID,
+      contentIndex: 0,
+      partID: part.id,
+      content: { type: "text", id: part.id, text: part.text },
     },
   }
 }
@@ -314,25 +328,77 @@ function reasoningPart(id: string, messageID: string, text: string): ReasoningPa
 }
 
 function reasoningUpdated(part: ReasoningPart): SdkEvent {
+  if (!part.text) {
+    return {
+      id: `evt-${part.id}-started`,
+      type: "session.next.reasoning.started",
+      properties: {
+        timestamp: 1,
+        sessionID: part.sessionID,
+        assistantMessageID: part.messageID,
+        reasoningID: part.id,
+      },
+    }
+  }
   return {
     id: `evt-${part.id}-updated`,
-    type: "message.part.updated",
+    type: "session.next.transcript.content.updated",
     properties: {
+      timestamp: 1,
       sessionID: part.sessionID,
-      part,
-      time: 1,
+      assistantMessageID: part.messageID,
+      contentIndex: 0,
+      partID: part.id,
+      content: { type: "reasoning", id: part.id, text: part.text },
     },
   }
 }
 
 function toolUpdated(part: SessionToolPart): SdkEvent {
+  const state =
+    part.state.status === "completed"
+      ? {
+          status: "completed" as const,
+          input: part.state.input,
+          content: part.state.output ? [{ type: "text" as const, text: part.state.output }] : [],
+          structured: part.state.metadata,
+        }
+      : part.state.status === "error"
+        ? {
+            status: "error" as const,
+            input: part.state.input,
+            content: [],
+            structured: part.state.metadata ?? {},
+            error: { type: "unknown" as const, message: part.state.error },
+          }
+        : part.state.status === "pending"
+          ? { status: "pending" as const, input: part.state.raw }
+          : {
+            status: "running" as const,
+            input: part.state.input,
+            content: [],
+            structured: part.state.metadata ?? {},
+            }
   return {
     id: `evt-${part.id}-updated`,
-    type: "message.part.updated",
+    type: "session.next.transcript.content.updated",
     properties: {
+      timestamp: 1,
       sessionID: part.sessionID,
-      part,
-      time: 1,
+      assistantMessageID: part.messageID,
+      contentIndex: 0,
+      partID: part.id,
+      content: {
+        type: "tool",
+        id: part.callID,
+        name: part.tool,
+        state,
+        time: {
+          created: "time" in part.state ? part.state.time.start : 1,
+          ran: "time" in part.state ? part.state.time.start : undefined,
+          completed: "time" in part.state && "end" in part.state.time ? part.state.time.end : undefined,
+        },
+      },
     },
   }
 }
@@ -1597,20 +1663,7 @@ describe("run stream transport", () => {
     try {
       await Promise.resolve()
       global.push(globalEvent(retry("child-1", 1, "retry child")))
-      global.push(
-        globalEvent({
-          id: "evt-child-message",
-          type: "message.updated",
-          properties: {
-            sessionID: "child-1",
-            info: assistantMessage({
-              sessionID: "child-1",
-              id: "msg-child-1",
-              parts: [],
-            }).info,
-          },
-        }),
-      )
+      global.push(globalEvent(assistant("msg-child-1", "child-1")))
       global.push(globalEvent(textUpdated(textPart("txt-child-1", "msg-child-1", "", "child-1"))))
       global.push(globalEvent(textDelta("msg-child-1", "txt-child-1", "Hello", "child-1")))
       global.push(
@@ -1718,20 +1771,7 @@ describe("run stream transport", () => {
 
       transport.selectSubagent("child-1")
 
-      global.push(
-        globalEvent({
-          id: "evt-child-message",
-          type: "message.updated",
-          properties: {
-            sessionID: "child-1",
-            info: assistantMessage({
-              sessionID: "child-1",
-              id: "msg-child-1",
-              parts: [],
-            }).info,
-          },
-        }),
-      )
+      global.push(globalEvent(assistant("msg-child-1", "child-1")))
       global.push(globalEvent(textUpdated(textPart("txt-child-1", "msg-child-1", "hello", "child-1"))))
 
       expect(

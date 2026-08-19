@@ -1,5 +1,4 @@
 import type { Event, GlobalEvent, OpencodeClient, PermissionV2Request } from "@opencode-ai/sdk/v2"
-import { legacyEventPayloads, legacyEventProjection } from "@/event-v2-bridge"
 import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
 import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"
@@ -114,40 +113,18 @@ function commandFiles(parts: unknown) {
     }))
 }
 
-function cliEventPayloads(projectLegacy: ReturnType<typeof legacyEventProjection>, source: NativeEvent) {
-  if (
-    source.type === "session.next.error" ||
-    source.type === "session.next.status" ||
-    source.type === "session.next.diff" ||
-    source.type === "session.next.text.delta" ||
-    source.type === "session.next.reasoning.delta" ||
-    source.type === "session.next.tool.input.delta" ||
-    source.type === "permission.v2.asked" ||
-    source.type === "permission.v2.replied" ||
-    source.type === "question.v2.asked" ||
-    source.type === "question.v2.replied" ||
-    source.type === "question.v2.rejected"
-  ) {
-    return [
-      {
-        id: source.id,
-        type: source.type,
-        properties: source.data,
-      } as Event,
-    ]
-  }
-
-  return legacyEventPayloads(
-    projectLegacy,
-    source as unknown as Parameters<typeof legacyEventPayloads>[1],
-  ).map((event) => event as Event)
+function cliEvent(source: NativeEvent) {
+  return {
+    id: source.id,
+    type: source.type,
+    properties: source.data,
+  } as Event
 }
 
 export function createNativeCompatClient(input: { native: NativeClient; directory?: string }): OpencodeClient {
   const native = input.native
   const permissionSessions = new Map<string, string>()
   const questionSessions = new Map<string, string>()
-  const projectLegacy = legacyEventProjection()
   const loc = (directory?: string) => location(directory ?? input.directory)
 
   const remember = (event: Event) => {
@@ -161,22 +138,18 @@ export function createNativeCompatClient(input: { native: NativeClient; director
 
   async function* projected(options?: RequestOptions): AsyncGenerator<Event> {
     for await (const source of native.events.subscribe({ signal: options?.signal })) {
-      for (const event of cliEventPayloads(projectLegacy, source)) {
-        yield remember(event)
-      }
+      yield remember(cliEvent(source))
     }
   }
 
   async function* global(options?: RequestOptions): AsyncGenerator<GlobalEvent> {
     for await (const source of native.events.subscribe({ signal: options?.signal })) {
-      for (const payload of cliEventPayloads(projectLegacy, source)) {
-        const event = remember(payload)
-        yield {
-          directory: source.location?.directory,
-          workspace: source.location?.workspaceID,
-          payload: event,
-        } as GlobalEvent
-      }
+      const event = remember(cliEvent(source))
+      yield {
+        directory: source.location?.directory,
+        workspace: source.location?.workspaceID,
+        payload: event,
+      } as GlobalEvent
     }
   }
 

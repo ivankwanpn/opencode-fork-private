@@ -1,5 +1,5 @@
 import { App } from "@slack/bolt"
-import { createOpencode, type ToolPart } from "@opencode-ai/sdk"
+import { createOpencode } from "@opencode-ai/sdk"
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -20,27 +20,31 @@ const opencode = await createOpencode({
 console.log("✅ Opencode server ready")
 
 const sessions = new Map<string, { client: any; server: any; sessionId: string; channel: string; thread: string }>()
+const tools = new Map<string, string>()
+const toolKey = (event: { data: { sessionID: string; assistantMessageID: string; callID: string } }) =>
+  `${event.data.sessionID}:${event.data.assistantMessageID}:${event.data.callID}`
 void (async () => {
-  const events = await opencode.client.event.subscribe()
+  const { createOpencodeClient } = await import("@opencode-ai/sdk/v2/client")
+  const events = await createOpencodeClient({ baseUrl: opencode.server.url }).v2.event.subscribe()
   for await (const event of events.stream) {
-    if (event.type === "message.part.updated") {
-      const part = event.properties.part
-      if (part.type === "tool") {
-        // Find the session for this tool update
-        for (const [_sessionKey, session] of sessions.entries()) {
-          if (session.sessionId === part.sessionID) {
-            void handleToolUpdate(part, session.channel, session.thread)
-            break
-          }
-        }
-      }
+    if (event.type === "session.next.tool.called") tools.set(toolKey(event), event.data.tool)
+    if (event.type === "session.next.tool.failed") {
+      tools.delete(toolKey(event))
+      continue
     }
+    if (event.type !== "session.next.tool.success") continue
+    const tool = tools.get(toolKey(event))
+    tools.delete(toolKey(event))
+    if (!tool) continue
+    const session = [...sessions.values()].find((item) => item.sessionId === event.data.sessionID)
+    if (!session) continue
+    const title = typeof event.data.structured.title === "string" ? event.data.structured.title : tool
+    void handleToolUpdate(tool, title, session.channel, session.thread)
   }
 })()
 
-async function handleToolUpdate(part: ToolPart, channel: string, thread: string) {
-  if (part.state.status !== "completed") return
-  const toolMessage = `*${part.tool}* - ${part.state.title}`
+async function handleToolUpdate(tool: string, title: string, channel: string, thread: string) {
+  const toolMessage = `*${tool}* - ${title}`
   await app.client.chat
     .postMessage({
       channel,

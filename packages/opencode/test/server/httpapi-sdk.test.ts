@@ -664,12 +664,10 @@ describe("HttpApi SDK", () => {
   )
 
   // Regression: EventV2 must publish on the same ProjectBus the /event handler
-  // subscribes to, AND the /event stream must forward handler ALS/context into the
-  // body-pump fiber. Drives the full SDK → /event → Session.updatePart → sync.run →
-  // bus.publish → SDK subscriber path. Goes red if either the publisher uses a
-  // different bus instance (Bug 2 / pre-#27825) or the stream loses context (Bug 1 /
-  // pre-#27425).
-  serverPathParity("streams sync-backed part updates to /event subscribers", (serverPath) =>
+  // subscribes to, and the stream must preserve handler ALS/context in the
+  // body-pump fiber. The compatibility endpoint keeps its envelope but no longer
+  // renames canonical transcript events into V1 message snapshots.
+  serverPathParity("streams canonical transcript updates to /event subscribers", (serverPath) =>
     withStandardProject(serverPath, ({ sdk }) =>
       Effect.gen(function* () {
         const session = yield* capture(() => sdk.session.create({ title: "sync-backed part event" }))
@@ -694,7 +692,7 @@ describe("HttpApi SDK", () => {
               Deferred.doneUnsafe(ready, Effect.void)
               continue
             }
-            if (type === "message.part.updated") {
+            if (type === "session.next.transcript.user-text.updated") {
               Deferred.doneUnsafe(received, Effect.succeed(payload))
               return
             }
@@ -717,12 +715,12 @@ describe("HttpApi SDK", () => {
 
         const event = yield* awaitWithTimeout(
           Deferred.await(received),
-          "timed out waiting for message.part.updated bus payload over /event",
+          "timed out waiting for canonical transcript payload over /event",
           "5 seconds",
         )
         const properties = record(record(event).properties)
-        expect(record(properties.part)).toMatchObject({ id: seeded.part.id, type: "text" })
-        return { type: record(event).type, partType: record(properties.part).type }
+        expect(properties).toMatchObject({ messageID: seeded.message.id, partID: seeded.part.id, text: "updated via sync" })
+        return { type: record(event).type, partID: properties.partID }
       }),
     ),
   )

@@ -100,6 +100,13 @@ plugin改用`session.next.created/updated/deleted`，不再由TUI/App邊界降�
 manifest移除，event inventory由96降至93，durable維持47；SessionV1 public compatibility只剩四個
 message/part snapshot definitions。
 
+**999.0.19 Message snapshot consumer hard cut**：CLI、ACP、App、TUI、Slack與GitHub handler已直接消費
+canonical text/reasoning/tool/step/transcript mutation事件；App補齊message/user-text/content五類mutation、
+hydration與message tombstone，UI view projection不再偽裝成wire event。`EventV2Bridge`的有狀態V1 snapshot
+projector已刪除，舊`/event`與`/global/event`只保留canonical`data -> properties`無狀態包裝。四個
+`message.updated/removed`與`message.part.updated/removed`已從public manifest移除，event inventory由93降至89，
+durable維持47；Client與SDK生成型別不再暴露這四項事件。
+
 ---
 
 ## 1. 各区域现状总表

@@ -13,8 +13,7 @@
 //
 // - Text parts buffer in `data.text` until their message role is confirmed as
 //   "assistant". This prevents echoing user-role text parts. The `ready()`
-//   check gates output: if we see a text delta before the message.updated
-//   event that tells us the role, we stash it and flush later via `replay()`.
+//   check gates output until the canonical message lifecycle identifies its role.
 //
 // - Tool echo stripping: bash tools may echo their own output in the next
 //   assistant text part. `stashEcho()` records completed bash output, and
@@ -24,8 +23,15 @@
 //   `data.questions`. The footer shows whichever is first. When a reply
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
-import type { Event, Part, PermissionV2Request, QuestionV2Request, ToolPart } from "@opencode-ai/sdk/v2"
+import type { Event, Message, Part, PermissionV2Request, QuestionV2Request, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
+import {
+  canonicalToolKey,
+  removeCanonicalTool,
+  updateCanonicalTool,
+  type CanonicalToolEvent,
+  type CanonicalToolRemovalEvent,
+} from "./canonical-tool"
 import { toolView } from "./tool"
 import type { FooterOutput, FooterPatch, FooterView, StreamCommit } from "./types"
 
@@ -55,7 +61,7 @@ type SessionCommit = StreamCommit
 // - ids:    parts and error keys we've already committed (dedup guard)
 // - tools:  tool parts we've emitted a "start" for but not yet completed
 // - call:   tool call inputs, keyed by msg:call, for enriching permission views
-// - role:   message ID → "assistant" | "user", learned from message.updated
+// - role:   message ID → "assistant" | "user", learned from canonical message lifecycle events
 // - msg:    part ID → message ID
 // - part:   part ID → "assistant" | "reasoning" (text parts only)
 // - text:   part ID → full accumulated text so far
@@ -80,6 +86,8 @@ export type SessionData = {
   permissions: PermissionV2Request[]
   questions: QuestionV2Request[]
   role: Map<string, MessageRole>
+  model: Map<string, { providerID: string; modelID: string }>
+  toolParts: Map<string, ToolPart>
   msg: Map<string, string>
   part: Map<string, PartKind>
   text: Map<string, string>
@@ -119,6 +127,8 @@ export function createSessionData(
     permissions: [],
     questions: [],
     role: new Map(),
+    model: new Map(),
+    toolParts: new Map(),
     msg: new Map(),
     part: new Map(),
     text: new Map(),
@@ -163,11 +173,7 @@ function formatUsage(
   return text
 }
 
-export function formatError(error: {
-  name?: string
-  message?: string
-  data?: unknown
-}): string {
+export function formatError(error: { name?: string; message?: string; data?: unknown }): string {
   if (error.data && typeof error.data === "object") {
     const message = Reflect.get(error.data, "message")
     if (typeof message === "string" && message) return message
@@ -297,6 +303,7 @@ export function bootstrapSessionData(input: {
       }
 
       input.data.call.set(key(part.messageID, part.callID), part.state.input)
+      input.data.toolParts.set(canonicalToolKey(part.messageID, part.callID), part)
     }
   }
 
@@ -428,8 +435,7 @@ function toolStatus(part: ToolPart): string {
 //
 // We gate on the message role being "assistant" because user-role messages
 // also contain text parts (the user's own input) which we don't want to
-// echo. If we haven't received the message.updated event yet, we return
-// false and the text stays buffered until replay() flushes it.
+// echo. If the message lifecycle has not identified the role yet, text stays buffered.
 function ready(data: SessionData, partID: string): boolean {
   const msg = data.msg.get(partID)
   if (!msg) {
@@ -587,6 +593,17 @@ function drop(data: SessionData, partID: string) {
 
 type FragmentDelta = Extract<Event, { type: "session.next.text.delta" | "session.next.reasoning.delta" }>
 
+function startFragment(
+  data: SessionData,
+  input: { messageID: string; partID: string; fragmentID: string; kind: "assistant" | "reasoning" },
+) {
+  data.role.set(input.messageID, "assistant")
+  data.msg.set(input.partID, input.messageID)
+  data.part.set(input.partID, input.kind)
+  data.text.set(input.partID, data.text.get(input.partID) ?? "")
+  data.fragment.set(input.fragmentID, input.partID)
+}
+
 export function fragmentPartID(data: SessionData, event: FragmentDelta) {
   const fragmentID =
     event.type === "session.next.text.delta"
@@ -594,6 +611,15 @@ export function fragmentPartID(data: SessionData, event: FragmentDelta) {
       : `reasoning:${event.properties.reasoningID}`
   const current = data.fragment.get(fragmentID)
   if (current && data.part.has(current)) return current
+
+  const eventPartID = event.type === "session.next.text.delta" ? event.properties.textID : event.properties.reasoningID
+  startFragment(data, {
+    messageID: event.properties.assistantMessageID,
+    partID: eventPartID,
+    fragmentID,
+    kind: event.type === "session.next.text.delta" ? "assistant" : "reasoning",
+  })
+  if (!data.ids.has(eventPartID)) return eventPartID
 
   const kind = event.type === "session.next.text.delta" ? "assistant" : "reasoning"
   const claimed = new Set(data.fragment.values())
@@ -612,7 +638,7 @@ export function fragmentPartID(data: SessionData, event: FragmentDelta) {
   return partID
 }
 
-// Called when we learn a message's role (from message.updated). Flushes any
+// Called when we learn a message's role. Flushes any
 // buffered text parts that were waiting on role confirmation. User-role
 // parts are silently dropped.
 function replay(data: SessionData, commits: SessionCommit[], messageID: string, role: MessageRole, thinking: boolean) {
@@ -776,6 +802,131 @@ function failTool(part: ToolPart, text: string): SessionCommit {
   })
 }
 
+function reduceMessageInfo(
+  data: SessionData,
+  info: Message,
+  thinking: boolean,
+  limits: Record<string, number>,
+): SessionDataOutput {
+  const commits: SessionCommit[] = []
+  if (typeof info.id === "string") {
+    data.role.set(info.id, info.role)
+    replay(data, commits, info.id, info.role, thinking)
+  }
+  if (info.role !== "assistant") return out(data, commits)
+
+  data.model.set(info.id, { providerID: info.providerID, modelID: info.modelID })
+  let next: FooterPatch | undefined
+  if (!data.announced) {
+    data.announced = true
+    next = { status: "assistant responding" }
+  }
+  const usage = formatUsage(info.tokens, limits[modelKey(info.providerID, info.modelID)], info.cost)
+  if (usage) next = { ...next, usage }
+  if (info.error && !isAbort(info.error) && !data.ids.has(msgErr(info.id))) {
+    data.ids.add(msgErr(info.id))
+    commits.push({
+      kind: "error",
+      text: formatError(info.error),
+      phase: "start",
+      source: "system",
+      messageID: info.id,
+    })
+  }
+  return out(data, commits, patch(next))
+}
+
+function reduceToolPart(data: SessionData, part: ToolPart): SessionDataOutput {
+  const commits: SessionCommit[] = []
+  const view = syncPermission(data, part) ?? syncQuestion(data, part)
+  data.toolParts.set(canonicalToolKey(part.messageID, part.callID), part)
+  if (part.tool === "bash" && part.callID) {
+    if (claimShell(data, part.callID, "tool", bashCommand(part)).source === "shell") return out(data, commits, view)
+  }
+  if (part.state.status === "pending") return out(data, commits, view)
+  if (part.state.status === "running") {
+    if (data.ids.has(part.id)) return out(data, commits, view)
+    if (!data.tools.has(part.id)) {
+      data.tools.add(part.id)
+      commits.push(startTool(part))
+    }
+    return out(data, commits, view ?? patch({ status: toolStatus(part) }))
+  }
+
+  const seen = data.tools.has(part.id)
+  data.tools.delete(part.id)
+  if (data.ids.has(part.id)) return out(data, commits, view)
+  if (!seen) commits.push(startTool(part))
+  data.ids.add(part.id)
+  if (part.state.status === "error") {
+    const text = part.state.error.trim() ? part.state.error : "unknown error"
+    commits.push(failTool(part, text))
+    return out(data, commits, view)
+  }
+
+  stashEcho(data, part)
+  const mode = toolView(part.tool)
+  if (mode.output && part.state.output.trim()) {
+    commits.push({
+      kind: "tool",
+      text: part.state.output,
+      phase: "progress",
+      source: "tool",
+      messageID: part.messageID,
+      partID: part.id,
+      tool: part.tool,
+      part,
+      toolState: "completed",
+    })
+  }
+  if (mode.final) commits.push(doneTool(part))
+  return out(data, commits, view)
+}
+
+function reduceTextPart(data: SessionData, part: Extract<Part, { type: "text" | "reasoning" }>, thinking: boolean) {
+  const commits: SessionCommit[] = []
+  if (data.ids.has(part.id)) return out(data, commits)
+  const kind = part.type === "text" ? "assistant" : "reasoning"
+  data.msg.set(part.id, part.messageID)
+  const role = data.role.get(part.messageID)
+  if (role === "user" && part.type === "text" && !data.includeUserText) {
+    data.ids.add(part.id)
+    drop(data, part.id)
+    return out(data, commits)
+  }
+  if (kind === "reasoning" && !thinking) {
+    if (part.time?.end) data.ids.add(part.id)
+    drop(data, part.id)
+    return out(data, commits)
+  }
+  data.part.set(part.id, role === "user" && kind === "assistant" ? "user" : kind)
+  syncText(data, part.id, part.text)
+  if (part.time?.end) data.end.add(part.id)
+  if (!ready(data, part.id)) return out(data, commits)
+  flushPart(data, commits, part.id)
+  if (!part.time?.end) return out(data, commits)
+  data.ids.add(part.id)
+  drop(data, part.id)
+  return out(data, commits)
+}
+
+export function reduceSessionMessageSnapshot(input: {
+  data: SessionData
+  info: Message
+  thinking: boolean
+  limits: Record<string, number>
+}) {
+  return reduceMessageInfo(input.data, input.info, input.thinking, input.limits)
+}
+
+export function reduceSessionPartSnapshot(input: { data: SessionData; part: Part; thinking: boolean }) {
+  if (input.part.type === "tool") return reduceToolPart(input.data, input.part)
+  if (input.part.type === "text" || input.part.type === "reasoning") {
+    return reduceTextPart(input.data, input.part, input.thinking)
+  }
+  return out(input.data, [])
+}
+
 // Emits "interrupted" final entries for all in-flight parts. Called when a turn is aborted.
 export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
   for (const partID of data.part.keys()) {
@@ -800,9 +951,9 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
 // footer updates. Called once per event from the stream transport's watch loop.
 //
 // Event handling follows the SDK event types:
-//   message.updated      → learn role, flush buffered parts, track usage
-//   session.next.*.delta → accumulate text/reasoning, flush if ready
-//   message.part.updated → handle text/reasoning/tool state transitions
+//   session.next.step.*  → learn assistant role, track usage and failures
+//   session.next.* text  → accumulate and finalize text/reasoning
+//   session.next.tool.*  → handle tool state transitions
 //   permission.*         → manage the permission queue, drive footer view
 //   question.*           → manage the question queue, drive footer view
 //   session.next.error   → emit error scrollback entry
@@ -810,6 +961,42 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
   const commits: SessionCommit[] = []
   const data = input.data
   const event = input.event
+
+  if (event.type === "session.next.transcript.message.removed") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    data.role.delete(event.properties.messageID)
+    data.model.delete(event.properties.messageID)
+    for (const [partID, messageID] of data.msg) {
+      if (messageID !== event.properties.messageID) continue
+      data.ids.add(partID)
+      drop(data, partID)
+    }
+    return out(data, commits)
+  }
+
+  if (event.type === "session.next.transcript.user-text.updated") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    data.role.set(event.properties.messageID, "user")
+    return reduceTextPart(
+      data,
+      {
+        id: event.properties.partID,
+        sessionID: event.properties.sessionID,
+        messageID: event.properties.messageID,
+        type: "text",
+        text: event.properties.text,
+        time: { start: event.properties.timestamp, end: event.properties.timestamp },
+      },
+      input.thinking,
+    )
+  }
+
+  if (event.type === "session.next.transcript.user-text.removed") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    data.ids.add(event.properties.partID)
+    drop(data, event.properties.partID)
+    return out(data, commits)
+  }
 
   if (event.type === "session.next.shell.started") {
     if (event.properties.sessionID !== input.sessionID) {
@@ -858,51 +1045,70 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return out(data, commits)
   }
 
-  if (event.type === "message.updated") {
+  if (event.type === "session.next.step.started") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
     }
-
-    const info = event.properties.info
-    if (typeof info.id === "string") {
-      data.role.set(info.id, info.role)
-      replay(data, commits, info.id, info.role, input.thinking)
-    }
-
-    if (info.role !== "assistant") {
-      return out(data, commits)
-    }
-
-    let next: FooterPatch | undefined
+    data.role.set(event.properties.assistantMessageID, "assistant")
+    data.model.set(event.properties.assistantMessageID, {
+      providerID: event.properties.model.providerID,
+      modelID: event.properties.model.id,
+    })
+    replay(data, commits, event.properties.assistantMessageID, "assistant", input.thinking)
     if (!data.announced) {
       data.announced = true
-      next = { status: "assistant responding" }
+      return out(data, commits, patch({ status: "assistant responding" }))
     }
+    return out(data, commits)
+  }
 
+  if (event.type === "session.next.step.ended") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    const model = data.model.get(event.properties.assistantMessageID)
     const usage = formatUsage(
-      info.tokens,
-      input.limits[modelKey(info.providerID, info.modelID)],
-      typeof info.cost === "number" ? info.cost : undefined,
+      event.properties.tokens,
+      model ? input.limits[modelKey(model.providerID, model.modelID)] : undefined,
+      event.properties.cost,
     )
-    if (usage) {
-      next = {
-        ...next,
-        usage,
-      }
-    }
+    return out(data, commits, usage ? patch({ usage }) : undefined)
+  }
 
-    if (typeof info.id === "string" && info.error && !isAbort(info.error) && !data.ids.has(msgErr(info.id))) {
-      data.ids.add(msgErr(info.id))
-      commits.push({
-        kind: "error",
-        text: formatError(info.error),
-        phase: "start",
-        source: "system",
-        messageID: info.id,
-      })
-    }
+  if (event.type === "session.next.step.failed") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    const id = msgErr(event.properties.assistantMessageID)
+    if (data.ids.has(id) || formatError(event.properties.error) === "Provider turn interrupted")
+      return out(data, commits)
+    data.ids.add(id)
+    commits.push({
+      kind: "error",
+      text: formatError(event.properties.error),
+      phase: "start",
+      source: "system",
+      messageID: event.properties.assistantMessageID,
+    })
+    return out(data, commits)
+  }
 
-    return out(data, commits, patch(next))
+  if (event.type === "session.next.text.started") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    startFragment(data, {
+      messageID: event.properties.assistantMessageID,
+      partID: event.properties.textID,
+      fragmentID: `text:${event.properties.textID}`,
+      kind: "assistant",
+    })
+    return out(data, commits)
+  }
+
+  if (event.type === "session.next.reasoning.started") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    startFragment(data, {
+      messageID: event.properties.assistantMessageID,
+      partID: event.properties.reasoningID,
+      fragmentID: `reasoning:${event.properties.reasoningID}`,
+      kind: "reasoning",
+    })
+    return out(data, commits)
   }
 
   if (event.type === "session.next.tool.input.delta") {
@@ -937,142 +1143,80 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return out(data, commits)
   }
 
-  if (event.type === "message.part.updated") {
-    const part = event.properties.part
-    if (part.sessionID !== input.sessionID) {
+  if (event.type === "session.next.text.ended" || event.type === "session.next.reasoning.ended") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    const partID = event.type === "session.next.text.ended" ? event.properties.textID : event.properties.reasoningID
+    const fragmentID =
+      event.type === "session.next.text.ended"
+        ? `text:${event.properties.textID}`
+        : `reasoning:${event.properties.reasoningID}`
+    const kind = event.type === "session.next.text.ended" ? "assistant" : "reasoning"
+    startFragment(data, { messageID: event.properties.assistantMessageID, partID, fragmentID, kind })
+    syncText(data, partID, event.properties.text)
+    data.end.add(partID)
+    if (kind === "reasoning" && !input.thinking) {
+      data.ids.add(partID)
+      drop(data, partID)
       return out(data, commits)
     }
+    flushPart(data, commits, partID)
+    data.ids.add(partID)
+    drop(data, partID)
+    return out(data, commits)
+  }
 
-    if (part.type === "tool") {
-      const view = syncPermission(data, part) ?? syncQuestion(data, part)
-      if (part.tool === "bash" && part.callID) {
-        if (claimShell(data, part.callID, "tool", bashCommand(part)).source === "shell") {
-          return out(data, commits, view)
-        }
-      }
-
-      if (part.state.status === "running") {
-        if (data.ids.has(part.id)) {
-          return out(data, commits, view)
-        }
-
-        if (!data.tools.has(part.id)) {
-          data.tools.add(part.id)
-          commits.push(startTool(part))
-        }
-
-        return out(data, commits, view ?? patch({ status: toolStatus(part) }))
-      }
-
-      if (part.state.status === "completed") {
-        const seen = data.tools.has(part.id)
-        const mode = toolView(part.tool)
-        data.tools.delete(part.id)
-        if (data.ids.has(part.id)) {
-          return out(data, commits, view)
-        }
-
-        if (!seen) {
-          commits.push(startTool(part))
-        }
-
-        data.ids.add(part.id)
-        stashEcho(data, part)
-
-        const output = part.state.output
-        if (mode.output && typeof output === "string" && output.trim()) {
-          commits.push({
-            kind: "tool",
-            text: output,
-            phase: "progress",
-            source: "tool",
-            messageID: part.messageID,
-            partID: part.id,
-            tool: part.tool,
-            part,
-            toolState: "completed",
-          })
-        }
-
-        if (mode.final) {
-          commits.push(doneTool(part))
-        }
-
-        return out(data, commits, view)
-      }
-
-      if (part.state.status === "error") {
-        const seen = data.tools.has(part.id)
-        data.tools.delete(part.id)
-        if (data.ids.has(part.id)) {
-          return out(data, commits, view)
-        }
-
-        if (!seen) {
-          commits.push(startTool(part))
-        }
-
-        data.ids.add(part.id)
-        const text =
-          typeof part.state.error === "string" && part.state.error.trim() ? part.state.error : "unknown error"
-        commits.push(failTool(part, text))
-        return out(data, commits, view)
-      }
-    }
-
-    if (part.type !== "text" && part.type !== "reasoning") {
-      return out(data, commits)
-    }
-
-    if (data.ids.has(part.id)) {
-      return out(data, commits)
-    }
-
-    const kind = part.type === "text" ? "assistant" : "reasoning"
-    if (typeof part.messageID === "string") {
-      data.msg.set(part.id, part.messageID)
-    }
-
-    const msg = part.messageID
-    const role = msg ? data.role.get(msg) : undefined
-    if (role === "user" && part.type === "text" && !data.includeUserText) {
+  if (event.type === "session.next.transcript.content.removed") {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    const part = removeCanonicalTool(data.toolParts, event as CanonicalToolRemovalEvent)
+    if (part) {
+      data.tools.delete(part.id)
       data.ids.add(part.id)
       drop(data, part.id)
-      return out(data, commits)
     }
-
-    if (kind === "reasoning" && !input.thinking) {
-      if (part.time?.end) {
-        data.ids.add(part.id)
-      }
-      drop(data, part.id)
-      return out(data, commits)
-    }
-
-    data.part.set(part.id, role === "user" && kind === "assistant" ? "user" : kind)
-    syncText(data, part.id, part.text)
-
-    if (part.time?.end) {
-      data.end.add(part.id)
-    }
-
-    if (msg && !role) {
-      return out(data, commits)
-    }
-
-    if (!ready(data, part.id)) {
-      return out(data, commits)
-    }
-
-    flushPart(data, commits, part.id)
-
-    if (!part.time?.end) {
-      return out(data, commits)
-    }
-
-    data.ids.add(part.id)
-    drop(data, part.id)
+    data.ids.add(event.properties.partID)
+    drop(data, event.properties.partID)
     return out(data, commits)
+  }
+
+  if (
+    event.type === "session.next.tool.called" ||
+    event.type === "session.next.tool.progress" ||
+    event.type === "session.next.tool.success" ||
+    event.type === "session.next.tool.failed" ||
+    event.type === "session.next.transcript.content.updated"
+  ) {
+    if (event.properties.sessionID !== input.sessionID) return out(data, commits)
+    const part = updateCanonicalTool(data.toolParts, event as CanonicalToolEvent)
+    if (part) return reduceToolPart(data, part)
+    if (event.type !== "session.next.transcript.content.updated") return out(data, commits)
+    const content = event.properties.content
+    if (content.type !== "text" && content.type !== "reasoning") return out(data, commits)
+    data.role.set(event.properties.assistantMessageID, "assistant")
+    if (content.type === "text") {
+      return reduceTextPart(
+        data,
+        {
+          id: event.properties.partID,
+          sessionID: event.properties.sessionID,
+          messageID: event.properties.assistantMessageID,
+          type: "text",
+          text: content.text,
+        },
+        input.thinking,
+      )
+    }
+    return reduceTextPart(
+      data,
+      {
+        id: event.properties.partID,
+        sessionID: event.properties.sessionID,
+        messageID: event.properties.assistantMessageID,
+        type: "reasoning",
+        text: content.text,
+        time: { start: event.properties.timestamp, end: event.properties.timestamp },
+      },
+      input.thinking,
+    )
   }
 
   if (event.type === "permission.v2.asked") {

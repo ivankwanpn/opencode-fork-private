@@ -16,7 +16,7 @@ export const textPartID = "prt_9999_text"
 const title = "Timeline collapse state regression"
 const model = { providerID: "opencode", modelID: "claude-opus-4-6", variant: "max" }
 
-type EventPayload = Extract<V2Event, { type: "message.part.updated" }>
+type EventPayload = Extract<V2Event, { type: "session.next.transcript.content.updated" }>
 let eventSequence = 0
 
 const userMessage = {
@@ -64,14 +64,6 @@ const editPart = {
     },
     time: { start: 1700000001000, end: 1700000002000 },
   },
-}
-
-const streamedTextPart = {
-  id: textPartID,
-  sessionID,
-  messageID: assistantMessageID,
-  type: "text",
-  text: "Streaming added a later assistant text part.",
 }
 
 const assistantMessage = {
@@ -194,15 +186,19 @@ export async function setupTimelineBenchmark(
 export function buildInitialStreamEvent(deltaCount: number): EventPayload {
   return {
     id: `evt_benchmark_${++eventSequence}`,
-    type: "message.part.updated",
+    type: "session.next.transcript.content.updated",
     location: { directory },
     data: {
+      timestamp: 1700000002000,
       sessionID,
-      part: {
-        ...streamedTextPart,
+      assistantMessageID,
+      contentIndex: 1,
+      partID: textPartID,
+      content: {
+        type: "text",
+        id: textPartID,
         text: `Streaming${streamChunk(0, deltaCount + 1)}\n\n\`\`\`ts\nconst initial = true\n\`\`\``,
       },
-      time: 1700000002000,
     },
   }
 }
@@ -210,15 +206,19 @@ export function buildInitialStreamEvent(deltaCount: number): EventPayload {
 export function buildStreamDeltaEvents(deltaCount: number): EventPayload[] {
   return Array.from({ length: deltaCount }, (_, index) => ({
     id: `evt_benchmark_${++eventSequence}`,
-    type: "message.part.updated",
+    type: "session.next.transcript.content.updated",
     location: { directory },
     data: {
+      timestamp: 1700000002000,
       sessionID,
-      part: {
-        ...streamedTextPart,
+      assistantMessageID,
+      contentIndex: 1,
+      partID: textPartID,
+      content: {
+        type: "text",
+        id: textPartID,
         text: `Streaming${Array.from({ length: index + 2 }, (_, offset) => streamChunk(offset, deltaCount + 1)).join("")}\n\n\`\`\`ts\nconst initial = true\n\`\`\``,
       },
-      time: 1700000002000,
     },
   }))
 }

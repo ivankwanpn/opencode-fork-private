@@ -27,6 +27,12 @@ import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
 import { createAttachClients, rebindAttachClients } from "./run/clients"
+import {
+  removeCanonicalTool,
+  updateCanonicalTool,
+  type CanonicalToolEvent,
+  type CanonicalToolRemovalEvent,
+} from "./run/canonical-tool"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -686,27 +692,72 @@ export const RunCommand = effectCmd({
         // created, and replies issued from inside the loop must use that client.
         async function loop(client: OpencodeClient, events: Awaited<ReturnType<typeof sdk.event.subscribe>>) {
           const toggles = new Map<string, boolean>()
+          const toolParts = new Map<string, ToolPart>()
           let error: string | undefined
 
           for await (const event of events.stream) {
             if (
-              event.type === "message.updated" &&
+              event.type === "session.next.step.started" &&
               event.properties.sessionID === sessionID &&
-              event.properties.info.role === "assistant" &&
               args.format !== "json" &&
               toggles.get("start") !== true
             ) {
               UI.empty()
-              UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
+              UI.println(`> ${event.properties.agent} · ${event.properties.model.id}`)
               UI.empty()
               toggles.set("start", true)
             }
 
-            if (event.type === "message.part.updated") {
-              const part = event.properties.part
-              if (part.sessionID !== sessionID) continue
+            if (event.type === "session.next.step.started" && event.properties.sessionID === sessionID) {
+              if (
+                emit("step_start", {
+                  part: {
+                    id: `step:${event.properties.assistantMessageID}:start`,
+                    sessionID,
+                    messageID: event.properties.assistantMessageID,
+                    type: "step-start",
+                    snapshot: event.properties.snapshot,
+                  },
+                })
+              )
+                continue
+            }
 
-              if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
+            if (event.type === "session.next.step.ended" && event.properties.sessionID === sessionID) {
+              if (
+                emit("step_finish", {
+                  part: {
+                    id: `step:${event.properties.assistantMessageID}:finish`,
+                    sessionID,
+                    messageID: event.properties.assistantMessageID,
+                    type: "step-finish",
+                    reason: event.properties.finish,
+                    snapshot: event.properties.snapshot,
+                    cost: event.properties.cost,
+                    tokens: event.properties.tokens,
+                  },
+                })
+              )
+                continue
+            }
+
+            if (event.type === "session.next.transcript.content.removed") {
+              if (event.properties.sessionID !== sessionID) continue
+              removeCanonicalTool(toolParts, event as CanonicalToolRemovalEvent)
+              continue
+            }
+
+            if (
+              event.type === "session.next.tool.called" ||
+              event.type === "session.next.tool.progress" ||
+              event.type === "session.next.tool.success" ||
+              event.type === "session.next.tool.failed" ||
+              event.type === "session.next.transcript.content.updated"
+            ) {
+              if (event.properties.sessionID !== sessionID) continue
+              const part = updateCanonicalTool(toolParts, event as CanonicalToolEvent)
+              if (!part) continue
+              if (part.state.status === "completed" || part.state.status === "error") {
                 if (emit("tool_use", { part })) continue
                 if (part.state.status === "completed") {
                   await tool(part)
@@ -716,51 +767,62 @@ export const RunCommand = effectCmd({
                 UI.error(part.state.error)
               }
 
-              if (
-                part.type === "tool" &&
-                part.tool === "task" &&
-                part.state.status === "running" &&
-                args.format !== "json"
-              ) {
+              if (part.tool === "task" && part.state.status === "running" && args.format !== "json") {
                 if (toggles.get(part.id) === true) continue
                 await tool(part)
                 toggles.set(part.id, true)
               }
+            }
 
-              if (part.type === "step-start") {
-                if (emit("step_start", { part })) continue
+            if (event.type === "session.next.text.ended" && event.properties.sessionID === sessionID) {
+              if (
+                emit("text", {
+                  part: {
+                    id: event.properties.textID,
+                    sessionID,
+                    messageID: event.properties.assistantMessageID,
+                    type: "text",
+                    text: event.properties.text,
+                    time: { end: event.properties.timestamp },
+                  },
+                })
+              )
+                continue
+              const text = event.properties.text.trim()
+              if (!text) continue
+              if (!process.stdout.isTTY) {
+                process.stdout.write(text + EOL)
+                continue
               }
+              UI.empty()
+              UI.println(text)
+              UI.empty()
+            }
 
-              if (part.type === "step-finish") {
-                if (emit("step_finish", { part })) continue
-              }
-
-              if (part.type === "text" && part.time?.end) {
-                if (emit("text", { part })) continue
-                const text = part.text.trim()
-                if (!text) continue
-                if (!process.stdout.isTTY) {
-                  process.stdout.write(text + EOL)
-                  continue
-                }
+            if (event.type === "session.next.reasoning.ended" && event.properties.sessionID === sessionID && thinking) {
+              if (
+                emit("reasoning", {
+                  part: {
+                    id: event.properties.reasoningID,
+                    sessionID,
+                    messageID: event.properties.assistantMessageID,
+                    type: "reasoning",
+                    text: event.properties.text,
+                    time: { end: event.properties.timestamp },
+                  },
+                })
+              )
+                continue
+              const text = event.properties.text.trim()
+              if (!text) continue
+              const line = `Thinking: ${text}`
+              if (process.stdout.isTTY) {
                 UI.empty()
-                UI.println(text)
+                UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
                 UI.empty()
+                continue
               }
-
-              if (part.type === "reasoning" && part.time?.end && thinking) {
-                if (emit("reasoning", { part })) continue
-                const text = part.text.trim()
-                if (!text) continue
-                const line = `Thinking: ${text}`
-                if (process.stdout.isTTY) {
-                  UI.empty()
-                  UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
-                  UI.empty()
-                  continue
-                }
-                process.stdout.write(line + EOL)
-              }
+              process.stdout.write(line + EOL)
             }
 
             if (event.type === "session.next.error") {

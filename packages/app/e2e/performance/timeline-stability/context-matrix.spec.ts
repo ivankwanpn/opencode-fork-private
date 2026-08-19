@@ -10,6 +10,7 @@ import {
   assistantID,
   assistantMessage,
   event,
+  partRemoved,
   partUpdated,
   setupTimeline,
   textPart,
@@ -102,7 +103,7 @@ test("splits and merges context groups when a middle text part changes", async (
   })
   await startVisualProbe(page, regions)
   await timeline.send(
-    event("message.part.removed", { sessionID: "ses_timeline_stability", messageID: assistantID, partID: textID }),
+    partRemoved(textID),
     500,
   )
   await expect(page.locator('[data-timeline-part-ids="prt_split_01_read,prt_split_03_glob"]')).toBeVisible()
@@ -162,7 +163,7 @@ test("removing the first context member replaces the group once without overlapp
   })
   await startVisualProbe(page, regions)
   await timeline.send(
-    event("message.part.removed", { sessionID: "ses_timeline_stability", messageID: assistantID, partID: ids[0] }),
+    partRemoved(ids[0]!),
     500,
   )
   const trace = await stopVisualProbe<keyof typeof regions>(page)

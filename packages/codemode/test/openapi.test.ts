@@ -183,12 +183,7 @@ describe("OpenAPI.fromSpec", () => {
       path: "/api/pty/{ptyID}/connect",
       reason: "WebSocket operations are not supported",
     })
-    expect(result.skipped.filter((item) => item.reason === "SSE operations are not supported")).toHaveLength(3)
-    expect(result.skipped).toContainEqual({
-      method: "GET",
-      path: "/api/fs/read/*",
-      reason: "binary responses are not supported",
-    })
+    expect(result.skipped.filter((item) => item.reason === "SSE operations are not supported")).toHaveLength(4)
     expect(toolAt(result.tools, "v2.health.get")).not.toBeUndefined()
     expect(toolAt(result.tools, "v2.session.get")).not.toBeUndefined()
     expect(toolAt(result.tools, "v2.session.create")).not.toBeUndefined()
@@ -205,16 +200,15 @@ describe("OpenAPI.fromSpec", () => {
     if (!Tool.isDefinition(switchAgent)) throw new Error("v2.session.switchAgent was not generated")
     expect(inputTypeScript(switchAgent)).toBe("{ sessionID: string; agent: string }")
 
-    const contextEntryPut = toolAt(result.tools, "v2.session.contextEntry.put")
-    expect(Tool.isDefinition(contextEntryPut)).toBe(true)
-    if (!Tool.isDefinition(contextEntryPut)) throw new Error("v2.session.contextEntry.put was not generated")
-    expect(inputTypeScript(contextEntryPut)).toBe("{ sessionID: string; key: string; value: unknown }")
-    expect(toolAt(result.tools, "v2_session_context_entry_put_2")).toBeUndefined()
+    const context = toolAt(result.tools, "v2.session.context")
+    expect(Tool.isDefinition(context)).toBe(true)
+    if (!Tool.isDefinition(context)) throw new Error("v2.session.context was not generated")
+    expect(inputTypeScript(context)).toBe("{ sessionID: string }")
     expect(toolAt(result.tools, "v2.pty.connect")).toBeUndefined()
     expect(toolAt(result.tools, "v2.session.log")).toBeUndefined()
     expect(toolAt(result.tools, "v2.event.subscribe")).toBeUndefined()
     expect(toolAt(result.tools, "v2.event.changes")).toBeUndefined()
-    expect(toolAt(result.tools, "v2.fs.read")).toBeUndefined()
+    expect(toolAt(result.tools, "v2.fs.read")).not.toBeUndefined()
     expect(toolAt(result.tools, "v2.pty.connectToken")).not.toBeUndefined()
   })
 
@@ -389,8 +383,8 @@ describe("OpenAPI.fromSpec", () => {
     expect(result.value).toMatchObject({
       items: [
         {
-          path: "tools.opencode.v2.health.get",
-          description: "Check whether the API server is ready to accept requests.",
+          path: "tools.opencode.global.health",
+          description: "Get health information about the OpenCode server.",
         },
       ],
     })

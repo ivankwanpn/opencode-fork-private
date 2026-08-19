@@ -13,7 +13,7 @@ import { pendingToolCall, toLocations, type ToolInput } from "./tool"
 import { Effect } from "effect"
 import type { ACPClient } from "./client"
 
-type PermissionEvent = Extract<ACPClient.LegacyEvent, { type: "permission.v2.asked" }>
+type PermissionEvent = Extract<ACPClient.NativeEvent, { type: "permission.v2.asked" }>
 type Reply = "once" | "always" | "reject"
 type Connection = Partial<Pick<AgentSideConnection, "requestPermission" | "writeTextFile">>
 
@@ -35,7 +35,7 @@ export class Handler {
   ) {}
 
   handle(event: PermissionEvent) {
-    const permission = event.properties
+    const permission = event.data
     const previous = this.queues.get(permission.sessionID) ?? Promise.resolve()
     const next = previous
       .then(() => this.process(event))
@@ -49,7 +49,7 @@ export class Handler {
   }
 
   private async process(event: PermissionEvent) {
-    const permission = event.properties
+    const permission = event.data
     const session = await Effect.runPromise(this.input.session.tryGet(permission.sessionID))
     if (!session) return
 

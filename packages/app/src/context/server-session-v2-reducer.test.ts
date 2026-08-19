@@ -7,6 +7,76 @@ const event = (input: object) => input as OpenCodeEvent | V2Event
 const base = { created: 1, location: { directory: "/repo" }, durable: { aggregateID: "ses_1", seq: 1, version: 1 } }
 
 describe("v2 session reducer", () => {
+  test("applies canonical transcript mutations and reports message tombstones", () => {
+    const reducer = createV2SessionReducer()
+    let messages: SessionMessageInfo[] = [
+      { id: "msg_user", type: "user", text: "before", time: { created: 1 } },
+      {
+        id: "msg_assistant",
+        type: "assistant",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+        content: [{ type: "text", text: "before" }],
+        time: { created: 2 },
+      },
+    ]
+    const apply = (type: string, data: Record<string, unknown>) => {
+      const result = reducer.reduce(
+        messages,
+        event({ id: `evt_${type}`, type, data: { timestamp: 3, sessionID: "ses_1", ...data } }),
+      )
+      if (result) messages = result.messages
+      return result
+    }
+
+    expect(
+      apply("session.next.transcript.user-text.updated", { messageID: "msg_user", partID: "prt_user", text: "after" }),
+    ).toMatchObject({ touched: ["msg_user"], removed: [] })
+    expect(messages[0]).toMatchObject({ type: "user", text: "after" })
+
+    apply("session.next.transcript.user-text.removed", { messageID: "msg_user", partID: "prt_user" })
+    expect(messages[0]).toMatchObject({ type: "user", text: "" })
+
+    apply("session.next.transcript.content.updated", {
+      assistantMessageID: "msg_assistant",
+      contentIndex: 0,
+      partID: "prt_assistant",
+      content: { type: "text", id: "text_1", text: "after" },
+    })
+    expect(messages[1]).toMatchObject({ type: "assistant", content: [{ type: "text", text: "after" }] })
+
+    apply("session.next.transcript.content.removed", {
+      assistantMessageID: "msg_assistant",
+      contentIndex: 0,
+      partID: "prt_assistant",
+    })
+    expect(messages[1]).toMatchObject({ type: "assistant", content: [] })
+
+    const removed = apply("session.next.transcript.message.removed", { messageID: "msg_user" })
+    expect(removed).toMatchObject({ touched: ["msg_user"], removed: ["msg_user"] })
+    expect(messages.map((message) => message.id)).toEqual(["msg_assistant"])
+  })
+
+  test("hydrates missing canonical transcript mutation targets", () => {
+    const result = createV2SessionReducer().reduce(
+      [],
+      event({
+        id: "evt_missing",
+        type: "session.next.transcript.content.updated",
+        data: {
+          timestamp: 1,
+          sessionID: "ses_1",
+          assistantMessageID: "msg_missing",
+          contentIndex: 0,
+          partID: "prt_missing",
+          content: { type: "text", id: "text_missing", text: "updated" },
+        },
+      }),
+    )
+
+    expect(result).toMatchObject({ missing: "msg_missing", touched: [], removed: [] })
+  })
+
   test("projects promoted input and streaming assistant content", () => {
     const reducer = createV2SessionReducer()
     let messages: SessionMessageInfo[] = []

@@ -276,36 +276,13 @@ function feed(state: State, event: Event): void {
 function open(state: State): string {
   const id = take(state, "msg", "msg")
   feed(state, {
-    type: "message.updated",
+    type: "session.next.step.started",
     properties: {
+      timestamp: Date.now(),
       sessionID: state.id,
-      info: {
-        id,
-        sessionID: state.id,
-        role: "assistant",
-        time: {
-          created: Date.now(),
-        },
-        parentID: `user_${id}`,
-        modelID: "demo",
-        providerID: "demo",
-        mode: "demo",
-        agent: "demo",
-        path: {
-          cwd: process.cwd(),
-          root: process.cwd(),
-        },
-        cost: 0.001,
-        tokens: {
-          input: 120,
-          output: 320,
-          reasoning: 80,
-          cache: {
-            read: 0,
-            write: 0,
-          },
-        },
-      },
+      assistantMessageID: id,
+      agent: "demo",
+      model: { providerID: "demo", id: "demo" },
     },
   } as Event)
   return id
@@ -317,20 +294,12 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
   const start = Date.now()
 
   feed(state, {
-    type: "message.part.updated",
+    type: "session.next.text.started",
     properties: {
+      timestamp: start,
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: part,
-        sessionID: state.id,
-        messageID: msg,
-        type: "text",
-        text: "",
-        time: {
-          start,
-        },
-      },
+      assistantMessageID: msg,
+      textID: part,
     },
   } as Event)
 
@@ -355,21 +324,13 @@ async function emitText(state: State, body: string, signal?: AbortSignal): Promi
   }
 
   feed(state, {
-    type: "message.part.updated",
+    type: "session.next.text.ended",
     properties: {
+      timestamp: Date.now(),
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: part,
-        sessionID: state.id,
-        messageID: msg,
-        type: "text",
-        text: next,
-        time: {
-          start,
-          end: Date.now(),
-        },
-      },
+      assistantMessageID: msg,
+      textID: part,
+      text: next,
     },
   } as Event)
 }
@@ -380,20 +341,12 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
   const start = Date.now()
 
   feed(state, {
-    type: "message.part.updated",
+    type: "session.next.reasoning.started",
     properties: {
+      timestamp: start,
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: part,
-        sessionID: state.id,
-        messageID: msg,
-        type: "reasoning",
-        text: "",
-        time: {
-          start,
-        },
-      },
+      assistantMessageID: msg,
+      reasoningID: part,
     },
   } as Event)
 
@@ -418,21 +371,13 @@ async function emitReasoning(state: State, body: string, signal?: AbortSignal): 
   }
 
   feed(state, {
-    type: "message.part.updated",
+    type: "session.next.reasoning.ended",
     properties: {
+      timestamp: Date.now(),
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: part,
-        sessionID: state.id,
-        messageID: msg,
-        type: "reasoning",
-        text: next,
-        time: {
-          start,
-          end: Date.now(),
-        },
-      },
+      assistantMessageID: msg,
+      reasoningID: part,
+      text: next,
     },
   } as Event)
 }
@@ -450,26 +395,28 @@ function make(state: State, tool: string, input: Record<string, unknown>): Ref {
 
 function startTool(state: State, ref: Ref, metadata: Record<string, unknown> = {}): void {
   feed(state, {
-    type: "message.part.updated",
+    type: "session.next.tool.called",
     properties: {
+      timestamp: ref.start,
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: ref.part,
-        sessionID: state.id,
-        messageID: ref.msg,
-        type: "tool",
-        callID: ref.call,
-        tool: ref.tool,
-        state: {
-          status: "running",
-          input: ref.input,
-          metadata,
-          time: {
-            start: ref.start,
-          },
-        },
-      },
+      assistantMessageID: ref.msg,
+      callID: ref.call,
+      tool: ref.tool,
+      input: ref.input,
+      provider: { executed: false },
+    },
+  } as Event)
+  if (Object.keys(metadata).length === 0) return
+  feed(state, {
+    id: `evt_${ref.call}_progress`,
+    type: "session.next.tool.progress",
+    properties: {
+      timestamp: Date.now(),
+      sessionID: state.id,
+      assistantMessageID: ref.msg,
+      callID: ref.call,
+      structured: metadata,
+      content: [],
     },
   } as Event)
 }
@@ -511,57 +458,30 @@ function doneTool(
   },
 ): void {
   feed(state, {
-    type: "message.part.updated",
+    id: `evt_${ref.call}_success`,
+    type: "session.next.tool.success",
     properties: {
+      timestamp: Date.now(),
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: ref.part,
-        sessionID: state.id,
-        messageID: ref.msg,
-        type: "tool",
-        callID: ref.call,
-        tool: ref.tool,
-        state: {
-          status: "completed",
-          input: ref.input,
-          output: output.output,
-          title: output.title,
-          metadata: output.metadata ?? {},
-          time: {
-            start: ref.start,
-            end: Date.now(),
-          },
-        },
-      },
+      assistantMessageID: ref.msg,
+      callID: ref.call,
+      structured: { ...output.metadata, title: output.title },
+      content: output.output ? [{ type: "text", text: output.output }] : [],
+      provider: { executed: false },
     },
   } as Event)
 }
 
 function failTool(state: State, ref: Ref, error: string): void {
   feed(state, {
-    type: "message.part.updated",
+    type: "session.next.tool.failed",
     properties: {
+      timestamp: Date.now(),
       sessionID: state.id,
-      time: Date.now(),
-      part: {
-        id: ref.part,
-        sessionID: state.id,
-        messageID: ref.msg,
-        type: "tool",
-        callID: ref.call,
-        tool: ref.tool,
-        state: {
-          status: "error",
-          input: ref.input,
-          error,
-          metadata: {},
-          time: {
-            start: ref.start,
-            end: Date.now(),
-          },
-        },
-      },
+      assistantMessageID: ref.msg,
+      callID: ref.call,
+      error: { type: "unknown", message: error },
+      provider: { executed: false },
     },
   } as Event)
 }

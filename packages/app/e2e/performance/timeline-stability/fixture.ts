@@ -31,10 +31,11 @@ type TimelinePayload = Extract<
   V2Event,
   {
     type:
-      | "message.updated"
-      | "message.removed"
-      | "message.part.updated"
-      | "message.part.removed"
+      | "session.next.transcript.message.removed"
+      | "session.next.transcript.content.updated"
+      | "session.next.transcript.content.removed"
+      | "session.next.step.ended"
+      | "session.next.step.failed"
       | "session.next.status"
       | "server.connected"
   }
@@ -74,16 +75,18 @@ const decodeMessage = Schema.decodeUnknownSync(SessionV1.WithParts)
 const decodePart = Schema.decodeUnknownSync(SessionV1.Part)
 const decodeStatus = Schema.decodeUnknownSync(SessionEvent.StatusInfo)
 const timelineEventSchema = Schema.Union([
-  SessionV1.Event.MessageUpdated,
-  SessionV1.Event.MessageRemoved,
-  SessionV1.Event.PartUpdated,
-  SessionV1.Event.PartRemoved,
+  SessionEvent.TranscriptMutation.MessageRemoved,
+  SessionEvent.TranscriptMutation.ContentUpdated,
+  SessionEvent.TranscriptMutation.ContentRemoved,
+  SessionEvent.Step.Ended,
+  SessionEvent.Step.Failed,
   SessionEvent.Status,
   ServerEvent.Connected,
 ])
 const decodeEvent = Schema.decodeUnknownSync(timelineEventSchema)
 const encodeEvent = Schema.encodeSync(timelineEventSchema)
 let eventSequence = 0
+let messages: TimelineMessage[] = []
 
 export async function setupTimeline(
   page: Page,
@@ -101,7 +104,7 @@ export async function setupTimeline(
   } = {},
 ) {
   const sessions = input.sessions ?? [session()]
-  let messages = validateTimelineMessages([
+  messages = validateTimelineMessages([
     ...(input.seedHistory ? historyMessages(18) : []),
     ...(input.messages ?? [userMessage(), assistantMessage()]),
   ])
@@ -205,17 +208,8 @@ export async function setupTimeline(
 }
 
 function describeEvent(event: EventPayload) {
-  if (event.type === "message.part.updated") {
-    const part = event.data.part
-    return [
-      event.type,
-      part.id,
-      part.type === "tool" ? part.tool : part.type,
-      part.type === "tool" ? part.state.status : undefined,
-    ]
-      .filter(Boolean)
-      .join(":")
-  }
+  if (event.type === "session.next.transcript.content.updated")
+    return [event.type, event.data.partID, event.data.content.type].join(":")
   if (event.type === "session.next.status") {
     const status = event.data.status
     return [event.type, status.type, status.type === "retry" ? status.attempt : undefined]
@@ -329,15 +323,109 @@ export function historyMessages(count: number): TimelineMessage[] {
 export function partUpdated(part: Part | PartSeed<"assistant">) {
   const owned = "messageID" in part ? part : { ...part, sessionID, messageID: assistantID }
   decodePart(owned, decodeOptions)
-  return event("message.part.updated", {
+  if (owned.type === "agent" || owned.type === "subtask")
+    throw new Error(`Unsupported assistant fixture part: ${owned.type}`)
+  const message = messages.find((item) => item.info.id === owned.messageID && item.info.role === "assistant")
+  if (!message || message.info.role !== "assistant") throw new Error(`Timeline assistant not found: ${owned.messageID}`)
+  const index = message.parts.findIndex((item) => item.id === owned.id)
+  const contentIndex = index < 0 ? message.parts.length : index
+  if (index < 0) message.parts.push(owned)
+  if (index >= 0) message.parts[index] = owned
+  return event("session.next.transcript.content.updated", {
+    timestamp: 1700000002000,
     sessionID,
-    part: owned,
-    time: 1700000002000,
+    assistantMessageID: owned.messageID,
+    contentIndex,
+    partID: owned.id,
+    content: assistantContent(owned),
   })
 }
 
 export function messageUpdated(info: Message) {
-  return event("message.updated", { sessionID, info })
+  if (info.role !== "assistant") throw new Error(`Canonical fixture cannot settle ${info.role} messages`)
+  if (info.error)
+    return event("session.next.step.failed", {
+      timestamp: info.time.completed ?? 1700000003000,
+      sessionID,
+      assistantMessageID: info.id,
+      error: { type: "unknown", message: String(info.error.data.message) },
+    })
+  return event("session.next.step.ended", {
+    timestamp: info.time.completed ?? 1700000003000,
+    sessionID,
+    assistantMessageID: info.id,
+    finish: info.finish ?? "stop",
+    cost: info.cost,
+    tokens: info.tokens,
+  })
+}
+
+export function partRemoved(partID: string, messageID = assistantID) {
+  const message = messages.find((item) => item.info.id === messageID && item.info.role === "assistant")
+  if (!message || message.info.role !== "assistant") throw new Error(`Timeline assistant not found: ${messageID}`)
+  const contentIndex = message.parts.findIndex((part) => part.id === partID)
+  if (contentIndex < 0) throw new Error(`Timeline part not found: ${partID}`)
+  message.parts.splice(contentIndex, 1)
+  return event("session.next.transcript.content.removed", {
+    timestamp: 1700000002000,
+    sessionID,
+    assistantMessageID: messageID,
+    contentIndex,
+    partID,
+  })
+}
+
+function assistantContent(part: AssistantPart) {
+  if (part.type === "text") return { type: "text" as const, id: part.id, text: part.text }
+  if (part.type === "reasoning")
+    return {
+      type: "reasoning" as const,
+      id: part.id,
+      text: part.text,
+      providerMetadata: part.metadata ? { legacy: part.metadata } : undefined,
+      time: part.time ? { created: part.time.start, completed: part.time.end } : undefined,
+    }
+  if (part.type !== "tool") throw new Error(`Unsupported canonical fixture part: ${part.type}`)
+  const time = "time" in part.state ? part.state.time : undefined
+  const completed = time && "end" in time && typeof time.end === "number" ? time.end : undefined
+  const base = {
+    type: "tool" as const,
+    id: part.id,
+    name: part.tool,
+    time: { created: time?.start ?? 1700000001000, completed },
+  }
+  if (part.state.status === "pending") return { ...base, state: { status: "pending" as const, input: part.state.raw } }
+  const structured = part.state.metadata ?? {}
+  if (part.state.status === "running")
+    return { ...base, state: { status: "running" as const, input: part.state.input, structured, content: [] } }
+  if (part.state.status === "error")
+    return {
+      ...base,
+      state: {
+        status: "error" as const,
+        input: part.state.input,
+        structured,
+        content: [],
+        error: { type: "unknown" as const, message: part.state.error },
+      },
+    }
+  return {
+    ...base,
+    state: {
+      status: "completed" as const,
+      input: part.state.input,
+      structured,
+      content: [
+        { type: "text" as const, text: part.state.output },
+        ...(part.state.attachments ?? []).map((file) => ({
+          type: "file" as const,
+          uri: file.url,
+          mime: file.mime,
+          name: file.filename,
+        })),
+      ],
+    },
+  }
 }
 
 export function status(type: SessionNextStatusInfo["type"], attempt = 1) {

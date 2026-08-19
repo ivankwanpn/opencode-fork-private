@@ -1,8 +1,13 @@
-import { isMessageNotFoundError, OpenCode, type MessagesListOutput, type SessionsListOutput } from "@opencode-ai/client"
+import {
+  isMessageNotFoundError,
+  OpenCode,
+  type MessagesListOutput,
+  type OpenCodeEvent,
+  type SessionsListOutput,
+} from "@opencode-ai/client"
 import {
   createOpencodeClient,
   type AssistantMessage,
-  type Event,
   type Message,
   type OpencodeClient,
   type Part,
@@ -12,7 +17,6 @@ import {
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import type { Command } from "@/command"
 import type { Provider } from "@/provider/provider"
-import { legacyEventPayloads, legacyEventProjection } from "@/event-v2-bridge"
 import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
 import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"
@@ -21,7 +25,7 @@ import type { PromptPart } from "./content"
 export type SessionInfo = ReturnType<typeof legacySessionFromNative>
 export type Transcript = ReturnType<typeof legacyTranscriptFromNative>
 export type LegacyAssistantMessage = AssistantMessage
-export type LegacyEvent = Event
+export type NativeEvent = OpenCodeEvent
 export type LegacyMessage = Message
 export type LegacyPart = Part
 export type LegacySessionMessage = SessionMessageResponse
@@ -52,7 +56,7 @@ export type McpConfig = NonNullable<NonNullable<Parameters<OpencodeClient["mcp"]
 export type EventEnvelope = {
   readonly directory?: string
   readonly workspace?: string
-  readonly payload: Event
+  readonly payload: NativeEvent
 }
 
 export type Catalog = {
@@ -315,27 +319,13 @@ function sessionCompletion(
 
 function events(native: GeneratedClients["native"]): Interface["events"]["subscribe"] {
   return async function* events(input) {
-    const projectLegacy = legacyEventProjection()
     for await (const source of native.events.subscribe({ signal: input?.signal })) {
-      for (const payload of projectEvent(projectLegacy, source as Parameters<typeof legacyEventPayloads>[1])) {
-        yield {
-          directory: source.location?.directory,
-          workspace: source.location?.workspaceID,
-          payload,
-        }
+      yield {
+        directory: source.location?.directory,
+        workspace: source.location?.workspaceID,
+        payload: source,
       }
     }
-  }
-}
-
-function projectEvent(
-  projectLegacy: ReturnType<typeof legacyEventProjection>,
-  source: Parameters<typeof legacyEventPayloads>[1],
-): readonly Event[] {
-  try {
-    return legacyEventPayloads(projectLegacy, source).map((payload) => payload as Event)
-  } catch {
-    return []
   }
 }
 
@@ -371,13 +361,17 @@ function catalog(native: GeneratedClients["native"]): Interface["catalog"] {
         native.commands.list(target),
         configuration.get(directory),
       ])
-      const projected = legacyProvidersFromNative(providerCatalog.data as unknown as Parameters<typeof legacyProvidersFromNative>[0])
+      const projected = legacyProvidersFromNative(
+        providerCatalog.data as unknown as Parameters<typeof legacyProvidersFromNative>[0],
+      )
       return {
         providers: Object.fromEntries(projected.providers.map((provider) => [provider.id, provider])) as Record<
           ProviderV2.ID,
           Provider.Info
         >,
-        agents: agents.data.map((agent) => legacyAgentFromNative(agent as unknown as Parameters<typeof legacyAgentFromNative>[0])),
+        agents: agents.data.map((agent) =>
+          legacyAgentFromNative(agent as unknown as Parameters<typeof legacyAgentFromNative>[0]),
+        ),
         commands: commands.data.map(legacyCommandFromNative).toSorted((a, b) => a.name.localeCompare(b.name)),
         configuredModel: configured.model,
       }

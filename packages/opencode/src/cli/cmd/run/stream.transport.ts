@@ -29,6 +29,7 @@ import {
   type SessionData,
 } from "./session-data"
 import { replayActiveText, replayLocalRows, replaySession } from "./session-replay"
+import { canonicalToolKey } from "./canonical-tool"
 import {
   bootstrapSubagentCalls,
   bootstrapSubagentData,
@@ -136,37 +137,8 @@ type TransportService = {
 class Service extends Context.Service<Service, TransportService>()("@opencode/RunStreamTransport") {}
 
 function sid(event: Event): string | undefined {
-  if (event.type === "message.updated") {
-    return event.properties.sessionID
-  }
-
-  if (
-    event.type === "session.next.text.delta" ||
-    event.type === "session.next.reasoning.delta" ||
-    event.type === "session.next.tool.input.delta"
-  ) {
-    return event.properties.sessionID
-  }
-
-  if (event.type === "message.part.updated") {
-    return event.properties.part.sessionID
-  }
-
-  if (
-    event.type === "session.next.shell.started" ||
-    event.type === "session.next.shell.ended" ||
-    event.type === "permission.v2.asked" ||
-    event.type === "permission.v2.replied" ||
-    event.type === "question.v2.asked" ||
-    event.type === "question.v2.replied" ||
-    event.type === "question.v2.rejected" ||
-    event.type === "session.next.error" ||
-    event.type === "session.next.status"
-  ) {
-    return event.properties.sessionID
-  }
-
-  return undefined
+  if (!("sessionID" in event.properties)) return undefined
+  return typeof event.properties.sessionID === "string" ? event.properties.sessionID : undefined
 }
 
 function isEvent(value: unknown): value is Event {
@@ -218,15 +190,15 @@ function active(event: Event, sessionID: string): boolean {
     return false
   }
 
-  if (event.type === "message.updated") {
-    return event.properties.info.role === "assistant"
-  }
-
   if (
+    event.type === "session.next.text.started" ||
     event.type === "session.next.text.delta" ||
+    event.type === "session.next.text.ended" ||
+    event.type === "session.next.reasoning.started" ||
     event.type === "session.next.reasoning.delta" ||
+    event.type === "session.next.reasoning.ended" ||
     event.type === "session.next.tool.input.delta" ||
-    event.type === "message.part.updated"
+    event.type === "session.next.tool.progress"
   ) {
     return false
   }
@@ -910,7 +882,14 @@ function createLayer(input: StreamInput) {
 
           trackBlocker(event)
 
-          const prev = event.type === "message.part.updated" ? listSubagentTabs(state.subagent) : undefined
+          const toolEvent =
+            event.type === "session.next.tool.called" ||
+            event.type === "session.next.tool.progress" ||
+            event.type === "session.next.tool.success" ||
+            event.type === "session.next.tool.failed" ||
+            event.type === "session.next.transcript.content.updated" ||
+            event.type === "session.next.transcript.content.removed"
+          const prev = toolEvent ? listSubagentTabs(state.subagent) : undefined
           const next = reduceSessionData({
             data: state.data,
             event,
@@ -934,15 +913,22 @@ function createLayer(input: StreamInput) {
             })
           }
 
-          if (
-            event.type === "message.part.updated" &&
-            event.properties.part.sessionID === input.sessionID &&
-            event.properties.part.type === "tool" &&
-            event.properties.part.tool === "question" &&
-            event.properties.part.state.status === "running" &&
-            state.data.questions.length === 0
-          ) {
-            yield* recoverQuestion(event.properties.part.id).pipe(
+          if (toolEvent && sid(event) === input.sessionID && state.data.questions.length === 0) {
+            const ref =
+              event.type === "session.next.transcript.content.updated" && event.properties.content.type === "tool"
+                ? {
+                    messageID: event.properties.assistantMessageID,
+                    callID: event.properties.content.id,
+                  }
+                : "assistantMessageID" in event.properties && "callID" in event.properties
+                  ? {
+                      messageID: String(event.properties.assistantMessageID),
+                      callID: String(event.properties.callID),
+                    }
+                  : undefined
+            const part = ref ? state.data.toolParts.get(canonicalToolKey(ref.messageID, ref.callID)) : undefined
+            if (part?.tool === "question" && part.state.status === "running")
+              yield* recoverQuestion(part.id).pipe(
               Effect.forkIn(scope, { startImmediately: true }),
               Effect.asVoid,
             )

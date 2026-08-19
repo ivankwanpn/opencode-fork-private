@@ -16,7 +16,7 @@ import { ACPSession } from "@/acp/session"
 import type { ACPClient } from "@/acp/client"
 import { makeClient } from "./client-fixture"
 
-type PermissionEvent = Extract<ACPClient.LegacyEvent, { type: "permission.v2.asked" }>
+type PermissionEvent = Extract<ACPClient.NativeEvent, { type: "permission.v2.asked" }>
 type PermissionReplyParams = Parameters<ACPClient.Interface["permission"]["reply"]>[0]
 type SessionUpdateParams = Parameters<AgentSideConnection["sessionUpdate"]>[0]
 const cleanupDirs: string[] = []
@@ -45,9 +45,8 @@ function makeSessionService() {
 }
 
 function createHarness(
-  requestPermission:
-    | ((params: RequestPermissionRequest) => Promise<RequestPermissionResponse>)
-    | null = () => Promise.resolve({ outcome: { outcome: "selected", optionId: "once" } }),
+  requestPermission: ((params: RequestPermissionRequest) => Promise<RequestPermissionResponse>) | null = () =>
+    Promise.resolve({ outcome: { outcome: "selected", optionId: "once" } }),
 ) {
   const replies: PermissionReplyParams[] = []
   const requests: RequestPermissionRequest[] = []
@@ -74,8 +73,7 @@ function createHarness(
       updates.push(params)
       return Promise.resolve()
     },
-  } satisfies Pick<AgentSideConnection, "sessionUpdate"> &
-    Partial<Pick<AgentSideConnection, "requestPermission">>
+  } satisfies Pick<AgentSideConnection, "sessionUpdate"> & Partial<Pick<AgentSideConnection, "requestPermission">>
   const subscription = new ACPEvent.Subscription({ client, connection, session })
 
   return { client, connection, replies, requests, session, subscription, updates }
@@ -114,7 +112,7 @@ function permissionAsked(
   return {
     id: `evt_${id}`,
     type: "permission.v2.asked",
-    properties: {
+    data: {
       id,
       sessionID,
       action: input.permission ?? "bash",
@@ -130,14 +128,14 @@ function textDelta(sessionID: string, messageID: string, partID: string, delta: 
   return {
     id: `evt_${sessionID}_${messageID}_${partID}`,
     type: "session.next.text.delta",
-    properties: {
+    data: {
       timestamp: 1,
       sessionID,
       assistantMessageID: messageID,
       textID: partID,
       delta,
     },
-  } as Extract<ACPClient.LegacyEvent, { type: "session.next.text.delta" }>
+  } as Extract<ACPClient.NativeEvent, { type: "session.next.text.delta" }>
 }
 
 function textFromUpdates(updates: SessionUpdateParams[], sessionId: string) {
@@ -210,9 +208,7 @@ describe("acp permissions", () => {
       kind: "fetch",
       rawInput: { url: "https://example.com/docs", format: "markdown" },
     })
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_fetch", reply: "once" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_fetch", reply: "once" }])
   })
 
   it("includes a diff content block for edit permission metadata", async () => {
@@ -247,9 +243,7 @@ describe("acp permissions", () => {
         },
       ],
     })
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_edit", reply: "once" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_edit", reply: "once" }])
   })
 
   it("includes per-file diff blocks and locations for apply_patch permission metadata", async () => {
@@ -301,9 +295,7 @@ describe("acp permissions", () => {
         },
       ],
     })
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_patch", reply: "once" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_patch", reply: "once" }])
   })
 
   it("forwards external_directory metadata and locations to requestPermission", async () => {
@@ -340,9 +332,7 @@ describe("acp permissions", () => {
         locations: [{ path: "/tmp/outside" }],
       },
     })
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_external", reply: "once" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_external", reply: "once" }])
   })
 
   it("rejects non-selected outcomes", async () => {
@@ -353,9 +343,7 @@ describe("acp permissions", () => {
 
     await pollUntil(() => harness.replies.length === 1, "cancelled permission was never replied")
 
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_cancelled", reply: "reject" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_cancelled", reply: "reject" }])
   })
 
   it("rejects without calling requestPermission when the connection has no permission UI", async () => {
@@ -367,15 +355,11 @@ describe("acp permissions", () => {
     await pollUntil(() => harness.replies.length === 1, "unavailable permission UI was never rejected")
 
     expect(harness.requests).toEqual([])
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_unavailable", reply: "reject" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_unavailable", reply: "reject" }])
   })
 
   it("rejects when the permission UI explicitly selects the reject option", async () => {
-    const harness = createHarness(() =>
-      Promise.resolve({ outcome: { outcome: "selected", optionId: "reject" } }),
-    )
+    const harness = createHarness(() => Promise.resolve({ outcome: { outcome: "selected", optionId: "reject" } }))
     await createSession(harness.session, "ses_a")
 
     harness.subscription.handle(permissionAsked("ses_a", "perm_reject"))
@@ -392,9 +376,7 @@ describe("acp permissions", () => {
       { optionId: "always", kind: "allow_always", name: "Always allow" },
       { optionId: "reject", kind: "reject_once", name: "Reject" },
     ])
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_reject", reply: "reject" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_reject", reply: "reject" }])
   })
 
   it("rejects when requestPermission fails", async () => {
@@ -405,9 +387,7 @@ describe("acp permissions", () => {
 
     await pollUntil(() => harness.replies.length === 1, "failed permission was never rejected")
 
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_failed", reply: "reject" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_failed", reply: "reject" }])
   })
 
   it("does not let a blocked session A permission block session B message updates", async () => {
@@ -430,9 +410,7 @@ describe("acp permissions", () => {
 
     releasePermission?.()
     await pollUntil(() => harness.replies.length === 1, "blocked permission was never replied after release")
-    expect(harness.replies).toEqual([
-      { sessionID: "ses_a", requestID: "perm_blocked", reply: "once" },
-    ])
+    expect(harness.replies).toEqual([{ sessionID: "ses_a", requestID: "perm_blocked", reply: "once" }])
   })
 
   it("serializes permission requests per session", async () => {

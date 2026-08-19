@@ -1,4 +1,4 @@
-import { EventV2Bridge, legacyEventPayloads, legacyEventProjection } from "@/event-v2-bridge"
+import { EventV2Bridge, legacyEventPayloads } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -31,14 +31,13 @@ function eventResponse(events: EventV2.Interface) {
     const queue = yield* Queue.unbounded<EventV2.Payload>()
     const unsubscribe = yield* events.listen((event) => Effect.sync(() => Queue.offerUnsafe(queue, event)))
     yield* Effect.addFinalizer(() => unsubscribe)
-    const projectLegacy = legacyEventProjection()
     const stream = Stream.fromQueue(queue).pipe(
       Stream.filter(
         (event) =>
           event.location?.directory === instance.directory &&
           (event.location.workspaceID === undefined || event.location.workspaceID === workspaceID),
       ),
-      Stream.map((event) => legacyEventPayloads(projectLegacy, event)),
+      Stream.map(legacyEventPayloads),
       Stream.flattenIterable,
     )
     const disposed = Stream.callback<{ id: string; type: string; properties: unknown }>((queue) => {

@@ -325,12 +325,17 @@ function assistantParts(sessionID: string, message: SessionMessageAssistant): Pa
   const ordinals = { text: 0, reasoning: 0 }
   return message.content.flatMap((content): Part[] => {
     if (content.type === "text") {
-      const part = textPart(sessionID, message.id, ordinals.text++, content.text)
+      const id = "id" in content && typeof content.id === "string" ? content.id : undefined
+      const part = textPart(sessionID, message.id, ordinals.text++, content.text, undefined, id)
       return content.text.trim() ? [part] : []
     }
     if (content.type === "reasoning") {
+      const ordinal = ordinals.reasoning++
       const part: Part = {
-        id: sessionMessagePartID(message.id, "reasoning", ordinals.reasoning++),
+        id:
+          "id" in content && typeof content.id === "string"
+            ? content.id
+            : sessionMessagePartID(message.id, "reasoning", ordinal),
         sessionID,
         messageID: message.id,
         type: "reasoning",
@@ -347,9 +352,16 @@ function assistantParts(sessionID: string, message: SessionMessageAssistant): Pa
   })
 }
 
-function textPart(sessionID: string, messageID: string, ordinal: number, text: string, synthetic?: boolean): Part {
+function textPart(
+  sessionID: string,
+  messageID: string,
+  ordinal: number,
+  text: string,
+  synthetic?: boolean,
+  id?: string,
+): Part {
   return {
-    id: sessionMessagePartID(messageID, "text", ordinal),
+    id: id ?? sessionMessagePartID(messageID, "text", ordinal),
     sessionID,
     messageID,
     type: "text",

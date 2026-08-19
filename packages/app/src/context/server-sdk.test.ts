@@ -177,63 +177,6 @@ describe("coalesceServerEvents", () => {
 })
 
 describe("enqueueServerEvent", () => {
-  const partUpdated = (text: string) =>
-    ({
-      type: "message.part.updated",
-      properties: {
-        sessionID: "session",
-        part: { id: "part", sessionID: "session", messageID: "message", type: "text", text },
-      },
-    }) as Event
-
-  test("preserves part updates across message remove and re-add barriers", () => {
-    const events: Array<{ directory: string; payload: Event }> = []
-    const enqueue = (payload: Event) => enqueueServerEvent(events, { directory: "/repo", payload })
-
-    enqueue(partUpdated("old"))
-    enqueue({ type: "message.removed", properties: { sessionID: "session", messageID: "message" } } as Event)
-    enqueue({
-      type: "message.updated",
-      properties: {
-        sessionID: "session",
-        info: {
-          id: "message",
-          sessionID: "session",
-          role: "user",
-          time: { created: 1 },
-          agent: "build",
-          model: { providerID: "provider", modelID: "model" },
-        },
-      },
-    } as Event)
-    enqueue(partUpdated("new"))
-
-    expect(events.map((event) => event.payload.type)).toEqual([
-      "message.part.updated",
-      "message.removed",
-      "message.updated",
-      "message.part.updated",
-    ])
-  })
-
-  test("preserves updates after session deletion", () => {
-    const events: Array<{ directory: string; payload: Event }> = []
-    const enqueue = (payload: Event) => enqueueServerEvent(events, { directory: "/repo", payload })
-
-    enqueue(partUpdated("old"))
-    enqueue({
-      type: "session.next.deleted",
-      properties: { timestamp: 1, sessionID: "session", info: { id: "session" } },
-    } as Event)
-    enqueue(partUpdated("new"))
-
-    expect(events.map((event) => event.payload.type)).toEqual([
-      "message.part.updated",
-      "session.next.deleted",
-      "message.part.updated",
-    ])
-  })
-
   test("does not coalesce edge-triggered session statuses", () => {
     const events: Array<{ directory: string; payload: Event }> = []
     const enqueue = (status: "retry" | "busy") =>

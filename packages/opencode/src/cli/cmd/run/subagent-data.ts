@@ -4,9 +4,18 @@ import {
   bootstrapSessionData,
   createSessionData,
   formatError,
+  reduceSessionMessageSnapshot,
+  reduceSessionPartSnapshot,
   reduceSessionData,
   type SessionData,
 } from "./session-data"
+import {
+  canonicalToolKey,
+  removeCanonicalTool,
+  updateCanonicalTool,
+  type CanonicalToolEvent,
+  type CanonicalToolRemovalEvent,
+} from "./canonical-tool"
 import type { FooterSubagentState, FooterSubagentTab, StreamCommit } from "./types"
 
 export const SUBAGENT_BOOTSTRAP_LIMIT = 200
@@ -40,6 +49,7 @@ type DetailState = {
 export type SubagentData = {
   tabs: Map<string, FooterSubagentTab>
   details: Map<string, DetailState>
+  toolParts: Map<string, ToolPart>
 }
 
 export type BootstrapSubagentInput = {
@@ -355,6 +365,17 @@ function syncTaskTab(data: SubagentData, part: ToolPart, children?: Set<string>)
   return true
 }
 
+function removeTaskTab(data: SubagentData, part: ToolPart) {
+  if (part.tool !== "task") return false
+  const sessionID = taskSessionID(part)
+  if (!sessionID) return false
+  const current = data.tabs.get(sessionID)
+  if (!current || current.callID !== part.callID) return false
+  data.tabs.delete(sessionID)
+  data.details.delete(sessionID)
+  return true
+}
+
 function frameKey(commit: StreamCommit) {
   if (commit.partID) {
     return `${commit.kind}:${commit.partID}:${commit.phase}`
@@ -472,10 +493,6 @@ function ensureBlockerTab(
   return true
 }
 
-function isAbortedAssistantMessage(info: Message) {
-  return info.role === "assistant" && info.error?.name === "MessageAbortedError"
-}
-
 function cancelSubagentTab(data: SubagentData, sessionID: string) {
   const current = data.tabs.get(sessionID)
   if (!current || current.status !== "running") {
@@ -545,6 +562,10 @@ function compactDetail(detail: DetailState) {
   next.tools = new Set([...detail.data.tools].filter((item) => partIDs.has(item)))
   next.call = compactCallMap(detail)
   next.role = copyMap(detail.data.role, messageIDs)
+  next.model = copyMap(detail.data.model, messageIDs)
+  next.toolParts = new Map(
+    [...detail.data.toolParts].filter(([, part]) => partIDs.has(part.id) || !detail.data.ids.has(part.id)),
+  )
   next.msg = copyMap(detail.data.msg, activePartIDs)
   next.part = copyMap(detail.data.part, activePartIDs)
   next.text = copyMap(detail.data.text, activePartIDs)
@@ -575,23 +596,6 @@ function applyChildEvent(input: {
   return changed || queueChanged(input.detail.data, before)
 }
 
-function bootstrapChildEvent(input: {
-  detail: DetailState
-  event: Event
-  thinking: boolean
-  limits: Record<string, number>
-}) {
-  const out = reduceSessionData({
-    data: input.detail.data,
-    event: input.event,
-    sessionID: input.detail.sessionID,
-    thinking: input.thinking,
-    limits: input.limits,
-  })
-
-  return appendCommits(input.detail, out.commits)
-}
-
 function bootstrapChildMessages(input: {
   detail: DetailState
   messages: BootstrapChildMessage[]
@@ -602,36 +606,22 @@ function bootstrapChildMessages(input: {
 
   for (const message of input.messages) {
     changed =
-      bootstrapChildEvent({
-        detail: input.detail,
-        event: {
-          id: `bootstrap:message:${message.info.id}`,
-          type: "message.updated",
-          properties: {
-            sessionID: input.detail.sessionID,
-            info: message.info,
-          },
-        },
-        thinking: input.thinking,
-        limits: input.limits,
-      }) || changed
+      appendCommits(
+        input.detail,
+        reduceSessionMessageSnapshot({
+          data: input.detail.data,
+          info: message.info,
+          thinking: input.thinking,
+          limits: input.limits,
+        }).commits,
+      ) || changed
 
     for (const part of message.parts) {
       changed =
-        bootstrapChildEvent({
-          detail: input.detail,
-          event: {
-            id: `bootstrap:part:${part.id}`,
-            type: "message.part.updated",
-            properties: {
-              sessionID: input.detail.sessionID,
-              part,
-              time: 0,
-            },
-          },
-          thinking: input.thinking,
-          limits: input.limits,
-        }) || changed
+        appendCommits(
+          input.detail,
+          reduceSessionPartSnapshot({ data: input.detail.data, part, thinking: input.thinking }).commits,
+        ) || changed
     }
   }
 
@@ -655,6 +645,7 @@ export function createSubagentData(): SubagentData {
   return {
     tabs: new Map(),
     details: new Map(),
+    toolParts: new Map(),
   }
 }
 
@@ -718,6 +709,7 @@ export function bootstrapSubagentData(input: BootstrapSubagentInput) {
         continue
       }
 
+      input.data.toolParts.set(canonicalToolKey(part.messageID, part.callID), part)
       changed = syncTaskTab(input.data, part, children) || changed
     }
   }
@@ -799,33 +791,29 @@ export function reduceSubagentData(input: {
 }) {
   const event = input.event
 
-  if (event.type === "message.part.updated") {
-    const part = event.properties.part
-    if (part.sessionID === input.sessionID) {
-      if (part.type !== "tool") {
-        return false
-      }
+  if (event.type === "session.next.transcript.content.removed") {
+    if (event.properties.sessionID !== input.sessionID) return false
+    const part = removeCanonicalTool(input.data.toolParts, event as CanonicalToolRemovalEvent)
+    return part ? removeTaskTab(input.data, part) : false
+  }
 
-      return syncTaskTab(input.data, part)
+  if (
+    event.type === "session.next.tool.called" ||
+    event.type === "session.next.tool.progress" ||
+    event.type === "session.next.tool.success" ||
+    event.type === "session.next.tool.failed" ||
+    event.type === "session.next.transcript.content.updated"
+  ) {
+    if (event.properties.sessionID === input.sessionID) {
+      const part = updateCanonicalTool(input.data.toolParts, event as CanonicalToolEvent)
+      return part ? syncTaskTab(input.data, part) : false
     }
   }
 
   const sessionID =
-    event.type === "message.updated" ||
-    event.type === "session.next.text.delta" ||
-    event.type === "session.next.reasoning.delta" ||
-    event.type === "session.next.tool.input.delta" ||
-    event.type === "permission.v2.asked" ||
-    event.type === "permission.v2.replied" ||
-    event.type === "question.v2.asked" ||
-    event.type === "question.v2.replied" ||
-    event.type === "question.v2.rejected" ||
-    event.type === "session.next.error" ||
-    event.type === "session.next.status"
+    "sessionID" in event.properties && typeof event.properties.sessionID === "string"
       ? event.properties.sessionID
-      : event.type === "message.part.updated"
-        ? event.properties.part.sessionID
-        : undefined
+      : undefined
 
   if (!sessionID || !knownSession(input.data, sessionID)) {
     return false
@@ -833,7 +821,7 @@ export function reduceSubagentData(input: {
 
   const detail = ensureDetail(input.data, sessionID)
   const cancelled =
-    event.type === "message.updated" && isAbortedAssistantMessage(event.properties.info)
+    event.type === "session.next.step.failed" && formatError(event.properties.error) === "Provider turn interrupted"
       ? cancelSubagentTab(input.data, sessionID)
       : false
   if (event.type === "session.next.status") {

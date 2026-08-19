@@ -10,8 +10,8 @@
 `@opencode-ai/core/session`（`SessionV2`）+ `SessionExecutionLocal` + `SessionRunner` +
 V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**：
 
-- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor`）已从生产 layer 图与源码删除；OpenCode旧`ToolRegistry`与工具定义仍留在源码，
-  但不再挂载到production layer，只服务plugin parity tests与少量CLI/外部compat测试。
+- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor`）已从生产 layer 图与源码删除；OpenCode舊
+  `ToolRegistry` root也已刪除。舊leaf tool definitions仍暫留給專用測試，production只掛載Core V2 registry。
 - V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
 
 当前已推进到**批次 8 的 Session consumer hard cut 收口**。V2 已是唯一模型执行路径，transcript storage hard cut
@@ -133,8 +133,18 @@ canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專
 metadata-only catalog列出並只在執行時materialize；later dynamic source優先，scope釋放後立即回落到下層
 command。ACP fallback loader改由`LocationServiceMap`按directory取得`CommandV2.Service`，native catalog不再
 降級成V1 command shape。OpenCode舊`Command.Service`、`Command.node`與重複的init/review templates已刪除，
-production `@/command` import清零。`LegacyEvent.CommandExecuted`仍由Core發布並被Project初始化狀態消費，
-屬於下一個獨立event hard cut，不是保留V1 command service的理由。
+production `@/command` import清零；當時仍獨立存在的command event相容債已由下述event hard cut收口。
+
+**999.0.19 Tool registry root hard cut**：production不可達、僅被測試當作V1 oracle的
+`packages/opencode/src/tool/registry.ts`已刪除。Plugin parity test改為literal canonical V2 contract，直接驗證
+`tool/`/`tools/`、default/named exports、deferred selection、執行與catalog provenance；TaskTool fixture不再掛載
+舊registry node。現役`PluginToolCompat`→`PluginToolCompatV2`轉換路徑與Truncate保留，legacy leaf definitions
+留給下一個獨立closure刪除批次。
+
+**999.0.19 Command execution event hard cut**：`command.executed`保持原type與四欄payload，canonical owner從
+`LegacyEvent.CommandExecuted`提升為current `Command.Event.Executed`並歸入foundation definitions；仍是
+live-only，public/durable inventory維持89/47。Core producer與Project `/init` consumer均改用current identity，
+V1 legacy-event modules已刪除。Client/OpenAPI wire無變更，V2 SDK generated diff只有definition ownership順序搬移。
 
 ---
 
@@ -145,16 +155,16 @@ production `@/command` import清零。`LegacyEvent.CommandExecuted`仍由Core發
 | Session 执行（prompt/command/shell/init） | `LegacySessionExecution` 仅保留外部请求/响应形状，内部选择、权限、admission 与执行全部走 V2；V1 `SessionPrompt.loop` 已删除 | **V2-only 执行，wire 壳待收** |
 | Session CRUD（list/get/create/fork/title/metadata） | production consumer 與 Core projector 全部走 `SessionV2`；舊 repository/layer source 已刪除 | **V2-only runtime，wire schema 待收** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
-| Tool registry | production只挂载Core V2 `ToolRegistry`；OpenCode旧`ToolRegistry`/工具定义为test-only plugin parity surface | **V2 已接管，compat source待清** |
+| Tool registry | production只掛載Core V2 `ToolRegistry`；OpenCode舊registry root已刪，legacy leaf definitions仍為test-only source | **V2-only runtime，leaf source待清** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
 | Agent | V1 `Agent`（`@/agent`）仍在 `LegacySessionExecution.select` 使用；V2 `AgentV2.Service` 独立 | **双路径** |
 | Subagent permission | V1 `subagent-permissions.ts` 只被test-only旧`TaskTool`/兼容测试引用；V2 runtime用Core `PermissionV2` + `SubagentPermit` | **V2 runtime，compat source待评估** |
 | Permission | V1 `@/permission` 为主（pending 表），`replyCompatible` 兜底 V2；V2 请求不出现在 `/permission` list | **V1 主，V2 兜底** |
 | Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
-| Plugin tools | 同一份 `Contribution` 双路：V1 registry（死）+ V2 `PluginToolCompatV2`（deferred，实际生效） | **V2 生效路径已通** |
+| Plugin tools | V1格式由`PluginToolCompat`編譯後只註冊到V2 `PluginToolCompatV2`（deferred）；舊registry雙路已刪 | **V2-only runtime，作者格式相容** |
 | TUI 插件 | plugin state/event/client/keymap均為V2 contract；舊state adapter與`api.command` shim已刪除 | **V2-only API** |
 | MCP | 单一 V2 runtime（`core/src/mcp/runtime.ts`）；`MCP.toolsNode` 注册进 V2 `Tools.Service`（direct/deferred/blocked） | **V2 已接管** |
-| Command | catalog/config/skill/MCP/ACP均使用`CommandV2`；舊service/node已刪除，僅`command.executed`仍是V1 event contract | **V2-only service，event待收** |
+| Command | catalog/config/skill/MCP/ACP與`command.executed` producer/consumer均使用current Command contract；舊service/event modules已刪 | **V2-only** |
 | TUI 主体 | 全部走 V2 client、canonical plugin state與單一native event envelope；TUI `native-v1-*` adapter已刪除 | **V2 已接管** |
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
@@ -202,9 +212,10 @@ production `@/command` import清零。`LegacyEvent.CommandExecuted`仍由Core發
 | `opencode/src/agent/subagent-permissions.ts` | production不可达；仍被test-only旧TaskTool测试引用 |
 | V1 loop/processor/compaction 对应测试 | 已删除或迁移到 V2 contract |
 
-`app-runtime.ts` 与 `httpapi/server.ts` 的 production layer 图已移除上述节点。`opencode/src/tool/registry.ts`
-暂留给 plugin compatibility parity test，不属于模型执行路径；legacy 工具定义仍被 run/外部展示层引用，随
-对应 consumer 迁移再删除。
+`app-runtime.ts` 与 `httpapi/server.ts` 的 production layer 图已移除上述节点。其後
+`opencode/src/tool/registry.ts`也已刪除，plugin compatibility test不再使用V1 oracle；legacy leaf definitions
+仍暫留給專用測試，待closure import graph獨立確認後刪除。`Truncate`/`schema.ts`仍為現役output retention support，
+不屬於可隨leaf一起刪除的registry執行面。
 
 ### 2.3 刻意保留的 V1 出口（外部兼容，迁移完成后独立评估）
 
@@ -277,7 +288,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 
 - **来源单一**：V1 `hooks.tool` + `tool/*.{js,ts}` → `PluginToolCompat` 编译为 `Contribution`
 - **V2 生效路径**：`PluginToolCompatV2` 把 Contribution 包成 canonical tool、`withExposure("deferred")`，`Tools.Service.register`（`bootstrap.ts:28,58-61` 触发）
-- **V1 死路径**：V1 `ToolRegistry`（opencode 包）同一批 Contribution
+- **V1 死路径已刪除**：OpenCode V1 `ToolRegistry` root不再接收同一批Contribution
 - **V2 plugin host 无 tool 注册 API**：`plugin/v2/effect/context.ts` 的 `tool` 仅 ToolDomain（before/after/definition hooks），无 register
 
 ### 4.4 MCP 已是单一 V2 runtime
@@ -303,8 +314,10 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - 从 `app-runtime.ts`、`httpapi/server.ts` 移除 `SessionProcessor.node` / `SessionCompaction.node`
 > - 删除死代码测试：`prompt.test.ts`、`processor-effect.test.ts`、`compaction.test.ts`、`snapshot-tool-race.test.ts`、`structured-output.test.ts`、`structured-output-integration.test.ts`、`tool/registry.test.ts`、`tool/skill.test.ts`
 > - 修复测试引用：`schema-decoding.test.ts`、`tool/task.test.ts` 改用 `LegacySessionInput`；`websearch.test.ts` 的 `webSearchEnabled` 移到 `tool/websearch.ts`
-> - **保留** V1 `tool/registry.ts`（`plugin-compat-v2.test.ts` parity 测试仍依赖）；V1 工具定义文件（task/shell/edit 等）被 run 展示层引用，暂留
-> - 注：`plugin-compat-v2.test.ts` 27 个失败与 `test/tool/`、`test/session/llm.test.ts` 的部分失败是 **baseline 预先存在问题**（stash 验证确认），非本批引入
+> - **後續closeout**：V1 `tool/registry.ts`已在999.0.19刪除，`plugin-compat-v2.test.ts`改為canonical-only；
+>   legacy leaf工具定義仍待獨立closure刪除批次
+> - 注：批次1當時的`plugin-compat-v2.test.ts` 27個baseline failures並非該批引入；後續registry closeout時
+>   canonical plugin compatibility + isolation + TaskTool focused suite已為65 pass / 0 fail
 
 原计划步骤：
 1. 确认 `app-runtime.ts`、`httpapi/server.ts` 的 layer 图中 `SessionPrompt`/`SessionProcessor`/V1 `SessionCompaction`/V1 `ToolRegistry`/V1 `TaskTool`/`subagent-permissions.ts` 移除后无其他依赖
@@ -354,7 +367,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 2. **config group**：`ConfigV1` → V2 config 解码；移除 `ConfigMigrateV1`（保留一次性迁移入口）
 3. **provider group**：V1 provider/auth → V2 provider
 4. **event group**：`EventV2Bridge` 的 V1 序列化 → V2 事件词汇
-5. ~~**command group**：V1 `@/command` → V2 `CommandV2`~~（service/catalog hard cut已完成；`command.executed`歸event批次）
+5. ~~**command group**：V1 `@/command` → V2 `CommandV2`~~（service/catalog與`command.executed` event hard cut均已完成）
 
 ### 批次 5：存储格式迁移（transcript hard cut 已完成）
 
@@ -389,7 +402,9 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 >   - **LSP/VCS 域（已完成）**：`LspEvent`（`lsp.updated`）与 `VcsEvent`（`vcs.branch.updated`）从 compatibilityDefinitions 移到 foundationDefinitions，作为独立 V2 domain events（不并入 session.next.*，符合产品决策）。两者无 producer（纯消费端触发拉取），保留在 ServerDefinitions 供 TUI/app 消费
 >   - **ACP 域（已确认就绪）**：ACP adapter 已符合产品决策——`acp/client.ts` 全部通过 V2 `OpenCode.make`（native client）获取数据（sessions.get/list、messages.list），`native-v1-session/transcript/catalog` 是纯 V2→V1 形状转换（无任何 DB/存储读取）；`acp/content.ts` 的 `SessionV1.TextPartInput/FilePartInput` 仅作 ACP 协议边界形状（对外协议保持兼容）。无需代码改动
 >   - **CLI presenter（--format json）已确认满足**：CLI 的 JSONL 输出数据源已是 V2 事件——`run.ts` 通过 `native-compat.ts`（CLI 的 compatibility adapter）消费，其 `event.subscribe` 从 `native.events.subscribe()`（V2 事件源）经 `legacyEventProjection` 投影 V1 形状；`--format json` 的 JSONL 契约（reasoning/tool/step/continuation ordering + V1 part 形状）由 run-process 契约测试验证通过（12 pass；1 个权限交互测试为 baseline 环境预存失败）。无需代码改动
->   - **compatibilityDefinitions 移除评估（暂不移除）**：按产品决策"先逐域迁移 producer 和 consumer 再移除 definition"。question/status/diff 的 producer 已切 V2，但 CLI/TUI consumer 仍走 V1 投影（未迁移）；`LegacyEvent.CommandExecuted`/`Project.Event` 等 producer 仍是 V1。当前不具备移除条件。待 consumer（TUI/CLI 全面改 V2 词汇）迁移完成后再逐域移除 `SessionStatusEvent`/`QuestionV1`/`sessionV1LiveDefinitions`（message.part.delta/session.diff/session.error）等 V1 definition。`SessionCompactionEvent` 无 producer（疑似废弃），可优先评估移除
+>   - **compatibilityDefinitions 繼續縮減**：按产品决策"先逐域迁移 producer 和 consumer 再移除 definition"。
+>     Session/question/status/diff/message與`command.executed`均已完成current hard cut；`Project.Event`等獨立
+>     compatibility domains仍依各自consumer逐項評估，不整包盲刪
 
 1. 替换 `core/src/session.ts`/`command.ts`/`execution/local.ts` 的 `SessionV1.Event.*` 发布点为 V2 `SessionEvent`（`@opencode-ai/schema/session-event`）
 2. TUI `useEvent()` legacy 事件集迁移到 V2 事件（`routes/session/index.tsx` 的 plan_exit/plan_enter、`sync.tsx` 的 session.updated/permission.*）

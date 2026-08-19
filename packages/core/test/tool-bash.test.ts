@@ -326,7 +326,14 @@ describe("BashTool", () => {
               combineOutput: true,
             })
             expect(runs[0]?.options).not.toHaveProperty("maxOutputBytes")
-            expect(assertions).toMatchObject([{ sessionID, action: "bash", resources: ["pwd"], save: [] }])
+            expect(assertions).toMatchObject([
+              {
+                sessionID,
+                action: "bash",
+                resources: ["pwd"],
+                save: Shell.name(shell) === "bash" ? ["pwd *"] : [],
+              },
+            ])
           }),
         )
       },
@@ -655,7 +662,11 @@ describe("BashTool", () => {
                   { exitCode: 0, stdout: "" },
                   { exitCode: 0, stdout: "C:/one\nC:/two\n" },
                   { exitCode: 0, stdout: "relative/path\n" },
+                  { exitCode: 0, stdout: "\\rooted\n" },
+                  { exitCode: 0, stdout: "/rooted\n" },
+                  { exitCode: 0, stdout: "C:/output-truncated\n", outputTruncated: true },
                   { exitCode: 0, stdout: "C:/truncated\n", stdoutTruncated: true },
+                  { exitCode: 0, stdout: "C:/error-truncated\n", stderrTruncated: true },
                 ]) {
                   reset()
                   configuredShell = "bash"
@@ -665,7 +676,9 @@ describe("BashTool", () => {
                       exitCode: scenario.exitCode,
                       output: undefined,
                       stdout: Buffer.from(scenario.stdout),
+                      outputTruncated: scenario.outputTruncated ?? false,
                       stdoutTruncated: scenario.stdoutTruncated ?? false,
+                      stderrTruncated: scenario.stderrTruncated ?? false,
                     })
                   const settled = yield* settleTool(
                     registry,
@@ -892,6 +905,100 @@ describe("BashTool", () => {
               executeTool(registry, call({ command: `cd "${relative}"`, workdir: "nested" })),
             ),
           ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("unescapes an unknown Bash command literal path before external denial", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const target = path.join(outside.path, "evil.py").replaceAll("\\", "/")
+        runHandler = (command) =>
+          process.platform === "win32" &&
+          command._tag === "StandardCommand" &&
+          command.args[3] === 'cygpath -w -- "$1"'
+            ? Effect.succeed({ ...result, output: undefined, stdout: Buffer.from(`${target}\n`) })
+            : Effect.succeed(result)
+        return withTool(active.path, (registry) =>
+          executeTool(registry, call({ command: String.raw`python \/tmp/evil.py` })),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs.filter((run) => run.options?.combineOutput === true)).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("does not reinterpret quoted or dynamic unknown Bash arguments as literal paths", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (active) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(active.path, (registry) =>
+          Effect.gen(function* () {
+            yield* executeTool(
+              registry,
+              call({ command: String.raw`python "\/tmp/evil.py"` }, "call-quoted-scanner"),
+            )
+            yield* executeTool(registry, call({ command: 'python "$TARGET"' }, "call-dynamic-scanner"))
+            expect(assertions.map((input) => input.action)).toEqual(["bash", "bash"])
+            expect(runs).toHaveLength(2)
+          }),
+        )
+      },
+      (active) => Effect.promise(() => active[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("denies an escaped native Bash path without starting a process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const target = path.join(outside.path, "native.py").replaceAll("\\", "/")
+        const escaped = process.platform === "win32" ? target.replace(":", "\\:") : `\\${target}`
+        return withTool(active.path, (registry) => executeTool(registry, call({ command: `python ${escaped}` }))).pipe(
           Effect.andThen(
             Effect.sync(() => {
               expect(assertions).toMatchObject([

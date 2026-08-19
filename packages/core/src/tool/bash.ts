@@ -108,19 +108,96 @@ const processCommand = (shell: string, input: string, cwd: string, env: Record<s
 // Full shell output is retained by ToolOutputStore after execution; revisit streaming
 // capture if unbounded process memory becomes a concern for hostile commands.
 
+type ScannerToken = {
+  readonly value: string
+  readonly home: boolean
+}
+
 const shellTokens = (command: string) => command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
 const unquote = (value: string) => value.replace(/^(['"])(.*)\1$/, "$2")
-const scannerPaths = (command: string) =>
-  shellTokens(command).flatMap((token): ShellCommand.PathCandidate[] => {
-    const value = unquote(token).replace(/^[<>]+|[;,|&]+$/g, "")
+const bashWords = (command: string) =>
+  command.match(/(?:\\[\s\S]|"(?:\\[\s\S]|[^"\\])*"|'[^']*'|[^\s"'\\;|&<>()])+/g) ?? []
+
+// Decode only static Bash words; expansion-bearing words stay outside path authorization.
+function bashLiteral(word: string): ScannerToken | undefined {
+  let value = ""
+  let quote: "plain" | "single" | "double" = "plain"
+  const home = word.startsWith("~")
+  for (let index = 0; index < word.length; index++) {
+    const character = word[index]!
+    if (quote === "single") {
+      if (character === "'") quote = "plain"
+      else value += character
+      continue
+    }
+    if (quote === "double") {
+      if (character === '"') {
+        quote = "plain"
+        continue
+      }
+      if (character === "$" || character === "`") return
+      if (character !== "\\") {
+        value += character
+        continue
+      }
+      const next = word[index + 1]
+      if (next === undefined) return
+      if (next === "\n") {
+        index++
+        continue
+      }
+      if ('$`"\\'.includes(next)) {
+        value += next
+        index++
+        continue
+      }
+      value += character
+      continue
+    }
+    if (character === "'") {
+      quote = "single"
+      continue
+    }
+    if (character === '"') {
+      quote = "double"
+      continue
+    }
+    if (character === "$" || character === "`" || "*?[{}".includes(character)) return
+    if (character !== "\\") {
+      value += character
+      continue
+    }
+    const next = word[index + 1]
+    if (next === undefined) return
+    index++
+    if (next !== "\n") value += next
+  }
+  if (quote !== "plain" || !value) return
+  return { value, home }
+}
+
+const scannerTokens = (command: string, kind: ShellCommand.Kind): ReadonlyArray<ScannerToken> =>
+  kind === "bash"
+    ? bashWords(command).flatMap((word) => {
+        const token = bashLiteral(word)
+        return token ? [token] : []
+      })
+    : shellTokens(command).map((token) => ({
+        value: unquote(token).replace(/^[<>]+|[;,|&]+$/g, ""),
+        home: !token.startsWith('"') && !token.startsWith("'"),
+      }))
+
+const scannerPaths = (command: string, kind: ShellCommand.Kind) =>
+  scannerTokens(command, kind).flatMap((token): ShellCommand.PathCandidate[] => {
+    const value = token.value
     if (!value) return []
-    if (
-      !path.isAbsolute(FSUtil.windowsPath(value)) &&
-      !/^\.\.?[\\/]/.test(value) &&
-      value !== "~" &&
-      !/^~[\\/]/.test(value)
-    )
-      return []
+    const native =
+      process.platform === "win32" &&
+      (/^[A-Za-z]:[\\/]/.test(value) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(value))
+    const absolute = kind === "bash" ? value.startsWith("/") || native : path.isAbsolute(FSUtil.windowsPath(value))
+    const relative = kind === "bash" ? /^\.\.?\//.test(value) : /^\.\.?[\\/]/.test(value)
+    const home = token.home && (value === "~" || value.startsWith("~/") || (kind !== "bash" && value.startsWith("~\\")))
+    if (!absolute && !relative && !home) return []
     return [{ value, kind: "file" }]
   })
 
@@ -215,7 +292,15 @@ const layer = Layer.effectDiscard(
         )
       const output = converted.stdout.toString("utf8").replace(/\r?\n$/, "")
       const native = FSUtil.windowsPath(output)
-      if (converted.stdoutTruncated || !output || /[\r\n\0]/.test(output) || !path.win32.isAbsolute(native))
+      const absolute = /^[A-Za-z]:[\\/]/.test(native) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(native)
+      if (
+        converted.outputTruncated === true ||
+        converted.stdoutTruncated ||
+        converted.stderrTruncated ||
+        !output ||
+        /[\r\n\0]/.test(output) ||
+        !absolute
+      )
         return yield* new ToolFailure({ message: `Cannot safely translate shell path: ${value}` })
       return native
     })
@@ -262,7 +347,7 @@ const layer = Layer.effectDiscard(
               )
               const workdir = yield* nativePath(input.workdir ?? ".", shell, kind)
               const target = yield* mutation.resolve({ path: workdir, kind: "directory" })
-              const candidates = [...analysis.pathHints, ...scannerPaths(input.command)]
+              const candidates = [...analysis.pathHints, ...scannerPaths(input.command, kind)]
               const resolved = yield* Effect.forEach(candidates, (candidate) =>
                 nativePath(candidate.value, shell, kind).pipe(
                   Effect.map((value) => (path.isAbsolute(value) ? value : path.resolve(target.canonical, value))),

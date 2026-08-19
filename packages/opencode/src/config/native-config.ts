@@ -1,4 +1,5 @@
 import { ConfigCapability } from "@opencode-ai/server/config-capability"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { Auth } from "@/auth"
 import { Effect, Layer } from "effect"
 import { EffectBridge } from "@/effect/bridge"
@@ -13,6 +14,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* Config.Service
     const auth = yield* Auth.Service
+    const locations = yield* LocationServiceMap.Service
     const customProvider = yield* makeCustomProvider
     return ConfigCapability.Service.of({
       get: () => config.get().pipe(Effect.map((value) => value as ConfigCapability.Value)),
@@ -20,6 +22,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const result = yield* config.updateGlobal(value as Config.Info)
           if (result.changed) {
+            if (locations.invalidateAll) yield* locations.invalidateAll()
             const bridge = yield* EffectBridge.make()
             const reason = Config.isAgentOnlyUpdate(value) ? "agent-config" : undefined
             bridge.fork(

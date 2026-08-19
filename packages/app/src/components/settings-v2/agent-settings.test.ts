@@ -6,16 +6,16 @@ import {
   configurableAgentIDs,
   formatAgentModel,
   parseAgentModel,
-  primaryAgentIDs,
   resolveAgentProtocol,
   subagentAgentIDs,
 } from "./agent-settings"
 
 describe("agent settings", () => {
-  test("separates coordinator and task subagent roles", () => {
-    expect(primaryAgentIDs).toEqual(["build", "plan"])
+  test("only exposes task subagents in Settings", () => {
     expect(subagentAgentIDs).toEqual(["general", "explore", "research", "worker"])
-    expect(configurableAgentIDs).toEqual([...primaryAgentIDs, ...subagentAgentIDs])
+    expect(configurableAgentIDs).toEqual(subagentAgentIDs)
+    expect(configurableAgentIDs).not.toContain("build")
+    expect(configurableAgentIDs).not.toContain("plan")
     expect(new Set(configurableAgentIDs).size).toBe(configurableAgentIDs.length)
   })
 
@@ -58,6 +58,8 @@ describe("agent settings", () => {
       "low",
       "medium",
       "high",
+      "xhigh",
+      "max",
     ])
     expect(agentReasoningOptions({ variants: {} }, "openai-responses")).toEqual([])
   })

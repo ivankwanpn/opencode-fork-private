@@ -10,11 +10,10 @@ import { agentOverride, type AgentOverride } from "@/context/agent-config"
 import {
   agentRoleMetadata,
   agentModelProtocols,
+  configurableAgentIDs,
   formatAgentModel,
   parseAgentModel,
-  primaryAgentIDs,
   resolveAgentProtocol,
-  subagentAgentIDs,
   type ConfigurableAgentID,
 } from "./agent-settings"
 import { SettingsListV2 } from "./parts/list"
@@ -219,11 +218,7 @@ export const SettingsAgentsV2: Component = () => {
         <p class="settings-v2-tab-description">{language.t("settings.agents.description")}</p>
       </div>
       <div class="settings-v2-tab-body settings-v2-agents">
-        <AgentSettingsSection
-          title={language.t("settings.agents.section.coordinators")}
-          ids={primaryAgentIDs}
-        />
-        <AgentSettingsSection title={language.t("settings.agents.section.subagents")} ids={subagentAgentIDs} />
+        <AgentSettingsSection title={language.t("settings.agents.section.subagents")} ids={configurableAgentIDs} />
       </div>
     </>
   )

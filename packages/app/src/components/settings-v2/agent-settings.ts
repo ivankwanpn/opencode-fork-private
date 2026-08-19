@@ -1,16 +1,12 @@
 import type { Model } from "@opencode-ai/sdk/v2/client"
 import type { CustomProvider } from "@opencode-ai/schema/custom-provider"
 import { modelVariantsForProtocol, resolveModelProtocol } from "@/pages/session/composer/model-protocol-variants"
-import { primaryAgentIDs } from "@/context/agent-config"
 
-export { primaryAgentIDs }
 export const subagentAgentIDs = ["general", "explore", "research", "worker"] as const
-export const configurableAgentIDs = [...primaryAgentIDs, ...subagentAgentIDs] as const
+export const configurableAgentIDs = subagentAgentIDs
 export type ConfigurableAgentID = (typeof configurableAgentIDs)[number]
 
 export const agentRoleMetadata = {
-  build: { descriptionKey: "settings.agents.role.build" },
-  plan: { descriptionKey: "settings.agents.role.plan" },
   general: { descriptionKey: "settings.agents.role.general" },
   explore: { descriptionKey: "settings.agents.role.explore" },
   research: { descriptionKey: "settings.agents.role.research" },

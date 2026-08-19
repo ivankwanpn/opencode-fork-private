@@ -2,9 +2,10 @@ import { Config } from "@/config/config"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Effect, Queue } from "effect"
+import { Effect, Option, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -58,6 +59,7 @@ function eventResponse() {
 export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handlers) =>
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const locations = Option.getOrUndefined(yield* Effect.serviceOption(LocationServiceMap.Service))
     const bridge = yield* EffectBridge.make()
 
     const health = Effect.fn("GlobalHttpApi.health")(function* () {
@@ -75,6 +77,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
     const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx) {
       const result = yield* config.updateGlobal(ctx.payload)
       if (result.changed) {
+        if (locations?.invalidateAll) yield* locations.invalidateAll()
         const reason = Config.isAgentOnlyUpdate(ctx.payload) ? "agent-config" : undefined
         bridge.fork(
           disposeAllInstancesAndEmitGlobalDisposed({

@@ -24,12 +24,117 @@ const tmpdirEffect = (options: Parameters<typeof tmpdir>[0]) =>
     (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
   )
 
+const updateAgent = (input: {
+  route: "/api/config" | "/global/config"
+  directory: string
+  model: string
+  protocol: string
+  variant: string
+}) => {
+  const config = {
+    agent: {
+      worker: { model: input.model, protocol: input.protocol, variant: input.variant },
+    },
+  }
+  return Effect.promise(() =>
+    Promise.resolve(
+      app().request(input.route, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-opencode-directory": input.directory,
+        },
+        body: JSON.stringify(input.route === "/api/config" ? { config } : config),
+      }),
+    ),
+  )
+}
+
+const worker = (directory: string) =>
+  Effect.promise(() =>
+    Promise.resolve(
+      app().request("/api/agent", {
+        headers: { "x-opencode-directory": directory },
+      }),
+    ).then(async (response) => {
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        data: Array<{ id: string; model?: { id: string; providerID: string; protocol?: string; variant?: string } }>
+      }
+      return body.data.find((agent) => agent.id === "worker")
+    }),
+  )
+
 afterEach(async () => {
   await disposeAllInstances()
   await resetDatabase()
 })
 
 describe("config HttpApi", () => {
+  it.live(
+    "refreshes the V2 agent catalog before an agent config update returns",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+
+      expect(
+        (yield* updateAgent({
+          route: "/api/config",
+          directory: tmp.path,
+          model: "openai/gpt-5.6-luna",
+          protocol: "openai-responses",
+          variant: "high",
+        })).status,
+      ).toBe(200)
+      expect(yield* worker(tmp.path)).toMatchObject({
+        model: { id: "gpt-5.6-luna", providerID: "openai", protocol: "openai-responses", variant: "high" },
+      })
+
+      expect(
+        (yield* updateAgent({
+          route: "/api/config",
+          directory: tmp.path,
+          model: "deepseek/deepseek-v4-flash",
+          protocol: "anthropic-messages",
+          variant: "max",
+        })).status,
+      ).toBe(200)
+      expect(yield* worker(tmp.path)).toMatchObject({
+        model: {
+          id: "deepseek-v4-flash",
+          providerID: "deepseek",
+          protocol: "anthropic-messages",
+          variant: "max",
+        },
+      })
+    }),
+    15_000,
+  )
+
+  it.live(
+    "refreshes the V2 agent catalog after a global compatibility update",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+      yield* worker(tmp.path)
+      const updated = yield* updateAgent({
+        route: "/global/config",
+        directory: tmp.path,
+        model: "deepseek/deepseek-v4-flash",
+        protocol: "anthropic-messages",
+        variant: "max",
+      })
+      expect(updated.status).toBe(200)
+      expect(yield* worker(tmp.path)).toMatchObject({
+        model: {
+          id: "deepseek-v4-flash",
+          providerID: "deepseek",
+          protocol: "anthropic-messages",
+          variant: "max",
+        },
+      })
+    }),
+    15_000,
+  )
+
   it.live(
     "serves config update through the default server app",
     Effect.gen(function* () {

@@ -1027,6 +1027,61 @@ describe("TaskTool", () => {
     }),
   )
 
+  foreground.effect("uses the current worker model override instead of the parent model", () =>
+    Effect.gen(function* () {
+      reset()
+      const parentModel = ModelV2.Ref.make({
+        id: ModelV2.ID.make("gpt-5.6-luna"),
+        providerID: ProviderV2.ID.make("openai"),
+        protocol: "openai-responses",
+      })
+      const workerModel = ModelV2.Ref.make({
+        id: ModelV2.ID.make("deepseek-v4-flash"),
+        providerID: ProviderV2.ID.make("deepseek"),
+        protocol: "anthropic-messages",
+        variant: ModelV2.VariantID.make("max"),
+      })
+      const workerID = AgentV2.ID.make("worker")
+      sessions.set(parentID, info({ id: parentID, agent: AgentV2.ID.make("build"), model: parentModel }))
+      agents.set(
+        workerID,
+        AgentV2.Info.make({
+          id: workerID,
+          request: { headers: {}, body: {} },
+          mode: "subagent",
+          hidden: false,
+          model: workerModel,
+          permissions: [{ action: "*", resource: "*", effect: "allow" }],
+        }),
+      )
+      const registry = yield* ToolRegistry.Service
+
+      const result = yield* settleTool(registry, call({ ...input, subagent_type: "worker" }, "call-worker-model"))
+
+      expect(result).toMatchObject({
+        result: { type: "text" },
+        output: {
+          structured: {
+            metadata: {
+              agent: "worker",
+              model: {
+                modelID: "deepseek-v4-flash",
+                providerID: "deepseek",
+                protocol: "anthropic-messages",
+                variant: "max",
+              },
+            },
+          },
+        },
+      })
+      expect(sessions.get(SessionSchema.ID.make("ses_task_child_1"))).toMatchObject({
+        agent: "worker",
+        model: workerModel,
+      })
+      expect(Array.from(taskSubmissions.values())[0]).toMatchObject({ agent: "worker", model: workerModel })
+    }),
+  )
+
   foreground.effect("accepts configured agents with mode all", () =>
     Effect.gen(function* () {
       reset()

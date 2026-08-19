@@ -129,6 +129,13 @@ adapter回流；deprecated `api.command` shim、compatibility `api.event` bus與
 canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專用測試已刪除。不可達的
 `server.instance.disposed` native分支一併移除；worker與SSE皆只轉送EventV2 manifest事件。
 
+**999.0.19 Command service hard cut**：Core `CommandV2` 新增scoped dynamic command sources，MCP prompts以
+metadata-only catalog列出並只在執行時materialize；later dynamic source優先，scope釋放後立即回落到下層
+command。ACP fallback loader改由`LocationServiceMap`按directory取得`CommandV2.Service`，native catalog不再
+降級成V1 command shape。OpenCode舊`Command.Service`、`Command.node`與重複的init/review templates已刪除，
+production `@/command` import清零。`LegacyEvent.CommandExecuted`仍由Core發布並被Project初始化狀態消費，
+屬於下一個獨立event hard cut，不是保留V1 command service的理由。
+
 ---
 
 ## 1. 各区域现状总表
@@ -147,7 +154,7 @@ canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專
 | Plugin tools | 同一份 `Contribution` 双路：V1 registry（死）+ V2 `PluginToolCompatV2`（deferred，实际生效） | **V2 生效路径已通** |
 | TUI 插件 | plugin state/event/client/keymap均為V2 contract；舊state adapter與`api.command` shim已刪除 | **V2-only API** |
 | MCP | 单一 V2 runtime（`core/src/mcp/runtime.ts`）；`MCP.toolsNode` 注册进 V2 `Tools.Service`（direct/deferred/blocked） | **V2 已接管** |
-| Command | TUI 用 V2 `CommandV2`；V1 `@/command` 只服务 legacy instance API | **双路径** |
+| Command | catalog/config/skill/MCP/ACP均使用`CommandV2`；舊service/node已刪除，僅`command.executed`仍是V1 event contract | **V2-only service，event待收** |
 | TUI 主体 | 全部走 V2 client、canonical plugin state與單一native event envelope；TUI `native-v1-*` adapter已刪除 | **V2 已接管** |
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
@@ -183,9 +190,6 @@ canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專
 
 7. **V1 Plugin 加载/触发/TUI** — `opencode/src/plugin/index.ts`、`loader.ts`、`plugin/tui/runtime.ts`
    插件安装/发现/TUI 插件仍 V1；运行时 hooks 已桥接 V2。
-
-8. **V1 Command** — `opencode/src/command/index.ts`
-   只服务 legacy instance HTTP API 的 `command.list` 端点。
 
 ### 2.2 V1 执行死代码（已删除）
 
@@ -341,7 +345,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 ### 批次 4：httpapi 各 group 迁移到 V2 数据模型（核心）
 
 > ✅ **部分完成（999.0.17）**：
-> - **command group**：`instance.command` 端点切到 V2 `CommandV2`（wire schema 用 `@opencode-ai/schema/command` 的 `Command.Info`，经 `LocationServiceMap` 解析）；契约测试通过
+> - **command group**：`instance.command` 端点切到 V2 `CommandV2`（wire schema 用 `@opencode-ai/schema/command` 的 `Command.Info`，经 `LocationServiceMap` 解析）；其後ACP與MCP prompt parity完成，舊`@/command` service/node已刪除
 > - **session group**：transcript list/get/revert/mutation 已切 canonical `SessionV2`，`LegacySessionRead` 的 retained merge 已删除；Session CRUD 仍保留 V1 `Session.Service` 读壳。`Session.Service` 直接读 `SessionTable`，下一批必须扩充 V2 等价能力并逐个迁移 consumer，不能回退 legacy transcript。
 > - **config/provider/event group**：标注待办。调研确认其核心迁移点在 core（配置双路径、事件投影），httpapi 是最后一层出口，归批次 6/8。且这 5 个 group 无生产客户端（TUI/Web 走 `packages/server` V2 handler），主要是契约测试消费
 
@@ -350,7 +354,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 2. **config group**：`ConfigV1` → V2 config 解码；移除 `ConfigMigrateV1`（保留一次性迁移入口）
 3. **provider group**：V1 provider/auth → V2 provider
 4. **event group**：`EventV2Bridge` 的 V1 序列化 → V2 事件词汇
-5. **command group**：V1 `@/command` → V2 `CommandV2`
+5. ~~**command group**：V1 `@/command` → V2 `CommandV2`~~（service/catalog hard cut已完成；`command.executed`歸event批次）
 
 ### 批次 5：存储格式迁移（transcript hard cut 已完成）
 

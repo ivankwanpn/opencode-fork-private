@@ -111,6 +111,7 @@ const processCommand = (shell: string, input: string, cwd: string, env: Record<s
 type ScannerToken = {
   readonly value: string
   readonly home: boolean
+  readonly kind: ShellCommand.PathCandidate["kind"]
 }
 
 const shellTokens = (command: string) => command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
@@ -118,13 +119,13 @@ const unquote = (value: string) => value.replace(/^(['"])(.*)\1$/, "$2")
 const bashWords = (command: string) =>
   command.match(/(?:\\[\s\S]|"(?:\\[\s\S]|[^"\\])*"|'[^']*'|[^\s"'\\;|&<>()])+/g) ?? []
 
-// Decode only static Bash words; expansion-bearing words stay outside path authorization.
+// Decode complete literal words or retain the stable parent before expansion.
 function bashLiteral(word: string): ScannerToken | undefined {
   let value = ""
   let quote: "plain" | "single" | "double" = "plain"
   const home = word.startsWith("~")
   for (let index = 0; index < word.length; index++) {
-    const character = word[index]!
+    const character = word[index]
     if (quote === "single") {
       if (character === "'") quote = "plain"
       else value += character
@@ -135,13 +136,16 @@ function bashLiteral(word: string): ScannerToken | undefined {
         quote = "plain"
         continue
       }
-      if (character === "$" || character === "`") return
+      if (character === "$" || character === "`") {
+        const boundary = bashStaticDirectory(value)
+        return boundary ? { value: boundary, home, kind: "directory" } : undefined
+      }
       if (character !== "\\") {
         value += character
         continue
       }
       const next = word[index + 1]
-      if (next === undefined) return
+      if (next === undefined) return undefined
       if (next === "\n") {
         index++
         continue
@@ -162,18 +166,35 @@ function bashLiteral(word: string): ScannerToken | undefined {
       quote = "double"
       continue
     }
-    if (character === "$" || character === "`" || "*?[{}".includes(character)) return
+    if (character === "$" || character === "`" || "*?[]{}".includes(character)) {
+      const boundary = bashStaticDirectory(value)
+      return boundary ? { value: boundary, home, kind: "directory" } : undefined
+    }
     if (character !== "\\") {
       value += character
       continue
     }
     const next = word[index + 1]
-    if (next === undefined) return
+    if (next === undefined) return undefined
     index++
     if (next !== "\n") value += next
   }
-  if (quote !== "plain" || !value) return
-  return { value, home }
+  if (quote !== "plain" || !value) return undefined
+  return { value, home, kind: "file" }
+}
+
+function bashStaticDirectory(value: string): string | undefined {
+  if (!value) return undefined
+  const trimmed = value.replace(/\/+$/, "")
+  if (trimmed !== value) {
+    if (!trimmed) return "/"
+    return /^[A-Za-z]:$/.test(trimmed) ? trimmed + "/" : trimmed
+  }
+  const separator = value.lastIndexOf("/")
+  if (separator < 0) return undefined
+  if (separator === 0) return "/"
+  const directory = value.slice(0, separator)
+  return /^[A-Za-z]:$/.test(directory) ? directory + "/" : directory
 }
 
 const scannerTokens = (command: string, kind: ShellCommand.Kind): ReadonlyArray<ScannerToken> =>
@@ -185,6 +206,7 @@ const scannerTokens = (command: string, kind: ShellCommand.Kind): ReadonlyArray<
     : shellTokens(command).map((token) => ({
         value: unquote(token).replace(/^[<>]+|[;,|&]+$/g, ""),
         home: !token.startsWith('"') && !token.startsWith("'"),
+        kind: "file" as const,
       }))
 
 const scannerPaths = (command: string, kind: ShellCommand.Kind) =>
@@ -198,7 +220,7 @@ const scannerPaths = (command: string, kind: ShellCommand.Kind) =>
     const relative = kind === "bash" ? /^\.\.?\//.test(value) : /^\.\.?[\\/]/.test(value)
     const home = token.home && (value === "~" || value.startsWith("~/") || (kind !== "bash" && value.startsWith("~\\")))
     if (!absolute && !relative && !home) return []
-    return [{ value, kind: "file" }]
+    return [{ value, kind: token.kind }]
   })
 
 const shellKind = (shell: string): ShellCommand.Kind | undefined => {

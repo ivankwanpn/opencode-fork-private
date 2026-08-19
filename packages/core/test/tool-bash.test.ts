@@ -949,11 +949,265 @@ describe("BashTool", () => {
               expect(assertions).toMatchObject([
                 {
                   action: "external_directory",
-                  resources: [path.join(realpathSync(outside.path), "*").replaceAll("\\", "/")],
+                  resources: [
+                    path
+                      .join(process.platform === "win32" ? realpathSync(outside.path) : realpathSync("/tmp"), "*")
+                      .replaceAll("\\", "/"),
+                  ],
                 },
               ])
               expect(jobOperations).toEqual([])
               expect(runs.filter((run) => run.options?.combineOutput === true)).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("denies an absolute Bash wildcard at its static directory boundary", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const external = process.platform === "win32" ? realpathSync(outside.path) : realpathSync("/tmp")
+        runHandler = (command) =>
+          process.platform === "win32" &&
+          command._tag === "StandardCommand" &&
+          command.args[3] === 'cygpath -w -- "$1"'
+            ? Effect.succeed({ ...result, output: undefined, stdout: Buffer.from(external + "\n") })
+            : Effect.succeed(result)
+        return withTool(active.path, (registry) =>
+          executeTool(registry, call({ command: "project-script /tmp/*" }, "call-absolute-wildcard")),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(external, "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs.filter((run) => run.options?.combineOutput === true)).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("denies a double-quoted Bash variable suffix at its static directory boundary", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const external = process.platform === "win32" ? realpathSync(outside.path) : realpathSync("/tmp")
+        runHandler = (command) =>
+          process.platform === "win32" &&
+          command._tag === "StandardCommand" &&
+          command.args[3] === 'cygpath -w -- "$1"'
+            ? Effect.succeed({ ...result, output: undefined, stdout: Buffer.from(external + "\n") })
+            : Effect.succeed(result)
+        return withTool(active.path, (registry) =>
+          executeTool(
+            registry,
+            call({ command: 'project-script "/tmp/$TARGET"' }, "call-absolute-variable"),
+          ),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(external, "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs.filter((run) => run.options?.combineOutput === true)).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("denies a relative Bash wildcard at its static directory boundary", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (root) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const active = path.join(root.path, "project")
+        const outside = path.join(root.path, "outside")
+        return Effect.promise(() => Promise.all([fs.mkdir(active), fs.mkdir(outside)])).pipe(
+          Effect.andThen(
+            withTool(active, (registry) =>
+              executeTool(
+                registry,
+                call({ command: "project-script ../outside/*.json" }, "call-relative-wildcard"),
+              ),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(outside), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      (root) => Effect.promise(() => root[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("does not save a dynamic Bash path prefix as a reusable command", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const external = process.platform === "win32" ? realpathSync(outside.path) : realpathSync("/tmp")
+        runHandler = (command) =>
+          process.platform === "win32" &&
+          command._tag === "StandardCommand" &&
+          command.args[3] === 'cygpath -w -- "$1"'
+            ? Effect.succeed({ ...result, output: undefined, stdout: Buffer.from(external + "\n") })
+            : Effect.succeed(result)
+        return withTool(active.path, (registry) =>
+          executeTool(registry, call({ command: "project-script /tmp/*" }, "call-dynamic-save")),
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(external, "*").replaceAll("\\", "/")],
+                },
+                {
+                  action: "bash",
+                  resources: ["project-script /tmp/*"],
+                  save: [],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs.filter((run) => run.options?.combineOutput === true)).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("keeps a single-quoted Bash expansion marker literal", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const literal = path.join(outside.path, "$TARGET")
+        return Effect.promise(() => fs.mkdir(literal)).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              executeTool(
+                registry,
+                call(
+                  { command: "project-script '" + literal.replaceAll("\\", "/") + "'" },
+                  "call-single-quoted-variable",
+                ),
+              ),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(literal), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("keeps escaped Bash brace metacharacters literal", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        configuredShell = "bash"
+        denyAction = "external_directory"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        const literal = path.join(outside.path, "{one,two}")
+        return Effect.promise(() => fs.mkdir(literal)).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              executeTool(
+                registry,
+                call(
+                  {
+                    command:
+                      "project-script " +
+                      literal.replaceAll("\\", "/").replace("{", "\\{").replace("}", "\\}"),
+                  },
+                  "call-escaped-brace",
+                ),
+              ),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions).toMatchObject([
+                {
+                  action: "external_directory",
+                  resources: [path.join(realpathSync(literal), "*").replaceAll("\\", "/")],
+                },
+              ])
+              expect(jobOperations).toEqual([])
+              expect(runs).toEqual([])
             }),
           ),
         )

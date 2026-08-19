@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect, Queue, Schema, Stream } from "effect"
 import { EventV2 } from "@opencode-ai/core/event"
+import { Command } from "@opencode-ai/schema/command"
 import { legacyEventPayloads } from "../../src/event-v2-bridge"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
 import { resetDatabase } from "../fixture/db"
@@ -45,6 +46,18 @@ const openEventStream = (directory: string) =>
   })
 
 describe("legacy event adapter", () => {
+  test("keeps the current command event type and payload unchanged", () => {
+    const data = {
+      name: "init",
+      sessionID: "ses_command",
+      arguments: "--force",
+      messageID: "msg_command",
+    }
+    const source = canonicalEvent(Command.Event.Executed.type, data)
+
+    expect(legacyEventPayloads(source)).toEqual([{ id: source.id, type: "command.executed", properties: data }])
+  })
+
   test("forwards canonical events without renaming them", () => {
     const source = canonicalEvent("session.next.step.started", {
       sessionID: "ses_test",

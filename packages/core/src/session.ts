@@ -41,8 +41,7 @@ import { Snapshot } from "./snapshot"
 import { SessionRevert } from "./session/revert"
 import { Revert } from "@opencode-ai/schema/revert"
 import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
-import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
-import { SessionV1 } from "./v1/session"
+import { Command } from "@opencode-ai/schema/command"
 import type { PermissionV2 } from "./permission"
 import { isDeepStrictEqual } from "node:util"
 
@@ -758,11 +757,11 @@ const layer = Layer.effect(
                   .materializeAgents(prompt, agent)
                   .pipe(Effect.flatMap(prepared.attachment.materialize)),
             })
-            yield* events.publish(LegacyEvent.CommandExecuted, {
+            yield* events.publish(Command.Event.Executed, {
               name: input.command,
               sessionID: input.sessionID,
               arguments: input.arguments,
-              messageID: SessionV1.MessageID.make(admitted.id),
+              messageID: admitted.id,
             })
             if (input.commit === true) {
               yield* SessionInput.promote(db, events, admitted.sessionID, admitted.id)

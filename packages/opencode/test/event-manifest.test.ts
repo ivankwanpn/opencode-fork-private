@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { SessionEvent } from "@opencode-ai/core/session/event"
+import { Command } from "@opencode-ai/schema/command"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { EventManifest as SchemaEventManifest } from "@opencode-ai/schema/event-manifest"
 import { Todo } from "@/session/todo"
@@ -13,6 +14,8 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.size).toBe(89)
     expect(EventManifest.Durable.size).toBe(47)
     expect(EventManifest.Latest.get("mcp.browser.open.failed")).toBe(McpEvent.BrowserOpenFailed)
+    expect(EventManifest.Latest.get("command.executed")).toBe(Command.Event.Executed)
+    expect([...EventManifest.Durable.keys()].some((type) => type.startsWith("command.executed."))).toBe(false)
     expect(EventManifest.Latest.get("session.next.step.ended")).toBe(SessionEvent.Step.Ended)
     expect(EventManifest.Latest.get("todo.updated")).toBe(Todo.Event.Updated)
     expect(EventManifest.Latest.has("ide.installed")).toBe(false)

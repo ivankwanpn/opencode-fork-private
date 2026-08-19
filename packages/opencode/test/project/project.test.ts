@@ -1,8 +1,10 @@
 import { describe, expect } from "bun:test"
 import { Project } from "@/project/project"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { Command } from "@opencode-ai/schema/command"
 import { $ } from "bun"
 import path from "path"
-import { tmpdirScoped } from "../fixture/fixture"
+import { TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { GlobalBus } from "../../src/bus/global"
 import { Database } from "@opencode-ai/core/database/database"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
@@ -15,6 +17,8 @@ import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { Cause, Effect, Exit, Layer, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { ProjectV2 } from "@opencode-ai/core/project"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -23,7 +27,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 
 const encoder = new TextEncoder()
 
-const projectTestNode = LayerNode.group([Project.node, Database.node, CrossSpawnSpawner.node])
+const projectTestNode = LayerNode.group([Project.node, Database.node, EventV2Bridge.node, CrossSpawnSpawner.node])
 const it = testEffect(AppNodeBuilder.build(projectTestNode))
 
 function remoteProjectID(remote: string) {
@@ -672,6 +676,36 @@ describe("Project.setInitialized", () => {
 
       const updated = yield* project.get(result.project.id)
       expect(updated?.time.initialized).toBeDefined()
+    }),
+  )
+
+  it.instance("updates initialization only for the current init command and directory", () =>
+    Effect.gen(function* () {
+      const project = yield* Project.Service
+      const events = yield* EventV2Bridge.Service
+      const test = yield* TestInstance
+      const result = yield* project.fromDirectory(test.directory)
+      const data = {
+        sessionID: SessionID.make("ses_project_init"),
+        arguments: "",
+        messageID: SessionMessage.ID.make("msg_project_init"),
+      }
+
+      yield* project.init()
+      yield* events.publish(Command.Event.Executed, { ...data, name: "review" })
+      expect((yield* project.get(result.project.id))?.time.initialized).toBeUndefined()
+
+      yield* events.publish(
+        Command.Event.Executed,
+        { ...data, name: "init" },
+        {
+          location: { directory: AbsolutePath.make(`${test.directory}-other`) },
+        },
+      )
+      expect((yield* project.get(result.project.id))?.time.initialized).toBeUndefined()
+
+      yield* events.publish(Command.Event.Executed, { ...data, name: "init" })
+      expect((yield* project.get(result.project.id))?.time.initialized).toBeDefined()
     }),
   )
 })

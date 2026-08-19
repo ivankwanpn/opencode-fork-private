@@ -12,13 +12,13 @@ import { Context, Effect, Layer } from "effect"
 
 export class Service extends Context.Service<Service, EventV2.Interface>()("@opencode/EventV2Bridge") {}
 
-export type LegacyEvent = {
+export type LegacyPayload = {
   readonly id: string
   readonly type: string
   readonly properties: Record<string, unknown>
 }
 
-export function legacyEventPayloads(source: EventV2.Payload): ReadonlyArray<LegacyEvent> {
+export function legacyEventPayloads(source: EventV2.Payload): ReadonlyArray<LegacyPayload> {
   if (source.type === SessionEvent.ToolDiscovery.Completed.type) return []
   return [
     {

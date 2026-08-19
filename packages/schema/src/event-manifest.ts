@@ -1,12 +1,12 @@
 export * as EventManifest from "./event-manifest"
 
 import { Catalog } from "./catalog"
+import { Command } from "./command"
 import { Durable } from "./durable-event-manifest"
 import { Event } from "./event"
 import { FileSystem } from "./filesystem"
 import { FileSystemWatcher } from "./filesystem-watcher"
 import { Integration } from "./integration"
-import { LegacyEvent } from "./legacy-event"
 import { LspEvent } from "./lsp-event"
 import { McpEvent } from "./mcp-event"
 import { ModelsDev } from "./models-dev"
@@ -31,6 +31,7 @@ const foundationDefinitions = Event.inventory(
   ...ModelsDev.Event.Definitions,
   ...Integration.Event.Definitions,
   ...Catalog.Event.Definitions,
+  ...Command.Event.Definitions,
   ...LspEvent.Definitions,
   ...VcsEvent.Definitions,
   ...coreDefinitions,
@@ -50,7 +51,6 @@ const featureDefinitions = Event.inventory(
 const compatibilityDefinitions = Event.inventory(
   ...TuiEvent.Definitions,
   ...McpEvent.Definitions,
-  ...LegacyEvent.Definitions,
   ...Project.Event.Definitions,
   ...WorkspaceEvent.Definitions,
   ...WorktreeEvent.Definitions,

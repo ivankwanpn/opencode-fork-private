@@ -3,6 +3,7 @@ import type { SessionHookSpec } from "@opencode-ai/plugin/v2/effect"
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { Command } from "@opencode-ai/schema/command"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -550,6 +551,15 @@ describe("SessionV2.prompt", () => {
       const session = yield* SessionV2.Service
       const events = yield* EventV2.Service
       const id = SessionMessage.ID.make("msg_native_command")
+      const executed: EventV2.Payload[] = []
+      const unsubscribe = yield* events.listen((event) =>
+        event.type === Command.Event.Executed.type
+          ? Effect.sync(() => {
+              executed.push(event)
+            })
+          : Effect.void,
+      )
+      yield* Effect.addFinalizer(() => unsubscribe)
       yield* pluginRuntime.hook<SessionHookSpec["message.before"]>(
         PluginRuntime.HookName.sessionMessageBefore,
         (event) => {
@@ -567,6 +577,7 @@ describe("SessionV2.prompt", () => {
         arguments: "src tests",
         resume: false,
       })
+      const durableAfterFirst = yield* eventCount(EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1))
       const retried = yield* session.command({
         id,
         sessionID,
@@ -578,6 +589,19 @@ describe("SessionV2.prompt", () => {
       expect(first.prompt).toEqual({ text: "Expanded /review: src tests [message-hook]" })
       expect(retried).toEqual(first)
       expect(yield* admittedCount).toBe(1)
+      expect(yield* eventCount(EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1))).toBe(durableAfterFirst)
+      expect(yield* eventCount(Command.Event.Executed.type)).toBe(0)
+      expect(yield* eventCount(EventV2.versionedType(Command.Event.Executed.type, 1))).toBe(0)
+      expect(executed.map((event) => ({ type: event.type, data: event.data })) as unknown).toEqual([
+        {
+          type: "command.executed",
+          data: { name: "review", sessionID, arguments: "src tests", messageID: id },
+        },
+        {
+          type: "command.executed",
+          data: { name: "review", sessionID, arguments: "src tests", messageID: id },
+        },
+      ])
 
       const recorded = yield* db
         .select()

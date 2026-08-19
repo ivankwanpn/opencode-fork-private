@@ -9,6 +9,7 @@ export type Event =
   | EventIntegrationUpdated
   | EventIntegrationConnectionUpdated
   | EventCatalogUpdated
+  | EventCommandExecuted
   | EventLspUpdated
   | EventVcsBranchUpdated
   | EventSessionNextCreated
@@ -85,7 +86,6 @@ export type Event =
   | EventTuiSessionSelect2
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
-  | EventCommandExecuted
   | EventProjectUpdated
   | EventWorkspaceReady
   | EventWorkspaceFailed
@@ -216,6 +216,16 @@ export type GlobalEvent = {
         type: "catalog.updated"
         properties: {
           [key: string]: unknown
+        }
+      }
+    | {
+        id: string
+        type: "command.executed"
+        properties: {
+          name: string
+          sessionID: string
+          arguments: string
+          messageID: string
         }
       }
     | {
@@ -1035,16 +1045,6 @@ export type GlobalEvent = {
         properties: {
           mcpName: string
           url: string
-        }
-      }
-    | {
-        id: string
-        type: "command.executed"
-        properties: {
-          name: string
-          sessionID: string
-          arguments: string
-          messageID: string
         }
       }
     | {
@@ -2978,6 +2978,7 @@ export type V2Event =
   | IntegrationUpdated
   | IntegrationConnectionUpdated
   | CatalogUpdated
+  | CommandExecuted
   | LspUpdated
   | VcsBranchUpdated
   | SessionNextCreated
@@ -3054,7 +3055,6 @@ export type V2Event =
   | TuiSessionSelect
   | McpToolsChanged
   | McpBrowserOpenFailed
-  | CommandExecuted
   | ProjectUpdated
   | WorkspaceReady
   | WorkspaceFailed
@@ -6256,6 +6256,26 @@ export type CatalogUpdated = {
   }
 }
 
+export type CommandExecuted = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "command.executed"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    name: string
+    sessionID: string
+    arguments: string
+    messageID: string
+  }
+}
+
 export type LspUpdated = {
   id: string
   metadata?: {
@@ -6815,26 +6835,6 @@ export type McpBrowserOpenFailed = {
   }
 }
 
-export type CommandExecuted = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "command.executed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    name: string
-    sessionID: string
-    arguments: string
-    messageID: string
-  }
-}
-
 export type ProjectUpdated = {
   id: string
   metadata?: {
@@ -7045,6 +7045,17 @@ export type EventCatalogUpdated = {
   type: "catalog.updated"
   properties: {
     [key: string]: unknown
+  }
+}
+
+export type EventCommandExecuted = {
+  id: string
+  type: "command.executed"
+  properties: {
+    name: string
+    sessionID: string
+    arguments: string
+    messageID: string
   }
 }
 
@@ -7919,17 +7930,6 @@ export type EventMcpBrowserOpenFailed = {
   properties: {
     mcpName: string
     url: string
-  }
-}
-
-export type EventCommandExecuted = {
-  id: string
-  type: "command.executed"
-  properties: {
-    name: string
-    sessionID: string
-    arguments: string
-    messageID: string
   }
 }
 

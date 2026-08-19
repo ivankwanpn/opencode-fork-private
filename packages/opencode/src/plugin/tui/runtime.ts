@@ -589,12 +589,6 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
     install: createThemeInstaller(load.origin, load.plugin_root, load.spec, plugin),
   })
 
-  const event: TuiPluginApi["event"] = {
-    on(type, handler) {
-      return scope.track(api.event.on(type, handler))
-    },
-  }
-
   const nativeEvent: TuiPluginApi["nativeEvent"] = {
     on(type, handler) {
       return scope.track(api.nativeEvent.on(type, handler))
@@ -629,7 +623,6 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
     get client() {
       return api.client
     },
-    event,
     nativeEvent,
     renderer: api.renderer,
     slots,

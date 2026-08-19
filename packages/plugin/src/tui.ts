@@ -1,6 +1,5 @@
 import type {
   AgentPart,
-  Event,
   FilePart,
   LspStatus,
   McpStatus,
@@ -502,15 +501,6 @@ export type TuiSlots = {
   }
 }
 
-export type TuiCompatibilityEvent = Event
-
-export type TuiEventBus = {
-  on: <Type extends TuiCompatibilityEvent["type"]>(
-    type: Type,
-    handler: (event: Extract<TuiCompatibilityEvent, { type: Type }>) => void,
-  ) => () => void
-}
-
 export type TuiNativeEvent = Frozen<V2Event>
 
 export type TuiNativeEventBus = {
@@ -605,7 +595,6 @@ export type TuiPluginApi = {
   state: TuiState
   theme: TuiTheme
   client: TuiPluginClient
-  event: TuiEventBus
   nativeEvent: TuiNativeEventBus
   renderer: CliRenderer
   slots: TuiSlots

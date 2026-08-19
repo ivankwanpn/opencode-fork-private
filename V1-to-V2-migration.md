@@ -121,7 +121,8 @@ HttpApi的URL/payload/response契約不變，handlers仍全部委派`SessionV2`�
 **999.0.19 TUI plugin state hard cut**：`TuiState`直接暴露`ProviderCatalogInfo`、`SessionV2Info`與
 `SessionMessage`，移除legacy `provider` array與`part()` view；內建home/sidebar/system plugins改讀canonical
 catalog、model、tokens與`location`。TUI的`native-v1-transcript/catalog`與對應測試已刪除，source gate阻止
-adapter回流；deprecated `api.command` shim與package export也已刪除，server-side plugin host共享同一V2 contract。
+adapter回流；deprecated `api.command` shim、compatibility `api.event` bus與package export也已刪除，plugin只
+使用canonical `nativeEvent`，server-side plugin host共享同一V2 contract。
 
 ---
 

@@ -20,7 +20,6 @@ test("runs onDispose callbacks with aborted signal and is idempotent", async () 
         `export default {
   id: "demo.lifecycle",
   tui: async (api, options) => {
-    api.event.on("event.test", () => {})
     api.nativeEvent.on("session.next.status", () => {})
     api.route.register([{ name: "lifecycle.route", render: () => null }])
     api.lifecycle.onDispose(async () => {

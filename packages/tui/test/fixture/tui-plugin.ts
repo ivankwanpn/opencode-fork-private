@@ -6,7 +6,6 @@ type Opts = {
   client?: TuiPluginApi["client"]
   keymap?: TuiPluginApi["keymap"]
   attention?: Partial<TuiPluginApi["attention"]>
-  event?: TuiPluginApi["event"]
   nativeEvent?: TuiPluginApi["nativeEvent"]
   state?: { session?: Partial<TuiPluginApi["state"]["session"]> }
 }
@@ -18,7 +17,6 @@ export function createTuiPluginApi(opts: Opts = {}) {
   return {
     attention: { notify: async () => ({ ok: false, notification: false, sound: false }), ...opts.attention },
     client: opts.client,
-    event: opts.event,
     nativeEvent: opts.nativeEvent ?? { on: () => () => {} },
     keymap: opts.keymap,
     kv: {

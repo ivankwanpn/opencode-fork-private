@@ -1,6 +1,6 @@
 import type { TuiDialogSelectOption, TuiNativeEvent, TuiPluginApi, TuiSlotProps } from "@opencode-ai/plugin/tui"
 import type { TuiConfig } from "../config"
-import type { useEvent, useNativeEvent } from "../context/event"
+import type { useNativeEvent } from "../context/event"
 import type { useRoute } from "../context/route"
 import type { useSDK } from "../context/sdk"
 import type { useSync } from "../context/sync"
@@ -28,7 +28,6 @@ type Input = {
   kv: ReturnType<typeof useKV>
   route: ReturnType<typeof useRoute>
   routes: PluginRoutes
-  event: ReturnType<typeof useEvent>
   nativeEvent: ReturnType<typeof useNativeEvent>
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
@@ -298,7 +297,6 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
     get client() {
       return input.sdk.native
     },
-    event: input.event,
     nativeEvent: {
       on<Type extends TuiNativeEvent["type"]>(
         type: Type,

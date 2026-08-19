@@ -1,7 +1,6 @@
 export * as SessionV1 from "./session"
 
 import { Effect, Schema, Types } from "effect"
-import { define, inventory } from "../event"
 import { FileDiff } from "../file-diff"
 import { Project } from "../project"
 import { Provider } from "../provider"
@@ -500,13 +499,6 @@ export type WithParts = {
   parts: Part[]
 }
 
-const options = {
-  durable: {
-    aggregate: "sessionID",
-    version: 1,
-  },
-} as const
-
 const SessionSummary = Schema.Struct({
   additions: Schema.Finite,
   deletions: Schema.Finite,
@@ -569,110 +561,3 @@ export const SessionInfo = Schema.Struct({
   revert: optional(SessionRevert),
 }).annotate({ identifier: "Session" })
 export type SessionInfo = typeof SessionInfo.Type
-
-const events = {
-  Created: define({
-    type: "session.created",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      info: SessionInfo,
-    },
-  }),
-  Updated: define({
-    type: "session.updated",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      info: SessionInfo,
-    },
-  }),
-  Deleted: define({
-    type: "session.deleted",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      info: SessionInfo,
-    },
-  }),
-  MessageUpdated: define({
-    type: "message.updated",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      info: Info,
-    },
-  }),
-  MessageRemoved: define({
-    type: "message.removed",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      messageID: MessageID,
-    },
-  }),
-  PartUpdated: define({
-    type: "message.part.updated",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      part: Part,
-      time: Schema.Finite,
-    },
-  }),
-  PartRemoved: define({
-    type: "message.part.removed",
-    ...options,
-    schema: {
-      sessionID: SessionID,
-      messageID: MessageID,
-      partID: PartID,
-    },
-  }),
-}
-
-export const PartDelta = define({
-  type: "message.part.delta",
-  schema: {
-    sessionID: SessionID,
-    messageID: MessageID,
-    partID: PartID,
-    field: Schema.String,
-    delta: Schema.String,
-  },
-})
-
-export const Diff = define({
-  type: "session.diff",
-  schema: {
-    sessionID: SessionID,
-    diff: Schema.Array(FileDiff.Info),
-  },
-})
-
-export const Error = define({
-  type: "session.error",
-  schema: {
-    sessionID: Schema.optional(SessionID),
-    error: Assistant.fields.error,
-  },
-})
-
-export const Event = {
-  ...events,
-  PartDelta,
-  Diff,
-  Error,
-  Definitions: inventory(
-    events.Created,
-    events.Updated,
-    events.Deleted,
-    events.MessageUpdated,
-    events.MessageRemoved,
-    events.PartUpdated,
-    events.PartRemoved,
-    PartDelta,
-    Diff,
-    Error,
-  ),
-}

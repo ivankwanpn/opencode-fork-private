@@ -18,8 +18,8 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
 `session_message_tombstone` 已从當前 schema 刪除並生成 drop migration。`Session.Service` production consumer
 也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。下一阻塞點是
-legacy HTTP/plugin/CLI/ACP wire schema 與 live compatibility manifest 仍引用 V1 型別；V1 durable definitions 已從
-replay manifest 移除。整個
+legacy HTTP/plugin/CLI/ACP wire schema 仍引用 V1 message/session/catalog型別；V1 event definitions已從
+replay/public manifest與Schema export移除。整個
 V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
 **999.0.19 進度**：production runtime 已無 `Session.Service` / `Session.node` consumer。CLI session/stats/GitHub、
@@ -58,7 +58,8 @@ manifest 移除；public event inventory 由 107 降至 105，durable map 維持
 
 **999.0.19 runtime V1 event alias closeout**：OpenCode `Session.Event` 與 `MessageV2.Event.PartDelta` 無任何
 consumer，只是把 V1 Session event schema 重新 export 到 production runtime；兩者已刪除並以 source gate
-阻止回流。`SessionV1.Event.*` 現只存在 Schema public manifest 的 wire compatibility inventory。
+阻止回流。Session consumer hard cut完成後，`SessionV1.Event`與其delta/diff/error schema也從Schema/Core
+export刪除，不再存在可重新註冊的V1 Session event definition。
 
 **999.0.19 Session status consumer hard cut**：CLI native adapter、TUI native event bus、App server state 與
 E2E fixtures 全部改用 `session.next.status`，EventV2Bridge 不再投影 `session.status`。TUI plugin API 新增
@@ -106,6 +107,10 @@ hydration與message tombstone，UI view projection不再偽裝成wire event。`E
 projector已刪除，舊`/event`與`/global/event`只保留canonical`data -> properties`無狀態包裝。四個
 `message.updated/removed`與`message.part.updated/removed`已從public manifest移除，event inventory由93降至89，
 durable維持47；Client與SDK生成型別不再暴露這四項事件。
+
+**999.0.19 SessionV1 event schema closeout**：完成public/consumer hard cut後，Schema/Core中零production引用的
+`SessionV1.Event`、`PartDelta`、`Diff`與`Error` export已刪除；V1 Session模組只保留仍被legacy HTTP/ACP/
+CLI/TUI wire view使用的message/session資料型別與錯誤門面。這個批次不改public inventory或durable map。
 
 ---
 
@@ -184,7 +189,7 @@ durable維持47；Client與SDK生成型別不再暴露這四項事件。
 
 - `opencode/src/compat/native-v1-*.ts`（session/transcript/catalog）→ 供 `cli/cmd/run/native-compat.ts`（run 命令）与 `acp/client.ts`（opencode acp）消费
 - `tui/src/plugin/native-v1-transcript.ts`、`native-v1-catalog.ts` → 仅 TUI plugin API adapter（`adapters.tsx`）外部相容
-- `event-v2-bridge.ts`（`legacyEventPayloads`/`legacyEventProjection`）→ run 命令 stdout/JSON 事件输出、TUI `useEvent()` 的 legacy 事件集
+- `event-v2-bridge.ts`（`legacyEventPayloads`）→ 僅為舊`/event`與`/global/event`保留canonical `data -> properties` envelope；不再投影或改名Session事件
 
 ---
 
@@ -196,10 +201,9 @@ durable維持47；Client與SDK生成型別不再暴露這四項事件。
 `v1/permission.ts` = schema `permission-v1` re-export + 4 错误类。
 `v1/config/` = 18 个文件，V1 配置 schema。
 
-它目前承载三类兼容资产，**删除前必须完成**：
+它目前承载两类兼容资产，**删除前必须完成**：
 1. **Session/wire 类型投影**：`SessionV1` ID、Info 与错误类型仍被 legacy API、CLI/TUI/ACP compatibility 边界消费
-2. **事件兼容面**：V2 producer 大多已切换，但 `execution/local.ts` 仍发布 V1 error，projector/bridge 仍消费或投影部分 V1 lifecycle/event
-3. **配置迁移链**：`core/src/config.ts` 用 `ConfigV1.Info + ConfigMigrateV1` 解码旧配置
+2. **配置迁移链**：`core/src/config.ts` 用 `ConfigV1.Info + ConfigMigrateV1` 解码旧配置
 
 canonical transcript 与 permission 已使用 V2 schema；legacy `message` / `part` / tombstone tables 已从当前
 schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
@@ -210,8 +214,6 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 |---|---|---|
 | `core/src/session.ts` | `SessionV1.MessageID` | exact-retry legacy ID 投影 |
 | `core/src/session/info.ts` | `SessionV1`、`PermissionV1` | `toLegacyInfo` / `toV1Rules` 外部投影 |
-| `core/src/session/projector.ts` | `SessionV1.Event.*` | V1 事件投影到 V2 表 |
-| `core/src/session/execution/local.ts` | `SessionV1.Event.Error` | drain 失败事件 |
 | `core/src/config.ts` | `ConfigV1`、`ConfigMigrateV1` | 配置加载双路径 |
 | `core/src/config/plugin/{provider,agent}.ts` | `ConfigV1/MigrateV1` | 配置迁移 |
 | `core/src/plugin/provider/opencode.ts` | `ConfigProviderV1` | provider 配置 |

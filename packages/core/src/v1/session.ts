@@ -9,7 +9,6 @@ export {
   AgentPartInput,
   Assistant,
   CompactionPart,
-  Event,
   FilePart,
   FilePartInput,
   FilePartSource,

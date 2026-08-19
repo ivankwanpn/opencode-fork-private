@@ -5,7 +5,6 @@ import { EventManifest } from "../src/event-manifest"
 import { IdeEvent } from "../src/ide-event"
 import { SessionEvent } from "../src/session-event"
 import { SessionTodo } from "../src/session-todo"
-import { SessionV1 } from "../src/session-v1"
 import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
@@ -14,18 +13,6 @@ describe("public event manifest", () => {
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
-    expect(SessionV1.Event.Definitions).toEqual([
-      SessionV1.Event.Created,
-      SessionV1.Event.Updated,
-      SessionV1.Event.Deleted,
-      SessionV1.Event.MessageUpdated,
-      SessionV1.Event.MessageRemoved,
-      SessionV1.Event.PartUpdated,
-      SessionV1.Event.PartRemoved,
-      SessionV1.Event.PartDelta,
-      SessionV1.Event.Diff,
-      SessionV1.Event.Error,
-    ])
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
     expect(EventManifest.Durable.size).toBe(47)
     for (const type of [
@@ -56,7 +43,6 @@ describe("public event manifest", () => {
     expect(Reference.Event.Definitions).toEqual([Reference.Event.Updated])
     expect(EventManifest.Latest.has("ide.installed")).toBe(false)
     expect(IdeEvent.Definitions).toEqual([IdeEvent.Installed])
-    expect(SessionV1.Event.PartDelta.type).toBe("message.part.delta")
     expect(EventManifest.Latest.has("message.part.delta")).toBe(false)
     expect(EventManifest.Latest.has("session.created")).toBe(false)
     expect(EventManifest.Latest.has("session.updated")).toBe(false)
@@ -65,9 +51,7 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.has("message.removed")).toBe(false)
     expect(EventManifest.Latest.has("message.part.updated")).toBe(false)
     expect(EventManifest.Latest.has("message.part.removed")).toBe(false)
-    expect(SessionV1.Event.Diff.type).toBe("session.diff")
     expect(EventManifest.Latest.has("session.diff")).toBe(false)
-    expect(SessionV1.Event.Error.type).toBe("session.error")
     expect(EventManifest.Latest.has("session.error")).toBe(false)
     expect(EventManifest.Latest.get("session.next.created")).toBe(SessionEvent.Created)
     expect(EventManifest.Latest.get("session.next.updated")).toBe(SessionEvent.Updated)

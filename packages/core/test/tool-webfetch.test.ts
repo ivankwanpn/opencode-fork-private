@@ -16,6 +16,7 @@ import { toolIdentity, executeTool, settleTool, toolDefinitions } from "./lib/to
 const sessionID = SessionV2.ID.make("ses_webfetch_test")
 const requests: Array<{ readonly url: string; readonly headers: Record<string, string> }> = []
 const assertions: PermissionV2.AssertInput[] = []
+let deniedResource: string | undefined
 let respond = (_request: HttpClientRequest.HttpClientRequest) =>
   Effect.succeed(new Response("hello", { headers: { "content-type": "text/plain" } }))
 
@@ -31,7 +32,14 @@ const http = Layer.succeed(
 const permission = Layer.succeed(
   PermissionV2.Service,
   PermissionV2.Service.of({
-    assert: (input) => Effect.sync(() => assertions.push(input)),
+    assert: (input) =>
+      Effect.sync(() => assertions.push(input)).pipe(
+        Effect.andThen(
+          input.resources.some((resource) => resource === deniedResource)
+            ? Effect.fail(new PermissionV2.BlockedError({ rules: [] }))
+            : Effect.void,
+        ),
+      ),
     ask: () => Effect.die("unused"),
     reply: () => Effect.die("unused"),
     get: () => Effect.die("unused"),
@@ -51,6 +59,7 @@ const live = testEffect(toolLayer())
 const reset = () => {
   requests.length = 0
   assertions.length = 0
+  deniedResource = undefined
   respond = () => Effect.succeed(new Response("hello", { headers: { "content-type": "text/plain" } }))
 }
 
@@ -139,6 +148,43 @@ describe("WebFetchTool registration", () => {
           expect(assertions.map((assertion) => assertion.resources)).toEqual([[url], [target]])
         }),
       (server) => Effect.promise(() => server.stop(true)),
+    ),
+  )
+
+  live.effect("does not request a redirect target until that target is approved", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const paths: string[] = []
+        return {
+          paths,
+          server: Bun.serve({
+            port: 0,
+            fetch: (request) => {
+              const pathname = new URL(request.url).pathname
+              paths.push(pathname)
+              return pathname === "/source"
+                ? new Response("", { status: 302, headers: { location: "/target" } })
+                : new Response("must not be requested", { headers: { "content-type": "text/plain" } })
+            },
+          }),
+        }
+      }),
+      (resource) =>
+        Effect.gen(function* () {
+          reset()
+          const registry = yield* ToolRegistry.Service
+          const url = new URL("/source", resource.server.url).toString()
+          const target = new URL("/target", resource.server.url).toString()
+          deniedResource = target
+
+          expect(yield* executeTool(registry, call({ url, format: "text" }, "call-webfetch-denied-redirect"))).toEqual({
+            type: "error",
+            value: `Unable to fetch ${url}`,
+          })
+          expect(assertions.map((assertion) => assertion.resources)).toEqual([[url], [target]])
+          expect(resource.paths).toEqual(["/source"])
+        }),
+      (resource) => Effect.promise(() => resource.server.stop(true)),
     ),
   )
 

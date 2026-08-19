@@ -41,6 +41,23 @@ describe("Patch", () => {
     ).toBe("marker\nmiddle\nmarker changed\nend\n")
   })
 
+  test("classifies expected derive mismatches", () => {
+    const missingContext = () =>
+      Patch.derive("context.txt", [{ oldLines: ["old"], newLines: ["new"], changeContext: "section" }], "old\n")
+    expect(missingContext).toThrow(Patch.DeriveError)
+    expect(missingContext).toThrow("Failed to find context 'section' in context.txt")
+
+    const missingLines = () => Patch.derive("lines.txt", [{ oldLines: ["missing"], newLines: ["new"] }], "old\n")
+    expect(missingLines).toThrow(Patch.DeriveError)
+    expect(missingLines).toThrow("Failed to find expected lines in lines.txt:\nmissing")
+  })
+
+  test("does not classify unexpected derive faults as expected mismatches", () => {
+    const unexpected = () => Patch.derive("unexpected.txt", [], undefined as unknown as string)
+    expect(unexpected).toThrow(TypeError)
+    expect(unexpected).not.toThrow(Patch.DeriveError)
+  })
+
   test("parses the EOF marker inside update chunks", () => {
     expect(
       Patch.parse("*** Begin Patch\n*** Update File: update.txt\n@@\n-last\n+end\n*** End of File\n*** End Patch"),

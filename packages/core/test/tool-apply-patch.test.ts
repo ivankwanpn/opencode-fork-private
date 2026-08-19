@@ -202,6 +202,256 @@ describe("ApplyPatchTool", () => {
     ),
   )
 
+  it.live("applies multiple update hunks to one file", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "multi.txt")
+        return Effect.promise(() => fs.writeFile(target, "line1\nline2\nline3\nline4\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call(
+                      "*** Begin Patch\n*** Update File: multi.txt\n@@\n-line2\n+changed2\n@@\n-line4\n+changed4\n*** End Patch",
+                    ),
+                  ),
+                ).toEqual({ type: "text", value: "Applied patch sequentially:\nM multi.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe(
+                  "line1\nchanged2\nline3\nchanged4\n",
+                )
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("inserts lines with an insert-only update hunk", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "insert-only.txt")
+        return Effect.promise(() => fs.writeFile(target, "alpha\nomega\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call(
+                      "*** Begin Patch\n*** Update File: insert-only.txt\n@@\n alpha\n+beta\n omega\n*** End Patch",
+                    ),
+                  ),
+                ).toEqual({ type: "text", value: "Applied patch sequentially:\nM insert-only.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("alpha\nbeta\nomega\n")
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("normalizes a missing trailing newline on update", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "no-newline.txt")
+        return Effect.promise(() => fs.writeFile(target, "no newline at end")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call(
+                      "*** Begin Patch\n*** Update File: no-newline.txt\n@@\n-no newline at end\n+first line\n+second line\n*** End Patch",
+                    ),
+                  ),
+                ).toEqual({ type: "text", value: "Applied patch sequentially:\nM no-newline.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("first line\nsecond line\n")
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("preserves a BOM without inventing a first-line diff", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "example.cs")
+        return Effect.promise(() => fs.writeFile(target, "\uFEFFusing System;\n\nclass Test {}\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                const settled = yield* settleTool(
+                  registry,
+                  call(
+                    "*** Begin Patch\n*** Update File: example.cs\n@@\n class Test {}\n+class Next {}\n*** End Patch",
+                  ),
+                )
+                expect(settled.result).toEqual({ type: "text", value: "Applied patch sequentially:\nM example.cs" })
+                const output = settled.output?.structured as ApplyPatchTool.Output | undefined
+                expect(output?.files).toEqual([
+                  {
+                    file: "example.cs",
+                    patch:
+                      "Index: example.cs\n===================================================================\n--- example.cs\n+++ example.cs\n@@ -1,3 +1,4 @@\n using System;\n \n class Test {}\n+class Next {}\n",
+                    status: "modified",
+                    additions: 1,
+                    deletions: 0,
+                  },
+                ])
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe(
+                  "\uFEFFusing System;\n\nclass Test {}\nclass Next {}\n",
+                )
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("rejects a context mismatch without changing the file", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "modify.txt")
+        return Effect.promise(() => fs.writeFile(target, "line1\nline2\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call("*** Begin Patch\n*** Update File: modify.txt\n@@\n-missing\n+changed\n*** End Patch"),
+                  ),
+                ).toEqual({ type: "error", value: "Unable to apply patch at modify.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("line1\nline2\n")
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("matches an end-of-file anchor from the file tail", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "eof-anchor.txt")
+        return Effect.promise(() => fs.writeFile(target, "start\nmarker\nmiddle\nmarker\nend\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call(
+                      "*** Begin Patch\n*** Update File: eof-anchor.txt\n@@\n-marker\n-end\n+marker-changed\n+end\n*** End of File\n*** End Patch",
+                    ),
+                  ),
+                ).toEqual({ type: "text", value: "Applied patch sequentially:\nM eof-anchor.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe(
+                  "start\nmarker\nmiddle\nmarker-changed\nend\n",
+                )
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("uses an @@ header to disambiguate repeated change context", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "multi-context.txt")
+        return Effect.promise(() => fs.writeFile(target, "fn a\nx=10\ny=2\nfn b\nx=10\ny=20\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call(
+                      "*** Begin Patch\n*** Update File: multi-context.txt\n@@ fn b\n-x=10\n+x=11\n*** End Patch",
+                    ),
+                  ),
+                ).toEqual({ type: "text", value: "Applied patch sequentially:\nM multi-context.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe(
+                  "fn a\nx=10\ny=2\nfn b\nx=11\ny=20\n",
+                )
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("parses cat and bare heredoc-wrapped patches", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            expect(
+              yield* executeTool(
+                registry,
+                call(
+                  "cat <<'EOF'\n*** Begin Patch\n*** Add File: heredoc-cat.txt\n+cat wrapper\n*** End Patch\nEOF",
+                  "call-heredoc-cat",
+                ),
+              ),
+            ).toEqual({ type: "text", value: "Applied patch sequentially:\nA heredoc-cat.txt" })
+            expect(
+              yield* executeTool(
+                registry,
+                call(
+                  "<<EOF\n*** Begin Patch\n*** Add File: heredoc-bare.txt\n+bare wrapper\n*** End Patch\nEOF",
+                  "call-heredoc-bare",
+                ),
+              ),
+            ).toEqual({ type: "text", value: "Applied patch sequentially:\nA heredoc-bare.txt" })
+            expect(yield* Effect.promise(() => fs.readFile(path.join(tmp.path, "heredoc-cat.txt"), "utf8"))).toBe(
+              "cat wrapper\n",
+            )
+            expect(yield* Effect.promise(() => fs.readFile(path.join(tmp.path, "heredoc-bare.txt"), "utf8"))).toBe(
+              "bare wrapper\n",
+            )
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
   it.live("rejects moves before applying any hunk", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),

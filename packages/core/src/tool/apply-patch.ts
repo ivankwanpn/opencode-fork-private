@@ -143,7 +143,13 @@ const layer = Layer.effectDiscard(
                       prepared.push({ ...hunk, target, before, after: "" })
                       return
                     }
-                    const update = Patch.derive(hunk.path, hunk.chunks, original)
+                    const update = yield* Effect.try({
+                      try: () => Patch.derive(hunk.path, hunk.chunks, original),
+                      catch: (cause) => {
+                        if (cause instanceof Patch.DeriveError) return fail(hunk.path)
+                        throw cause
+                      },
+                    })
                     prepared.push({
                       ...hunk,
                       target,

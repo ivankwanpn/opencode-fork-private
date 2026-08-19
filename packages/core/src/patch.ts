@@ -22,6 +22,8 @@ export interface FileUpdate {
   readonly bom: boolean
 }
 
+export class DeriveError extends Error {}
+
 export function parse(patchText: string): ReadonlyArray<Hunk> {
   const lines = stripHeredoc(patchText.trim()).split("\n")
   const begin = lines.findIndex((line) => line.trim() === "*** Begin Patch")
@@ -135,7 +137,7 @@ function computeReplacements(lines: ReadonlyArray<string>, path: string, chunks:
   for (const chunk of chunks) {
     if (chunk.changeContext) {
       const context = seek(lines, [chunk.changeContext], lineIndex)
-      if (context === -1) throw new Error(`Failed to find context '${chunk.changeContext}' in ${path}`)
+      if (context === -1) throw new DeriveError(`Failed to find context '${chunk.changeContext}' in ${path}`)
       lineIndex = context + 1
     }
     if (chunk.oldLines.length === 0) {
@@ -150,7 +152,8 @@ function computeReplacements(lines: ReadonlyArray<string>, path: string, chunks:
       if (newLines.at(-1) === "") newLines = newLines.slice(0, -1)
       found = seek(lines, oldLines, lineIndex, chunk.endOfFile)
     }
-    if (found === -1) throw new Error(`Failed to find expected lines in ${path}:\n${chunk.oldLines.join("\n")}`)
+    if (found === -1)
+      throw new DeriveError(`Failed to find expected lines in ${path}:\n${chunk.oldLines.join("\n")}`)
     replacements.push([found, oldLines.length, newLines])
     lineIndex = found + oldLines.length
   }

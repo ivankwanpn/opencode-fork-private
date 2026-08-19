@@ -1,6 +1,13 @@
 import { describe, expect } from "bun:test"
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import type { CallToolResult, Tool as MCPToolDefinition } from "@modelcontextprotocol/sdk/types.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type CallToolResult,
+  type Tool as MCPToolDefinition,
+} from "@modelcontextprotocol/sdk/types.js"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -262,6 +269,9 @@ describe("CodeModeTool", () => {
       })
       expect(execute?.description).toContain("tools.demo_server.echo")
       expect(execute?.description).toContain("tools.demo_server.structured")
+      expect(execute?.description).toContain(
+        "tools.demo_server.structured(input: {}): Promise<{\n  answer: number,\n}>",
+      )
       expect(execute?.description).not.toContain("tools.demo_server.fail")
 
       expect(
@@ -270,6 +280,111 @@ describe("CodeModeTool", () => {
           { action: "execute", resource: "*", effect: "allow" },
         ]),
       ).toEqual([])
+    }),
+  )
+
+  it.effect("uses a real MCP handshake for text, structured, and error results", () =>
+    Effect.gen(function* () {
+      reset()
+      const connection = yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          const server = new Server(
+            { name: "code-mode-test-server", version: "1.0.0" },
+            { capabilities: { tools: {} } },
+          )
+          const definitions: MCPToolDefinition[] = [
+            {
+              name: "get_text",
+              description: "Return a greeting",
+              inputSchema: {
+                type: "object",
+                properties: { name: { type: "string" } },
+                required: ["name"],
+              },
+            },
+            {
+              name: "sum",
+              description: "Return a structured sum",
+              inputSchema: {
+                type: "object",
+                properties: { a: { type: "number" }, b: { type: "number" } },
+                required: ["a", "b"],
+              },
+              outputSchema: {
+                type: "object",
+                properties: { total: { type: "number" } },
+                required: ["total"],
+              },
+            },
+            {
+              name: "boom",
+              description: "Return an MCP error",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ]
+          server.setRequestHandler(ListToolsRequestSchema, () => Promise.resolve({ tools: definitions }))
+          server.setRequestHandler(CallToolRequestSchema, (request): Promise<CallToolResult> => {
+            if (request.params.name === "get_text")
+              return Promise.resolve({
+                content: [{ type: "text", text: `hello ${String(request.params.arguments?.name)}` }],
+              })
+            if (request.params.name === "sum") {
+              const total = Number(request.params.arguments?.a) + Number(request.params.arguments?.b)
+              return Promise.resolve({
+                content: [{ type: "text", text: String(total) }],
+                structuredContent: { total },
+              })
+            }
+            return Promise.resolve({
+              isError: true,
+              content: [{ type: "text", text: "sdk failure" }],
+            })
+          })
+
+          const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+          await server.connect(serverTransport)
+          const client = new Client({ name: "code-mode-test-client", version: "1.0.0" }, { capabilities: {} })
+          await client.connect(clientTransport)
+          return { client, server, tools: (await client.listTools()).tools }
+        }),
+        (connection) =>
+          Effect.promise(() =>
+            Promise.allSettled([connection.client.close(), connection.server.close()]),
+          ).pipe(Effect.asVoid),
+      )
+      mcpTools = Object.fromEntries(
+        connection.tools.map((def) => [
+          `sdk_${def.name}`,
+          { clientName: "sdk", def, client: connection.client, timeout: 1_000 },
+        ]),
+      )
+      const registry = yield* ToolRegistry.Service
+      const settlement = yield* execute(
+        registry,
+        `
+          const message = await tools.sdk.get_text({ name: "Ada" })
+          const sum = await tools.sdk.sum({ a: 2, b: 5 })
+          let failure
+          try { await tools.sdk.boom({}) } catch (error) { failure = error.message }
+          return { message, total: sum.total, failure }
+        `,
+      )
+
+      const content = settlement.output?.content[0]
+      expect(content?.type).toBe("text")
+      if (content?.type !== "text") throw new Error("Expected CodeMode text output")
+      expect(JSON.parse(content.text)).toEqual({
+        message: "hello Ada",
+        total: 7,
+        failure: "sdk failure",
+      })
+      expect(settlement.output?.structured).toEqual({
+        toolCalls: [
+          { tool: "sdk.get_text", status: "completed", input: { name: "Ada" } },
+          { tool: "sdk.sum", status: "completed", input: { a: 2, b: 5 } },
+          { tool: "sdk.boom", status: "error" },
+        ],
+      })
     }),
   )
 
@@ -344,6 +459,98 @@ describe("CodeModeTool", () => {
           },
         ],
       })
+    }),
+  )
+
+  it.effect("projects resource links into sandbox text without creating attachments", () =>
+    Effect.gen(function* () {
+      reset()
+      mcpTools = { demo_server_links: entry(definition("links")) }
+      handlers.set("links", () =>
+        Promise.resolve({
+          content: [
+            {
+              type: "resource_link",
+              uri: "https://example.com/guide.pdf",
+              name: "guide.pdf",
+              mimeType: "application/pdf",
+            },
+            {
+              type: "resource_link",
+              uri: "file:///tmp/notes.md",
+              name: "notes.md",
+            },
+          ],
+        }),
+      )
+      const registry = yield* ToolRegistry.Service
+      const settlement = yield* execute(registry, "return await tools.demo_server.links({});")
+
+      expect(settlement.output).toEqual({
+        structured: {
+          toolCalls: [{ tool: "demo_server.links", status: "completed" }],
+        },
+        content: [
+          {
+            type: "text",
+            text: "guide.pdf: https://example.com/guide.pdf\nnotes.md: file:///tmp/notes.md",
+          },
+        ],
+      })
+    }),
+  )
+
+  it.effect("keeps multiple attachments separate from the program return value and logs", () =>
+    Effect.gen(function* () {
+      reset()
+      mcpTools = { demo_server_media: entry(definition("media")) }
+      handlers.set("media", () =>
+        Promise.resolve({
+          content: [
+            { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+            { type: "audio", data: "d29ybGQ=", mimeType: "audio/mpeg" },
+            {
+              type: "resource",
+              resource: {
+                uri: "file:///tmp/report.pdf",
+                mimeType: "application/pdf",
+                blob: "cmVwb3J0",
+              },
+            },
+          ],
+        }),
+      )
+      const registry = yield* ToolRegistry.Service
+      const settlement = yield* execute(
+        registry,
+        'await tools.demo_server.media({}); console.log("captured 3 files"); return { status: "done" };',
+      )
+
+      expect(settlement.output?.content[0]).toEqual({
+        type: "text",
+        text: '{\n  "status": "done"\n}\n\nLogs:\ncaptured 3 files',
+      })
+      expect(settlement.output?.content[0]).not.toEqual(expect.objectContaining({ text: expect.stringContaining("aGVsbG8=") }))
+      expect(settlement.output?.content.slice(1)).toEqual([
+        {
+          type: "file",
+          uri: "data:image/png;base64,aGVsbG8=",
+          mime: "image/png",
+          name: undefined,
+        },
+        {
+          type: "file",
+          uri: "data:audio/mpeg;base64,d29ybGQ=",
+          mime: "audio/mpeg",
+          name: undefined,
+        },
+        {
+          type: "file",
+          uri: "data:application/pdf;base64,cmVwb3J0",
+          mime: "application/pdf",
+          name: "report.pdf",
+        },
+      ])
     }),
   )
 
@@ -440,13 +647,17 @@ describe("CodeModeTool", () => {
     }),
   )
 
-  it.effect("returns confined logs without exposing host globals", () =>
+  it.effect("returns confined logs without exposing host globals and preserves error logs", () =>
     Effect.gen(function* () {
       reset()
       const registry = yield* ToolRegistry.Service
       expect((yield* execute(registry, 'console.log("trace"); return typeof process;')).result).toEqual({
         type: "text",
         value: "undefined\n\nLogs:\ntrace",
+      })
+      expect((yield* execute(registry, 'console.log("before failure"); throw new Error("boom");')).result).toEqual({
+        type: "error",
+        value: "Uncaught: boom\n\nLogs:\nbefore failure",
       })
     }),
   )

@@ -10,7 +10,8 @@
 `@opencode-ai/core/session`（`SessionV2`）+ `SessionExecutionLocal` + `SessionRunner` +
 V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**：
 
-- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor` + V1 `ToolRegistry`）已从生产 layer 图与源码删除；仍保留的 legacy 工具定义只服务兼容出口。
+- V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor`）已从生产 layer 图与源码删除；OpenCode旧`ToolRegistry`与工具定义仍留在源码，
+  但不再挂载到production layer，只服务plugin parity tests与少量CLI/外部compat测试。
 - V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
 
 当前已推进到**批次 8 的 Session consumer hard cut 收口**。V2 已是唯一模型执行路径，transcript storage hard cut
@@ -137,10 +138,10 @@ canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專
 | Session 执行（prompt/command/shell/init） | `LegacySessionExecution` 仅保留外部请求/响应形状，内部选择、权限、admission 与执行全部走 V2；V1 `SessionPrompt.loop` 已删除 | **V2-only 执行，wire 壳待收** |
 | Session CRUD（list/get/create/fork/title/metadata） | production consumer 與 Core projector 全部走 `SessionV2`；舊 repository/layer source 已刪除 | **V2-only runtime，wire schema 待收** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
-| Tool registry | V1 `ToolRegistry`（opencode 包）死代码；V2 `ToolRegistry`（core）完整（direct/deferred/hidden + settlement） | **V2 已接管** |
+| Tool registry | production只挂载Core V2 `ToolRegistry`；OpenCode旧`ToolRegistry`/工具定义为test-only plugin parity surface | **V2 已接管，compat source待清** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
 | Agent | V1 `Agent`（`@/agent`）仍在 `LegacySessionExecution.select` 使用；V2 `AgentV2.Service` 独立 | **双路径** |
-| Subagent permission | V1 `subagent-permissions.ts` 只被死 V1 `TaskTool` 引用（不可达）；V2 用 `PermissionV2` + `SubagentPermit` | **V1 死路径，可删** |
+| Subagent permission | V1 `subagent-permissions.ts` 只被test-only旧`TaskTool`/兼容测试引用；V2 runtime用Core `PermissionV2` + `SubagentPermit` | **V2 runtime，compat source待评估** |
 | Permission | V1 `@/permission` 为主（pending 表），`replyCompatible` 兜底 V2；V2 请求不出现在 `/permission` list | **V1 主，V2 兜底** |
 | Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
 | Plugin tools | 同一份 `Contribution` 双路：V1 registry（死）+ V2 `PluginToolCompatV2`（deferred，实际生效） | **V2 生效路径已通** |
@@ -194,7 +195,7 @@ canonical `{ data, location }`，`useEvent()`、compatibility allowlist及其專
 | `opencode/src/session/processor.ts`（`SessionProcessor`） | 已删除 |
 | `opencode/src/session/compaction.ts`（V1 `SessionCompaction`） | 已删除 |
 | `opencode/src/session/tools.ts`（V1 tool 组装） | 已删除 |
-| `opencode/src/agent/subagent-permissions.ts` | 已删除 |
+| `opencode/src/agent/subagent-permissions.ts` | production不可达；仍被test-only旧TaskTool测试引用 |
 | V1 loop/processor/compaction 对应测试 | 已删除或迁移到 V2 contract |
 
 `app-runtime.ts` 与 `httpapi/server.ts` 的 production layer 图已移除上述节点。`opencode/src/tool/registry.ts`

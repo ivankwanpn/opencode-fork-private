@@ -15,6 +15,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { LocationMutation } from "@opencode-ai/core/location-mutation"
 import { PermissionV2 } from "@opencode-ai/core/permission"
+import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { AppProcess } from "@opencode-ai/core/process"
 import { Project } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
@@ -28,6 +29,7 @@ import { Shell } from "@opencode-ai/core/shell"
 import { BashTool } from "@opencode-ai/core/tool/bash"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
+import type { ShellHookSpec } from "@opencode-ai/plugin/v2/effect"
 import { location } from "./fixture/location"
 import { tmpdir } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
@@ -39,6 +41,8 @@ const runs: Array<{
   readonly command: string
   readonly cwd?: string
   readonly shell?: string | boolean
+  readonly env?: ChildProcess.CommandOptions["env"]
+  readonly extendEnv?: boolean
   readonly options?: AppProcess.RunOptions
 }> = []
 let denyAction: string | undefined
@@ -85,7 +89,14 @@ const appProcess = Layer.succeed(
     run: (command: ChildProcess.Command, options?: AppProcess.RunOptions) =>
       Effect.suspend(() => {
         if (command._tag !== "StandardCommand") throw new Error("expected standard command")
-        runs.push({ command: command.command, cwd: command.options.cwd, shell: command.options.shell, options })
+        runs.push({
+          command: command.command,
+          cwd: command.options.cwd,
+          shell: command.options.shell,
+          env: command.options.env,
+          extendEnv: command.options.extendEnv,
+          options,
+        })
         if (runHandler) return runHandler(command, options)
         return runFailure ? Effect.fail(runFailure) : Effect.succeed(result)
       }),
@@ -130,6 +141,7 @@ const withTool = <A, E>(
     jobs: BackgroundJob.Interface,
     database: Database.Interface,
     events: EventV2.Interface,
+    plugins: PluginRuntime.Interface,
   ) => Effect.Effect<A, E, Scope.Scope>,
   processLayer: Layer.Layer<AppProcess.Service> = appProcess,
 ) => {
@@ -143,6 +155,7 @@ const withTool = <A, E>(
       yield* BackgroundJob.Service,
       yield* Database.Service,
       yield* EventV2.Service,
+      yield* PluginRuntime.Service,
     )
   }).pipe(
     Effect.provide(
@@ -153,6 +166,7 @@ const withTool = <A, E>(
           BackgroundJob.node,
           ToolRegistry.node,
           ToolRegistry.toolsNode,
+          PluginRuntime.node,
           LocationMutation.node,
           BashTool.node,
         ]),
@@ -200,6 +214,56 @@ const setupSession = (db: Database.Interface["db"], directory: string) =>
   })
 
 describe("BashTool", () => {
+  it.live("applies canonical plugin shell environment once before starting the process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry, _jobs, _database, _events, plugins) =>
+          Effect.gen(function* () {
+            const calls: string[] = []
+            const received: Array<{ cwd: string; sessionID?: string; callID?: string }> = []
+            yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, (event) => {
+              calls.push("first")
+              received.push({ cwd: event.cwd, sessionID: event.sessionID, callID: event.callID })
+              event.env.update((env) => ({
+                ...env,
+                PATH: "plugin-path",
+                FIRST_PLUGIN: "active",
+                OVERRIDE: "first",
+                TERM: "plugin-term",
+              }))
+            })
+            yield* plugins.hook<ShellHookSpec["env"]>(PluginRuntime.HookName.shellEnv, (event) => {
+              calls.push("second")
+              event.env.update((env) => ({ ...env, SECOND_PLUGIN: "active", OVERRIDE: "second" }))
+            })
+
+            yield* settleTool(registry, call({ command: "pwd" }))
+
+            expect(calls).toEqual(["first", "second"])
+            expect(received).toEqual([
+              { cwd: realpathSync(tmp.path), sessionID, callID: "call-bash" },
+            ])
+            expect(runs).toHaveLength(1)
+            expect(runs[0]).toMatchObject({
+              extendEnv: true,
+              env: {
+                PATH: "plugin-path",
+                FIRST_PLUGIN: "active",
+                SECOND_PLUGIN: "active",
+                OVERRIDE: "second",
+                TERM: "dumb",
+              },
+              options: { combineOutput: true },
+            })
+          }),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
   it.live("registers and returns structured successful output from the active Location", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
@@ -722,7 +786,6 @@ test("keeps remaining deferred parity TODOs visible", async () => {
     "Port tree-sitter bash / PowerShell parser-based approval reduction.",
     "Port BashArity reusable command-prefix approvals.",
     "Replace token-based command-argument path detection with parser-based detection.",
-    "Add plugin shell.env environment augmentation once V2 plugin hooks exist.",
     "Persist shell task status and output manifests if cross-restart process adoption is implemented.",
     "Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.",
     "Revisit binary output handling if stdout/stderr decoding is text-only.",

@@ -14,6 +14,7 @@ import { Identifier } from "../id/id"
 import { LocationMutation } from "../location-mutation"
 import { AppProcess } from "../process"
 import { PermissionV2 } from "../permission"
+import { PluginRuntime } from "../plugin/runtime"
 import { PositiveInt } from "../schema"
 import { SessionCommand } from "../session/command"
 import { SessionExecution } from "../session/execution"
@@ -72,16 +73,20 @@ const modelOutput = (output: Output) => {
   return `${warnings.trimStart()}${warnings ? "\n\n" : ""}Command exited with code ${output.exit}.`
 }
 
-const processCommand = (shell: string, input: string, cwd: string) => {
+const processCommand = (shell: string, input: string, cwd: string, env: Record<string, string>) => {
   if (process.platform === "win32" && Shell.ps(shell))
     return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", input], {
       cwd,
+      extendEnv: true,
+      env,
       stdin: "ignore",
       detached: false,
       forceKillAfter: Duration.seconds(3),
     })
   return ChildProcess.make(input, [], {
     cwd,
+    extendEnv: true,
+    env,
     shell,
     stdin: "ignore",
     detached: process.platform !== "win32",
@@ -97,7 +102,6 @@ const processCommand = (shell: string, input: string, cwd: string) => {
 // TODO: Port tree-sitter bash / PowerShell parser-based approval reduction.
 // TODO: Port BashArity reusable command-prefix approvals.
 // TODO: Replace token-based command-argument path detection with parser-based detection.
-// TODO: Add plugin shell.env environment augmentation once V2 plugin hooks exist.
 // TODO: Persist shell task status and output manifests if cross-restart process adoption is implemented.
 // TODO: Add HTTP background-job observation only after durable status, restart recovery, and authorization are defined.
 // TODO: Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.
@@ -163,6 +167,7 @@ const layer = Layer.effectDiscard(
     const commands = yield* SessionCommand.Service
     const config = yield* Config.Service
     const permission = yield* PermissionV2.Service
+    const plugins = yield* PluginRuntime.Service
 
     yield* tools
       .register({
@@ -234,6 +239,13 @@ const layer = Layer.effectDiscard(
                   message: `Shell task limit reached (${MAX_RUNNING_PER_SESSION}); inspect or stop an existing task first`,
                 })
 
+              const environment = PluginRuntime.mutable<Record<string, string>>({})
+              yield* plugins.run(PluginRuntime.HookName.shellEnv, {
+                cwd: target.canonical,
+                sessionID: context.sessionID,
+                callID: context.toolCallID,
+                env: environment.value,
+              })
               const shell = Shell.acceptable(Config.latest(yield* config.entries(), "shell"))
               const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
               const taskID = Identifier.ascending("job")
@@ -290,7 +302,7 @@ const layer = Layer.effectDiscard(
                   if (execution) yield* execution.wake(context.sessionID).pipe(Effect.ignore)
                 })
               const run = appProcess
-                .run(processCommand(shell, input.command, target.canonical), {
+                .run(processCommand(shell, input.command, target.canonical, { ...environment.get(), TERM: "dumb" }), {
                   combineOutput: true,
                   onOutput,
                 })
@@ -399,5 +411,6 @@ export const node = makeLocationNode({
     SessionCommand.node,
     Config.node,
     PermissionV2.node,
+    PluginRuntime.node,
   ],
 })

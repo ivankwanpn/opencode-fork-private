@@ -4,8 +4,6 @@ import type { HostPluginApi } from "@opencode-ai/tui/plugin/slots"
 import { createTuiResolvedConfig } from "./tui-runtime"
 
 type Count = {
-  event_add: number
-  event_drop: number
   route_add: number
   route_drop: number
   command_add: number
@@ -88,7 +86,6 @@ type Opts = {
   client?: HostPluginApi["client"] | (() => HostPluginApi["client"])
   renderer?: HostPluginApi["renderer"]
   attention?: AttentionOpts
-  event?: HostPluginApi["event"]
   nativeEvent?: HostPluginApi["nativeEvent"]
   mode?: HostPluginApi["mode"]
   count?: Count
@@ -98,11 +95,10 @@ type Opts = {
   state?: {
     ready?: HostPluginApi["state"]["ready"]
     config?: HostPluginApi["state"]["config"]
-    provider?: HostPluginApi["state"]["provider"]
+    catalog?: HostPluginApi["state"]["catalog"]
     path?: HostPluginApi["state"]["path"]
     vcs?: HostPluginApi["state"]["vcs"]
     session?: Partial<HostPluginApi["state"]["session"]>
-    part?: HostPluginApi["state"]["part"]
     lsp?: HostPluginApi["state"]["lsp"]
     mcp?: HostPluginApi["state"]["mcp"]
   }
@@ -209,15 +205,6 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
     get client() {
       return client()
     },
-    event: opts.event ?? {
-      on: () => {
-        if (count) count.event_add += 1
-        return () => {
-          if (!count) return
-          count.event_drop += 1
-        }
-      },
-    },
     nativeEvent: opts.nativeEvent ?? { on: () => () => {} },
     renderer,
     slots: {
@@ -305,8 +292,8 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
       get config() {
         return opts.state?.config ?? {}
       },
-      get provider() {
-        return opts.state?.provider ?? []
+      get catalog() {
+        return opts.state?.catalog
       },
       get path() {
         return opts.state?.path ?? { home: "", state: "", config: "", worktree: "", directory: "" }
@@ -324,7 +311,6 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
         permission: opts.state?.session?.permission ?? (() => []),
         question: opts.state?.session?.question ?? (() => []),
       },
-      part: opts.state?.part ?? (() => []),
       lsp: opts.state?.lsp ?? (() => []),
       mcp: opts.state?.mcp ?? (() => []),
     },

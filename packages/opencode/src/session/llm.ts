@@ -16,10 +16,10 @@ import type { LLMClientService } from "@opencode-ai/llm/route"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
-import type { Agent } from "@/agent/agent"
+import type { LegacyAgentInfo } from "@/compat/agent-wire"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
-import { Permission } from "@/permission"
+import { LegacyPermissionRules } from "@/permission/legacy-rules"
 import { Wildcard } from "@/util/wildcard"
 import { SessionID } from "@/session/schema"
 import { Auth } from "@/auth"
@@ -37,7 +37,7 @@ export type StreamInput = {
   sessionID: string
   parentSessionID?: string
   model: Provider.Model
-  agent: Agent.Info
+  agent: LegacyAgentInfo
   permission?: PermissionV1.Ruleset
   system: string[]
   messages: ModelMessage[]
@@ -195,7 +195,7 @@ const live: Layer.Layer<
           }
         }
 
-        const ruleset = Permission.merge(input.agent.permission ?? [], input.permission ?? [])
+        const ruleset = LegacyPermissionRules.merge(input.agent.permission ?? [], input.permission ?? [])
         workflowModel.sessionPreapprovedTools = Object.keys(prepared.tools).filter((name) => {
           const match = ruleset.findLast((rule) => Wildcard.match(name, rule.permission))
           return !match || match.action !== "ask"

@@ -11,15 +11,16 @@
 V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**：
 
 - V1 **执行回路**（`SessionPrompt.loop` + `SessionProcessor`）已从生产 layer 图与源码删除；OpenCode舊
-  `ToolRegistry` root也已刪除。舊leaf tool definitions仍暫留給專用測試，production只掛載Core V2 registry。
+  `ToolRegistry` root、shell closure與其餘leaf tool definitions也已刪除，production只掛載Core V2 registry。
 - V1 剩余活跃资产是四类兼容载体：**存储格式**、**事件兼容面**、**配置 schema**、**外部 wire 契约**。
 
 当前已推进到**批次 8 的 Session consumer hard cut 收口**。V2 已是唯一模型执行路径，transcript storage hard cut
 也已完成：运行时读取、mutation/revert 与 CLI import/export 全部只使用 canonical V2 transcript；retained
 legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
 `session_message_tombstone` 已从當前 schema 刪除並生成 drop migration。`Session.Service` production consumer
-也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。下一阻塞點是
-legacy HTTP/plugin/CLI/ACP wire schema 仍引用 V1 message/session/catalog型別；V1 event definitions已從
+也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。Agent catalog、
+selection、ACP/CLI/HTTP catalog reads已hard cut到Location-scoped `AgentV2`，舊Agent service/source已刪除。下一阻塞點是
+Config、Provider、Permission runtime facade與legacy HTTP/plugin/CLI/ACP wire schema；V1 event definitions已從
 replay/public manifest與Schema export移除。整個
 V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
@@ -158,6 +159,23 @@ exact resource、`save=[]`保守執行；parser load/parse/size錯誤仍fail clo
 CLI與ACP均不再顯示/接受Always allow；TUI與CLI對request/capability切換、stale selection與重複提交fail closed，
 ACP對陳舊always reply轉為reject。非空save仍保留原confirmation/persistence流程。
 
+**999.0.19 OpenCode tool leaf closeout**：OpenCode V1 registry之後殘留的20個leaf tool definitions、prompt副本與
+V1-only測試已刪除；Core V2內建tools與plugin compatibility parity tests成為唯一現役行為來源。source gate同時
+檢查已刪檔案與alias/relative import，防止test-only oracle重新進入production。
+
+**999.0.19 Agent service hard cut**：`LegacySessionExecution.select`、ACP directory、legacy `/agent` facade、
+CLI `run --agent`/`agent list`全部從Session所在Location解析`AgentV2.Service`；agent model/protocol/variant直接寫回
+canonical Session。`agent create`缺少的LLM config generation已補成獨立`AgentGenerator`，既有identifier從
+Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog source、prompt副本、test-only
+`subagent-permissions.ts`與重複V1測試已刪除；legacy `/agent`與舊provider adapter所需shape集中在
+`compat/agent-wire.ts`，不再代表可執行catalog。
+
+**999.0.19 Permission service hard cut**：HTTP/UI/tool execution原本已直接使用Location-scoped `PermissionV2`；
+本輪再確認V1 pending service為零production caller，從AppRuntime/HTTP layer移除後完整刪除
+`permission/index.ts`、`permission/evaluate.ts`與service-only測試。legacy LLM/wire仍需的V1 rules shape只保留在
+無狀態`permission/legacy-rules.ts`，不發布事件、不維護pending state，也不能被掛成service；source gate阻止
+`Permission.Service/node`與舊root import回流。
+
 ---
 
 ## 1. 各区域现状总表
@@ -167,11 +185,11 @@ ACP對陳舊always reply轉為reject。非空save仍保留原confirmation/persis
 | Session 执行（prompt/command/shell/init） | `LegacySessionExecution` 仅保留外部请求/响应形状，内部选择、权限、admission 与执行全部走 V2；V1 `SessionPrompt.loop` 已删除 | **V2-only 执行，wire 壳待收** |
 | Session CRUD（list/get/create/fork/title/metadata） | production consumer 與 Core projector 全部走 `SessionV2`；舊 repository/layer source 已刪除 | **V2-only runtime，wire schema 待收** |
 | Session 读取（messages） | HTTP/CLI/runtime 只读 canonical `SessionV2` transcript；retained V1 rows 不再合并 | **V2-only** |
-| Tool registry | production只掛載Core V2 `ToolRegistry`；OpenCode舊registry與ShellTool/arity已刪，其餘legacy leaf definitions仍為test-only source | **V2-only runtime，剩餘leaf source待清** |
+| Tool registry | production只掛載Core V2 `ToolRegistry`；OpenCode舊registry、ShellTool/arity與其餘legacy leaf definitions均已刪除 | **V2-only** |
 | `tool_search` | `searchDeferred` + 跨 turn `selected/onSelect` 已接入 V2 runner | **已完整生效** |
-| Agent | V1 `Agent`（`@/agent`）仍在 `LegacySessionExecution.select` 使用；V2 `AgentV2.Service` 独立 | **双路径** |
-| Subagent permission | V1 `subagent-permissions.ts` 只被test-only旧`TaskTool`/兼容测试引用；V2 runtime用Core `PermissionV2` + `SubagentPermit` | **V2 runtime，compat source待评估** |
-| Permission | V1 `@/permission` pending/config facade仍在；現役V2工具與四端UI直接使用PermissionV2，empty-save不再假裝可永久允許 | **V1 facade待刪，V2 runtime已通** |
+| Agent | catalog/selection/ACP/CLI/HTTP均讀Location-scoped `AgentV2.Service`；缺少的config generation由獨立`AgentGenerator`補齊；舊service/source已刪 | **V2-only runtime，legacy wire shape保留** |
+| Subagent permission | Core V2 `PermissionV2` + `SubagentPermit`為唯一runtime；V1 test-only helper與重複測試已刪 | **V2-only** |
+| Permission | V1 pending service/source已刪；現役工具、HTTP與四端UI直接使用PermissionV2；legacy LLM/wire只保留無狀態rules shape | **V2-only service，wire rules相容** |
 | Plugin 加载 | V1 格式加载（`@/plugin` + `loader.ts`），hooks 已桥接注册到 V2 `PluginV2` | **V1 格式 + V2 注册并存** |
 | Plugin tools | V1格式由`PluginToolCompat`編譯後只註冊到V2 `PluginToolCompatV2`（deferred）；舊registry雙路已刪 | **V2-only runtime，作者格式相容** |
 | TUI 插件 | plugin state/event/client/keymap均為V2 contract；舊state adapter與`api.command` shim已刪除 | **V2-only API** |
@@ -199,12 +217,12 @@ ACP對陳舊always reply轉為reject。非空save仍保留原confirmation/persis
 3. **V1 Provider** — `opencode/src/provider/provider.ts`、`provider/auth`
    provider / config.providers 组；`LegacySessionExecution` 的模型解析路径。
 
-4. **V1 Agent** — `opencode/src/agent/agent.ts`
-   `LegacySessionExecution.select` 用 V1 Agent 选 agent，再交给 V2 `canonical.switchAgent`。
+4. ~~**V1 Agent service**~~ — 已完成。`LegacySessionExecution.select`與所有catalog consumer改用
+   Location-scoped `AgentV2.Service`；`opencode/src/agent/agent.ts`已刪。外部wire shape移至
+   `compat/agent-wire.ts`，CLI-only生成能力移至`agent/generator.ts`。
 
-5. **V1 Permission** — `opencode/src/permission/index.ts`
-   permission 组 + `permissionRespond`。V1 pending 表为主，`replyCompatible` 兜底 V2。
-   **风险**：V2 工具发起的 `PermissionV2.ask` 不出现在 V1 `/permission` list。
+5. ~~**V1 Permission service**~~ — 已完成。HTTP/UI/tool execution只使用Location-scoped `PermissionV2`；
+   零production caller的pending service、`replyCompatible`與node已刪。legacy LLM/wire只保留pure rules helper。
 
 6. **Session 维护兼容服务** — SessionRunState / SessionStatus / SessionSummary / Todo
    httpapi 相应端点仍保留 V1 wire 形状；`SessionRevert.Service`、其 runtime layer 与
@@ -221,12 +239,12 @@ ACP對陳舊always reply轉為reject。非空save仍保留原confirmation/persis
 | `opencode/src/session/processor.ts`（`SessionProcessor`） | 已删除 |
 | `opencode/src/session/compaction.ts`（V1 `SessionCompaction`） | 已删除 |
 | `opencode/src/session/tools.ts`（V1 tool 组装） | 已删除 |
-| `opencode/src/agent/subagent-permissions.ts` | production不可达；仍被test-only旧TaskTool测试引用 |
+| `opencode/src/agent/subagent-permissions.ts` | 已删除；V2 runtime由`PermissionV2` + `SubagentPermit`覆盖 |
 | V1 loop/processor/compaction 对应测试 | 已删除或迁移到 V2 contract |
 
 `app-runtime.ts` 与 `httpapi/server.ts` 的 production layer 图已移除上述节点。其後
 `opencode/src/tool/registry.ts`也已刪除，plugin compatibility test不再使用V1 oracle；ShellTool/arity closure隨後
-完成Core等價能力補齊並刪除。其餘legacy leaf definitions仍暫留給專用測試，待各自parity/closure確認後刪除。
+完成Core等價能力補齊並刪除。其餘legacy leaf definitions與V1-only測試也已完成parity/closure並刪除。
 `Truncate`/`schema.ts`仍為現役output retention support，不屬於可隨leaf一起刪除的registry執行面。
 
 ### 2.3 刻意保留的 V1 出口（外部兼容，迁移完成后独立评估）
@@ -326,8 +344,8 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - 从 `app-runtime.ts`、`httpapi/server.ts` 移除 `SessionProcessor.node` / `SessionCompaction.node`
 > - 删除死代码测试：`prompt.test.ts`、`processor-effect.test.ts`、`compaction.test.ts`、`snapshot-tool-race.test.ts`、`structured-output.test.ts`、`structured-output-integration.test.ts`、`tool/registry.test.ts`、`tool/skill.test.ts`
 > - 修复测试引用：`schema-decoding.test.ts`、`tool/task.test.ts` 改用 `LegacySessionInput`；`websearch.test.ts` 的 `webSearchEnabled` 移到 `tool/websearch.ts`
-> - **後續closeout**：V1 `tool/registry.ts`已在999.0.19刪除，`plugin-compat-v2.test.ts`改為canonical-only；
->   legacy leaf工具定義仍待獨立closure刪除批次
+> - **後續closeout**：V1 `tool/registry.ts`、legacy leaf工具定義與V1-only測試均已在999.0.19刪除；
+>   `plugin-compat-v2.test.ts`改為canonical-only並由source gate阻止舊source回流
 > - 注：批次1當時的`plugin-compat-v2.test.ts` 27個baseline failures並非該批引入；後續registry closeout時
 >   canonical plugin compatibility + isolation + TaskTool focused suite已為65 pass / 0 fail
 
@@ -346,11 +364,10 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - 调查确认：TUI/run/acp 都走 `packages/server` 的 V2 handler（`server.permission.*`）；experimental httpapi 的 V1 permission group 无实际 HTTP 消费者（仅契约测试），已切 V2
 
 剩余（工具路径，批次 7 前保留）：
-1. `@/permission`（V1）仍被V1 Agent與剩餘legacy tool/LLM compatibility引用；`Permission.node`保留在layer图，
-   但`tool/shell.ts`已刪，production BashTool只使用PermissionV2
-2. 剩餘V1工具路径改走`PermissionV2.ask`或隨test-only leaf closure刪除
-3. `replyCompatible` 兜底逻辑仍被 `test/permission/next.test.ts` 覆盖，保留
-4. `core/v1/permission.ts` 的运行时使用（session 数据模型的 permission 字段，批次 4）
+1. OpenCode V1 pending service、`Permission.node`、`replyCompatible`與service-only測試已刪
+2. production工具路径、HTTP與UI已全部走`PermissionV2`
+3. legacy LLM/wire仍使用`PermissionV1.Ruleset` shape，集中在`permission/legacy-rules.ts`
+4. `core/v1/permission.ts`仍作相容schema/error門面，待legacy LLM/wire shape收口
 
 ### 批次 3：V2 可靠性收尾（V2 侧，高优先）
 
@@ -468,11 +485,11 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - `session/session.ts` 的repository/layer先被清空，之後wire DTO與domain helper完成分離並整檔刪除；legacy `/session` route仍保留相容URL與DTO，但執行只走canonical services。
 > - Durable manifest 已 V2-only；`ServerDefinitions` 仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
 > - `session.error` 與 Session status producer 已 V2-only；舊 consumer 暫經 bridge 投影，dead `session.idle` / `session.compacted` definitions 已移除。
-> - Config、Provider、Agent、Permission 与 plugin/TUI 外部 wire compatibility 仍有活跃 V1 consumer。
+> - Agent與Permission service runtime已完成hard cut；Config、Provider與plugin/CLI/ACP外部wire compatibility仍有活躍V1 consumer，legacy LLM仍使用集中化V1 agent/permission wire shape。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
 > **批次 8 下一步**：Session mutation、production consumer、repository、projector 與 durable replay manifest 已 canonical。接下来逐一遷移
-> legacy HTTP/plugin/CLI/TUI/ACP live/wire consumer；之后按 Config/Provider/Agent/Permission 与外部
+> legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
 >
@@ -504,8 +521,9 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 
 ## 6. 风险与注意事项
 
-1. **共享 Session row 一致性**：V1 `Session.Service` 与 V2 `SessionV2` 仍共享 `SessionTable`；迁移 CRUD consumer 时必须先补齐 V2 metadata/permission 等等价能力，再移除 V1 projection。V2 mutation 之间已由 `expectedSeq` 乐观并发守衛（update/setPermissions/compat echo 全覆盖），但 V1 `Session.Service` 经 V1 事件投影的直接写表路径仍无此守衛，consumer 迁移完成前两者仍可能交错。Transcript 已是 canonical-only，不得恢复双表读写。
+1. **Session clustered ownership**：V1 `Session.Service`與其projection已刪，canonical mutation由`expectedSeq`樂觀並發守衛；目前仍是process-local drain ownership。跨進程projection/runner ownership需要獨立設計，不得藉由恢復V1 repository或雙表讀寫處理。
 2. **两套 route 树执行语义不同**：TUI worker/native routes 用 `locationServiceMapV2Layer`（forwarding）；`packages/server/src/routes.ts` 独立 route 树仍绑 `noopLayer`（V2 工具彼处 recording-only）。需确认生产 server 入口。
-3. **Permission 双轨盲区**：V2 工具请求不出现在 V1 `/permission` list，用户 UI 可能看不到待授权请求。
+3. **Legacy LLM wire shape**：Permission service已刪，但舊provider adapter仍以`LegacyAgentInfo`與
+   `PermissionV1.Ruleset`組裝請求。這是wire compatibility，不得重新擴張成catalog/pending service。
 4. **`tool_search` selection 持久化**：若未来接入非 runner 的 V2 工具调用面（MCP/session-scoped 注册），需显式设计 selection 持久化。
 5. **删除 V1 的依赖顺序**：存储格式 → 事件发布点 → 配置解码。`v1/config/config.ts` 已依赖 V2（`config/experimental`/`config/reference`），是最容易先移除的内部引用。

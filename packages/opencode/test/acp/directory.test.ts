@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Directory } from "@/acp/directory"
-import { Agent } from "@/agent/agent"
+import { AgentV2 } from "@opencode-ai/core/agent"
 import { InstanceStore } from "@/project/instance-store"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -111,21 +111,28 @@ describe("ACP directory snapshot", () => {
         LayerMap.make(
           (ref: Location.Ref) => {
             loaded.push(ref)
-            return Layer.mock(CommandV2.Service, {
-              list: () => Effect.succeed([command("zeta"), command("alpha")]),
-            }) as unknown as Layer.Layer<LocationServices>
+            const agent = AgentV2.Info.make({
+              id: AgentV2.defaultID,
+              request: { headers: {}, body: {} },
+              mode: "primary",
+              hidden: false,
+              permissions: [],
+            })
+            return Layer.mergeAll(
+              Layer.mock(CommandV2.Service, {
+                list: () => Effect.succeed([command("zeta"), command("alpha")]),
+              }),
+              Layer.mock(AgentV2.Service, {
+                all: () => Effect.succeed([agent]),
+                default: () => Effect.succeed(agent),
+              }),
+            ) as unknown as Layer.Layer<LocationServices>
           },
           { idleTimeToLive: "1 minute" },
         ),
         LocationServiceMap.Service.of,
       ),
     )
-    const agent = {
-      name: "build",
-      mode: "primary",
-      permission: [],
-      options: {},
-    } satisfies Agent.Info
     const dependencies = Layer.mergeAll(
       Layer.mock(InstanceStore.Service, {
         load: ({ directory }) =>
@@ -144,10 +151,6 @@ describe("ACP directory snapshot", () => {
         list: () => Effect.succeed({}),
         defaultModel: () =>
           Effect.succeed({ providerID: ProviderV2.ID.make("provider"), modelID: ModelV2.ID.make("model") }),
-      }),
-      Layer.mock(Agent.Service, {
-        list: () => Effect.succeed([agent]),
-        defaultInfo: () => Effect.succeed(agent),
       }),
       locationServices,
     )

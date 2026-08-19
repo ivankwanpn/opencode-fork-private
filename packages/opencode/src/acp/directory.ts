@@ -1,4 +1,4 @@
-import { Agent } from "@/agent/agent"
+import { AgentV2 } from "@opencode-ai/core/agent"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { InstanceRef } from "@/effect/instance-ref"
 import { InstanceBootstrap } from "@/project/bootstrap"
@@ -112,32 +112,32 @@ export const loaderLayer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* InstanceStore.Service
     const provider = yield* Provider.Service
-    const agent = yield* Agent.Service
     const locations = yield* LocationServiceMap.Service
 
     return Loader.of({
       load: Effect.fn("ACPDirectoryLoader.load")(function* (directory) {
         const ctx = yield* store.load({ directory })
         return yield* Effect.gen(function* () {
-          const command = yield* CommandV2.Service.pipe(
-            Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))),
-          )
+          const services = locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))
+          const agent = yield* AgentV2.Service.pipe(Effect.provide(services))
+          const command = yield* CommandV2.Service.pipe(Effect.provide(services))
           const providers = yield* provider.list()
           const [agents, defaultAgent, commands, defaultModel] = yield* Effect.all(
-            [agent.list(), agent.defaultInfo(), command.list(), provider.defaultModel().pipe(Effect.option)],
+            [agent.all(), agent.default(), command.list(), provider.defaultModel().pipe(Effect.option)],
             { concurrency: "unbounded" },
           )
+          if (!defaultAgent) return yield* Effect.die("no primary visible agent found")
           return build({
             directory,
             providers,
             modes: agents
               .filter((item) => item.mode !== "subagent" && item.hidden !== true)
               .map((item) => ({
-                id: item.name,
-                name: item.name,
+                id: item.id,
+                name: item.id,
                 ...(item.description ? { description: item.description } : {}),
               })),
-            defaultModeID: defaultAgent.name,
+            defaultModeID: defaultAgent.id,
             commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
             ...(defaultModel._tag === "Some" ? { defaultModel: defaultModel.value } : {}),
           })
@@ -210,7 +210,7 @@ const layer = Layer.effect(
 export const loaderNode = LayerNode.make({
   service: Loader,
   layer: loaderLayer,
-  deps: [Provider.node, Agent.node, LocationServiceMap.node, InstanceStore.node],
+  deps: [Provider.node, LocationServiceMap.node, InstanceStore.node],
 })
 
 export const node = LayerNode.make({ service: Service, layer, deps: [loaderNode] })

@@ -1,8 +1,9 @@
+import { AgentV2 } from "@opencode-ai/core/agent"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { AbsolutePath } from "@opencode-ai/core/schema"
-import { Agent } from "@/agent/agent"
+import { legacyAgentFromCore } from "@/compat/native-v1-catalog"
 import * as InstanceState from "@/effect/instance-state"
 import { Format } from "@/format"
 import { Global } from "@opencode-ai/core/global"
@@ -17,7 +18,6 @@ import { markInstanceForDisposal } from "../lifecycle"
 
 export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance", (handlers) =>
   Effect.gen(function* () {
-    const agent = yield* Agent.Service
     const format = yield* Format.Service
     const lsp = yield* LSP.Service
     const skill = yield* Skill.Service
@@ -101,7 +101,9 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
     })
 
     const getAgent = Effect.fn("InstanceHttpApi.agent")(function* () {
-      return yield* agent.list()
+      return yield* location(AgentV2.Service.use((agents) => agents.all())).pipe(
+        Effect.map((agents) => agents.map(legacyAgentFromCore)),
+      )
     })
 
     const getSkill = Effect.fn("InstanceHttpApi.skill")(function* () {

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
-import type { Agent } from "../../src/agent/agent"
+import type { LegacyAgentInfo } from "../../src/compat/agent-wire"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Skill } from "../../src/skill"
-import { Permission } from "../../src/permission"
+import { Permission } from "../../src/permission/legacy-rules"
 import type { Provider } from "../../src/provider/provider"
 import { SystemPrompt } from "../../src/session/system"
 import { MCPBridge as MCP } from "../../src/effect/mcp-bridge"
@@ -38,7 +38,7 @@ const skills: Skill.Info[] = [
   },
 ]
 
-const build: Agent.Info = {
+const build: LegacyAgentInfo = {
   name: "build",
   mode: "primary",
   permission: Permission.fromConfig({ "*": "allow" }),

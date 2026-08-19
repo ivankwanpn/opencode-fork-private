@@ -5,7 +5,6 @@ import * as Socket from "effect/unstable/socket/Socket"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Observability from "@opencode-ai/core/observability"
 import { Account } from "@/account/account"
-import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
 import { AuthCredentialMigration } from "@/auth/credential-migration"
 import { BackgroundJob } from "@/background/job"
@@ -18,7 +17,6 @@ import { Git } from "@/git"
 import { LSP } from "@/lsp/lsp"
 import { MCPBridge as MCP } from "@/effect/mcp-bridge"
 import { McpAuth } from "@opencode-ai/core/mcp"
-import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
 import { PluginPtyEnvironment } from "@/plugin/pty-environment"
 import { InstanceStore } from "@/project/instance-store"
@@ -255,11 +253,9 @@ const hostNodes = [
   ModelsDev.node,
   Provider.node,
   ProviderAuth.node,
-  Agent.node,
   Skill.node,
   Discovery.node,
   Question.node,
-  Permission.node,
   PermissionSaved.node,
   Todo.node,
   SessionTodoV2.node,

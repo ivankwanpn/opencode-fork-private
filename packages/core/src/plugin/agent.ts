@@ -145,8 +145,7 @@ export const Plugin = define({
     // Spec §3.3 minimal tool whitelists for the subagent roles. Permission
     // rules are last-match-wins, so the `*: deny` catch-all must come first and
     // every explicit allow (plus the protective `read` *.env rules) afterwards.
-    // This mirrors the V1 definitions in
-    // packages/opencode/src/agent/agent.ts — keep them in sync.
+    // Keep the deny-first ordering so later explicit allows win.
     const subagentWhitelist = (tools: readonly string[], extra?: PermissionV2.Rule[]): PermissionV2.Rule[] => [
       { action: "*", resource: "*", effect: "deny" },
       ...tools.map((action): PermissionV2.Rule => ({ action, resource: "*", effect: "allow" })),

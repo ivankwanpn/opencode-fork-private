@@ -1,4 +1,4 @@
-import { Agent } from "@/agent/agent"
+import { type LegacyAgentInfo } from "@/compat/agent-wire"
 import { Provider } from "@/provider/provider"
 import { LLM } from "@/session/llm"
 import { MessageID, SessionID } from "@/session/schema"
@@ -8,7 +8,7 @@ import { Effect, Stream } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 
-const COPY_NAME_AGENT: Agent.Info = {
+const COPY_NAME_AGENT: LegacyAgentInfo = {
   name: "project-copy-name",
   mode: "primary",
   permission: [],

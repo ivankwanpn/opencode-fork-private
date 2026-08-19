@@ -8,8 +8,9 @@ import type {
   ProviderCatalogInfo,
 } from "@opencode-ai/sdk/v2"
 import type { Command } from "@opencode-ai/sdk"
+import type { AgentV2 } from "@opencode-ai/core/agent"
 
-export function legacyAgentFromNative(info: AgentV2Info): Agent {
+function projectLegacyAgent(info: AgentV2Info | AgentV2.Info) {
   const topP = info.request.body.topP
   const temperature = info.request.body.temperature
   return {
@@ -25,11 +26,30 @@ export function legacyAgentFromNative(info: AgentV2Info): Agent {
       pattern: rule.resource,
       action: rule.effect,
     })),
-    model: info.model ? { modelID: info.model.id, providerID: info.model.providerID } : undefined,
+    model: info.model
+      ? { modelID: info.model.id, providerID: info.model.providerID, protocol: info.model.protocol }
+      : undefined,
     variant: info.model?.variant,
     prompt: info.system,
     options: { ...info.request.body },
     steps: info.steps,
+  }
+}
+
+export function legacyAgentFromNative(info: AgentV2Info): Agent {
+  return projectLegacyAgent(info)
+}
+
+export function legacyAgentFromCore(info: AgentV2.Info) {
+  return {
+    ...projectLegacyAgent(info),
+    model: info.model
+      ? {
+          modelID: info.model.id,
+          providerID: info.model.providerID,
+          protocol: info.model.protocol,
+        }
+      : undefined,
   }
 }
 

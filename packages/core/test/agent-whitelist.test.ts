@@ -12,10 +12,7 @@ import { agentHost, host } from "./plugin/host"
 
 const it = testEffect(AppNodeBuilder.build(AgentV2.node))
 
-// Spec §3.3 minimal tool whitelists for the four subagent roles. These tables
-// must stay identical to the mirror in
-// packages/opencode/test/agent/subagent-whitelist.test.ts (V1) — keep them in
-// sync to prevent drift between the V2 and V1 built-in agent definitions.
+// Spec §3.3 minimal tool whitelists for the four subagent roles.
 const SUBAGENT_WHITELISTS: Record<string, { allow: readonly string[]; deny: readonly string[] }> = {
   general: {
     allow: ["bash", "read", "write", "edit", "grep", "glob", "webfetch", "websearch", "task", "skill"],

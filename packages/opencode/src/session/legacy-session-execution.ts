@@ -1,7 +1,7 @@
-import { Agent } from "@/agent/agent"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { AgentV2 } from "@opencode-ai/core/agent"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -77,8 +77,8 @@ export class ResponseNotFoundError extends Schema.TaggedErrorClass<ResponseNotFo
 ) {}
 
 const make = Effect.gen(function* () {
-  const agent = yield* Agent.Service
   const events = yield* EventV2Bridge.Service
+  const locations = yield* LocationServiceMap.Service
   const read = yield* LegacySessionRead.Service
   const runState = yield* SessionRunState.Service
   const canonical = yield* SessionV2.Service
@@ -102,23 +102,36 @@ const make = Effect.gen(function* () {
 
   const select = Effect.fn("LegacySessionExecution.select")(function* (sessionID: SessionID, input: Selection) {
     const current = yield* read.get(sessionID)
-    const selectedAgent = input.agent === undefined ? undefined : yield* agent.get(input.agent)
-    if (input.agent !== undefined && !selectedAgent) return yield* new InvalidSelectionError({ agent: input.agent })
+    const requestedAgent = input.agent
+    const selectedAgent =
+      requestedAgent === undefined
+        ? undefined
+        : yield* AgentV2.Service.use((agents) => agents.get(AgentV2.ID.make(requestedAgent))).pipe(
+            Effect.provide(locations.get(current.location)),
+          )
+    if (requestedAgent !== undefined && !selectedAgent)
+      return yield* new InvalidSelectionError({ agent: requestedAgent })
 
     const selected =
-      input.agent !== undefined && current.agent !== input.agent
+      requestedAgent !== undefined && current.agent !== requestedAgent
         ? yield* canonical
-            .switchAgent({ sessionID: current.id, agent: input.agent })
+            .switchAgent({ sessionID: current.id, agent: requestedAgent })
             .pipe(Effect.andThen(read.get(sessionID)))
         : current
-    const requestedModel = input.model ?? selectedAgent?.model
-    const selectedVariant = input.variant ?? (input.model === undefined ? selectedAgent?.variant : undefined)
+    const requestedModel = input.model
+      ? {
+          providerID: input.model.providerID,
+          id: input.model.modelID,
+          protocol: input.model.protocol,
+        }
+      : selectedAgent?.model
+    const selectedVariant = input.variant ?? (input.model === undefined ? selectedAgent?.model?.variant : undefined)
     const baseModel =
       requestedModel ??
       (selectedVariant !== undefined && selected.model
         ? {
             providerID: selected.model.providerID,
-            modelID: selected.model.id,
+            id: selected.model.id,
             protocol: selected.model.protocol,
           }
         : undefined)
@@ -128,9 +141,9 @@ const make = Effect.gen(function* () {
             sessionID: selected.id,
             model: {
               providerID: baseModel.providerID,
-              id: baseModel.modelID,
+              id: baseModel.id,
               variant: selectedVariant === undefined ? undefined : ModelV2.VariantID.make(selectedVariant),
-              protocol: "protocol" in baseModel ? baseModel.protocol : undefined,
+              protocol: baseModel.protocol,
             },
           })
           .pipe(Effect.andThen(read.get(sessionID)))

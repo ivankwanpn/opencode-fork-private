@@ -1,5 +1,9 @@
 import type { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { AgentV2 } from "@opencode-ai/core/agent"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 // CLI entry point for `opencode run` and `opencode --mini`.
 //
 // Handles three modes:
@@ -269,13 +273,10 @@ export const RunCommand = effectCmd({
         describe: "enable direct interactive demo slash commands; pass one as the message to run it immediately",
       }),
   handler: Effect.fn("Cli.run")(function* (args) {
-    const { Agent } = yield* Effect.promise(() => import("@/agent/agent"))
     const { RuntimeFlags } = yield* Effect.promise(() => import("@/effect/runtime-flags"))
-    const { InstanceRef } = yield* Effect.promise(() => import("@/effect/instance-ref"))
     const { ServerAuth } = yield* Effect.promise(() => import("@/server/auth"))
-    const agentSvc = yield* Agent.Service
     const flags = yield* RuntimeFlags.Service
-    const localInstance = yield* InstanceRef
+    const locations = yield* LocationServiceMap.Service
     yield* Effect.promise(async () => {
       const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
       const interactive = args.mini
@@ -592,7 +593,9 @@ export const RunCommand = effectCmd({
         const name = args.agent
 
         const entry = await Effect.runPromise(
-          agentSvc.get(name).pipe(Effect.provideService(InstanceRef, localInstance)),
+          AgentV2.Service.use((agents) => agents.get(AgentV2.ID.make(name))).pipe(
+            Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory ?? root) }))),
+          ),
         )
         if (!entry) {
           UI.println(

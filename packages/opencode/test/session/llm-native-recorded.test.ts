@@ -15,7 +15,7 @@ import { Filesystem } from "@/util/filesystem"
 import { LLMEvent, LLMResponse } from "@opencode-ai/llm"
 import { RequestExecutor } from "@opencode-ai/llm/route"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import type { Agent } from "../../src/agent/agent"
+import type { LegacyAgentInfo } from "../../src/compat/agent-wire"
 import { LLM } from "../../src/session/llm"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { TestInstance } from "../fixture/fixture"
@@ -358,7 +358,7 @@ const driveToolLoop = (scenario: RecordedScenario) =>
       options: {},
       permission: [{ permission: "*", pattern: "*", action: "allow" }],
       temperature: 0,
-    } satisfies Agent.Info
+    } satisfies LegacyAgentInfo
     const provider = yield* Provider.Service
     const resolved = yield* provider.getModel(scenario.providerID, modelID)
 

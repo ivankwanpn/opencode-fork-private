@@ -62,9 +62,7 @@ describe("opencode read-only commands (smoke)", () => {
     60_000,
   )
 
-  // `agent list` walks the agent config. Empty config means no agents
-  // configured; the command should still exit 0 with a "no agents" line or
-  // similar. We don't pin the message — just exit cleanly.
+  // `agent list` reads the Location-scoped V2 catalog, including built-ins.
   cliIt.live(
     "agent list: exits 0",
     ({ opencode }) =>

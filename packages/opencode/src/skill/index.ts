@@ -2,12 +2,12 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import path from "path"
 import { DateTime, Effect, Layer, Context, Schema } from "effect"
 import { NamedError } from "@opencode-ai/core/util/error"
-import type { Agent } from "@/agent/agent"
+import type { LegacyAgentInfo } from "@/compat/agent-wire"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { Global } from "@opencode-ai/core/global"
 import { SkillPlugin } from "@opencode-ai/core/plugin/skill"
-import { Permission } from "@/permission"
+import { LegacyPermissionRules } from "@/permission/legacy-rules"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Config } from "@/config/config"
 import { FrontmatterError } from "@opencode-ai/core/v1/config/error"
@@ -100,7 +100,7 @@ export interface Interface {
   readonly require: (name: string) => Effect.Effect<Info, NotFoundError>
   readonly all: () => Effect.Effect<Info[]>
   readonly dirs: () => Effect.Effect<string[]>
-  readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
+  readonly available: (agent?: LegacyAgentInfo) => Effect.Effect<Info[]>
 }
 
 const add = Effect.fnUntraced(function* (state: State, match: string, events: EventV2Bridge.Service["Service"]) {
@@ -312,11 +312,13 @@ const layer = Layer.effect(
       return (yield* InstanceState.get(discovered)).dirs
     })
 
-    const available = Effect.fn("Skill.available")(function* (agent?: Agent.Info) {
+    const available = Effect.fn("Skill.available")(function* (agent?: LegacyAgentInfo) {
       const s = yield* InstanceState.get(state)
       const list = Object.values(s.skills).toSorted((a, b) => a.name.localeCompare(b.name))
       if (!agent) return list
-      return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
+      return list.filter(
+        (skill) => LegacyPermissionRules.evaluate("skill", skill.name, agent.permission).action !== "deny",
+      )
     })
 
     return Service.of({ get, require, all, dirs, available })

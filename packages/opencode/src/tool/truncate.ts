@@ -2,9 +2,9 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { NodePath } from "@effect/platform-node"
 import { Cause, Duration, Effect, Layer, Option, Schedule, Context } from "effect"
 import path from "path"
-import type { Agent } from "../agent/agent"
+import type { LegacyAgentInfo } from "@/compat/agent-wire"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { evaluate } from "@/permission/evaluate"
+import { evaluate } from "@/permission/legacy-rules"
 import { Config } from "@/config/config"
 import { Identifier } from "../id/id"
 import { ToolID } from "./schema"
@@ -25,7 +25,7 @@ export interface Options {
   direction?: "head" | "tail"
 }
 
-function hasTaskTool(agent?: Agent.Info) {
+function hasTaskTool(agent?: LegacyAgentInfo) {
   if (!agent?.permission) return false
   return evaluate("task", "*", agent.permission).action !== "deny"
 }
@@ -37,7 +37,7 @@ export interface Interface {
    * Returns output unchanged when it fits within the limits, otherwise writes the full text
    * to the truncation directory and returns a preview plus a hint to inspect the saved file.
    */
-  readonly output: (text: string, options?: Options, agent?: Agent.Info) => Effect.Effect<Result>
+  readonly output: (text: string, options?: Options, agent?: LegacyAgentInfo) => Effect.Effect<Result>
   /**
    * Resolved truncation limits: values from `tool_output` in opencode config, or MAX_LINES / MAX_BYTES if unset.
    */
@@ -82,7 +82,11 @@ const layer = Layer.effect(
       }
     })
 
-    const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, agent?: Agent.Info) {
+    const output = Effect.fn("Truncate.output")(function* (
+      text: string,
+      options: Options = {},
+      agent?: LegacyAgentInfo,
+    ) {
       const resolved = yield* limits()
       const maxLines = options.maxLines ?? resolved.maxLines
       const maxBytes = options.maxBytes ?? resolved.maxBytes

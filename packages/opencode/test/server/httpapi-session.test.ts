@@ -573,6 +573,48 @@ describe("session HttpApi", () => {
     }),
   )
 
+  it.live("selects configured agents from the location-scoped V2 catalog", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped({
+        git: true,
+        config: {
+          ...testProviderConfig("http://127.0.0.1:1/v1"),
+          agent: {
+            worker: {
+              model: "test/test-model",
+              protocol: "openai-responses",
+              variant: "high",
+            },
+          },
+        },
+      })
+      const session = yield* createSession({ title: "V2 agent selection" }).pipe(provideInstanceEffect(directory))
+      const response = yield* request(
+        `${pathFor(SessionPaths.prompt, { sessionID: session.id })}?directory=${encodeURIComponent(directory)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "worker",
+            noReply: true,
+            parts: [{ type: "text", text: "record the configured model" }],
+          }),
+        },
+      )
+
+      expect(response.status).toBe(200)
+      expect(yield* SessionV2.Service.use((sessions) => sessions.get(session.id))).toMatchObject({
+        agent: "worker",
+        model: {
+          id: "test-model",
+          providerID: "test",
+          protocol: "openai-responses",
+          variant: "high",
+        },
+      })
+    }),
+  )
+
   it.live(
     "runs legacy structured-output prompts through canonical V2 execution",
     () =>

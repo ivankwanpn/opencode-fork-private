@@ -1,5 +1,5 @@
 import { ProjectCopyNameCapability } from "@opencode-ai/server/project-copy-name-capability"
-import { Agent } from "@/agent/agent"
+import { type LegacyAgentInfo } from "@/compat/agent-wire"
 import { Provider } from "@/provider/provider"
 import { LLM } from "@/session/llm"
 import { MessageID, SessionID } from "@/session/schema"
@@ -7,7 +7,7 @@ import { Slug } from "@opencode-ai/core/util/slug"
 import { LLMEvent } from "@opencode-ai/llm"
 import { Effect, Layer, Stream } from "effect"
 
-const agent: Agent.Info = {
+const agent: LegacyAgentInfo = {
   name: "project-copy-name",
   mode: "primary",
   permission: [],

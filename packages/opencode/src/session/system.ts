@@ -14,8 +14,8 @@ import PROMPT_META from "./prompt/meta.txt"
 import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider/provider"
-import type { Agent } from "@/agent/agent"
-import { Permission } from "@/permission"
+import type { LegacyAgentInfo } from "@/compat/agent-wire"
+import { LegacyPermissionRules } from "@/permission/legacy-rules"
 import { Skill } from "@/skill"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Location } from "@opencode-ai/core/location"
@@ -43,8 +43,8 @@ export function provider(model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
-  readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
+  readonly skills: (agent: LegacyAgentInfo) => Effect.Effect<string | undefined>
+  readonly mcp: (agent: LegacyAgentInfo, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
@@ -95,8 +95,8 @@ const layer = Layer.effect(
         ].filter((part): part is string => part !== undefined)
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
-        if (Permission.disabled(["skill"], agent.permission).has("skill")) return
+      skills: Effect.fn("SystemPrompt.skills")(function* (agent: LegacyAgentInfo) {
+        if (LegacyPermissionRules.disabled(["skill"], agent.permission).has("skill")) return
 
         const list = yield* skill.available(agent)
 
@@ -109,10 +109,12 @@ const layer = Layer.effect(
         ].join("\n")
       }),
 
-      mcp: Effect.fn("SystemPrompt.mcp")(function* (agent: Agent.Info, permission?: PermissionV1.Ruleset) {
-        const ruleset = Permission.merge(agent.permission, permission ?? [])
+      mcp: Effect.fn("SystemPrompt.mcp")(function* (agent: LegacyAgentInfo, permission?: PermissionV1.Ruleset) {
+        const ruleset = LegacyPermissionRules.merge(agent.permission, permission ?? [])
         const instructions = (yield* mcp.instructions()).filter(
-          (item) => item.tools.length === 0 || Permission.disabled([...item.tools], ruleset).size < item.tools.length,
+          (item) =>
+            item.tools.length === 0 ||
+            LegacyPermissionRules.disabled([...item.tools], ruleset).size < item.tools.length,
         )
         if (instructions.length === 0) return
 

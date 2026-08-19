@@ -15,11 +15,10 @@ import { ProviderTransform } from "@/provider/transform"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 
 import { testEffect } from "../lib/effect"
-import type { Agent } from "../../src/agent/agent"
+import type { LegacyAgentInfo } from "../../src/compat/agent-wire"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Permission } from "@/permission"
 import { LLMAISDK } from "@/session/llm/ai-sdk"
 import { SessionUsage } from "@/session/usage"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -854,7 +853,7 @@ describe("session.llm.stream", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.4,
           topP: 0.8,
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-1"),
@@ -932,7 +931,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-cerebras-reasoning"),
@@ -1000,7 +999,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
         const user = {
           id: MessageID.make("msg_user-service-abort"),
           sessionID,
@@ -1068,7 +1067,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "question", pattern: "*", action: "deny" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-tools"),
@@ -1171,7 +1170,7 @@ describe("session.llm.stream", () => {
           options: { reasoningMode: "pro" },
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.2,
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-2"),
@@ -1276,7 +1275,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         yield* drainWith(
           AppNodeBuilder.build(LLM.node, [
@@ -1344,7 +1343,7 @@ describe("session.llm.stream", () => {
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.2,
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         yield* drainWith(llmLayerWithExecutor({ flags: { experimentalNativeLlm: true } }), {
           user: {
@@ -1427,7 +1426,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         yield* drainWith(llmLayerWithExecutor({ executor, flags: { experimentalNativeLlm: true } }), {
           user: {
@@ -1516,7 +1515,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         yield* drainWith(llmLayerWithExecutor({ flags: { experimentalNativeLlm: true } }), {
           user: {
@@ -1643,7 +1642,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-data-url"),
@@ -1735,7 +1734,7 @@ describe("session.llm.stream", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.4,
           topP: 0.9,
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-3"),
@@ -1827,7 +1826,7 @@ describe("session.llm.stream", () => {
           mode: "primary",
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
         const user = {
           id: MessageID.make("msg_user-anthropic-tools"),
           sessionID,
@@ -2031,7 +2030,7 @@ describe("session.llm.stream", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.3,
           topP: 0.8,
-        } satisfies Agent.Info
+        } satisfies LegacyAgentInfo
 
         const user = {
           id: MessageID.make("msg_user-4"),

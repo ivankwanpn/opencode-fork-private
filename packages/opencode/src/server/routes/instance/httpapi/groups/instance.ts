@@ -1,5 +1,5 @@
 import { Command } from "@opencode-ai/schema/command"
-import { Agent } from "@/agent/agent"
+import { LegacyAgentInfo } from "@/compat/agent-wire"
 import { Format } from "@/format"
 import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"
@@ -148,7 +148,7 @@ export const InstanceApi = HttpApi.make("instance")
         ),
         HttpApiEndpoint.get("agent", InstancePaths.agent, {
           query: WorkspaceRoutingQuery,
-          success: described(Schema.Array(Agent.Info), "List of agents"),
+          success: described(Schema.Array(LegacyAgentInfo), "List of agents"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "app.agents",

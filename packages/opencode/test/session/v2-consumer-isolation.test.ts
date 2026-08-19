@@ -13,8 +13,6 @@ const migrated = [
   "share/share-next.ts",
   "share/session.ts",
   "session/legacy-session-execution.ts",
-  "tool/code-mode.ts",
-  "tool/task.ts",
 ]
 
 test("migrated Session consumers do not import the legacy Session service", async () => {
@@ -52,6 +50,54 @@ test("production runtime does not resolve or mount the legacy Session service", 
 
 test("legacy Session service module is deleted", async () => {
   expect(await Bun.file(new URL("../../src/session/session.ts", import.meta.url)).exists()).toBe(false)
+})
+
+test("legacy Agent service is deleted and cannot be mounted by production runtime", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter(
+      (entry) =>
+        entry.source.includes("@/agent/agent") ||
+        entry.source.includes("Agent.Service") ||
+        entry.source.includes("Agent.node"),
+    )
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(await Bun.file(new URL("../../src/agent/agent.ts", import.meta.url)).exists()).toBe(false)
+  expect(await Bun.file(new URL("../../src/agent/subagent-permissions.ts", import.meta.url)).exists()).toBe(false)
+  expect(offenders).toEqual([])
+})
+
+test("legacy Permission service is deleted and cannot be mounted by production runtime", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter(
+      (entry) =>
+        entry.source.includes('from "@/permission"') ||
+        entry.source.includes("Permission.Service") ||
+        entry.source.includes("Permission.node"),
+    )
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(await Bun.file(new URL("../../src/permission/index.ts", import.meta.url)).exists()).toBe(false)
+  expect(await Bun.file(new URL("../../src/permission/evaluate.ts", import.meta.url)).exists()).toBe(false)
+  expect(offenders).toEqual([])
 })
 
 test("legacy OpenCode ToolRegistry root is deleted and not mounted by production source", async () => {
@@ -112,6 +158,63 @@ test("legacy shell parser and arity closure is deleted and cannot be imported", 
           .resolve(repositoryRoot, path.dirname(entry.file), specifier.replace(/\.ts$/, ""))
           .replaceAll("\\", "/")
         return modules.has(resolved) ? [entry.file] : []
+      }),
+    )
+    .sort()
+
+  expect(
+    await Promise.all(deleted.map(async (file) => [file, await Bun.file(path.join(repositoryRoot, file)).exists()])),
+  ).toEqual(deleted.map((file) => [file, false]))
+  expect(offenders).toEqual([])
+})
+
+test("legacy OpenCode tool leaves are deleted and cannot be imported", async () => {
+  const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const repositoryRoot = path.resolve(sourceRoot, "../../..")
+  const modules = [
+    "apply_patch",
+    "code-mode",
+    "edit",
+    "external-directory",
+    "glob",
+    "grep",
+    "invalid",
+    "json-schema",
+    "lsp",
+    "mcp-websearch",
+    "plan",
+    "question",
+    "read",
+    "skill",
+    "task",
+    "todo",
+    "tool",
+    "webfetch",
+    "websearch",
+    "write",
+  ]
+  const deleted = modules.map((module) => `packages/opencode/src/tool/${module}.ts`)
+  const aliases = new Set(modules.map((module) => `@/tool/${module}`))
+  const resolvedModules = new Set(
+    deleted.map((file) => path.resolve(repositoryRoot, file).slice(0, -3).replaceAll("\\", "/")),
+  )
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("packages/**/*.{ts,tsx}").scanSync(repositoryRoot)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(repositoryRoot, file)).text(),
+      })),
+    )
+  )
+    .flatMap((entry) =>
+      [...entry.source.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g)].flatMap((match) => {
+        const specifier = match[1]!
+        if (aliases.has(specifier)) return [entry.file]
+        if (!specifier.startsWith(".")) return []
+        const resolved = path
+          .resolve(repositoryRoot, path.dirname(entry.file), specifier.replace(/\.ts$/, ""))
+          .replaceAll("\\", "/")
+        return resolvedModules.has(resolved) ? [entry.file] : []
       }),
     )
     .sort()

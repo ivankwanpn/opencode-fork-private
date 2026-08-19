@@ -10,6 +10,10 @@ import { EOL } from "os"
 import type { Argv } from "yargs"
 import { Effect } from "effect"
 import { effectCmd } from "../effect-cmd"
+import { AgentV2 } from "@opencode-ai/core/agent"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 
 type AgentMode = "all" | "primary" | "subagent"
 
@@ -60,12 +64,12 @@ const AgentCreateCommand = effectCmd({
       }),
   handler: Effect.fn("Cli.agent.create")(function* (args) {
     const { InstanceRef } = yield* Effect.promise(() => import("@/effect/instance-ref"))
-    const { Agent } = yield* Effect.promise(() => import("../../agent/agent"))
+    const { AgentGenerator } = yield* Effect.promise(() => import("../../agent/generator"))
     const { Provider } = yield* Effect.promise(() => import("@/provider/provider"))
     const maybeCtx = yield* InstanceRef
     if (!maybeCtx) return yield* Effect.die("InstanceRef not provided")
     const ctx = maybeCtx
-    const agentSvc = yield* Agent.Service
+    const generator = yield* AgentGenerator.Service
     const runLocalEffect = <A, E>(effect: Effect.Effect<A, E>) =>
       Effect.runPromise(effect.pipe(Effect.provideService(InstanceRef, ctx)))
     yield* Effect.promise(async () => {
@@ -129,7 +133,7 @@ const AgentCreateCommand = effectCmd({
       const spinner = prompts.spinner()
       spinner.start("Generating agent configuration...")
       const model = args.model ? Provider.parseModel(args.model) : undefined
-      const generated = await runLocalEffect(agentSvc.generate({ description, model })).catch((error) => {
+      const generated = await runLocalEffect(generator.generate({ description, model })).catch((error) => {
         spinner.stop(`LLM failed to generate agent: ${error.message}`, 1)
         if (isFullyNonInteractive) process.exit(1)
         throw new UI.CancelledError()
@@ -235,18 +239,17 @@ const AgentListCommand = effectCmd({
   command: "list",
   describe: "list all available agents",
   handler: Effect.fn("Cli.agent.list")(function* () {
-    const { Agent } = yield* Effect.promise(() => import("../../agent/agent"))
-    const agents = yield* Agent.Service.use((svc) => svc.list())
-    const sortedAgents = agents.sort((a, b) => {
-      if (a.native !== b.native) {
-        return a.native ? -1 : 1
-      }
-      return a.name.localeCompare(b.name)
-    })
+    const { InstanceRef } = yield* Effect.promise(() => import("@/effect/instance-ref"))
+    const ctx = yield* InstanceRef
+    if (!ctx) return yield* Effect.die("InstanceRef not provided")
+    const locations = yield* LocationServiceMap.Service
+    const agents = yield* AgentV2.Service.use((service) => service.all()).pipe(
+      Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))),
+    )
 
-    for (const agent of sortedAgents) {
-      process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
-      process.stdout.write(`  ${JSON.stringify(agent.permission, null, 2)}` + EOL)
+    for (const agent of agents) {
+      process.stdout.write(`${agent.id} (${agent.mode})` + EOL)
+      process.stdout.write(`  ${JSON.stringify(agent.permissions, null, 2)}` + EOL)
     }
   }),
 })

@@ -1,17 +1,27 @@
 export * as PluginV1Compat from "./v1-compat"
 
-import { define, type MutableValue, type ProviderContext } from "@opencode-ai/plugin/v2/effect"
-import type { Model, ModelV2Info, Provider } from "@opencode-ai/sdk/v2/types"
+import { define, type MutableValue, type PluginContext, type ProviderContext } from "@opencode-ai/plugin/v2/effect"
+import type { Auth, Model, ModelV2Info, Provider } from "@opencode-ai/sdk/v2/types"
 import { Effect, Stream } from "effect"
+import { ModelV2 } from "../model"
 import { PluginHost } from "./host"
 import { PluginRuntime } from "./runtime"
 import { PluginV1Projection } from "./v1-projection"
+import { ProviderV2 } from "../provider"
 
 type RuntimeHook = (input: any, output: any) => Promise<void>
 
 export interface Hooks {
   readonly dispose?: () => Promise<void>
   readonly event?: (input: { event: any }) => Promise<void>
+  readonly auth?: {
+    readonly provider: string
+    readonly loader?: (auth: () => Promise<Auth>, provider: Provider) => Promise<Record<string, any>>
+  }
+  readonly provider?: {
+    readonly id: string
+    readonly models?: (provider: Provider, context: { auth?: Auth }) => Promise<Record<string, Model>>
+  }
   readonly "chat.message"?: RuntimeHook
   readonly "chat.params"?: RuntimeHook
   readonly "chat.headers"?: RuntimeHook
@@ -68,6 +78,72 @@ export function fromHooks(id: string, hooks: Hooks) {
             Stream.runForEach((event) => Effect.promise(() => eventHook({ event: event as never }))),
             Effect.forkScoped,
           )
+        }
+
+        const auth = hooks.auth
+        if (auth?.loader) {
+          const loaded = new Map<Auth["type"], Promise<Record<string, any>>>()
+          yield* host.aisdk.options((event) => {
+            if (event.model.providerID !== auth.provider) return
+            return Effect.gen(function* () {
+              const current = yield* resolveAuth(host, auth.provider)
+              if (!current) return
+              const provider = clone(
+                PluginV1Projection.provider(providerFromModel(event.model), [event.model], {
+                  source: "api",
+                  auth: current.type === "oauth" ? "oauth" : "key",
+                }),
+              )
+              const options =
+                loaded.get(current.type) ??
+                auth.loader!(async () => {
+                  const latest = await Effect.runPromise(resolveAuth(host, auth.provider))
+                  if (!latest) throw new Error(`Provider credential disconnected: ${auth.provider}`)
+                  return latest
+                }, provider)
+              loaded.set(current.type, options)
+              Object.assign(event.options, yield* Effect.promise(() => options))
+            })
+          })
+        }
+
+        const provider = hooks.provider
+        if (provider?.models) {
+          yield* host.catalog.transform((catalog) => {
+            const record = catalog.provider.get(provider.id)
+            if (!record) return
+            return Effect.gen(function* () {
+              const resolved = yield* resolveCredential(host, provider.id)
+              const legacy = clone(
+                PluginV1Projection.provider(record.provider, record.models.values(), {
+                  source: resolved.connection?.type === "env" ? "env" : resolved.credential ? "api" : undefined,
+                  auth:
+                    resolved.connection?.type === "env"
+                      ? "env"
+                      : resolved.credential?.type === "oauth"
+                        ? "oauth"
+                        : resolved.credential
+                          ? "key"
+                          : undefined,
+                }),
+              )
+              const previous = new Map(record.models)
+              const models = yield* Effect.promise(() =>
+                provider.models!(legacy, { auth: PluginV1Projection.auth(resolved.credential) }),
+              )
+              for (const id of previous.keys()) catalog.model.remove(provider.id, id)
+              for (const [id, model] of Object.entries(models)) {
+                const modelID = ModelV2.ID.make(id)
+                const projected = PluginV1Projection.fromModel(
+                  ProviderV2.ID.make(provider.id),
+                  modelID,
+                  model,
+                  previous.get(id),
+                )
+                catalog.model.update(provider.id, id, (draft) => Object.assign(draft, projected))
+              }
+            })
+          })
         }
 
         const message = hooks["chat.message"]
@@ -338,4 +414,44 @@ export function fromHooks(id: string, hooks: Hooks) {
         }
       }),
   })
+}
+
+function resolveCredential(host: PluginContext, providerID: string) {
+  return Effect.gen(function* () {
+    const connection = yield* host.integration.connection.active(providerID)
+    const credential = connection
+      ? yield* host.integration.connection.resolve(connection).pipe(Effect.orDie)
+      : undefined
+    return { connection, credential }
+  })
+}
+
+function resolveAuth(host: PluginContext, providerID: string) {
+  return Effect.map(resolveCredential(host, providerID), (resolved) => PluginV1Projection.auth(resolved.credential))
+}
+
+function providerFromModel(model: ModelV2Info) {
+  const providerID = ProviderV2.ID.make(model.providerID)
+  return ProviderV2.Info.make({
+    ...ProviderV2.Info.empty(providerID),
+    api:
+      model.api.type === "aisdk"
+        ? {
+            type: "aisdk",
+            package: model.api.package,
+            url: model.api.url,
+            settings: { ...model.api.settings },
+          }
+        : {
+            type: "native",
+            url: model.api.url,
+            settings: { ...model.api.settings },
+          },
+  })
+}
+
+function clone<Value>(value: Value): Value {
+  if (Array.isArray(value)) return value.map(clone) as Value
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) return value
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)])) as Value
 }

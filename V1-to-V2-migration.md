@@ -19,8 +19,10 @@ V2 `ToolRegistry` / `PermissionV2`。V1 已不是运行时，而是**兼容面**
 legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；`message`、`part` 与
 `session_message_tombstone` 已从當前 schema 刪除並生成 drop migration。`Session.Service` production consumer
 也已在 999.0.19 清零，舊 repository/layer source 與 Core V1 lifecycle projector 隨後完成刪除。Agent catalog、
-selection、ACP/CLI/HTTP catalog reads已hard cut到Location-scoped `AgentV2`，舊Agent service/source已刪除。下一阻塞點是
-Config、Provider、Permission runtime facade與legacy HTTP/plugin/CLI/ACP wire schema；V1 event definitions已從
+selection、ACP/CLI/HTTP catalog reads已hard cut到Location-scoped `AgentV2`，舊Agent service/source已刪除。
+Provider catalog、模型執行、agent generator與CLI agent也已hard cut到Location-scoped `Catalog` / `AISDK` /
+`Integration`，production graph不再掛載V1 `Provider.Service`。下一阻塞點是Config、legacy Auth/provider static
+shape與HTTP/plugin/CLI/ACP wire schema；V1 event definitions已從
 replay/public manifest與Schema export移除。整個
 V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
@@ -486,7 +488,7 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > - `session/session.ts` 的repository/layer先被清空，之後wire DTO與domain helper完成分離並整檔刪除；legacy `/session` route仍保留相容URL與DTO，但執行只走canonical services。
 > - Durable manifest 已 V2-only；`ServerDefinitions` 仍保留 V1 live/wire definitions，待 CLI/TUI/plugin/ACP consumer 遷移後逐項刪除。
 > - `session.error` 與 Session status producer 已 V2-only；舊 consumer 暫經 bridge 投影，dead `session.idle` / `session.compacted` definitions 已移除。
-> - Agent與Permission service runtime已完成hard cut；Config與plugin/CLI/ACP外部wire compatibility仍有活躍V1 consumer。Provider catalog/read面已V2-only，legacy LLM仍使用集中化V1 provider與agent/permission wire shape。
+> - Agent、Permission與Provider service runtime已完成hard cut；Config、Auth與plugin/CLI/ACP外部wire compatibility仍有活躍V1 consumer。LLM執行只從canonical catalog/AISDK/integration取得runtime資料，legacy agent/permission/provider shape只在集中化request與wire projection邊界保留。
 > - `packages/core/src/v1/*` 与 `packages/schema/src/v1/*` 因上述 runtime/wire consumer 尚不能整体删除。
 >
 > **999.0.19 Provider catalog/read hard cut** ✅：新增Location-scoped `CatalogSnapshot.Service`，由
@@ -497,13 +499,19 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > project-copy naming均改讀同一Location-scoped `Catalog`。`OPENCODE_AUTH_CONTENT`暫態連線只在legacy
 > `/config/providers` wire邊界合併，等待V2 runtime credential能力收口。
 >
-> **Provider execution hard cut前置條件** ⏸️：V2 `AISDK`需補齊Integration credential注入、OpenAI Codex
-> OAuth的backend URL/token refresh/Authorization/Account header行為，以及在Connection/Catalog更新後清除
-> SDK與language cache。完成focused parity測試後，先遷移`session/llm.ts`，再遷移`agent/generator.ts`，最後
-> 移除兩個host graph中的`Provider.node`；legacy provider static types/DTO另移到明確compat模組後才能刪整檔。
+> **999.0.19 Provider execution hard cut** ✅：V2 `AISDK`已補齊Integration credential注入、case-insensitive
+> credential header降級、endpoint展開、response-header/chunk timeout與Connection/Catalog更新後的SDK/language
+> cache invalidation。OpenAI Codex OAuth由canonical Integration按request解析與刷新credential；AI SDK transport
+> 寫入backend URL、Authorization與Account header，native runtime則直接把同一credential編譯成Codex endpoint/
+> bearer/account request並保留注入的`RequestExecutor` transport，不再把global `fetch`塞進provider DTO。
+> `session/llm.ts`、`agent/generator.ts`與CLI agent均改讀Location-scoped `Catalog` / `AISDK` / `Integration`；
+> AppRuntime與HTTP server最後兩個`Provider.node` mount已移除，source gate保證production `packages/opencode/src`
+> 不再引用`Provider.Service`/`Provider.node`。Config provider projection改為「canonical config base → provider plugin
+> specialization → user override/filter」兩階段，保留V1 override順序而不恢復V1 service。V1 plugin provider/auth
+> hooks已在Core plugin host投影到V2 AISDK options；legacy provider static types/DTO仍待移到明確compat模組後再刪整檔。
 >
-> **批次 8 下一步**：Session mutation、production consumer、repository、projector 與 durable replay manifest 已 canonical。接下来完成
-> Provider execution hard cut，再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部
+> **批次 8 下一步**：Session與Provider runtime hard cut均已完成。接下来盤點並拆除Config/Auth runtime facade，
+> 再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。
 >
@@ -537,8 +545,9 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 
 1. **Session clustered ownership**：V1 `Session.Service`與其projection已刪，canonical mutation由`expectedSeq`樂觀並發守衛；目前仍是process-local drain ownership。跨進程projection/runner ownership需要獨立設計，不得藉由恢復V1 repository或雙表讀寫處理。
 2. **两套 route 树执行语义不同**：TUI worker/native routes 用 `locationServiceMapV2Layer`（forwarding）；`packages/server/src/routes.ts` 独立 route 树仍绑 `noopLayer`（V2 工具彼处 recording-only）。需确认生产 server 入口。
-3. **Legacy LLM execution boundary**：Permission service已刪，但舊provider adapter仍負責language建構，並以
-   `LegacyAgentInfo`與`PermissionV1.Ruleset`組裝請求。hard cut前必須補齊V2 AISDK credential/OAuth parity與
-   cache invalidation；agent/permission shape是wire compatibility，不得重新擴張成catalog/pending service。
+3. **Legacy LLM request shape boundary**：Provider language/runtime建構已切到V2 `AISDK` / `Integration`，但request
+   preparation與V1 plugin hooks仍以`LegacyAgentInfo`、`PermissionV1.Ruleset`及純投影provider shape組裝輸入；
+   這些是集中化compatibility shape，不得重新擴張成catalog/provider/pending service。Auth facade仍為
+   `OPENCODE_AUTH_CONTENT`等legacy來源提供fallback，待V2 credential入口覆蓋後再拆除。
 4. **`tool_search` selection 持久化**：若未来接入非 runner 的 V2 工具调用面（MCP/session-scoped 注册），需显式设计 selection 持久化。
 5. **删除 V1 的依赖顺序**：存储格式 → 事件发布点 → 配置解码。`v1/config/config.ts` 已依赖 V2（`config/experimental`/`config/reference`），是最容易先移除的内部引用。

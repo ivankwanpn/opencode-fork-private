@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { ModelV2 } from "../../model"
-import { define } from "../internal"
+import { define } from "@opencode-ai/plugin/v2/effect/plugin"
 
 export const OpenRouterPlugin = define({
   id: "openrouter",

@@ -16,6 +16,8 @@ const clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const issuer = "https://auth.openai.com"
 const callbackPort = 1455
 const pollingSafetyMargin = 3000
+const codexApiEndpoint = "https://chatgpt.com/backend-api/codex/responses"
+const oauthDummyKey = "opencode-oauth-dummy-key"
 const browserMethodID = Integration.MethodID.make("chatgpt-browser")
 const headlessMethodID = Integration.MethodID.make("chatgpt-headless")
 
@@ -36,6 +38,8 @@ type Claims = {
   organizations?: Array<{ id: string }>
   "https://api.openai.com/auth"?: { chatgpt_account_id?: string }
 }
+
+type RuntimeFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response>
 
 const browser = {
   integrationID: Integration.ID.make("openai"),
@@ -152,11 +156,14 @@ const headless = {
   refresh: (value) => refresh(headlessMethodID, value),
 } satisfies IntegrationOAuthMethodRegistration
 
-export function makeOpenAIPlugin(options: { fetchCodexModels?: typeof fetchCodexModels } = {}) {
+export function makeOpenAIPlugin(
+  options: { fetchCodexModels?: typeof fetchCodexModels; runtimeFetch?: RuntimeFetch } = {},
+) {
   return define({
     id: "openai",
     effect: Effect.fn(function* (ctx) {
       const discovery = yield* ProviderModelDiscovery.Service
+      const integrations = yield* Integration.Service
       yield* discovery.register(
         ProviderV2.ID.openai,
         openAIOAuthModelStrategy(options.fetchCodexModels ?? fetchCodexModels),
@@ -180,6 +187,16 @@ export function makeOpenAIPlugin(options: { fetchCodexModels?: typeof fetchCodex
           }
         }),
       )
+      yield* ctx.aisdk.options(
+        Effect.fn(function* (evt) {
+          if (evt.package !== "@ai-sdk/openai") return
+          if (evt.model.providerID === ProviderV2.ID.openai && (yield* resolveOpenAIOAuth(integrations))) {
+            evt.options.apiKey = oauthDummyKey
+            evt.options.baseURL = codexApiEndpoint.replace(/\/responses\/?$/, "")
+            evt.options.fetch = openAIOAuthFetch(integrations, options.runtimeFetch ?? fetch)
+          }
+        }),
+      )
       yield* ctx.aisdk.sdk(
         Effect.fn(function* (evt) {
           if (evt.package !== "@ai-sdk/openai") return
@@ -199,9 +216,56 @@ export function makeOpenAIPlugin(options: { fetchCodexModels?: typeof fetchCodex
 
 export const OpenAIPlugin = makeOpenAIPlugin()
 
-export function openAIOAuthModelStrategy(
-  models = fetchCodexModels,
-): ProviderModelDiscovery.Strategy {
+function resolveOpenAIOAuth(integrations: Integration.Interface) {
+  return Effect.gen(function* () {
+    const connection = yield* integrations.connection.active(Integration.ID.make(ProviderV2.ID.openai))
+    if (!connection) return
+    const value = yield* integrations.connection.resolve(connection)
+    return value?.type === "oauth" ? value : undefined
+  }).pipe(
+    Effect.catch(() =>
+      Effect.die(
+        new Error(
+          "ChatGPT sign-in has expired and could not be refreshed. Re-authenticate in provider settings (OpenAI > ChatGPT Pro/Plus).",
+        ),
+      ),
+    ),
+  )
+}
+
+function openAIOAuthFetch(integrations: Integration.Interface, runtimeFetch: RuntimeFetch): RuntimeFetch {
+  return async (requestInput, init) => {
+    const credential = await Effect.runPromise(resolveOpenAIOAuth(integrations))
+    if (!credential) return runtimeFetch(requestInput, init)
+
+    const headers = new Headers(init?.headers)
+    headers.delete("authorization")
+    headers.set("authorization", `Bearer ${credential.access}`)
+    const id = accountID(credential.metadata)
+    if (id) headers.set("ChatGPT-Account-Id", id)
+
+    const parsed =
+      requestInput instanceof URL
+        ? requestInput
+        : new URL(typeof requestInput === "string" ? requestInput : requestInput.url)
+    const url =
+      parsed.pathname.includes("/v1/responses") || parsed.pathname.includes("/chat/completions")
+        ? new URL(codexApiEndpoint)
+        : parsed
+    const response = await runtimeFetch(url, { ...init, headers })
+    if (response.status === 401)
+      throw new Error(
+        "ChatGPT authentication is invalid or expired. Re-authenticate in provider settings (OpenAI > ChatGPT Pro/Plus) to continue using Codex models.",
+      )
+    if (response.status === 403)
+      throw new Error(
+        "ChatGPT rejected the Codex request (HTTP 403). Your account may need ChatGPT Pro/Plus access, or re-authenticate in provider settings.",
+      )
+    return response
+  }
+}
+
+export function openAIOAuthModelStrategy(models = fetchCodexModels): ProviderModelDiscovery.Strategy {
   return (input) => {
     const credential = input.credential
     if (credential?.type !== "oauth") return Effect.succeed(undefined)

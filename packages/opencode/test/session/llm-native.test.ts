@@ -8,7 +8,6 @@ import { LLMNative } from "@/session/llm/native-request"
 import { LLMNativeRuntime } from "@/session/llm/native-runtime"
 import type { Provider } from "@/provider/provider"
 
-import { OAUTH_DUMMY_KEY } from "@/auth"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -429,14 +428,11 @@ describe("session.llm-native.request", () => {
         provider: providerInfo,
         auth: { type: "oauth", refresh: "refresh", access: "access", expires: 1 },
       }),
-    ).toEqual({ type: "unsupported", reason: "OAuth auth requires a provider fetch override" })
-    expect(
-      LLMNativeRuntime.status({
-        model: baseModel,
-        provider: { ...providerInfo, options: { apiKey: OAUTH_DUMMY_KEY, fetch: async () => new Response() } },
-        auth: { type: "oauth", refresh: "refresh", access: "access", expires: 1 },
-      }),
-    ).toMatchObject({ type: "supported", apiKey: OAUTH_DUMMY_KEY })
+    ).toMatchObject({
+      type: "supported",
+      apiKey: "access",
+      baseURL: "https://chatgpt.com/backend-api/codex",
+    })
 
     expect(
       LLMNativeRuntime.status({
@@ -710,13 +706,13 @@ describe("session.llm-native.request", () => {
     }),
   )
 
-  it.effect("uses provider fetch override for native OpenAI OAuth requests", () =>
+  it.effect("uses the injected native transport for OpenAI OAuth requests", () =>
     Effect.gen(function* () {
-      const captures: Array<{ url: string; body: unknown }> = []
+      const captures: Array<{ url: string; body: unknown; headers: Headers }> = []
       const customFetch = Object.assign(
         async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
           const request = input instanceof Request ? input : new Request(input, init)
-          captures.push({ url: request.url, body: await request.clone().json() })
+          captures.push({ url: request.url, body: await request.clone().json(), headers: request.headers })
           return responsesStream([
             { type: "response.output_text.delta", item_id: "msg_1", delta: "Hello" },
             { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } },
@@ -730,13 +726,15 @@ describe("session.llm-native.request", () => {
         model: baseModel,
         provider: {
           ...providerInfo,
-          options: {
-            apiKey: OAUTH_DUMMY_KEY,
-            baseURL: "https://chatgpt.com/backend-api/codex",
-            fetch: customFetch,
-          },
+          options: {},
         },
-        auth: { type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 },
+        auth: {
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+          accountId: "account-1",
+        },
         llmClient,
         messages: [{ role: "user", content: "hello" }],
         tools: {},
@@ -746,7 +744,9 @@ describe("session.llm-native.request", () => {
       })
       expect(native.type).toBe("supported")
       if (native.type === "unsupported") throw new Error(native.reason)
-      const events = Array.from(yield* native.stream.pipe(Stream.runCollect))
+      const events = Array.from(
+        yield* native.stream.pipe(Stream.provideService(FetchHttpClient.Fetch, customFetch), Stream.runCollect),
+      )
 
       expect(captures).toHaveLength(1)
       expect(captures[0]).toMatchObject({
@@ -757,6 +757,8 @@ describe("session.llm-native.request", () => {
           input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
         },
       })
+      expect(captures[0].headers.get("authorization")).toBe("Bearer access")
+      expect(captures[0].headers.get("ChatGPT-Account-Id")).toBe("account-1")
       expect(events).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "text-delta", text: "Hello" }),

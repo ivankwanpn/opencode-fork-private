@@ -6,7 +6,6 @@ import { isRecord } from "@/util/record"
 import { asSchema, type ModelMessage, type Tool } from "ai"
 import { Cause, Effect, FiberSet, Queue } from "effect"
 import * as Stream from "effect/Stream"
-import { FetchHttpClient } from "effect/unstable/http"
 import {
   LLMRequest,
   Tool as NativeTool,
@@ -18,6 +17,8 @@ import {
 } from "@opencode-ai/llm"
 import type { LLMClientShape } from "@opencode-ai/llm/route"
 import { LLMNative } from "./native-request"
+
+const openAICodexBaseURL = "https://chatgpt.com/backend-api/codex"
 
 export type RuntimeStatus =
   | { readonly type: "supported"; readonly apiKey: string; readonly baseURL?: string }
@@ -44,36 +45,37 @@ type StreamInput = {
 }
 
 export function status(input: Pick<StreamInput, "model" | "provider" | "auth">): RuntimeStatus {
-  return statusWithFetch(input, providerFetch(input))
-}
-
-function statusWithFetch(
-  input: Pick<StreamInput, "model" | "provider" | "auth">,
-  fetch: typeof globalThis.fetch | undefined,
-): RuntimeStatus {
   const providerID = input.model.providerID
   if (providerID !== "openai" && providerID !== "anthropic" && !providerID.startsWith("opencode"))
     return { type: "unsupported", reason: "provider is not openai, opencode, or anthropic" }
   const npm = input.model.api.npm
   if (npm !== "@ai-sdk/openai" && npm !== "@ai-sdk/openai-compatible" && npm !== "@ai-sdk/anthropic")
     return { type: "unsupported", reason: "provider package is not OpenAI, OpenAI-compatible, or Anthropic" }
-  if (input.auth?.type === "oauth" && !(input.provider.id === "openai" && fetch)) {
-    return { type: "unsupported", reason: "OAuth auth requires a provider fetch override" }
-  }
+  if (input.auth?.type === "oauth" && input.provider.id !== "openai")
+    return { type: "unsupported", reason: "OAuth auth is only supported for OpenAI" }
 
-  const apiKey = typeof input.provider.options.apiKey === "string" ? input.provider.options.apiKey : input.provider.key
+  const apiKey =
+    input.auth?.type === "oauth"
+      ? input.auth.access
+      : typeof input.provider.options.apiKey === "string"
+        ? input.provider.options.apiKey
+        : input.provider.key
   if (!apiKey) return { type: "unsupported", reason: "API key is not configured" }
 
   return {
     type: "supported",
     apiKey,
-    baseURL: typeof input.provider.options.baseURL === "string" ? input.provider.options.baseURL : undefined,
+    baseURL:
+      input.auth?.type === "oauth"
+        ? openAICodexBaseURL
+        : typeof input.provider.options.baseURL === "string"
+          ? input.provider.options.baseURL
+          : undefined,
   }
 }
 
 export function stream(input: StreamInput): StreamResult {
-  const fetch = providerFetch(input)
-  const current = statusWithFetch(input, fetch)
+  const current = status(input)
   if (current.type === "unsupported") return current
 
   // Integration point with @opencode-ai/llm: native-request lowers session data
@@ -98,7 +100,13 @@ export function stream(input: StreamInput): StreamResult {
     topK: input.topK,
     maxOutputTokens: input.maxOutputTokens,
     providerOptions: ProviderTransform.providerOptions(input.model, input.providerOptions ?? {}),
-    headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
+    headers: {
+      ...providerHeaders(input.provider.options.headers),
+      ...input.headers,
+      ...(input.auth?.type === "oauth" && input.auth.accountId
+        ? { "ChatGPT-Account-Id": input.auth.accountId }
+        : {}),
+    },
   })
   const stream = Stream.scoped(
     Stream.unwrap(
@@ -141,15 +149,8 @@ export function stream(input: StreamInput): StreamResult {
 
   return {
     ...current,
-    stream: fetch ? stream.pipe(Stream.provideService(FetchHttpClient.Fetch, fetch)) : stream,
+    stream,
   }
-}
-
-function providerFetch(input: Pick<StreamInput, "provider" | "auth">): typeof globalThis.fetch | undefined {
-  if (input.provider.id !== "openai" || input.auth?.type !== "oauth") return undefined
-  const value: unknown = input.provider.options.fetch
-  if (typeof value !== "function") return undefined
-  return value as typeof globalThis.fetch
 }
 
 function providerHeaders(value: unknown): Record<string, string> | undefined {

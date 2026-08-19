@@ -10,9 +10,13 @@ import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import z from "zod"
 import { LLM } from "../../src/session/llm"
 import { LLMClient, RequestExecutor } from "@opencode-ai/llm/route"
-import { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
+import { Catalog } from "@opencode-ai/core/catalog"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { PluginV1Projection } from "@opencode-ai/core/plugin/v1-projection"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 
 import { testEffect } from "../lib/effect"
 import type { LegacyAgentInfo } from "../../src/compat/agent-wire"
@@ -27,6 +31,7 @@ import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { InstanceState } from "@/effect/instance-state"
 
 type ConfigModel = NonNullable<NonNullable<ConfigV1.Info["provider"]>[string]["models"]>[string]
 
@@ -53,10 +58,39 @@ const openAIConfig = (model: ModelsDev.Provider["models"][string], baseURL: stri
 }
 
 const it = testEffect(
-  AppNodeBuilder.build(LayerNode.group([LLM.node, Provider.node]), [
+  AppNodeBuilder.build(LayerNode.group([LLM.node, LocationServiceMap.node]), [
     [SessionExecution.node, SessionExecution.noopLayer],
   ]),
 )
+
+const resolveModel = Effect.fn("LLMTest.resolveModel")(function* (
+  providerID: ProviderV2.ID,
+  modelID: ModelV2.ID,
+) {
+  const ctx = yield* InstanceState.context
+  const workspaceID = yield* InstanceState.workspaceID
+  const locations = yield* LocationServiceMap.Service
+  const catalog = yield* Catalog.Service.pipe(
+    Effect.provide(
+      locations.get(
+        Location.Ref.make({
+          directory: AbsolutePath.make(ctx.directory),
+          ...(workspaceID === undefined ? {} : { workspaceID }),
+        }),
+      ),
+    ),
+  )
+  const model = (yield* catalog.model.available()).find(
+    (item) => item.providerID === providerID && item.id === modelID,
+  )
+  if (!model) return yield* Effect.die(`Missing available model: ${providerID}/${modelID}`)
+  const projected = PluginV1Projection.model(model)
+  return {
+    ...projected,
+    id: ModelV2.ID.make(projected.id),
+    providerID: ProviderV2.ID.make(projected.providerID),
+  }
+})
 
 // LLM.stream returns a Stream, not an Effect, so we can't use the serviceUse proxy.
 const drain = (input: LLM.StreamInput) => LLM.Service.use((svc) => svc.stream(input).pipe(Stream.runDrain))
@@ -715,12 +749,26 @@ beforeAll(() => {
   state.server = Bun.serve({
     port: 0,
     async fetch(req) {
+      const url = new URL(req.url)
+      if (req.method === "GET" && url.pathname.endsWith("/models")) {
+        return Response.json({
+          data: [
+            "gemini-3.1-pro-preview",
+            "gpt-oss-120b",
+            "qwen-plus",
+            "gpt-5.2",
+            "MiniMax-M2.5",
+            "claude-opus-4-6",
+            "gemini-2.5-flash",
+          ].map((id) => ({ id })),
+        })
+      }
+
       const next = state.queue.shift()
       if (!next) {
         return new Response("unexpected request", { status: 500 })
       }
 
-      const url = new URL(req.url)
       const body = (await req.json()) as Record<string, unknown>
       next.resolve({ url, headers: req.headers, body })
 
@@ -841,7 +889,7 @@ describe("session.llm.stream", () => {
           }),
         )
 
-        const resolved = yield* Provider.use.getModel(
+        const resolved = yield* resolveModel(
           ProviderV2.ID.make(vivgridFixture.providerID),
           ModelV2.ID.make(fixture.model.id),
         )
@@ -921,7 +969,7 @@ describe("session.llm.stream", () => {
           }),
         )
 
-        const resolved = yield* Provider.use.getModel(
+        const resolved = yield* resolveModel(
           ProviderV2.ID.make(cerebrasFixture.providerID),
           ModelV2.ID.make(fixture.model.id),
         )
@@ -989,7 +1037,7 @@ describe("session.llm.stream", () => {
         const fixture = loadFixture(alibabaQwenFixture.providerID, alibabaQwenFixture.modelID)
         const pending = waitStreamingRequest("/chat/completions")
 
-        const resolved = yield* Provider.use.getModel(
+        const resolved = yield* resolveModel(
           ProviderV2.ID.make(alibabaQwenFixture.providerID),
           ModelV2.ID.make(fixture.model.id),
         )
@@ -1057,7 +1105,7 @@ describe("session.llm.stream", () => {
           }),
         )
 
-        const resolved = yield* Provider.use.getModel(
+        const resolved = yield* resolveModel(
           ProviderV2.ID.make(alibabaQwenFixture.providerID),
           ModelV2.ID.make(fixture.model.id),
         )
@@ -1162,7 +1210,7 @@ describe("session.llm.stream", () => {
         ]
         const request = waitRequest("/responses", createEventResponse(responseChunks, true))
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-2")
         const agent = {
           name: "test",
@@ -1268,7 +1316,7 @@ describe("session.llm.stream", () => {
           }),
         )
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-native-flag-off")
         const agent = {
           name: "test",
@@ -1335,7 +1383,7 @@ describe("session.llm.stream", () => {
         ]
         const request = waitRequest("/responses", createEventResponse(chunks, true))
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-native")
         const agent = {
           name: "test",
@@ -1419,7 +1467,7 @@ describe("session.llm.stream", () => {
           }),
         )
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-native-injected-tool")
         const agent = {
           name: "test",
@@ -1508,7 +1556,7 @@ describe("session.llm.stream", () => {
         const request = waitRequest("/responses", createEventResponse(chunks, true))
         let executed: unknown
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-native-tool")
         const agent = {
           name: "test",
@@ -1635,7 +1683,7 @@ describe("session.llm.stream", () => {
           ),
         ).toString("base64")}`
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.openai, ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-data-url")
         const agent = {
           name: "test",
@@ -1722,7 +1770,7 @@ describe("session.llm.stream", () => {
         ]
         const request = waitRequest("/messages", createEventResponse(chunks))
 
-        const resolved = yield* Provider.use.getModel(
+        const resolved = yield* resolveModel(
           ProviderV2.ID.make(minimaxFixture.providerID),
           ModelV2.ID.make(model.id),
         )
@@ -1819,7 +1867,7 @@ describe("session.llm.stream", () => {
         ]
         const request = waitRequest("/messages", createEventResponse(chunks))
 
-        const resolved = yield* Provider.use.getModel(ProviderV2.ID.make("anthropic"), ModelV2.ID.make(model.id))
+        const resolved = yield* resolveModel(ProviderV2.ID.make("anthropic"), ModelV2.ID.make(model.id))
         const sessionID = SessionID.make("session-test-anthropic-tools")
         const agent = {
           name: "test",
@@ -2018,7 +2066,7 @@ describe("session.llm.stream", () => {
         ]
         const request = waitRequest(pathSuffix, createEventResponse(chunks))
 
-        const resolved = yield* Provider.use.getModel(
+        const resolved = yield* resolveModel(
           ProviderV2.ID.make(geminiFixture.providerID),
           ModelV2.ID.make(model.id),
         )

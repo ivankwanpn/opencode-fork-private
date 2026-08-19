@@ -13,6 +13,7 @@ import { effectCmd } from "../effect-cmd"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 
 type AgentMode = "all" | "primary" | "subagent"
@@ -65,7 +66,6 @@ const AgentCreateCommand = effectCmd({
   handler: Effect.fn("Cli.agent.create")(function* (args) {
     const { InstanceRef } = yield* Effect.promise(() => import("@/effect/instance-ref"))
     const { AgentGenerator } = yield* Effect.promise(() => import("../../agent/generator"))
-    const { Provider } = yield* Effect.promise(() => import("@/provider/provider"))
     const maybeCtx = yield* InstanceRef
     if (!maybeCtx) return yield* Effect.die("InstanceRef not provided")
     const ctx = maybeCtx
@@ -132,7 +132,7 @@ const AgentCreateCommand = effectCmd({
       // Generate agent
       const spinner = prompts.spinner()
       spinner.start("Generating agent configuration...")
-      const model = args.model ? Provider.parseModel(args.model) : undefined
+      const model = args.model ? ModelV2.parse(args.model) : undefined
       const generated = await runLocalEffect(generator.generate({ description, model })).catch((error) => {
         spinner.stop(`LLM failed to generate agent: ${error.message}`, 1)
         if (isFullyNonInteractive) process.exit(1)

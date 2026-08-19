@@ -61,30 +61,45 @@ export const Plugin = define({
 
     yield* catalog.transform(
       Effect.fn(function* (catalog) {
-        const configuredDefault = Config.latest(entries, "model")
-        if (configuredDefault !== undefined) {
-          const model = ModelV2.parse(configuredDefault)
-          catalog.model.default.set(model.providerID, model.modelID)
-        }
-        for (const file of files) {
-          for (const [id, item] of Object.entries(file.info.providers ?? {})) {
-            project(catalog, id, item)
-          }
-        }
-        const filters = files.map((file) => file.info.provider_filter)
-        const enabled = filters.findLast((filter) => filter?.enabled !== undefined)?.enabled
-        const disabled = new Set(filters.findLast((filter) => filter?.disabled !== undefined)?.disabled ?? [])
-        const allowed = enabled === undefined ? undefined : new Set(enabled)
-        for (const record of catalog.provider.list()) {
-          if ((!allowed || allowed.has(record.provider.id)) && !disabled.has(record.provider.id)) continue
-          catalog.provider.update(record.provider.id, (provider) => {
-            provider.disabled = true
-          })
-        }
+        apply(catalog, entries, files)
       }),
     )
   }),
 })
+
+export const OverridePlugin = define({
+  id: "config-provider-override",
+  effect: Effect.fn(function* () {
+    const config = yield* Config.Service
+    const catalog = yield* Catalog.Service
+    const entries = yield* config.entries()
+    const files = entries.filter((entry): entry is Config.Document => entry.type === "document")
+    yield* catalog.transform((draft) => apply(draft, entries, files))
+  }),
+})
+
+function apply(catalog: Draft, entries: readonly Config.Entry[], files: readonly Config.Document[]) {
+  const configuredDefault = Config.latest(entries, "model")
+  if (configuredDefault !== undefined) {
+    const model = ModelV2.parse(configuredDefault)
+    catalog.model.default.set(model.providerID, model.modelID)
+  }
+  for (const file of files) {
+    for (const [id, item] of Object.entries(file.info.providers ?? {})) {
+      project(catalog, id, item)
+    }
+  }
+  const filters = files.map((file) => file.info.provider_filter)
+  const enabled = filters.findLast((filter) => filter?.enabled !== undefined)?.enabled
+  const disabled = new Set(filters.findLast((filter) => filter?.disabled !== undefined)?.disabled ?? [])
+  const allowed = enabled === undefined ? undefined : new Set(enabled)
+  for (const record of catalog.provider.list()) {
+    if ((!allowed || allowed.has(record.provider.id)) && !disabled.has(record.provider.id)) continue
+    catalog.provider.update(record.provider.id, (provider) => {
+      provider.disabled = true
+    })
+  }
+}
 
 export function project(catalog: Draft, providerID: string, item: NonNullable<Config.Info["providers"]>[string]) {
   const provider = ProviderV2.ID.make(providerID)

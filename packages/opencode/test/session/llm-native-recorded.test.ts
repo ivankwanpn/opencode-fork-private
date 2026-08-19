@@ -9,9 +9,15 @@ import { Effect, Layer, Option, Schema, Stream } from "effect"
 import path from "node:path"
 import z from "zod"
 import { Auth } from "@/auth"
-import { Provider } from "@/provider/provider"
 
 import { Filesystem } from "@/util/filesystem"
+import { Catalog } from "@opencode-ai/core/catalog"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
+import { Location } from "@opencode-ai/core/location"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { PluginV1Projection } from "@opencode-ai/core/plugin/v1-projection"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { LLMEvent, LLMResponse } from "@opencode-ai/llm"
 import { RequestExecutor } from "@opencode-ai/llm/route"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -26,6 +32,7 @@ import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { InstanceState } from "@/effect/instance-state"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "../fixtures/recordings")
 
@@ -238,15 +245,6 @@ const redactRecordedBody = (body: string) =>
     .replace(/"safety_identifier"\s*:\s*"user-[^"]+"/g, '"safety_identifier":"user_redacted"')
     .replace(/"(access|access_token|refresh|refresh_token|accountId|account_id)"\s*:\s*"[^"]+"/g, '"$1":"redacted"')
 
-function authLayer(scenario: RecordedScenario) {
-  const replayAuth = shouldRecord ? scenario.recordAuth?.() : scenario.replayAuth
-  if (!replayAuth) return undefined
-  return Layer.mock(Auth.Service)({
-    get: (providerID) => Effect.succeed(providerID === scenario.providerID ? replayAuth : undefined),
-    all: () => Effect.succeed({ [scenario.providerID]: replayAuth }),
-  })
-}
-
 async function loadFixture(providerID: string, modelID: string) {
   const data = await modelsFixture
   const provider = data[providerID]
@@ -261,7 +259,6 @@ const modelsFixture = Filesystem.readJson<Record<string, ModelsDev.Provider>>(
 )
 
 function recordedNativeLLMLayer(scenario: RecordedScenario) {
-  const auth = authLayer(scenario)
   // Only the HTTP client is recorded; RequestExecutor and the opencode LLM stack remain real.
   const metadata = {
     provider: scenario.providerID,
@@ -281,13 +278,41 @@ function recordedNativeLLMLayer(scenario: RecordedScenario) {
         redactor: HttpRecorderInternal.Redactor.make(redact),
       })
     : HttpRecorder.http(scenario.cassette, { directory: FIXTURES_DIR, metadata, redact })
-  return AppNodeBuilder.build(LayerNode.group([Provider.node, LLM.node]), [
+  return AppNodeBuilder.build(LayerNode.group([Credential.node, LLM.node, LocationServiceMap.node]), [
     [LayerNodePlatform.requestExecutor, RequestExecutor.layer.pipe(Layer.provide(recordedHttp))],
     [RuntimeFlags.node, RuntimeFlags.layer({ experimentalNativeLlm: true })],
     [SessionExecution.node, SessionExecution.noopLayer],
-    ...(auth ? ([[Auth.node, auth]] as const) : []),
   ])
 }
+
+const resolveModel = Effect.fn("RecordedLLMTest.resolveModel")(function* (
+  providerID: ProviderV2.ID,
+  modelID: ModelV2.ID,
+) {
+  const ctx = yield* InstanceState.context
+  const workspaceID = yield* InstanceState.workspaceID
+  const locations = yield* LocationServiceMap.Service
+  const catalog = yield* Catalog.Service.pipe(
+    Effect.provide(
+      locations.get(
+        Location.Ref.make({
+          directory: AbsolutePath.make(ctx.directory),
+          ...(workspaceID === undefined ? {} : { workspaceID }),
+        }),
+      ),
+    ),
+  )
+  const model = (yield* catalog.model.available()).find(
+    (item) => item.providerID === providerID && item.id === modelID,
+  )
+  if (!model) return yield* Effect.die(`Missing available model: ${providerID}/${modelID}`)
+  const projected = PluginV1Projection.model(model)
+  return {
+    ...projected,
+    id: ModelV2.ID.make(projected.id),
+    providerID: ProviderV2.ID.make(projected.providerID),
+  }
+})
 
 const writeConfig = (directory: string, scenario: RecordedScenario, model: ModelsDev.Provider["models"][string]) =>
   Effect.promise(() =>
@@ -347,6 +372,21 @@ const driveToolLoop = (scenario: RecordedScenario) =>
     const test = yield* TestInstance
     const model = yield* Effect.promise(() => loadFixture(scenario.providerID, scenario.modelID))
     yield* writeConfig(test.directory, scenario, model)
+    const auth = shouldRecord ? scenario.recordAuth?.() : scenario.replayAuth
+    if (auth?.type === "oauth") {
+      const credentials = yield* Credential.Service
+      yield* credentials.create({
+        integrationID: Integration.ID.make(scenario.providerID),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("chatgpt-browser"),
+          refresh: auth.refresh,
+          access: auth.access,
+          expires: auth.expires,
+          ...(auth.accountId ? { metadata: { accountID: auth.accountId } } : {}),
+        }),
+      })
+    }
 
     const stableID = scenario.stableID ?? scenario.providerID
     const sessionID = SessionID.make(`session-recorded-${stableID}-loop`)
@@ -359,8 +399,7 @@ const driveToolLoop = (scenario: RecordedScenario) =>
       permission: [{ permission: "*", pattern: "*", action: "allow" }],
       temperature: 0,
     } satisfies LegacyAgentInfo
-    const provider = yield* Provider.Service
-    const resolved = yield* provider.getModel(scenario.providerID, modelID)
+    const resolved = yield* resolveModel(scenario.providerID, modelID)
 
     const userMessage = { role: "user", content: WEATHER_USER } satisfies ModelMessage
     const base = {

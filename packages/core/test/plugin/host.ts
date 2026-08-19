@@ -18,6 +18,7 @@ export function host(overrides: Overrides = {}): PluginContext {
       reload: () => Effect.die("unused agent.reload"),
     },
     aisdk: overrides.aisdk ?? {
+      options: () => Effect.die("unused aisdk.options"),
       sdk: () => Effect.die("unused aisdk.sdk"),
       language: () => Effect.die("unused aisdk.language"),
     },

@@ -188,7 +188,7 @@ function providers(info?: Readonly<Record<string, ConfigProviderV1.Info>>) {
 function migrateProvider(info: ConfigProviderV1.Info) {
   const lowerer = ConfigProviderOptionsV1.get(info.npm)
   const options = lowerer.provider(info.options ?? {})
-  const url = info.api ?? options.url
+  const url = options.url ?? info.api
   return {
     name: info.name,
     env: info.env,

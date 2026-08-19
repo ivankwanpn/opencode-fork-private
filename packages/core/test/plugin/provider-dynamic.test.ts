@@ -1,24 +1,23 @@
 import { Npm } from "@opencode-ai/core/npm"
 import { describe, expect } from "bun:test"
-import { Cause, Effect, Layer } from "effect"
+import { Cause, Effect } from "effect"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
 import { AISDK } from "@opencode-ai/core/aisdk"
-import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
+import { PluginTestLayer } from "./fixture"
 import { DynamicProviderPlugin } from "@opencode-ai/core/plugin/provider/dynamic"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "../lib/effect"
-import { PluginTestLayer } from "./fixture"
 
 const fixtureProvider = new URL("./fixtures/provider-factory.ts", import.meta.url).href
 const fixtureProviderPath = fileURLToPath(fixtureProvider)
 const it = testEffect(PluginTestLayer)
-const itWithAISDK = testEffect(Layer.mergeAll(PluginTestLayer, AppNodeBuilder.build(AISDK.node)))
+const itWithAISDK = testEffect(PluginTestLayer)
 
 function npmEntrypoint(entrypoint?: string) {
   return Npm.Service.of({

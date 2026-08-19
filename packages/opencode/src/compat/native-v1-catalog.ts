@@ -166,6 +166,22 @@ function projectLegacyProviders(catalog: ProviderCatalogInfo | ProviderCatalog.I
   return {
     providers: catalog.providers.flatMap((provider) => {
       if (!visible.has(provider.info.id)) return []
+      const apiKey =
+        provider.info.api.settings?.apiKey === undefined && provider.info.request.body.apiKey === undefined
+          ? credentialKey(provider.info.request.headers)
+          : undefined
+      const body = {
+        ...(provider.info.api.settings ?? {}),
+        ...provider.info.request.body,
+      }
+      const options = {
+        ...body,
+        ...(provider.info.api.url ? { baseURL: provider.info.api.url } : {}),
+        ...(Object.keys(provider.info.request.headers).length
+          ? { headers: { ...provider.info.request.headers } }
+          : {}),
+        ...(apiKey === undefined ? {} : { apiKey }),
+      }
       return [
         {
           id: provider.info.id,
@@ -173,7 +189,7 @@ function projectLegacyProviders(catalog: ProviderCatalogInfo | ProviderCatalog.I
           source: provider.source,
           auth: provider.auth,
           env: [...provider.env],
-          options: { ...provider.info.request.body },
+          options,
           models: Object.fromEntries(
             (models.get(provider.info.id) ?? []).map((model) => [model.id, legacyModelFromNative(model)]),
           ),
@@ -184,4 +200,14 @@ function projectLegacyProviders(catalog: ProviderCatalogInfo | ProviderCatalog.I
       Object.entries(catalog.default).filter(([providerID]) => visible.has(providerID)),
     ),
   }
+}
+
+function credentialKey(headers: Readonly<Record<string, string>>) {
+  const entries = Object.entries(headers)
+  const authorization = entries.find(([name]) => name.toLowerCase() === "authorization")?.[1]
+  const bearer = authorization === undefined ? undefined : /^Bearer\s+(.+)$/i.exec(authorization)?.[1]
+  if (bearer) return bearer
+  return entries.find(([name, value]) =>
+    ["x-api-key", "api-key", "x-goog-api-key"].includes(name.toLowerCase()) && value.length > 0,
+  )?.[1]
 }

@@ -1,6 +1,9 @@
 import { describe, expect } from "bun:test"
 import { Catalog } from "@opencode-ai/core/catalog"
+import { AISDK } from "@opencode-ai/core/aisdk"
+import { Credential } from "@opencode-ai/core/credential"
 import { EventV2 } from "@opencode-ai/core/event"
+import { Integration } from "@opencode-ai/core/integration"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
@@ -269,10 +272,7 @@ describe("PluginV1Compat", () => {
       yield* add(plugins, "v1-chat-projection", {
         "chat.params": async (incoming, output) => {
           input = incoming
-          if (
-            incoming.model.api.id.toLowerCase().startsWith("openai/") &&
-            incoming.model.capabilities.reasoning
-          ) {
+          if (incoming.model.api.id.toLowerCase().startsWith("openai/") && incoming.model.capabilities.reasoning) {
             output.maxOutputTokens = undefined
           }
         },
@@ -330,6 +330,210 @@ describe("PluginV1Compat", () => {
           },
         },
       })
+    }),
+  )
+
+  it.effect("runs V1 provider model hooks on clones and replaces the canonical provider models", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const credentials = yield* Credential.Service
+      const plugins = yield* PluginV2.Service
+      const providerID = ProviderV2.ID.make("legacy-live-models")
+      const modelID = ModelV2.ID.make("kept")
+      const removedID = ModelV2.ID.make("removed")
+      const original = ModelV2.Info.make({
+        ...ModelV2.Info.empty(providerID, modelID),
+        name: "Original",
+        api: {
+          id: ModelV2.ID.make("upstream-kept"),
+          type: "aisdk",
+          package: "@ai-sdk/openai-compatible",
+          url: "https://models.example.com/v1",
+          settings: { compatibility: "strict" },
+        },
+        capabilities: {
+          tools: true,
+          input: ["text/plain", "image/png"],
+          output: ["text/plain"],
+          reasoning: true,
+        },
+        request: {
+          headers: { "x-model": "kept" },
+          body: { nested: { value: "model" } },
+          variant: "high",
+        },
+        variants: [
+          {
+            id: ModelV2.VariantID.make("high"),
+            headers: { "x-variant": "high" },
+            body: { reasoningEffort: "high" },
+          },
+        ],
+        protocols: ["openai-compatible"],
+        time: { released: Date.parse("2026-07-01") },
+        cost: [{ input: 1, output: 2, cache: { read: 0.5, write: 0 } }],
+        limit: { context: 200_000, output: 32_000 },
+      })
+      yield* catalog.transform((draft) => {
+        draft.provider.update(providerID, (provider) => {
+          provider.name = "Legacy live models"
+          provider.api = { type: "aisdk", package: "@ai-sdk/openai-compatible" }
+          provider.request.body.nested = { value: "provider" }
+        })
+        draft.model.update(providerID, modelID, (model) => Object.assign(model, original))
+        draft.model.update(providerID, removedID, (model) => {
+          model.name = "Removed"
+        })
+      })
+      yield* credentials.create({
+        integrationID: Integration.ID.make(providerID),
+        value: Credential.Key.make({ type: "key", key: "secret", metadata: { region: "test" } }),
+      })
+      let auth: Parameters<NonNullable<NonNullable<Hooks["provider"]>["models"]>>[1]["auth"]
+
+      yield* add(plugins, "v1-provider-models", {
+        provider: {
+          id: providerID,
+          models: async (provider, context) => {
+            auth = context.auth
+            ;(provider.options.nested as { value: string }).value = "plugin-mutated-provider"
+            const model = provider.models[modelID]
+            model.name = "Updated by V1"
+            return { [modelID]: model }
+          },
+        },
+      })
+
+      const provider = yield* catalog.provider.get(providerID)
+      const model = yield* catalog.model.get(providerID, modelID)
+      expect((provider?.request.body.nested as { value: string }).value).toBe("provider")
+      expect(yield* catalog.model.get(providerID, removedID)).toBeUndefined()
+      expect(auth).toEqual({ type: "api", key: "secret", metadata: { region: "test" } })
+      expect(model).toMatchObject({
+        id: modelID,
+        providerID,
+        name: "Updated by V1",
+        api: {
+          id: "upstream-kept",
+          package: "@ai-sdk/openai-compatible",
+          settings: { compatibility: "strict" },
+        },
+        capabilities: {
+          input: ["text/plain", "image/png"],
+          output: ["text/plain"],
+        },
+        request: {
+          headers: { "x-model": "kept" },
+          body: { nested: { value: "model" } },
+          variant: "high",
+        },
+        variants: [
+          {
+            id: "high",
+            headers: { "x-variant": "high" },
+            body: { reasoningEffort: "high" },
+          },
+        ],
+        protocols: ["openai-compatible"],
+      })
+    }),
+  )
+
+  it.effect("adapts V1 auth loaders to AISDK options with live credentials and scoped disposal", () =>
+    Effect.gen(function* () {
+      const aisdk = yield* AISDK.Service
+      const credentials = yield* Credential.Service
+      const plugins = yield* PluginV2.Service
+      const providerID = ProviderV2.ID.make("legacy-auth")
+      const model = ModelV2.Info.make({
+        ...ModelV2.Info.empty(providerID, ModelV2.ID.make("model")),
+        api: {
+          id: ModelV2.ID.make("model"),
+          type: "aisdk",
+          package: "@ai-sdk/openai-compatible",
+        },
+      })
+      const stored = yield* credentials.create({
+        integrationID: Integration.ID.make(providerID),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("legacy-oauth"),
+          refresh: "refresh",
+          access: "first-access",
+          expires: Date.now() + 60 * 60 * 1000,
+          metadata: { accountID: "account", enterpriseUrl: "https://enterprise.example.com" },
+        }),
+      })
+      const calls: string[] = []
+      const pluginID = PluginV2.ID.make("v1-auth-loader")
+
+      yield* add(plugins, pluginID, {
+        auth: {
+          provider: providerID,
+          loader: async (getAuth, provider) => {
+            const initial = await getAuth()
+            calls.push(`${initial.type}:${provider.models.model.id}`)
+            return {
+              loadedAs: initial.type,
+              getAuth,
+            }
+          },
+        },
+      })
+
+      const first = yield* aisdk.runOptions({
+        model,
+        package: "@ai-sdk/openai-compatible",
+        options: {},
+      })
+      expect(first.options.loadedAs).toBe("oauth")
+      expect(yield* Effect.promise(() => first.options.getAuth())).toMatchObject({
+        type: "oauth",
+        access: "first-access",
+        accountId: "account",
+        enterpriseUrl: "https://enterprise.example.com",
+      })
+
+      yield* credentials.update(stored.id, {
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("legacy-oauth"),
+          refresh: "refresh",
+          access: "second-access",
+          expires: Date.now() + 60 * 60 * 1000,
+        }),
+      })
+      const second = yield* aisdk.runOptions({
+        model,
+        package: "@ai-sdk/openai-compatible",
+        options: {},
+      })
+      expect(yield* Effect.promise(() => second.options.getAuth())).toMatchObject({
+        type: "oauth",
+        access: "second-access",
+      })
+      expect(calls).toEqual(["oauth:model"])
+
+      yield* credentials.update(stored.id, {
+        value: Credential.Key.make({ type: "key", key: "api-key" }),
+      })
+      const key = yield* aisdk.runOptions({
+        model,
+        package: "@ai-sdk/openai-compatible",
+        options: {},
+      })
+      expect(key.options.loadedAs).toBe("api")
+      expect(yield* Effect.promise(() => key.options.getAuth())).toEqual({ type: "api", key: "api-key" })
+      expect(calls).toEqual(["oauth:model", "api:model"])
+
+      yield* plugins.remove(pluginID)
+      expect(
+        (yield* aisdk.runOptions({
+          model,
+          package: "@ai-sdk/openai-compatible",
+          options: {},
+        })).options.loadedAs,
+      ).toBeUndefined()
     }),
   )
 

@@ -170,6 +170,22 @@ describe("Config", () => {
     }),
   )
 
+  it.effect("prefers the configured v1 provider base URL over the catalog API URL", () =>
+    Effect.sync(() => {
+      const migrated = ConfigMigrateV1.migrate({
+        provider: {
+          openai: {
+            npm: "@ai-sdk/openai",
+            api: "https://api.openai.com/v1",
+            options: { baseURL: "https://gateway.example.test/v1" },
+          },
+        },
+      })
+
+      expect(migrated.providers?.openai?.api?.url).toBe("https://gateway.example.test/v1")
+    }),
+  )
+
   it.effect("migrates v1 command configuration", () =>
     Effect.sync(() => {
       expect(

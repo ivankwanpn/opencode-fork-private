@@ -57,6 +57,27 @@ describe("CerebrasPlugin", () => {
     }),
   )
 
+  it.effect("uses the Cerebras gpt-oss reasoning replay field", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const providerID = ProviderV2.ID.make("cerebras")
+      const modelID = ModelV2.ID.make("gpt-oss-120b")
+      yield* catalog.transform((draft) => {
+        draft.provider.update(providerID, (provider) => {
+          provider.api = { type: "aisdk", package: "@ai-sdk/cerebras" }
+        })
+        draft.model.update(providerID, modelID, (model) => {
+          model.api = { id: modelID, type: "aisdk", package: "@ai-sdk/cerebras" }
+          model.capabilities.reasoning = true
+        })
+      })
+      yield* addPlugin()
+      expect((yield* catalog.model.get(providerID, modelID))?.capabilities.interleaved).toEqual({
+        field: "reasoning",
+      })
+    }),
+  )
+
   it.effect("creates a bundled Cerebras SDK with the model provider ID as the SDK name", () =>
     Effect.gen(function* () {
       cerebrasOptions.length = 0

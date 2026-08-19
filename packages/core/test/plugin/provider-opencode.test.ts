@@ -368,6 +368,35 @@ describe("OpencodePlugin", () => {
     ),
   )
 
+  it.effect("uses configured AISDK settings apiKey as credentials", () =>
+    withEnv({ OPENCODE_API_KEY: undefined }, () =>
+      Effect.gen(function* () {
+        const catalog = yield* Catalog.Service
+        yield* catalog.transform((catalog) => {
+          const provider = ProviderV2.Info.make({
+            ...ProviderV2.Info.empty(ProviderV2.ID.opencode),
+            api: { type: "aisdk", package: "test-provider", settings: { apiKey: "configured" } },
+          })
+          const model = ModelV2.Info.make({
+            ...ModelV2.Info.empty(provider.id, ModelV2.ID.make("paid")),
+            api: { id: ModelV2.ID.make("paid"), type: "aisdk", package: "test-provider" },
+            cost: cost(1),
+          })
+          catalog.provider.update(provider.id, (draft) => {
+            draft.api = provider.api
+          })
+          catalog.model.update(provider.id, model.id, (draft) => {
+            draft.cost = [...model.cost]
+          })
+        })
+        yield* addPlugin()
+        const configured = required(yield* catalog.provider.get(ProviderV2.ID.opencode))
+        expect(configured.api.type === "aisdk" && configured.api.settings?.apiKey).toBe("configured")
+        expect(required(yield* catalog.model.get(ProviderV2.ID.opencode, ModelV2.ID.make("paid"))).enabled).toBe(true)
+      }),
+    ),
+  )
+
   it.effect("ignores non-opencode providers and models", () =>
     withEnv({ OPENCODE_API_KEY: undefined }, () =>
       Effect.gen(function* () {

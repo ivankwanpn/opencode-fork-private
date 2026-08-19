@@ -14,7 +14,6 @@ import { Storage } from "@/storage/storage"
 import { Snapshot } from "@/snapshot"
 import { Plugin } from "@/plugin"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
-import { Provider } from "@/provider/provider"
 import { ProviderAuth } from "@/provider/auth"
 import { AgentGenerator } from "@/agent/generator"
 import { Skill } from "@/skill"
@@ -72,7 +71,6 @@ export const AppLayer = AppNodeBuilderV1.build(
     Snapshot.node,
     Plugin.node,
     ModelsDev.node,
-    Provider.node,
     ProviderAuth.node,
     AgentGenerator.node,
     Skill.node,

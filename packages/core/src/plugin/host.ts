@@ -102,6 +102,16 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
         ),
     },
     aisdk: {
+      options: (callback) =>
+        aisdk.hook.options((event) => {
+          const output = {
+            model: mutable(event.model),
+            package: event.package,
+            options: event.options,
+          }
+          const result = callback(output)
+          return Effect.suspend(() => (Effect.isEffect(result) ? result : Effect.void))
+        }),
       sdk: (callback) =>
         aisdk.hook.sdk((event) => {
           const output = {

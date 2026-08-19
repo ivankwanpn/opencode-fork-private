@@ -3,6 +3,11 @@ import type { ModelV2Info } from "@opencode-ai/sdk/v2/types"
 import type { Hooks } from "./registration.js"
 
 export type AISDKHooks = Hooks<{
+  options: {
+    readonly model: ModelV2Info
+    readonly package: string
+    readonly options: Record<string, any>
+  }
   sdk: {
     readonly model: ModelV2Info
     readonly package: string

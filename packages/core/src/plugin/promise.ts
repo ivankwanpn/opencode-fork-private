@@ -71,6 +71,8 @@ export function fromPromise(plugin: Plugin) {
             reload: () => run(host.agent.reload()),
           },
           aisdk: {
+            options: (callback) =>
+              register(host.aisdk.options((event) => Effect.promise(() => Promise.resolve(callback(event))))),
             sdk: (callback) =>
               register(host.aisdk.sdk((event) => Effect.promise(() => Promise.resolve(callback(event))))),
             language: (callback) =>

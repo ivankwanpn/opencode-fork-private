@@ -15,6 +15,8 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
 
+type RuntimeFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response>
+
 const it = testEffect(
   ProviderModelDiscovery.makeLayer({
     fetch: async () => Response.json({ data: [{ id: "compatible-model" }] }),
@@ -23,11 +25,11 @@ const it = testEffect(
 
 const addPlugin = (item = OpenAIPlugin) =>
   Effect.gen(function* () {
-  const plugin = yield* PluginV2.Service
-  const host = yield* PluginHost.make(plugin)
-  const integrations = yield* Integration.Service
-  yield* item.effect(host).pipe(Effect.provideService(Integration.Service, integrations))
-})
+    const plugin = yield* PluginV2.Service
+    const host = yield* PluginHost.make(plugin)
+    const integrations = yield* Integration.Service
+    yield* item.effect(host).pipe(Effect.provideService(Integration.Service, integrations))
+  })
 
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Expected value")
@@ -225,6 +227,190 @@ describe("OpenAIPlugin", () => {
         options: { name: "custom-openai", apiKey: "test" },
       })
       expect(result.sdk?.responses("gpt-5").provider).toBe("custom-openai.responses")
+    }),
+  )
+
+  it.effect("configures Codex transport and resolves the OAuth credential for every request", () =>
+    Effect.gen(function* () {
+      const aisdk = yield* AISDK.Service
+      const credentials = yield* Credential.Service
+      const requests: { url: string; headers: Headers }[] = []
+      const runtimeFetch: RuntimeFetch = async (input, init) => {
+        requests.push({
+          url: input instanceof Request ? input.url : input.toString(),
+          headers: new Headers(init?.headers),
+        })
+        return new Response("ok")
+      }
+      yield* addPlugin(makeOpenAIPlugin({ runtimeFetch }))
+      const stored = yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("chatgpt-browser"),
+          access: "first-access",
+          refresh: "refresh-token",
+          expires: Date.now() + 60 * 60 * 1000,
+          metadata: { accountID: "first-account" },
+        }),
+      })
+      const configured = yield* aisdk.runOptions({
+        model: ModelV2.Info.make({
+          ...ModelV2.Info.empty(ProviderV2.ID.openai, ModelV2.ID.make("gpt-5")),
+          api: { id: ModelV2.ID.make("gpt-5"), type: "aisdk", package: "@ai-sdk/openai" },
+        }),
+        package: "@ai-sdk/openai",
+        options: { name: "openai" },
+      })
+      const result = yield* aisdk.runSDK(configured)
+      expect(result.options.apiKey).toBe("opencode-oauth-dummy-key")
+      expect(result.options.baseURL).toBe("https://chatgpt.com/backend-api/codex")
+
+      const runtime = result.options.fetch as typeof fetch
+      yield* Effect.promise(() =>
+        runtime("https://api.openai.com/v1/responses", {
+          headers: { Authorization: "Bearer opencode-oauth-dummy-key", "x-keep": "yes" },
+        }),
+      )
+      yield* credentials.update(stored.id, {
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("chatgpt-browser"),
+          access: "second-access",
+          refresh: "refresh-token",
+          expires: Date.now() + 60 * 60 * 1000,
+          metadata: { accountID: "second-account" },
+        }),
+      })
+      yield* Effect.promise(() => runtime("https://api.openai.com/chat/completions"))
+
+      expect(requests.map((request) => request.url)).toEqual([
+        "https://chatgpt.com/backend-api/codex/responses",
+        "https://chatgpt.com/backend-api/codex/responses",
+      ])
+      expect(requests[0].headers.get("authorization")).toBe("Bearer first-access")
+      expect(requests[0].headers.get("ChatGPT-Account-Id")).toBe("first-account")
+      expect(requests[0].headers.get("x-keep")).toBe("yes")
+      expect(requests[1].headers.get("authorization")).toBe("Bearer second-access")
+      expect(requests[1].headers.get("ChatGPT-Account-Id")).toBe("second-account")
+    }),
+  )
+
+  it.effect("refreshes an expired OAuth credential when the Codex transport sends a request", () =>
+    Effect.gen(function* () {
+      const aisdk = yield* AISDK.Service
+      const credentials = yield* Credential.Service
+      const integrations = yield* Integration.Service
+      const methodID = Integration.MethodID.make("chatgpt-browser")
+      let authorization = ""
+      let refreshes = 0
+      yield* addPlugin(
+        makeOpenAIPlugin({
+          runtimeFetch: async (_input, init) => {
+            authorization = new Headers(init?.headers).get("authorization") ?? ""
+            return new Response("ok")
+          },
+        }),
+      )
+      const stored = yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          access: "initial-access",
+          refresh: "initial-refresh",
+          expires: Date.now() + 60 * 60 * 1000,
+        }),
+      })
+      const configured = yield* aisdk.runOptions({
+        model: ModelV2.Info.make({
+          ...ModelV2.Info.empty(ProviderV2.ID.openai, ModelV2.ID.make("gpt-5")),
+          api: { id: ModelV2.ID.make("gpt-5"), type: "aisdk", package: "@ai-sdk/openai" },
+        }),
+        package: "@ai-sdk/openai",
+        options: { name: "openai" },
+      })
+      const result = yield* aisdk.runSDK(configured)
+      yield* integrations.transform((editor) =>
+        editor.method.update({
+          integrationID: Integration.ID.make(ProviderV2.ID.openai),
+          method: { id: methodID, type: "oauth", label: "ChatGPT" },
+          authorize: () => Effect.die("not used"),
+          refresh: (value) => {
+            refreshes++
+            return Effect.succeed(
+              Credential.OAuth.make({
+                ...value,
+                access: "refreshed-access",
+                refresh: "refreshed-token",
+                expires: Date.now() + 60 * 60 * 1000,
+              }),
+            )
+          },
+        }),
+      )
+      yield* credentials.update(stored.id, {
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          access: "initial-access",
+          refresh: "initial-refresh",
+          expires: Date.now() - 1,
+        }),
+      })
+
+      yield* Effect.promise(() => (result.options.fetch as typeof fetch)("https://api.openai.com/v1/responses"))
+
+      expect(refreshes).toBe(1)
+      expect(authorization).toBe("Bearer refreshed-access")
+      expect((yield* credentials.get(stored.id))?.value).toMatchObject({
+        type: "oauth",
+        access: "refreshed-access",
+        refresh: "refreshed-token",
+      })
+    }),
+  )
+
+  it.effect("turns Codex authentication responses into actionable errors", () =>
+    Effect.gen(function* () {
+      const aisdk = yield* AISDK.Service
+      const credentials = yield* Credential.Service
+      let status = 401
+      yield* addPlugin(
+        makeOpenAIPlugin({
+          runtimeFetch: async () => new Response("denied", { status }),
+        }),
+      )
+      yield* credentials.create({
+        integrationID: Integration.ID.make(ProviderV2.ID.openai),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("chatgpt-browser"),
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60 * 60 * 1000,
+        }),
+      })
+      const configured = yield* aisdk.runOptions({
+        model: ModelV2.Info.make({
+          ...ModelV2.Info.empty(ProviderV2.ID.openai, ModelV2.ID.make("gpt-5")),
+          api: { id: ModelV2.ID.make("gpt-5"), type: "aisdk", package: "@ai-sdk/openai" },
+        }),
+        package: "@ai-sdk/openai",
+        options: { name: "openai" },
+      })
+      const result = yield* aisdk.runSDK(configured)
+      const runtime = result.options.fetch as typeof fetch
+
+      yield* Effect.promise(async () => {
+        await expect(runtime("https://api.openai.com/v1/responses")).rejects.toThrow(
+          "ChatGPT authentication is invalid or expired",
+        )
+        status = 403
+        await expect(runtime("https://api.openai.com/v1/responses")).rejects.toThrow(
+          "ChatGPT rejected the Codex request (HTTP 403)",
+        )
+      })
     }),
   )
 

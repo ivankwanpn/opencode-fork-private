@@ -13,7 +13,7 @@
       "transport": "http",
       "request": {
         "method": "POST",
-        "url": "https://api.openai.com/v1/responses",
+        "url": "https://chatgpt.com/backend-api/codex/responses",
         "headers": {
           "content-type": "application/json"
         },
@@ -29,7 +29,7 @@
       "transport": "http",
       "request": {
         "method": "POST",
-        "url": "https://api.openai.com/v1/responses",
+        "url": "https://chatgpt.com/backend-api/codex/responses",
         "headers": {
           "content-type": "application/json"
         },

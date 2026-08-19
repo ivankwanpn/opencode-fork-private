@@ -1,7 +1,17 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { llmClient } from "@opencode-ai/core/effect/app-node-platform"
+import { AISDK } from "@opencode-ai/core/aisdk"
+import { Catalog } from "@opencode-ai/core/catalog"
+import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
+import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { PermissionV2 } from "@opencode-ai/core/permission"
+import { PluginV1Projection } from "@opencode-ai/core/plugin/v1-projection"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Provider } from "@/provider/provider"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
@@ -29,6 +39,8 @@ import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
 import { LLMRequestPrep } from "./llm/request"
+import { legacyProvidersFromNative } from "@/compat/native-v1-catalog"
+import { InstanceState } from "@/effect/instance-state"
 
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
@@ -117,7 +129,7 @@ const live: Layer.Layer<
   never,
   | Auth.Service
   | Config.Service
-  | Provider.Service
+  | LocationServiceMap.Service
   | Plugin.Service
   | LLMClientService
   | RuntimeFlags.Service
@@ -126,34 +138,77 @@ const live: Layer.Layer<
   Effect.gen(function* () {
     const auth = yield* Auth.Service
     const config = yield* Config.Service
-    const provider = yield* Provider.Service
+    const locations = yield* LocationServiceMap.Service
     const plugin = yield* Plugin.Service
     const llmClient = yield* LLMClient.Service
     const flags = yield* RuntimeFlags.Service
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+      const ctx = yield* InstanceState.context
+      const workspaceID = yield* InstanceState.workspaceID
+      const location = locations.get(
+        Location.Ref.make({
+          directory: AbsolutePath.make(ctx.directory),
+          ...(workspaceID === undefined ? {} : { workspaceID }),
+        }),
+      )
+      const [catalog, snapshot, aisdk, integrations] = yield* Effect.all([
+        Catalog.Service,
+        CatalogSnapshot.Service,
+        AISDK.Service,
+        Integration.Service,
+      ]).pipe(Effect.provide(location))
+      const providerID = input.model.providerID
+      const modelID = input.model.id
+      const available = yield* catalog.model.available()
+      const canonical = available.find(
+        (model) => model.providerID === providerID && model.id === modelID,
+      )
+      const nativeCatalog = yield* snapshot.get()
+      const projectedProvider = legacyProvidersFromNative(nativeCatalog).providers.find(
+        (provider) => provider.id === providerID,
+      )
+      if (!canonical || !projectedProvider) {
+        return yield* new Provider.ModelNotFoundError({
+          providerID,
+          modelID,
+          suggestions: available
+            .filter((model) => model.providerID === providerID)
+            .map((model) => model.id)
+            .slice(0, 3),
+        })
+      }
+      const model = legacyModel(PluginV1Projection.model(canonical))
+      const item = legacyProvider(projectedProvider)
+
       yield* Effect.logInfo("stream", {
-        providerID: input.model.providerID,
-        modelID: input.model.id,
+        providerID: model.providerID,
+        modelID: model.id,
         "session.id": input.sessionID,
         small: (input.small ?? false).toString(),
         agent: input.agent.name,
         mode: input.agent.mode,
       })
 
-      const [language, cfg, item, info] = yield* Effect.all(
+      const [language, cfg, compatibilityAuth] = yield* Effect.all(
         [
-          provider.getLanguage(input.model),
+          aisdk.language(canonical),
           config.get(),
-          provider.getProvider(input.model.providerID),
-          auth.get(input.model.providerID),
+          auth.get(model.providerID),
         ],
         { concurrency: "unbounded" },
       )
+      const provider = yield* catalog.provider.get(providerID)
+      const connection = yield* integrations.connection.active(
+        provider?.integrationID ?? Integration.ID.make(providerID),
+      )
+      const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
+      const info = projectCredential(credential) ?? compatibilityAuth
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
       const prepared = yield* LLMRequestPrep.prepare({
         ...input,
+        model,
         provider: item,
         auth: info,
         plugin,
@@ -239,7 +294,7 @@ const live: Layer.Layer<
       // either returns a ready LLMEvent stream or a concrete fallback reason.
       if (flags.experimentalNativeLlm) {
         const native = LLMNativeRuntime.stream({
-          model: input.model,
+          model,
           provider: item,
           auth: info,
           llmClient,
@@ -257,8 +312,8 @@ const live: Layer.Layer<
         if (native.type === "supported") {
           yield* Effect.logInfo("llm runtime selected", {
             "llm.runtime": "native",
-            "llm.provider": input.model.providerID,
-            "llm.model": input.model.id,
+            "llm.provider": model.providerID,
+            "llm.model": model.id,
           })
           return {
             type: "native" as const,
@@ -267,13 +322,13 @@ const live: Layer.Layer<
         }
         yield* Effect.logInfo("llm runtime selected", {
           "llm.runtime": "ai-sdk",
-          "llm.provider": input.model.providerID,
-          "llm.model": input.model.id,
+          "llm.provider": model.providerID,
+          "llm.model": model.id,
           "llm.native_unsupported_reason": native.reason,
         })
         yield* Effect.logInfo("native runtime unavailable; falling back to ai-sdk", {
-          providerID: input.model.providerID,
-          modelID: input.model.id,
+          providerID: model.providerID,
+          modelID: model.id,
           "session.id": input.sessionID,
           small: (input.small ?? false).toString(),
           agent: input.agent.name,
@@ -284,8 +339,8 @@ const live: Layer.Layer<
 
       yield* Effect.logInfo("llm runtime selected", {
         "llm.runtime": "ai-sdk",
-        "llm.provider": input.model.providerID,
-        "llm.model": input.model.id,
+        "llm.provider": model.providerID,
+        "llm.model": model.id,
       })
       // Default runtime path: AI SDK owns provider execution and tool dispatch;
       // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
@@ -295,8 +350,8 @@ const live: Layer.Layer<
           onError(error) {
             bridge.fork(
               Effect.logError("stream error", {
-                providerID: input.model.providerID,
-                modelID: input.model.id,
+                providerID: model.providerID,
+                modelID: model.id,
                 "session.id": input.sessionID,
                 small: (input.small ?? false).toString(),
                 agent: input.agent.name,
@@ -306,7 +361,7 @@ const live: Layer.Layer<
             )
           },
           // Copilot returns the authoritative billed amount only in provider-specific response fields.
-          includeRawChunks: input.model.providerID.includes("github-copilot"),
+          includeRawChunks: model.providerID.includes("github-copilot"),
           async experimental_repairToolCall(failed) {
             const lower = failed.toolCall.toolName.toLowerCase()
             if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
@@ -327,7 +382,7 @@ const live: Layer.Layer<
           temperature: prepared.params.temperature,
           topP: prepared.params.topP,
           topK: prepared.params.topK,
-          providerOptions: ProviderTransform.providerOptions(input.model, prepared.params.options),
+          providerOptions: ProviderTransform.providerOptions(model, prepared.params.options),
           activeTools: Object.keys(prepared.tools).filter((x) => x !== "invalid"),
           tools: prepared.tools,
           toolChoice: input.toolChoice,
@@ -346,7 +401,7 @@ const live: Layer.Layer<
                     // @ts-expect-error
                     args.params.prompt = ProviderTransform.message(
                       args.params.prompt,
-                      input.model,
+                      model,
                       prepared.messageTransformOptions,
                     )
                   }
@@ -365,6 +420,7 @@ const live: Layer.Layer<
             },
           },
         }),
+        providerID: model.providerID,
       }
     })
 
@@ -387,7 +443,7 @@ const live: Layer.Layer<
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(
-              Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event, input.model.providerID)),
+              Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event, result.providerID)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
             )
           }),
@@ -400,13 +456,53 @@ const live: Layer.Layer<
 
 export const hasToolCalls = LLMRequestPrep.hasToolCalls
 
+function legacyModel(input: ReturnType<typeof PluginV1Projection.model>): Provider.Model {
+  return {
+    ...input,
+    id: ModelV2.ID.make(input.id),
+    providerID: ProviderV2.ID.make(input.providerID),
+  }
+}
+
+function legacyProvider(input: ReturnType<typeof legacyProvidersFromNative>["providers"][number]): Provider.Info {
+  return {
+    ...input,
+    id: ProviderV2.ID.make(input.id),
+    models: Object.fromEntries(Object.entries(input.models).map(([id, model]) => [id, legacyModel(model)])),
+  }
+}
+
+function projectCredential(value: Credential.Value | undefined): Auth.Info | undefined {
+  if (!value) return
+  if (value.type === "oauth") {
+    const accountId = [value.metadata?.accountID, value.metadata?.accountId].find(
+      (item): item is string => typeof item === "string",
+    )
+    return new Auth.Oauth({
+      type: "oauth",
+      refresh: value.refresh,
+      access: value.access,
+      expires: value.expires,
+      ...(accountId ? { accountId } : {}),
+    })
+  }
+  const metadata = Object.fromEntries(
+    Object.entries(value.metadata ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  )
+  return new Auth.Api({
+    type: "api",
+    key: value.key,
+    ...(Object.keys(metadata).length ? { metadata } : {}),
+  })
+}
+
 export const node = LayerNode.make({
   service: Service,
   layer: live,
   deps: [
     Auth.node,
     Config.node,
-    Provider.node,
+    LocationServiceMap.node,
     Plugin.node,
     llmClient,
     RuntimeFlags.node,

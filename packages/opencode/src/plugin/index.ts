@@ -28,7 +28,7 @@ import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { ModalPlugin } from "./modal/modal"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
-import { Context, DateTime, Duration, Effect, Fiber, Layer, Option, Scope } from "effect"
+import { Cause, Context, DateTime, Duration, Effect, Exit, Fiber, Layer, Option, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { errorMessage } from "@/util/error"
@@ -373,8 +373,9 @@ const layer = Layer.effect(
 
         const readyHooks = loadedHooks.filter((loaded) => !loaded.runtimeID || !failures.has(loaded.runtimeID))
 
-        yield* Effect.gen(function* () {
+        const activeHooks = yield* Effect.gen(function* () {
           const plugins = yield* PluginV2.Service
+          const active: LoadedEntry[] = []
           for (const [runtimeID, message] of failures) {
             const id = PluginV2.ID.make(runtimeID)
             yield* Effect.exit(plugins.add(id, () => Effect.die(new Error(message))))
@@ -383,14 +384,24 @@ const layer = Layer.effect(
           for (const loaded of readyHooks) {
             const id = PluginV2.ID.make(loaded.id)
             const adapted = PluginV1Compat.fromHooks(loaded.id, loaded.hooks)
-            yield* plugins.add(id, adapted.effect)
+            const added = yield* Effect.exit(plugins.add(id, adapted.effect))
+            if (Exit.isFailure(added)) {
+              recordRuntimeFailure(loaded.runtimeID, Cause.pretty(added.cause))
+              yield* Effect.logError("failed to activate external plugin", {
+                id: loaded.id,
+                cause: Cause.pretty(added.cause),
+              })
+              continue
+            }
             yield* Effect.addFinalizer(() => plugins.remove(id))
+            active.push(loaded)
           }
+          return active
         }).pipe(Effect.provide(location))
 
         const active: Entry[] = []
         const positions = new Map<string, number>()
-        for (const loaded of readyHooks) {
+        for (const loaded of activeHooks) {
           const index = positions.get(loaded.id)
           if (index === undefined) {
             positions.set(loaded.id, active.length)

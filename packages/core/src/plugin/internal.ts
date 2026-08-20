@@ -3,7 +3,7 @@ export * as PluginInternal from "./internal"
 import { makeLocationNode } from "../effect/app-node"
 import { httpClient } from "../effect/app-node-platform"
 import type { PluginContext } from "@opencode-ai/plugin/v2/effect"
-import { Effect, Layer, Scope } from "effect"
+import { Cause, Effect, Layer, Scope } from "effect"
 import { AgentV2 } from "../agent"
 import { Catalog } from "../catalog"
 import { CommandV2 } from "../command"
@@ -109,21 +109,31 @@ const layer = Layer.effectDiscard(
       return plugin.add(PluginV2.ID.make(loaded.id), loaded.effect)
     }
 
+    const addIsolated = <R>(input: Plugin<R>) =>
+      add(input).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("failed to initialize internal plugin", {
+            id: input.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      )
+
     yield* State.batch(
       Effect.gen(function* () {
-        yield* add(ConfigReferencePlugin.Plugin)
-        yield* add(AgentPlugin.Plugin)
-        yield* add(CommandPlugin.Plugin)
-        yield* add(SkillPlugin.Plugin)
-        yield* add(ModelsDevPlugin)
-        yield* add(ConfigAgentPlugin.Plugin)
-        yield* add(ConfigCommandPlugin.Plugin)
-        yield* add(ConfigSkillPlugin.Plugin)
-        yield* add(ConfigProviderPlugin.Plugin)
-        for (const item of ProviderPlugins) yield* add(item)
-        yield* add(ConfigExternalPlugin.Plugin)
-        yield* add(ConfigProviderPlugin.OverridePlugin)
-        yield* add(VariantPlugin.Plugin)
+        yield* addIsolated(ConfigReferencePlugin.Plugin)
+        yield* addIsolated(AgentPlugin.Plugin)
+        yield* addIsolated(CommandPlugin.Plugin)
+        yield* addIsolated(SkillPlugin.Plugin)
+        yield* addIsolated(ModelsDevPlugin)
+        yield* addIsolated(ConfigAgentPlugin.Plugin)
+        yield* addIsolated(ConfigCommandPlugin.Plugin)
+        yield* addIsolated(ConfigSkillPlugin.Plugin)
+        yield* addIsolated(ConfigProviderPlugin.Plugin)
+        for (const item of ProviderPlugins) yield* addIsolated(item)
+        yield* addIsolated(ConfigExternalPlugin.Plugin)
+        yield* addIsolated(ConfigProviderPlugin.OverridePlugin)
+        yield* addIsolated(VariantPlugin.Plugin)
       }),
     ).pipe(Effect.withSpan("PluginInternal.boot"))
   }),

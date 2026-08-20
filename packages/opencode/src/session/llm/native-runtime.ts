@@ -1,4 +1,4 @@
-import type { Auth } from "@/auth"
+import type { AuthWire } from "@/compat/auth-wire"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
@@ -30,7 +30,7 @@ export type StreamResult =
 type StreamInput = {
   readonly model: Provider.Model
   readonly provider: Provider.Info
-  readonly auth: Auth.Info | undefined
+  readonly auth: AuthWire.Info | undefined
   readonly llmClient: LLMClientShape
   readonly messages: ModelMessage[]
   readonly tools: Record<string, Tool>

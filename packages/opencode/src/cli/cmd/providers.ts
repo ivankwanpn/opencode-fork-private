@@ -1,5 +1,4 @@
 import type { Argv } from "yargs"
-import { Auth } from "../../auth"
 import { cmd } from "./cmd"
 import { CliError, effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
@@ -298,7 +297,6 @@ export const ProvidersLoginCommand = effectCmd({
     UI.empty()
     yield* Prompt.intro("Add credential")
     if (args.url) {
-      const auth = yield* Auth.Service
       const url = args.url.replace(/\/+$/, "")
       const wellknown = (yield* cliTry(`Failed to load auth provider metadata from ${url}: `, () =>
         fetch(`${url}/.well-known/opencode`).then((x) => x.json()),
@@ -321,7 +319,17 @@ export const ProvidersLoginCommand = effectCmd({
         yield* Prompt.outro("Done")
         return
       }
-      yield* Effect.orDie(auth.set(url, { type: "wellknown", key: wellknown.auth.env, token: token.trim() }))
+      yield* Credential.Service.use((credentials) =>
+        credentials.create({
+          integrationID: Integration.ID.make(url),
+          label: url,
+          value: Credential.WellKnown.make({
+            type: "wellknown",
+            key: wellknown.auth.env,
+            token: token.trim(),
+          }),
+        }),
+      )
       yield* Prompt.log.success("Logged into " + url)
       yield* Prompt.outro("Done")
       return

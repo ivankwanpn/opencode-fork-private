@@ -22,8 +22,9 @@ legacy `message` / `part` 用户资料按产品决策直接放弃，不迁移；
 selection、ACP/CLI/HTTP catalog reads已hard cut到Location-scoped `AgentV2`，舊Agent service/source已刪除。
 Provider catalog、模型執行、agent generator與CLI agent也已hard cut到Location-scoped `Catalog` / `AISDK` /
 `Integration`，production graph不再掛載V1 `Provider.Service`。ProviderAuth pending/runtime service亦已刪除，
-legacy HTTP與V1 plugin auth只在明確compat boundary投影到V2 Integration。下一阻塞點是Config、剩餘legacy Auth/
-provider static shape與control-plane/LLM/HTTP wire schema；V1 event definitions已從
+legacy HTTP與V1 plugin auth只在明確compat boundary投影到V2 Integration。舊`Auth.Service`、`Auth.node`與
+`auth.json` runtime亦已刪除；well-known與remote workspace transient credentials由V2 Credential原生承載。
+下一阻塞點是Config、provider static shape與control-plane/LLM/HTTP wire schema；V1 event definitions已從
 replay/public manifest與Schema export移除。整個
 V1 → V2 遷移尚未完成，不能以 transcript 或 Session hard cut 代替最終完成狀態。
 
@@ -202,7 +203,7 @@ Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog so
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
 | Config | V1 `ConfigV1.Info` + `ConfigMigrateV1`；httpapi config 组 V1-only | **V1-only** |
-| Provider | catalog/filter/default/small-model與CLI/ACP/HTTP/share/project-copy reads均為Location-scoped V2；只剩legacy `LLM`與`AgentGenerator`執行時建構依賴V1 service | **V2 catalog，執行面待hard cut** |
+| Provider | catalog/filter/default/small-model、模型執行與CLI/ACP/HTTP/share/project-copy reads均為Location-scoped V2；舊Provider service未掛載，只剩static DTO/transform相容shape與V1-only測試待拆 | **V2-only runtime，legacy static shape待收** |
 
 ---
 
@@ -217,9 +218,10 @@ Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog so
 2. **V1 Config** — `opencode/src/config/config.ts` + `ConfigV1.Info`（`@opencode-ai/core/v1/config/config`）
    `config.get/update` 端点、config 组。此区域 V1 最彻底。
 
-3. **V1 Provider execution** — `opencode/src/provider/provider.ts`、`provider/auth`
-   provider catalog/filter/default/small-model與所有read consumer已改用V2；剩餘真實runtime consumer只有
-   `session/llm.ts`與`agent/generator.ts`。legacy provider/config HTTP URL與response DTO只作wire投影。
+3. **Legacy Provider static/wire shape** — `opencode/src/provider/provider.ts`
+   provider catalog/filter/default/small-model與模型執行均已改用V2；舊Service/node沒有production consumer，
+   目前同檔仍混有legacy DTO、transform所需model shape與test-only V1 service implementation。`provider/auth.ts`
+   與Auth runtime均已刪除；下一步要把現役compatibility shape移出後，刪除service implementation與V1-only測試。
 
 4. ~~**V1 Agent service**~~ — 已完成。`LegacySessionExecution.select`與所有catalog consumer改用
    Location-scoped `AgentV2.Service`；`opencode/src/agent/agent.ts`已刪。外部wire shape移至
@@ -518,10 +520,20 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > legacy `/provider/auth`、`/provider/:id/oauth/*`只保留URL/DTO/error名稱，handler透過Location-scoped
 > Integration執行。CLI provider login/list/logout改用Integration/Credential；custom provider configure/disconnect
 > 停止雙寫legacy auth store，standard disconnect也直接刪除canonical credential。configure/disconnect不再以
-> request內全域instance dispose刷新，避免斷線後下一個request卡在自我關閉競態。`login <url>`的remote
-> well-known token因尚無V2等價credential種類，暫保留唯一最小`Auth.Service`寫入邊界。
+> request內全域instance dispose刷新，避免斷線後下一個request卡在自我關閉競態。此checkpoint當時只剩
+> `login <url>`的remote well-known token仍依賴最小`Auth.Service`寫入邊界，已由下述hard cut收口。
 >
-> **批次 8 下一步**：Session與Provider/ProviderAuth runtime hard cut均已完成。接下来盤點並拆除Config/Auth runtime facade，
+> **999.0.19 Auth runtime hard cut** ✅：V2 Credential新增獨立`StoredValue`，模型/Integration可用的
+> `Credential.Value`仍嚴格限制為key/oauth，well-known只存在於持久化與remote-config domain，不污染模型登入
+> contract。`OPENCODE_CREDENTIAL_CONTENT`以canonical `Credential.Info[]`提供process-local transient overlay；
+> env存在時完整遮蔽本機DB，malformed內容fail closed為空，避免remote workspace意外讀到宿主credential。
+> control-plane workspace改傳canonical envelope，Config直接從Credential載入well-known，LLM/provider compatibility
+> projection只讀Integration/Credential。CLI `providers login <url>`直接建立V2 well-known credential；舊
+> `/auth/:providerID` URL/payload保留為`compat/auth-wire.ts`純adapter，OAuth refresh會保留canonical method identity。
+> `packages/opencode/src/auth/index.ts`、`Auth.Service/node`、`OPENCODE_AUTH_CONTENT`與auth.json-only測試已刪除，
+> AppRuntime/HTTP layer不再掛載Auth；舊使用者auth.json依既定產品決策不遷移。
+>
+> **批次 8 下一步**：Session、Provider/ProviderAuth與Auth runtime hard cut均已完成。接下来盤點並拆除Config runtime facade，
 > 再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性
 > 升级路径不再需要时。整个批次仍未完成。

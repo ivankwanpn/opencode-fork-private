@@ -2,7 +2,7 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Auth } from "../../src/auth"
+import { Credential } from "@opencode-ai/core/credential"
 import { Workspace } from "../../src/control-plane/workspace"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
@@ -16,7 +16,7 @@ export const workspaceLayerWithRuntimeFlags = (overrides: Partial<RuntimeFlags.I
   AppNodeBuilder.build(
     LayerNode.group([
       Workspace.node,
-      Auth.node,
+      Credential.node,
       Project.node,
       Vcs.node,
       Database.node,

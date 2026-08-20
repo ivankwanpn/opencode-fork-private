@@ -3,6 +3,8 @@ import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 import { Context, Effect, Layer } from "effect"
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import Http from "node:http"
@@ -692,10 +694,21 @@ describe("provider HttpApi", () => {
     Effect.gen(function* () {
       const directory = (yield* TestInstance).directory
       yield* setEnvScoped(
-        "OPENCODE_AUTH_CONTENT",
-        JSON.stringify({
-          google: { type: "oauth", refresh: "dummy", access: "dummy", expires: 9999999999999 },
-        }),
+        Credential.CONTENT_ENV,
+        JSON.stringify([
+          new Credential.Info({
+            id: Credential.ID.create(),
+            integrationID: Integration.ID.make("google"),
+            label: "test",
+            value: Credential.OAuth.make({
+              type: "oauth",
+              methodID: Integration.MethodID.make("test"),
+              refresh: "dummy",
+              access: "dummy",
+              expires: 9999999999999,
+            }),
+          }),
+        ]),
       )
       const headers = { "x-opencode-directory": directory }
       const providerResponse = yield* request("/provider", { headers })

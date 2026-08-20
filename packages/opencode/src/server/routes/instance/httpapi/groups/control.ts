@@ -1,4 +1,4 @@
-import { Auth } from "@/auth"
+import { AuthWire } from "@/compat/auth-wire"
 
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
@@ -38,7 +38,7 @@ export const ControlApi = HttpApi.make("control").add(
     .add(
       HttpApiEndpoint.put("authSet", ControlPaths.auth, {
         params: AuthParams,
-        payload: Auth.Info,
+        payload: AuthWire.Info,
         success: described(Schema.Boolean, "Successfully set authentication credentials"),
         error: HttpApiError.BadRequest,
       }).annotateMerge(

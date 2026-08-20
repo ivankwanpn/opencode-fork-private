@@ -93,6 +93,29 @@ test("production runtime does not resolve or mount the legacy Provider service",
   expect(offenders).toEqual([])
 })
 
+test("legacy Auth service is deleted and cannot be mounted by production runtime", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const offenders = (
+    await Promise.all(
+      [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
+        file: file.replaceAll("\\", "/"),
+        source: await Bun.file(path.join(root, file)).text(),
+      })),
+    )
+  )
+    .filter(
+      (entry) =>
+        entry.source.includes('from "@/auth"') ||
+        entry.source.includes('from "../auth"') ||
+        /\bAuth\.(?:Service|node)\b/.test(entry.source),
+    )
+    .map((entry) => entry.file)
+    .sort()
+
+  expect(await Bun.file(new URL("../../src/auth/index.ts", import.meta.url)).exists()).toBe(false)
+  expect(offenders).toEqual([])
+})
+
 test("legacy Permission service is deleted and cannot be mounted by production runtime", async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
   const offenders = (

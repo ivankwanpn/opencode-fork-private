@@ -6,7 +6,7 @@ import {
   requestDeviceCode,
   XaiAuthPlugin,
 } from "../../src/plugin/xai"
-import { OAUTH_DUMMY_KEY } from "../../src/auth"
+import { OAUTH_DUMMY_KEY } from "../../src/compat/auth-wire"
 
 function makeJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url")

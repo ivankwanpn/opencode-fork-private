@@ -11,7 +11,8 @@ import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
-import { Auth } from "../auth"
+import { Credential } from "@opencode-ai/core/credential"
+import { AuthWire } from "@/compat/auth-wire"
 import { Env } from "../env"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { iife } from "@/util/iife"
@@ -150,7 +151,7 @@ type CustomLoader = (provider: Info) => Effect.Effect<{
 }>
 
 type CustomDep = {
-  auth: (id: string) => Effect.Effect<Auth.Info | undefined>
+  auth: (id: string) => Effect.Effect<AuthWire.Info | undefined>
   config: () => Effect.Effect<ConfigV1.Info>
   env: () => Effect.Effect<Record<string, string | undefined>>
   get: (key: string) => Effect.Effect<string | undefined>
@@ -1420,11 +1421,15 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
     const config = yield* Config.Service
-    const auth = yield* Auth.Service
+    const credentials = yield* Credential.Service
     const env = yield* Env.Service
     const plugin = yield* Plugin.Service
     const modelsDevSvc = yield* ModelsDev.Service
     const runtimeFlags = yield* RuntimeFlags.Service
+    const auth = (id: string) =>
+      credentials.list(AuthWire.normalizeIntegrationID(id)).pipe(
+        Effect.map((saved) => (saved[0] ? AuthWire.fromCredential(saved[0].value) : undefined)),
+      )
 
     const state = yield* InstanceState.make<State>(() =>
       Effect.gen(function* () {
@@ -1447,7 +1452,7 @@ const layer = Layer.effect(
           [providerID: string]: CustomDiscoverModels
         } = {}
         const dep = {
-          auth: (id: string) => auth.get(id).pipe(Effect.orDie),
+          auth,
           config: () => config.get(),
           env: () => env.all(),
           get: (key: string) => env.get(key),
@@ -1490,7 +1495,7 @@ const layer = Layer.effect(
 
           const provider = database[providerID]
           if (!provider) continue
-          const pluginAuth = yield* auth.get(providerID).pipe(Effect.orDie)
+          const pluginAuth = yield* auth(providerID)
 
           provider.models = yield* Effect.promise(async () => {
             const next = await models(toPublicInfo(provider), { auth: pluginAuth })
@@ -1619,7 +1624,7 @@ const layer = Layer.effect(
         }
 
         // load apikeys
-        const auths = yield* auth.all().pipe(Effect.orDie)
+        const auths = AuthWire.project(yield* credentials.all())
         for (const [id, provider] of Object.entries(auths)) {
           const providerID = ProviderV2.ID.make(id)
           if (disabled.has(providerID)) continue
@@ -1637,13 +1642,13 @@ const layer = Layer.effect(
           const providerID = ProviderV2.ID.make(plugin.auth.provider)
           if (disabled.has(providerID)) continue
 
-          const stored = yield* auth.get(providerID).pipe(Effect.orDie)
+          const stored = yield* auth(providerID)
           if (!stored) continue
           if (!plugin.auth.loader) continue
 
           const options = yield* Effect.promise(() =>
             plugin.auth!.loader!(
-              () => bridge.promise(auth.get(providerID).pipe(Effect.orDie)) as any,
+              () => bridge.promise(auth(providerID)) as any,
               toPublicInfo(database[plugin.auth!.provider]),
             ),
           )
@@ -2106,7 +2111,7 @@ export function parseModel(model: string) {
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [FSUtil.node, Config.node, Auth.node, Env.node, Plugin.node, ModelsDev.node, RuntimeFlags.node],
+  deps: [FSUtil.node, Config.node, Credential.node, Env.node, Plugin.node, ModelsDev.node, RuntimeFlags.node],
 })
 
 export * as Provider from "./provider"

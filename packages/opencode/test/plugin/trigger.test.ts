@@ -5,7 +5,7 @@ import { Npm } from "@opencode-ai/core/npm"
 import path from "path"
 import { pathToFileURL } from "url"
 import { Account } from "../../src/account/account"
-import { Auth } from "../../src/auth"
+import { Credential } from "@opencode-ai/core/credential"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { Plugin } from "../../src/plugin/index"
 
@@ -13,7 +13,7 @@ import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { AccountTest } from "../fake/account"
-import { AuthTest } from "../fake/auth"
+import { CredentialTest } from "../fake/credential"
 import { NpmTest } from "../fake/npm"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -22,7 +22,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([Plugin.node, CrossSpawnSpawner.node]), [
-    [Auth.node, AuthTest.empty],
+    [Credential.node, CredentialTest.empty],
     [Account.node, AccountTest.empty],
     [Npm.node, NpmTest.noop],
     [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true })],

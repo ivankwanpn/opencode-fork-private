@@ -6,6 +6,8 @@ import { Effect } from "effect"
 import { testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 
 const DIGITALOCEAN = ProviderV2.ID.make("digitalocean")
 const it = testEffect(LayerNode.compile(Provider.node, [locationServiceMapReplacement]))
@@ -30,13 +32,18 @@ const withEnv = <A, E, R>(values: Record<string, string>, effect: Effect.Effect<
 const withAuth = <A, E, R>(metadata: Record<string, string> | undefined, effect: Effect.Effect<A, E, R>) =>
   withEnv(
     {
-      OPENCODE_AUTH_CONTENT: JSON.stringify({
-        digitalocean: {
-          type: "api",
-          key: "sk_do_test",
-          ...(metadata ? { metadata } : {}),
-        },
-      }),
+      [Credential.CONTENT_ENV]: JSON.stringify([
+        new Credential.Info({
+          id: Credential.ID.create(),
+          integrationID: Integration.ID.make("digitalocean"),
+          label: "test",
+          value: Credential.Key.make({
+            type: "key",
+            key: "sk_do_test",
+            ...(metadata ? { metadata } : {}),
+          }),
+        }),
+      ]),
     },
     effect,
   )

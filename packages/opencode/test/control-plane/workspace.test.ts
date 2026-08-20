@@ -9,6 +9,8 @@ import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { Database } from "@opencode-ai/core/database/database"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -36,7 +38,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { TestSessionV2 } from "../fixture/session-v2"
 
 const originalEnv = {
-  OPENCODE_AUTH_CONTENT: process.env.OPENCODE_AUTH_CONTENT,
+  [Credential.CONTENT_ENV]: process.env[Credential.CONTENT_ENV],
   OPENCODE_EXPERIMENTAL_WORKSPACES: process.env.OPENCODE_EXPERIMENTAL_WORKSPACES,
   OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
   OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
@@ -458,7 +460,13 @@ describe("workspace CRUD", () => {
       Effect.gen(function* () {
         const instance = yield* requireInstance
         const workspace = yield* Workspace.Service
-        process.env.OPENCODE_AUTH_CONTENT = JSON.stringify({ test: { type: "api", key: "secret" } })
+        const transient = new Credential.Info({
+          id: Credential.ID.create(),
+          integrationID: Integration.ID.make("test"),
+          label: "test",
+          value: Credential.Key.make({ type: "key", key: "secret" }),
+        })
+        process.env[Credential.CONTENT_ENV] = JSON.stringify([transient])
         process.env.OTEL_EXPORTER_OTLP_HEADERS = "authorization=otel"
         process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "https://otel.test"
         process.env.OTEL_RESOURCE_ATTRIBUTES = "service.name=opencode-test"
@@ -517,9 +525,7 @@ describe("workspace CRUD", () => {
           extra: { configured: true },
           projectID: instance.project.id,
         })
-        expect(JSON.parse(recorded.calls.create[0].env.OPENCODE_AUTH_CONTENT ?? "{}")).toEqual({
-          test: { type: "api", key: "secret" },
-        })
+        expect(JSON.parse(recorded.calls.create[0].env[Credential.CONTENT_ENV] ?? "[]")).toEqual([transient])
         expect(recorded.calls.create[0].env.OPENCODE_WORKSPACE_ID).toBe(workspaceID)
         expect(recorded.calls.create[0].env.OPENCODE_EXPERIMENTAL_WORKSPACES).toBe("true")
         expect(recorded.calls.create[0].env.OTEL_EXPORTER_OTLP_HEADERS).toBe("authorization=otel")

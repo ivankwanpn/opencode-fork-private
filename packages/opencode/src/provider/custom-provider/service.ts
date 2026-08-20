@@ -188,7 +188,7 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.flatMap((items) =>
             items.length <= 1
-              ? Effect.succeed(items[0])
+              ? Effect.succeed(items[0]?.value.type === "wellknown" ? undefined : items[0])
               : Effect.die(new Error("multiple credentials found for one integration")),
           ),
         ),
@@ -196,6 +196,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const integrationID = Integration.ID.make(providerID)
         if (value) {
+          if (value.value.type === "wellknown") return yield* Effect.die("invalid custom provider credential")
           yield* credentials.create({ integrationID, label: value.label, value: value.value })
           return
         }

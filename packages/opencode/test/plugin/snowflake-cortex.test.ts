@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { OAUTH_DUMMY_KEY } from "../../src/auth"
+import { OAUTH_DUMMY_KEY } from "../../src/compat/auth-wire"
 import { oauthScope, SnowflakeCortexAuthPlugin } from "../../src/plugin/snowflake-cortex"
 
 function makeInput() {

@@ -1,12 +1,10 @@
 import { Config } from "@/config/config"
-import { Auth } from "@/auth"
 import { legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { Provider } from "@/provider/provider"
 import { InstanceState } from "@/effect/instance-state"
 import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
-import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Effect, Schema } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -15,7 +13,6 @@ import { markInstanceForDisposal } from "../lifecycle"
 
 export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers) =>
   Effect.gen(function* () {
-    const auth = yield* Auth.Service
     const configSvc = yield* Config.Service
     const locations = yield* LocationServiceMap.Service
 
@@ -46,11 +43,7 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
 
     const providers = Effect.fn("ConfigHttpApi.providers")(function* () {
       const catalog = yield* location(CatalogSnapshot.Service.use((snapshot) => snapshot.get()))
-      const connected = new Set(catalog.connected)
-      for (const providerID of Object.keys(yield* auth.all().pipe(Effect.orDie))) {
-        connected.add(ProviderV2.ID.make(providerID))
-      }
-      const providers = legacyProvidersFromNative({ ...catalog, connected: [...connected] })
+      const providers = legacyProvidersFromNative(catalog)
       return Schema.decodeUnknownSync(Provider.ConfigProvidersResult)({
         providers: providers.providers.map((provider) => Provider.toPublicInfo(provider as unknown as Provider.Info)),
         default: providers.defaults,

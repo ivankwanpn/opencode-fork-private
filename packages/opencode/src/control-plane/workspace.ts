@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm"
 import { inArray } from "drizzle-orm"
 import { Project } from "@/project/project"
 import { GlobalBus } from "@/bus/global"
-import { Auth } from "@/auth"
+import { Credential } from "@opencode-ai/core/credential"
 import { EventV2 } from "@opencode-ai/core/event"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { EventSequenceTable, EventTable } from "@opencode-ai/core/event/sql"
@@ -120,7 +120,6 @@ export class SyncAbortedError extends Schema.TaggedErrorClass<SyncAbortedError>(
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
-type CreateError = Auth.AuthError
 type SessionWarpError =
   | SessionV2.NotFoundError
   | WorkspaceNotFoundError
@@ -132,7 +131,7 @@ type WaitForSyncError = SyncTimeoutError | SyncAbortedError
 type SyncLoopError = SyncHttpError | HttpClientError.HttpClientError
 
 export interface Interface {
-  readonly create: (input: CreateInput) => Effect.Effect<Info, CreateError>
+  readonly create: (input: CreateInput) => Effect.Effect<Info, unknown>
   readonly sessionWarp: (input: SessionWarpInput) => Effect.Effect<void, SessionWarpError>
   readonly list: (project: Project.Info) => Effect.Effect<Info[]>
   readonly syncList: (project: Project.Info) => Effect.Effect<void>
@@ -156,7 +155,7 @@ export const use = serviceUse(Service)
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const auth = yield* Auth.Service
+    const credentials = yield* Credential.Service
     const session = yield* SessionV2.Service
     const removal = yield* SessionRemoval.Service
     const runState = yield* SessionRunState.Service
@@ -530,7 +529,7 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
 
       const env = {
-        OPENCODE_AUTH_CONTENT: JSON.stringify(yield* auth.all()),
+        [Credential.CONTENT_ENV]: JSON.stringify(yield* credentials.all()),
         OPENCODE_WORKSPACE_ID: config.id,
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
         OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
@@ -958,7 +957,7 @@ export const node = LayerNode.make({
   service: Service,
   layer: layer,
   deps: [
-    Auth.node,
+    Credential.node,
     SessionV2.node,
     SessionRemoval.node,
     SessionRunState.node,

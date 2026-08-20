@@ -4,7 +4,7 @@ import { Npm } from "@opencode-ai/core/npm"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Auth } from "../../src/auth"
+import { Credential } from "@opencode-ai/core/credential"
 import { Account } from "../../src/account/account"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { Workspace } from "../../src/control-plane/workspace"
@@ -16,7 +16,7 @@ import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { AccountTest } from "../fake/account"
-import { AuthTest } from "../fake/auth"
+import { CredentialTest } from "../fake/credential"
 import { NpmTest } from "../fake/npm"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -25,7 +25,7 @@ import { SessionExecution } from "@opencode-ai/core/session/execution"
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([Plugin.node, Workspace.node, InstanceStore.node, Ripgrep.node]), [
-    [Auth.node, AuthTest.empty],
+    [Credential.node, CredentialTest.empty],
     [Account.node, AccountTest.empty],
     [Npm.node, NpmTest.noop],
     [InstanceStore.bootstrapNode, noopBootstrapLayer],

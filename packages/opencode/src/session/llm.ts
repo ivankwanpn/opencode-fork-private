@@ -3,7 +3,6 @@ import { llmClient } from "@opencode-ai/core/effect/app-node-platform"
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
-import { Credential } from "@opencode-ai/core/credential"
 import { Integration } from "@opencode-ai/core/integration"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
@@ -32,7 +31,7 @@ import { Plugin } from "@/plugin"
 import { LegacyPermissionRules } from "@/permission/legacy-rules"
 import { Wildcard } from "@/util/wildcard"
 import { SessionID } from "@/session/schema"
-import { Auth } from "@/auth"
+import { AuthWire } from "@/compat/auth-wire"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
@@ -127,7 +126,6 @@ export const requestWorkflowApproval = Effect.fn("LLM.requestWorkflowApproval")(
 const live: Layer.Layer<
   Service,
   never,
-  | Auth.Service
   | Config.Service
   | LocationServiceMap.Service
   | Plugin.Service
@@ -136,7 +134,6 @@ const live: Layer.Layer<
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const auth = yield* Auth.Service
     const config = yield* Config.Service
     const locations = yield* LocationServiceMap.Service
     const plugin = yield* Plugin.Service
@@ -190,12 +187,8 @@ const live: Layer.Layer<
         mode: input.agent.mode,
       })
 
-      const [language, cfg, compatibilityAuth] = yield* Effect.all(
-        [
-          aisdk.language(canonical),
-          config.get(),
-          auth.get(model.providerID),
-        ],
+      const [language, cfg] = yield* Effect.all(
+        [aisdk.language(canonical), config.get()],
         { concurrency: "unbounded" },
       )
       const provider = yield* catalog.provider.get(providerID)
@@ -203,7 +196,7 @@ const live: Layer.Layer<
         provider?.integrationID ?? Integration.ID.make(providerID),
       )
       const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
-      const info = projectCredential(credential) ?? compatibilityAuth
+      const info = credential ? AuthWire.fromCredential(credential) : undefined
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
       const prepared = yield* LLMRequestPrep.prepare({
@@ -472,35 +465,10 @@ function legacyProvider(input: ReturnType<typeof legacyProvidersFromNative>["pro
   }
 }
 
-function projectCredential(value: Credential.Value | undefined): Auth.Info | undefined {
-  if (!value) return
-  if (value.type === "oauth") {
-    const accountId = [value.metadata?.accountID, value.metadata?.accountId].find(
-      (item): item is string => typeof item === "string",
-    )
-    return new Auth.Oauth({
-      type: "oauth",
-      refresh: value.refresh,
-      access: value.access,
-      expires: value.expires,
-      ...(accountId ? { accountId } : {}),
-    })
-  }
-  const metadata = Object.fromEntries(
-    Object.entries(value.metadata ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-  )
-  return new Auth.Api({
-    type: "api",
-    key: value.key,
-    ...(Object.keys(metadata).length ? { metadata } : {}),
-  })
-}
-
 export const node = LayerNode.make({
   service: Service,
   layer: live,
   deps: [
-    Auth.node,
     Config.node,
     LocationServiceMap.node,
     Plugin.node,

@@ -448,6 +448,7 @@ export const locationLayer = Layer.effect(
           }
           const credential = yield* credentials.get(connection.id)
           if (!credential) return undefined
+          if (credential.value.type === "wellknown") return undefined
           if (credential.value.type === "key") return credential.value
           const implementation = state
             .get()

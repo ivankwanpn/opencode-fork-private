@@ -8,7 +8,7 @@ import { tool, type ModelMessage, type JSONValue } from "ai"
 import { Effect, Layer, Option, Schema, Stream } from "effect"
 import path from "node:path"
 import z from "zod"
-import { Auth } from "@/auth"
+import { AuthWire } from "@/compat/auth-wire"
 
 import { Filesystem } from "@/util/filesystem"
 import { Catalog } from "@opencode-ai/core/catalog"
@@ -44,7 +44,7 @@ const replayOpenAIOAuth = {
   access: "fixture-access-token",
   expires: Date.now() + 60 * 60 * 1000,
   accountId: "fixture-account",
-} satisfies Auth.Info
+} satisfies AuthWire.Info
 
 type RecordedScenario = {
   readonly id: string
@@ -55,8 +55,8 @@ type RecordedScenario = {
   readonly protocol: string
   readonly tags: ReadonlyArray<string>
   readonly canRecord: () => boolean
-  readonly recordAuth?: () => Auth.Info | undefined
-  readonly replayAuth?: Auth.Info
+  readonly recordAuth?: () => AuthWire.Info | undefined
+  readonly replayAuth?: AuthWire.Info
   readonly stableID?: string
   readonly config: (model: ModelsDev.Provider["models"][string]) => Partial<ConfigV1.Info>
 }
@@ -74,10 +74,10 @@ const cloneModel = (model: ModelsDev.Provider["models"][string]) => {
 }
 
 const envValue = (...names: string[]) => names.map((name) => process.env[name]).find(Boolean)
-const decodeAuth = Schema.decodeUnknownOption(Auth.Info)
+const decodeAuth = Schema.decodeUnknownOption(AuthWire.Info)
 const recordOpenAIOAuth = (() => {
   let loaded = false
-  let auth: Auth.Info | undefined
+  let auth: AuthWire.Info | undefined
   return () => {
     if (loaded) return auth
     loaded = true

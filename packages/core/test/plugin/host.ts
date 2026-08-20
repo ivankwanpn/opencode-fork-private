@@ -278,7 +278,16 @@ export function integrationHost(integration: Integration.Interface): PluginConte
 
 function method(value: Integration.Method) {
   if (value.type === "env") return { type: value.type, names: [...value.names] }
-  if (value.type === "key") return { type: value.type, label: value.label, prompts: value.prompts }
+  if (value.type === "key") {
+    return {
+      type: value.type,
+      label: value.label,
+      prompts: value.prompts?.map((prompt) => {
+        if (prompt.type === "text") return { ...prompt }
+        return { ...prompt, options: prompt.options.map((option) => ({ ...option })) }
+      }),
+    }
+  }
   return {
     type: value.type,
     id: value.id,

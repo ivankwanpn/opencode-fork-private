@@ -1,5 +1,5 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import type { Auth } from "@/auth"
+import type { AuthWire } from "@/compat/auth-wire"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceState } from "@/effect/instance-state"
@@ -29,7 +29,7 @@ type PrepareInput = {
   readonly small?: boolean
   readonly tools: Record<string, Tool>
   readonly provider: Provider.Info
-  readonly auth: Auth.Info | undefined
+  readonly auth: AuthWire.Info | undefined
   readonly plugin: Plugin.Interface
   readonly flags: RuntimeFlags.Info
   readonly isWorkflow: boolean

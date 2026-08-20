@@ -14,6 +14,8 @@ import { Env } from "@/env"
 import { Plugin } from "@/plugin"
 import { Provider } from "@/provider/provider"
 import { ProviderError } from "@/provider/error"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -141,7 +143,7 @@ it.live("headerTimeout is opt-in for non-OpenAI providers", () =>
 
 it.live("OpenAI Codex headerTimeout default can be disabled by config", () =>
   Effect.gen(function* () {
-    yield* withAuthContent(
+    yield* withCredentialContent(
       Effect.gen(function* () {
         yield* provideTmpdirInstance(
           () =>
@@ -159,7 +161,7 @@ it.live("OpenAI Codex headerTimeout default can be disabled by config", () =>
 
 it.live("OpenAI API auth gets default headerTimeout", () =>
   Effect.gen(function* () {
-    yield* withAuthContent(
+    yield* withCredentialContent(
       Effect.gen(function* () {
         yield* provideTmpdirInstance(() =>
           Effect.gen(function* () {
@@ -169,7 +171,7 @@ it.live("OpenAI API auth gets default headerTimeout", () =>
           }),
         )
       }),
-      { openai: { type: "api", key: "sk-test" } },
+      Credential.Key.make({ type: "key", key: "sk-test" }),
     )
   }),
 )
@@ -214,24 +216,34 @@ async function delayedBodyServer(delay: number): Promise<{ server: Server; url: 
   return { server, url: `http://127.0.0.1:${address.port}` }
 }
 
-function withAuthContent<A, E, R>(self: Effect.Effect<A, E, R>, value: Record<string, unknown> = defaultAuthContent()) {
+function withCredentialContent<A, E, R>(
+  self: Effect.Effect<A, E, R>,
+  value: Credential.StoredValue = Credential.OAuth.make({
+    type: "oauth",
+    methodID: Integration.MethodID.make("test"),
+    refresh: "refresh",
+    access: "access",
+    expires: Date.now() + 60_000,
+  }),
+) {
   return Effect.acquireUseRelease(
     Effect.sync(() => {
-      const previous = process.env.OPENCODE_AUTH_CONTENT
-      process.env.OPENCODE_AUTH_CONTENT = JSON.stringify(value)
+      const previous = process.env[Credential.CONTENT_ENV]
+      process.env[Credential.CONTENT_ENV] = JSON.stringify([
+        new Credential.Info({
+          id: Credential.ID.create(),
+          integrationID: Integration.ID.make("openai"),
+          label: "test",
+          value,
+        }),
+      ])
       return previous
     }),
     () => self,
     (previous) =>
       Effect.sync(() => {
-        if (previous === undefined) delete process.env.OPENCODE_AUTH_CONTENT
-        else process.env.OPENCODE_AUTH_CONTENT = previous
+        if (previous === undefined) delete process.env[Credential.CONTENT_ENV]
+        else process.env[Credential.CONTENT_ENV] = previous
       }),
   )
-}
-
-function defaultAuthContent() {
-  return {
-    openai: { type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 },
-  }
 }

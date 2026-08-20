@@ -10,10 +10,11 @@ import { Config } from "@/config/config"
 import { ConfigManaged } from "@/config/managed"
 import { ConfigParse } from "../../src/config/parse"
 import { Npm } from "@opencode-ai/core/npm"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 
 import { InstanceRef } from "../../src/effect/instance-ref"
 import type { InstanceContext } from "../../src/project/instance-context"
-import { Auth } from "../../src/auth"
 import { Account } from "../../src/account/account"
 import { AccessToken, AccountID, OrgID } from "../../src/account/schema"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -41,7 +42,7 @@ import { ConfigPlugin } from "@/config/plugin"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { ConfigProviderV1 } from "@opencode-ai/core/v1/config/provider"
 import { AccountTest } from "../fake/account"
-import { AuthTest } from "../fake/auth"
+import { CredentialTest } from "../fake/credential"
 import { NpmTest } from "../fake/npm"
 
 describe("config update scope", () => {
@@ -65,12 +66,17 @@ const json = (request: Parameters<typeof HttpClientResponse.fromWeb>[0], body: u
     }),
   )
 
-const wellKnownAuth = (url: string) =>
-  Layer.mock(Auth.Service)({
+const wellKnownCredential = (url: string) =>
+  Layer.mock(Credential.Service)({
     all: () =>
-      Effect.succeed({
-        [url]: new Auth.WellKnown({ type: "wellknown", key: "TEST_TOKEN", token: "test-token" }),
-      }),
+      Effect.succeed([
+        new Credential.Info({
+          id: Credential.ID.create(),
+          integrationID: Integration.ID.make(url),
+          label: url,
+          value: Credential.WellKnown.make({ type: "wellknown", key: "TEST_TOKEN", token: "test-token" }),
+        }),
+      ]),
   })
 
 function remoteConfigClient(input: {
@@ -103,13 +109,13 @@ function remoteConfigClient(input: {
 
 const configLayer = (
   options: {
-    auth?: Layer.Layer<Auth.Service>
+    credential?: Layer.Layer<Credential.Service>
     account?: Layer.Layer<Account.Service>
     client?: HttpClient.HttpClient
   } = {},
 ) =>
   LayerNode.compile(LayerNode.group([Config.node, FSUtil.node, Env.node, CrossSpawnSpawner.node]), [
-    [Auth.node, options.auth ?? AuthTest.empty],
+    [Credential.node, options.credential ?? CredentialTest.empty],
     [Account.node, options.account ?? AccountTest.empty],
     [Npm.node, NpmTest.noop],
     [httpClient, Layer.succeed(HttpClient.HttpClient, options.client ?? unexpectedHttp)],
@@ -283,7 +289,7 @@ const wellKnown = (input: {
   })
   return {
     seen,
-    it: configIt({ auth: wellKnownAuth(input.authUrl ?? "https://example.com"), client }),
+    it: configIt({ credential: wellKnownCredential(input.authUrl ?? "https://example.com"), client }),
   }
 }
 
@@ -1880,7 +1886,7 @@ test("remote well-known config can use FetchHttpClient layer", async () => {
       Effect.provide(
         Layer.mergeAll(
           LayerNode.compile(LayerNode.group([Config.node, FSUtil.node, Env.node, CrossSpawnSpawner.node]), [
-            [Auth.node, wellKnownAuth(server.url.origin)],
+            [Credential.node, wellKnownCredential(server.url.origin)],
             [Account.node, AccountTest.empty],
             [Npm.node, NpmTest.noop],
             [httpClient, FetchHttpClient.layer],

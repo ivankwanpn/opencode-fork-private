@@ -29,7 +29,19 @@ export const Key = Schema.Struct({
   metadata: optional(Schema.Record(Schema.String, Schema.Unknown)),
 }).annotate({ identifier: "Credential.Key" })
 
+export interface WellKnown extends Schema.Schema.Type<typeof WellKnown> {}
+export const WellKnown = Schema.Struct({
+  type: Schema.Literal("wellknown"),
+  key: Schema.String,
+  token: Schema.String,
+}).annotate({ identifier: "Credential.WellKnown" })
+
 export const Value = Schema.Union([OAuth, Key])
   .pipe(Schema.toTaggedUnion("type"))
   .annotate({ identifier: "Credential.Value" })
 export type Value = Schema.Schema.Type<typeof Value>
+
+export const StoredValue = Schema.Union([OAuth, Key, WellKnown])
+  .pipe(Schema.toTaggedUnion("type"))
+  .annotate({ identifier: "Credential.StoredValue" })
+export type StoredValue = Schema.Schema.Type<typeof StoredValue>

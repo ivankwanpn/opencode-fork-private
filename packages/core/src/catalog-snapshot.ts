@@ -34,7 +34,9 @@ const layer = Layer.effect(
         { concurrency: "unbounded" },
       )
       const integrationByID = new Map(integrations.map((item) => [item.id, item]))
-      const credentialTypes = new Map(credentials.map((item) => [item.id, item.value.type]))
+      const credentialTypes = new Map(
+        credentials.flatMap((item) => (item.value.type === "wellknown" ? [] : [[item.id, item.value.type] as const])),
+      )
       const defaults = Object.fromEntries(
         providers.flatMap((provider) => {
           const model =

@@ -1,23 +1,23 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdir, unlink } from "fs/promises"
+import { mkdir } from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Effect, Layer } from "effect"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
+import { Credential } from "@opencode-ai/core/credential"
+import { Integration } from "@opencode-ai/core/integration"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Global } from "@opencode-ai/core/global"
 import { disposeAllInstances, provideInstanceEffect, tmpdirScoped, TestInstance } from "../fixture/fixture"
 import { markPluginDependenciesReady } from "../fixture/plugin"
-import { Auth } from "@/auth"
 import { Config } from "@/config/config"
 import { Env } from "../../src/env"
 import { Plugin } from "../../src/plugin/index"
 import { Provider } from "@/provider/provider"
 
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Filesystem } from "@/util/filesystem"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { InstanceStore } from "@/project/instance-store"
 import { testEffect } from "../lib/effect"
@@ -68,7 +68,7 @@ const providerLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
       FSUtil.node,
       Env.node,
       Config.node,
-      Auth.node,
+      Credential.node,
       Plugin.node,
       ModelsDev.node,
       RuntimeFlags.node,
@@ -87,7 +87,7 @@ const paid = (providers: Record<string, { models: Record<string, { cost: { input
 const languageBaseURL = (language: unknown) => (language as { config: { baseURL: string } }).config.baseURL
 
 const it = testEffect(
-  LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node, Auth.node]), [
+  LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node, Credential.node]), [
     locationServiceMapReplacement,
   ]),
 )
@@ -137,12 +137,16 @@ it.instance(
 )
 
 it.instance(
-  "custom provider loaded from Auth-only literal api key",
+  "custom provider loaded from a stored V2 credential",
   Effect.gen(function* () {
     const providerID = ProviderV2.ID.make("auth-only-custom")
-    const auth = yield* Auth.Service
-    yield* Effect.acquireRelease(auth.set(providerID, new Auth.Api({ type: "api", key: "auth-only-key" })), () =>
-      auth.remove(providerID).pipe(Effect.orDie),
+    const credentials = yield* Credential.Service
+    yield* Effect.acquireRelease(
+      credentials.create({
+        integrationID: Integration.ID.make(providerID),
+        value: Credential.Key.make({ type: "key", key: "auth-only-key" }),
+      }),
+      (credential) => credentials.remove(credential.id),
     )
 
     const providers = yield* list
@@ -2060,7 +2064,7 @@ it.effect("opencode loader keeps paid models when config apiKey is present", () 
   }).pipe(provideMultiInstance),
 )
 
-it.effect("opencode loader keeps paid models when auth exists", () =>
+it.effect("opencode loader keeps paid models when a V2 credential exists", () =>
   Effect.gen(function* () {
     const noneDir = yield* tmpdirScoped()
     const keyedDir = yield* tmpdirScoped()
@@ -2072,17 +2076,14 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
         .pipe(Effect.provide(instanceStoreLayer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)))
 
     const none = paid(yield* listIn(noneDir))
-
-    const authPath = path.join(Global.Path.data, "auth.json")
-    const original = yield* Effect.promise(() => Filesystem.readText(authPath).catch(() => undefined))
-
     yield* Effect.acquireRelease(
-      Effect.promise(() => Filesystem.write(authPath, JSON.stringify({ opencode: { type: "api", key: "test-key" } }))),
-      () =>
-        Effect.promise(async () => {
-          if (original !== undefined) await Filesystem.write(authPath, original)
-          else await unlink(authPath).catch(() => undefined)
+      Credential.Service.use((credentials) =>
+        credentials.create({
+          integrationID: Integration.ID.make("opencode"),
+          value: Credential.Key.make({ type: "key", key: "test-key" }),
         }),
+      ),
+      (credential) => Credential.Service.use((credentials) => credentials.remove(credential.id)),
     )
 
     const keyedCount = paid(yield* listIn(keyedDir))

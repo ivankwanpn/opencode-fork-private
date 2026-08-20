@@ -5,7 +5,6 @@ import * as Socket from "effect/unstable/socket/Socket"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Observability from "@opencode-ai/core/observability"
 import { Account } from "@/account/account"
-import { Auth } from "@/auth"
 import { BackgroundJob } from "@/background/job"
 import { Config } from "@/config/config"
 import { Workspace } from "@/control-plane/workspace"
@@ -238,7 +237,6 @@ const hostNodes = [
   FSUtil.node,
   Database.node,
   Credential.node,
-  Auth.node,
   Account.node,
   Config.node,
   Env.node,

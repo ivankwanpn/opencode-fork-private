@@ -1,27 +1,38 @@
-import { Auth } from "@/auth"
+import { AuthWire } from "@/compat/auth-wire"
 
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { RootHttpApi } from "../api"
 import { LogInput } from "../groups/control"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { Credential } from "@opencode-ai/core/credential"
 
 export const controlHandlers = HttpApiBuilder.group(RootHttpApi, "control", (handlers) =>
   Effect.gen(function* () {
-    const auth = yield* Auth.Service
+    const credentials = yield* Credential.Service
 
     const authSet = Effect.fn("ControlHttpApi.authSet")(function* (ctx: {
       params: { providerID: ProviderV2.ID }
-      payload: Auth.Info
+      payload: AuthWire.Info
     }) {
-      yield* auth.set(ctx.params.providerID, ctx.payload).pipe(Effect.orDie)
+      const integrationID = AuthWire.normalizeIntegrationID(ctx.params.providerID)
+      const saved = (yield* credentials.list(integrationID))[0]
+      yield* credentials.create({
+        integrationID,
+        label: saved?.label,
+        value: AuthWire.toCredential(ctx.payload, saved?.value),
+      })
       return true
     })
 
     const authRemove = Effect.fn("ControlHttpApi.authRemove")(function* (ctx: {
       params: { providerID: ProviderV2.ID }
     }) {
-      yield* auth.remove(ctx.params.providerID).pipe(Effect.orDie)
+      yield* Effect.forEach(
+        yield* credentials.list(AuthWire.normalizeIntegrationID(ctx.params.providerID)),
+        (credential) => credentials.remove(credential.id),
+        { discard: true },
+      )
       return true
     })
 

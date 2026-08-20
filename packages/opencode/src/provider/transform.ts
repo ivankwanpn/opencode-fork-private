@@ -1,7 +1,7 @@
 import type { ModelMessage, ToolResultPart } from "ai"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
-import type * as Provider from "./provider"
+import type { Provider } from "@/compat/provider-wire"
 import type * as ModelsDev from "@opencode-ai/core/models-dev"
 import { iife } from "@/util/iife"
 

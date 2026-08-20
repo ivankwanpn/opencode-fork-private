@@ -17,7 +17,7 @@ import {
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { ModelV2 } from "@opencode-ai/core/model"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import { legacyAgentFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
 import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"

@@ -203,7 +203,7 @@ Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog so
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
 | Config | V1 `ConfigV1.Info` + `ConfigMigrateV1`；httpapi config 组 V1-only | **V1-only** |
-| Provider | catalog/filter/default/small-model、模型執行與CLI/ACP/HTTP/share/project-copy reads均為Location-scoped V2；舊Provider service/node、SDK loader與V1-only測試已刪，只剩DTO/transform相容shape | **V2-only runtime，legacy static shape待收** |
+| Provider | catalog/filter/default/small-model、模型執行與CLI/ACP/HTTP/share/project-copy reads均為Location-scoped V2；舊Provider runtime已刪，DTO/model/error只存在`compat/provider-wire.ts` | **V2-only runtime，明確wire相容邊界** |
 
 ---
 
@@ -218,10 +218,10 @@ Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog so
 2. **V1 Config** — `opencode/src/config/config.ts` + `ConfigV1.Info`（`@opencode-ai/core/v1/config/config`）
    `config.get/update` 端点、config 组。此区域 V1 最彻底。
 
-3. **Legacy Provider static/wire shape** — `opencode/src/provider/provider.ts`
+3. **Legacy Provider static/wire shape** — `opencode/src/compat/provider-wire.ts`
    provider catalog/filter/default/small-model與模型執行均已改用V2；舊Service/node沒有production consumer，
-   Service/node、自帶SDK loader、model discovery與V1-only測試已刪。該檔目前只保留legacy DTO、transform所需model
-   shape、wire error與sort/parse helper；`provider/auth.ts`與Auth runtime亦已刪除，待外部wire/LLM projection收口後移出。
+   Service/node、自帶SDK loader、model discovery與V1-only測試已刪。compat檔只保留legacy DTO、transform所需model
+   shape、wire error與sort/parse helper；`provider/provider.ts`、`provider/auth.ts`與Auth runtime均已刪除。
 
 4. ~~**V1 Agent service**~~ — 已完成。`LegacySessionExecution.select`與所有catalog consumer改用
    Location-scoped `AgentV2.Service`；`opencode/src/agent/agent.ts`已刪。外部wire shape移至
@@ -539,6 +539,9 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > `header-timeout.test.ts`、DigitalOcean/Bedrock V1 service tests及fake Provider service；source gate阻止service與
 > test oracle回流。等價能力由Core V2 AISDK/ProviderModelDiscovery/ConfigProvider/Catalog與DigitalOcean/Bedrock
 > plugins承擔；focused parity為Core 41 pass，OpenCode transform/ACP/source gate 404 pass，legacy catalog wire 1 pass。
+> 隨後剩餘181行DTO/model/error/sort/parse shape移到`compat/provider-wire.ts`，production與測試consumer全部
+> 顯式從compat boundary匯入，`provider/provider.ts`路徑刪除並由source gate阻止回流；mechanical boundary
+> closeout後OpenCode typecheck與25項catalog/ACP/schema/source回歸通過。
 >
 > **批次 8 下一步**：Session、Provider/ProviderAuth與Auth runtime hard cut均已完成。接下来盤點並拆除Config runtime facade，
 > 再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部

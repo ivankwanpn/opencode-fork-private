@@ -1,6 +1,6 @@
 export * as SessionUsage from "./usage"
 
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import type { ProviderMetadata, Usage } from "@opencode-ai/llm"
 import { Decimal } from "decimal.js"
 

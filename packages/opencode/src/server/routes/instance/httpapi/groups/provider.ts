@@ -1,5 +1,5 @@
 import { ProviderAuthCompat } from "@/compat/provider-auth"
-import { Provider } from "@/provider/provider"
+import { Provider } from "@/compat/provider-wire"
 
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"

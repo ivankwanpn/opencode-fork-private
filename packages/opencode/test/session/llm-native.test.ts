@@ -6,7 +6,7 @@ import { Effect, Fiber, Layer, Stream } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { LLMNative } from "@/session/llm/native-request"
 import { LLMNativeRuntime } from "@/session/llm/native-runtime"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"

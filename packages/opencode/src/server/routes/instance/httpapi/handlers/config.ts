@@ -1,6 +1,6 @@
 import { Config } from "@/config/config"
 import { legacyProvidersFromNative } from "@/compat/native-v1-catalog"
-import { Provider } from "@/provider/provider"
+import { Provider } from "@/compat/provider-wire"
 import { InstanceState } from "@/effect/instance-state"
 import { CatalogSnapshot } from "@opencode-ai/core/catalog-snapshot"
 import { Location } from "@opencode-ai/core/location"

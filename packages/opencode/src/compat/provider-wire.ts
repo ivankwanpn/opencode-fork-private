@@ -3,7 +3,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { optional } from "@opencode-ai/core/schema"
 import { Schema, Types } from "effect"
 import { sortBy } from "remeda"
-import { ModelStatus } from "./model-status"
+import { ModelStatus } from "../provider/model-status"
 
 const ProviderApiInfo = Schema.Struct({
   id: Schema.String,
@@ -205,4 +205,4 @@ export function parseModel(model: string) {
   }
 }
 
-export * as Provider from "./provider"
+export * as Provider from "./provider-wire"

@@ -13,7 +13,7 @@ import PROMPT_META from "./prompt/meta.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import type { LegacyAgentInfo } from "@/compat/agent-wire"
 import { LegacyPermissionRules } from "@/permission/legacy-rules"
 import { Skill } from "@/skill"

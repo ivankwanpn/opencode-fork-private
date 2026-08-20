@@ -1,5 +1,5 @@
 import type { AuthWire } from "@/compat/auth-wire"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"

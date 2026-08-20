@@ -10,7 +10,7 @@ import {
   OpenRouter,
 } from "@opencode-ai/llm/providers"
 import type { ModelMessage } from "ai"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import { isRecord } from "@/util/record"
 
 type ToolInput = {

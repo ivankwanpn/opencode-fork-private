@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import { ConfigProviderV1 } from "@opencode-ai/core/v1/config/provider"
 import { CatalogModelStatus, ModelStatus } from "@/provider/model-status"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
-import { Provider } from "@/provider/provider"
+import { Provider } from "@/compat/provider-wire"
 
 describe("provider model status schemas", () => {
   test("keeps catalog status separate from normalized provider status", () => {

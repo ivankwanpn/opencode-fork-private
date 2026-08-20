@@ -28,7 +28,7 @@ import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
 import type { SystemError } from "bun"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import { DateTime, Effect, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */

@@ -16,7 +16,7 @@ import { Effect } from "effect"
 import * as ACPService from "@/acp/service"
 import * as ACPError from "@/acp/error"
 import { UsageService } from "@/acp/usage"
-import type { Provider } from "@/provider/provider"
+import type { Provider } from "@/compat/provider-wire"
 import { ACPClient } from "@/acp/client"
 import { makeClient } from "./client-fixture"
 

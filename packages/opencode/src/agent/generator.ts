@@ -15,7 +15,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import { Plugin } from "@/plugin"
-import { Provider } from "@/provider/provider"
+import { Provider } from "@/compat/provider-wire"
 import { ProviderTransform } from "@/provider/transform"
 import PROMPT_GENERATE from "./generate.txt"
 

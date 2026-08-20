@@ -87,12 +87,16 @@ test("production runtime does not resolve or mount the legacy Provider service",
       })),
     )
   )
-    .filter((entry) => /\bProvider\.(?:Service|node)\b/.test(entry.source))
+    .filter(
+      (entry) =>
+        /\bProvider\.(?:Service|node)\b/.test(entry.source) || entry.source.includes("@/provider/provider"),
+    )
     .map((entry) => entry.file)
     .sort()
 
-  const provider = await Bun.file(path.join(root, "provider/provider.ts")).text()
+  const provider = await Bun.file(path.join(root, "compat/provider-wire.ts")).text()
   const deleted = [
+    "packages/opencode/src/provider/provider.ts",
     "packages/opencode/test/provider/provider.test.ts",
     "packages/opencode/test/provider/provider-live-models.test.ts",
     "packages/opencode/test/provider/header-timeout.test.ts",

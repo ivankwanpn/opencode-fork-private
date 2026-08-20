@@ -66,6 +66,7 @@ import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref }
 import { createSessionLineage } from "@/pages/session/session-lineage"
 
 import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent } from "@/pages/session"
+import { ErrorTabPage } from "@/pages/error-tab"
 import { NewHome } from "@/pages/home"
 import { LegacyHome } from "@/pages/home/legacy-home"
 
@@ -608,6 +609,7 @@ function Routes(props: { serverScoped?: JSX.Element }) {
         <Route path="/server/:serverKey/session/:id" component={TargetSessionRoute} />
       </Show>
       <Route path="/new-session" component={DraftRoute} />
+      <Route path="/error/:errorID" component={ErrorTabPage} />
     </>
   )
 }

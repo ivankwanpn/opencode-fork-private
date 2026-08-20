@@ -217,6 +217,9 @@ function formatError(error: unknown, t: Translator): string {
 
 interface ErrorPageProps {
   error: unknown
+  fatal?: boolean
+  embedded?: boolean
+  onClose?: () => void
 }
 
 export const ErrorPage: Component<ErrorPageProps> = (props) => {
@@ -241,6 +244,7 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
   }
 
   onMount(() => {
+    if (props.fatal === false) return
     void ensureFatalErrorRecorded().catch(() => undefined)
   })
 
@@ -257,7 +261,8 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
 
   return (
     <div
-      class="relative flex-1 h-screen w-screen min-h-0 flex flex-col items-center justify-center font-sans"
+      class="relative flex-1 min-h-0 flex flex-col items-center justify-center font-sans"
+      classList={{ "h-screen w-screen": !props.embedded, "h-full w-full": props.embedded }}
       data-tauri-drag-region
     >
       <div class="w-2/3 max-w-3xl flex flex-col items-center justify-center gap-8">
@@ -276,9 +281,20 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
           hideLabel
         />
         <div class="flex flex-row items-center justify-center gap-3 flex-wrap max-w-64">
-          <Button size="large" onClick={platform.restart}>
-            {language.t("error.page.action.restart")}
-          </Button>
+          <Show
+            when={props.onClose}
+            fallback={
+              <Button size="large" onClick={platform.restart}>
+                {language.t("error.page.action.restart")}
+              </Button>
+            }
+          >
+            {(close) => (
+              <Button size="large" onClick={close()}>
+                {language.t("common.close")}
+              </Button>
+            )}
+          </Show>
           <Show when={platform.platform === "desktop" && platform.exportDebugLogs}>
             <Button size="large" variant="ghost" onClick={exportDebugLogs}>
               {language.t("error.page.action.exportLogs")}

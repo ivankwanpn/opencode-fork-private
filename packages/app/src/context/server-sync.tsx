@@ -890,7 +890,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         { agent: { [id]: next } as unknown as NonNullable<Config["agent"]> },
         { refreshProviders: false },
       )
-      await refreshAgents()
     } catch (error) {
       setGlobalStore("config", "agent", id, before)
       throw error

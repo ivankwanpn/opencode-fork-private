@@ -113,6 +113,15 @@ export function layoutTransitionState(scheduled: boolean, eligible: boolean, ret
   }
 }
 
+export function layoutTransitionEligibility(channel: string | undefined, eligible: boolean | undefined) {
+  return channel === "dev" || eligible === true
+}
+
+export function oldInterfaceRetirement(channel: string | undefined, sunset: Date | undefined, now = Date.now()) {
+  if (channel === "dev") return false
+  return sunset ? now >= sunset.getTime() : false
+}
+
 export const maximumSunsetTimeout = 2_147_483_647
 
 export function nextSunsetCheckDelay(sunset: number, now: number) {
@@ -240,9 +249,14 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       defaultSettings.general.showCustomAgents,
     )
     const sunset = oldInterfaceSunset
-    const [oldInterfaceRetired, setOldInterfaceRetired] = createSignal(sunset ? Date.now() >= sunset.getTime() : false)
-    const layoutTransitionClassified = createMemo(() => typeof store.general?.layoutTransitionEligible === "boolean")
-    const layoutTransitionEligible = withFallback(() => store.general?.layoutTransitionEligible, false)
+    const channel = import.meta.env.VITE_OPENCODE_CHANNEL
+    const [oldInterfaceRetired, setOldInterfaceRetired] = createSignal(oldInterfaceRetirement(channel, sunset))
+    const layoutTransitionClassified = createMemo(
+      () => channel === "dev" || typeof store.general?.layoutTransitionEligible === "boolean",
+    )
+    const layoutTransitionEligible = createMemo(() =>
+      layoutTransitionEligibility(channel, store.general?.layoutTransitionEligible),
+    )
     const newInterfaceNoticeDismissed = withFallback(() => store.general?.newInterfaceNoticeDismissed, false)
     const layoutUpgrade = createMemo(() =>
       launchState.classified && !launchState.migrationApplied
@@ -270,7 +284,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     })
     const visible = (preference: () => boolean) => createMemo(() => !newLayoutDesigns() || preference())
 
-    if (sunset && !oldInterfaceRetired()) {
+    if (sunset && channel !== "dev" && !oldInterfaceRetired()) {
       const timeout = { current: undefined as ReturnType<typeof setTimeout> | undefined }
       const checkSunset = () => {
         if (Date.now() >= sunset.getTime()) {

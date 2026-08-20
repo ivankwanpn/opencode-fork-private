@@ -53,6 +53,33 @@ const provider = {
 }
 
 describe("Config", () => {
+  it.effect("reloads changed configuration without rebuilding the service", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.promise(() =>
+          fs.writeFile(path.join(dir.path, "opencode.json"), JSON.stringify({ model: "openai/first" })),
+        ).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const file = path.join(dir.path, "opencode.json")
+              const config = yield* Config.Service
+              expect(Config.latest(yield* config.entries(), "model")).toBe("openai/first")
+
+              yield* Effect.promise(() => fs.writeFile(file, JSON.stringify({ model: "openai/second" })))
+              if (!config.reload) return yield* Effect.die("Config.reload is unavailable")
+              yield* config.reload()
+
+              expect(Config.latest(yield* config.entries(), "model")).toBe("openai/second")
+            }).pipe(Effect.provide(testLayer(dir.path))),
+          ),
+        ),
+      ),
+    ),
+  )
+
   it.effect("returns the latest defined scalar from priority-ordered documents", () =>
     Effect.sync(() => {
       const entries = [

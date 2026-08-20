@@ -50,18 +50,64 @@ describe("plugin runtime readiness", () => {
     ])
   })
 
-  test("reports initializing while expected contributions are not observed", () => {
+  test("reports terminal failures when expected contributions are absent after initialization", () => {
     const result = runtimeSnapshot([descriptor()], observations())
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "failed",
+      capabilities: [
+        { name: "skills", state: "failed", message: "Skill contribution was not discovered" },
+        { name: "commands", state: "failed", message: "Command contributions were not discovered" },
+        { name: "mcp", state: "failed", message: "MCP server state was not observed" },
+      ],
+    })
+  })
+
+  test("reports a missing plugin runtime registration as a terminal failure", () => {
+    const result = runtimeSnapshot(
+      [descriptor({ capabilities: ["plugin"], pluginRuntimeID: "claude-marketplace/marketplace/demo" })],
+      observations(),
+    )
+
+    expect(result.plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "failed",
+      capabilities: [{ name: "plugin", state: "failed", message: "Plugin runtime did not register" }],
+    })
+  })
+
+  test("keeps plugin-backed contributions pending while initialization continues in background", () => {
+    const runtime = descriptor({
+      capabilities: ["skills", "plugin", "tools"],
+      pluginRuntimeID: "claude-marketplace/marketplace/demo",
+      toolSourceIDs: ["claude-marketplace/marketplace/demo"],
+    })
+    const result = runtimeSnapshot([runtime], observations(), true)
 
     expect(result.plugins[0]).toEqual({
       id: Plugin.ID.make("demo@marketplace"),
       state: "initializing",
       capabilities: [
         { name: "skills", state: "pending" },
-        { name: "commands", state: "pending" },
-        { name: "mcp", state: "pending" },
+        { name: "plugin", state: "pending" },
+        { name: "tools", state: "pending" },
       ],
     })
+  })
+
+  test("keeps command and MCP observations pending during background initialization", () => {
+    const runtime = descriptor({
+      capabilities: ["commands", "mcp"],
+      commandNames: ["claude/marketplace/demo"],
+      mcpServers: ["claude:marketplace:demo"],
+    })
+    const result = runtimeSnapshot([runtime], observations(), true)
+
+    expect(result.plugins[0]?.capabilities).toEqual([
+      { name: "commands", state: "pending" },
+      { name: "mcp", state: "pending" },
+    ])
   })
 
   test("reports ready only from observed Skill, Command, MCP, and PluginV2 contributions", () => {
@@ -190,7 +236,7 @@ describe("plugin runtime readiness", () => {
     }
   })
 
-  test("keeps tools pending until every expected Plugin source is observed and ready", () => {
+  test("distinguishes missing tool sources from explicitly pending sources", () => {
     const runtime = descriptor({
       capabilities: ["tools"],
       skillDirectory: undefined,
@@ -203,13 +249,26 @@ describe("plugin runtime readiness", () => {
       state: "pending",
     }
 
-    for (const toolSources of [[], [pending]]) {
-      expect(runtimeSnapshot([runtime], observations({ toolSources })).plugins[0]).toEqual({
-        id: Plugin.ID.make("demo@marketplace"),
-        state: "initializing",
-        capabilities: [{ name: "tools", state: "pending" }],
-      })
-    }
+    expect(runtimeSnapshot([runtime], observations()).plugins[0]).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "failed",
+      capabilities: [{ name: "tools", state: "failed", message: "Plugin tool sources were not observed" }],
+    })
+    expect(
+      runtimeSnapshot(
+        [runtime],
+        observations({
+          toolSources: [
+            pending,
+            { source: { type: "plugin", id: "claude-marketplace/marketplace/helper" }, state: "pending" },
+          ],
+        }),
+      ).plugins[0],
+    ).toEqual({
+      id: Plugin.ID.make("demo@marketplace"),
+      state: "initializing",
+      capabilities: [{ name: "tools", state: "pending" }],
+    })
   })
 
   test("reports tools ready only when every exact Plugin source is ready", () => {

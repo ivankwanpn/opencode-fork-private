@@ -543,6 +543,24 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > 顯式從compat boundary匯入，`provider/provider.ts`路徑刪除並由source gate阻止回流；mechanical boundary
 > closeout後OpenCode typecheck與25項catalog/ACP/schema/source回歸通過。
 >
+> **999.0.19 targeted Config/Agent reload與marketplace V2 runtime修復** ✅：Core `Config.Service`補上原地
+> `reload()`，`LocationServiceMap.reloadAgents()`只重讀active Location的Config並重跑`AgentV2` transforms。
+> agent-only Desktop/global config update不再同步`invalidateAll()`或dispose instances，後端在response前完成targeted
+> Agent reload，App維持optimistic config並由既有`agent-config`事件非阻塞refresh；切換子代理模型不再重啟
+> Plugin/MCP/LSP整張location graph。
+>
+> Marketplace skills直接以安裝目錄註冊為`SkillV2.DirectorySource`，不消費或投影V1 plugin `config` mutation；
+> Superpowers即使generated artifact copy遺失仍從installed `skills/`提供V2能力。Marketplace catalog capability探測
+> 改為保序並行，skills/plugin-only enable/disable不再invalidate全Location，commands/MCP變更仍保留必要重載。
+> `Plugin.init()`加入8秒上限，runtime snapshot在init完成後把缺失貢獻判為terminal failure而非永久pending；前端只對
+> 明確`initializing/pending`狀態每秒重取。實際276項官方marketplace純讀benchmark為list約23ms、descriptors約12ms。
+>
+> **Marketplace plugin lifecycle follow-up** ✅：plugin initialization timeout不再取消InstanceState的實際初始化fiber；
+> timeout只讓目前呼叫先返回，初始化在service scope中繼續，後續runtime polling可觀察到完成狀態。外部plugin不再在
+>進入loader前同步等待全部背景dependency install，改為只在file-plugin retry路徑非同步等待；因此已安裝的
+> marketplace plugin（例如同時提供`skills/`與`.opencode/plugins/*`的Superpowers）不會因無關的dependency install
+> 卡住而同時失去SkillV2與plugin hook。timeout期間runtime保持`initializing/pending`，完成後再轉為`ready`或真實失敗。
+>
 > **批次 8 下一步**：Session、Provider/ProviderAuth與Auth runtime hard cut均已完成。接下来盤點並拆除Config runtime facade，
 > 再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部
 > wire 边界的引用关系删除 `core/src/v1/*`、`packages/schema/src/v1/*`。`v1/config` 必须保留到旧配置一次性

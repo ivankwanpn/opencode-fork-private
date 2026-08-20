@@ -5,7 +5,7 @@ import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import type { Plugin } from "@opencode-ai/schema/plugin"
-import { type Component, For, Show, createEffect, createMemo, createSignal } from "solid-js"
+import { type Component, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
@@ -21,6 +21,7 @@ import {
   type PluginLoadState,
 } from "./plugin-load-state"
 import { pluginRuntimePresentation } from "./plugin-runtime-status"
+import { pluginRuntimeNeedsRefresh } from "./plugin-runtime-poll"
 import "./settings-v2.css"
 
 type Catalog = Awaited<ReturnType<ServerApi["plugins"]["list"]>>
@@ -58,6 +59,7 @@ export const SettingsPluginsV2: Component = () => {
   const [error, setError] = createSignal<string>()
   let catalogRequest = 0
   let runtimeRequest = 0
+  let runtimeTimer: ReturnType<typeof setTimeout> | undefined
 
   const currentServer = (target: ReturnType<typeof sdk>, generation: number) =>
     target === sdk() && generation === target.protocolGeneration()
@@ -92,6 +94,8 @@ export const SettingsPluginsV2: Component = () => {
   }
 
   const loadRuntime = async (target: ReturnType<typeof sdk>, directory: string) => {
+    if (runtimeTimer !== undefined) clearTimeout(runtimeTimer)
+    runtimeTimer = undefined
     const request = ++runtimeRequest
     const generation = target.protocolGeneration()
     const context = { request, server: target, generation, directory }
@@ -108,6 +112,14 @@ export const SettingsPluginsV2: Component = () => {
       )
         return
       setRuntimeState((current) => resolvePluginLoad(current, request, value))
+      if (pluginRuntimeNeedsRefresh(value)) {
+        runtimeTimer = setTimeout(() => {
+          runtimeTimer = undefined
+          if (!currentServer(target, generation)) return
+          if (serverSync().data.path.directory !== directory) return
+          void loadRuntime(target, directory)
+        }, 1_000)
+      }
     } catch (reason) {
       if (
         !pluginLoadContextCurrent(context, {
@@ -327,7 +339,14 @@ export const SettingsPluginsV2: Component = () => {
       return
     }
     runtimeRequest += 1
+    if (runtimeTimer !== undefined) clearTimeout(runtimeTimer)
+    runtimeTimer = undefined
     setRuntimeState({ state: "idle" })
+  })
+
+  onCleanup(() => {
+    runtimeRequest += 1
+    if (runtimeTimer !== undefined) clearTimeout(runtimeTimer)
   })
 
   return (

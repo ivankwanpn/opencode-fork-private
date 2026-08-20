@@ -101,6 +101,25 @@ export type ManagedPluginSource = {
   readonly spec: string
 }
 
+export function pluginMutationRequiresLocationReload(
+  before: readonly RuntimeDescriptor[],
+  after: readonly RuntimeDescriptor[],
+) {
+  const previous = new Map(before.map((descriptor) => [descriptor.id, descriptor]))
+  const next = new Map(after.map((descriptor) => [descriptor.id, descriptor]))
+  return Array.from(new Set([...previous.keys(), ...next.keys()])).some((id) => {
+    const left = previous.get(id)
+    const right = next.get(id)
+    const capabilities = new Set([...(left?.capabilities ?? []), ...(right?.capabilities ?? [])])
+    if (!capabilities.has("commands") && !capabilities.has("mcp")) return false
+    return (
+      left?.enabled !== right?.enabled ||
+      JSON.stringify(left?.commandNames ?? []) !== JSON.stringify(right?.commandNames ?? []) ||
+      JSON.stringify(left?.mcpServers ?? []) !== JSON.stringify(right?.mcpServers ?? [])
+    )
+  })
+}
+
 const defaultPaths: MarketplacePaths = {
   stateFile: path.join(Global.Path.state, "claude-marketplaces.json"),
   marketplaceDirectory: path.join(Global.Path.data, "claude-marketplaces"),
@@ -464,25 +483,29 @@ export class ClaudeMarketplaceManager {
           lastUpdated: marketplace.lastUpdated,
           pluginCount: manifest.plugins.length,
         })
-        for (const entry of manifest.plugins) {
-          const id = pluginID(marketplace.name, entry.name)
-          const installed = state.plugins[id]
-          plugins.push({
-            id,
-            name: entry.name,
-            marketplace: marketplace.name,
-            ...(entry.description ? { description: entry.description } : {}),
-            ...(entry.version ? { version: entry.version } : {}),
-            ...(entry.category ? { category: entry.category } : {}),
-            tags: entry.tags,
-            capabilities: await this.capabilities(marketplace.cachePath, entry, installed?.installPath).catch(() => [
-              "plugin",
-            ]),
-            mcpServers: Object.keys(installed?.mcp ?? {}).toSorted(),
-            installed: installed?.installed === true,
-            enabled: installed?.enabled === true,
-          })
-        }
+        plugins.push(
+          ...(await Promise.all(
+            manifest.plugins.map(async (entry) => {
+              const id = pluginID(marketplace.name, entry.name)
+              const installed = state.plugins[id]
+              return {
+                id,
+                name: entry.name,
+                marketplace: marketplace.name,
+                ...(entry.description ? { description: entry.description } : {}),
+                ...(entry.version ? { version: entry.version } : {}),
+                ...(entry.category ? { category: entry.category } : {}),
+                tags: entry.tags,
+                capabilities: await this.capabilities(marketplace.cachePath, entry, installed?.installPath).catch(
+                  () => ["plugin"] as const,
+                ),
+                mcpServers: Object.keys(installed?.mcp ?? {}).toSorted(),
+                installed: installed?.installed === true,
+                enabled: installed?.enabled === true,
+              }
+            }),
+          )),
+        )
       } catch (error) {
         marketplaces.push({
           name: marketplace.name,
@@ -659,8 +682,10 @@ export class ClaudeMarketplaceManager {
             }
           }
 
-          const skillDirectory =
-            plugin.artifacts?.skillDirectory && (await isDirectory(plugin.artifacts.skillDirectory))
+          const installedSkills = path.join(plugin.installPath, "skills")
+          const skillDirectory = (await isDirectory(installedSkills))
+            ? installedSkills
+            : plugin.artifacts?.skillDirectory && (await isDirectory(plugin.artifacts.skillDirectory))
               ? plugin.artifacts.skillDirectory
               : undefined
           const commandNames = plugin.artifacts?.commandDirectory

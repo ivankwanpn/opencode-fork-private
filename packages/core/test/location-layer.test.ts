@@ -51,6 +51,40 @@ const it = testEffect(
 )
 
 describe("LocationServiceMap", () => {
+  it.live("reloads agent configuration without rebuilding the location context", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) => {
+        const ref = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+        const file = path.join(dir.path, "opencode.json")
+        const agent = (locations: LocationServiceMap.Interface) =>
+          AgentV2.Service.use((service) => service.get(AgentV2.ID.make("worker"))).pipe(
+            Effect.provide(locations.get(ref)),
+          )
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            fs.writeFile(file, JSON.stringify({ agent: { worker: { model: "openai/first" } } })),
+          )
+          const locations = yield* LocationServiceMap.Service
+          const context = yield* locations.contextEffect(ref)
+          expect((yield* agent(locations))?.model?.id).toBe(ModelV2.ID.make("first"))
+
+          yield* Effect.promise(() =>
+            fs.writeFile(file, JSON.stringify({ agent: { worker: { model: "openai/second" } } })),
+          )
+          if (!locations.reloadAgents) return yield* Effect.die("LocationServiceMap.reloadAgents is unavailable")
+          yield* locations.reloadAgents()
+
+          expect((yield* agent(locations))?.model?.id).toBe(ModelV2.ID.make("second"))
+          expect(yield* locations.contextEffect(ref)).toBe(context)
+        }).pipe(Effect.scoped)
+      }),
+    ),
+  )
+
   it.live("invalidates every loaded location", () =>
     Effect.acquireRelease(
       Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),

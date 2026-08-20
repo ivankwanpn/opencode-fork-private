@@ -266,6 +266,9 @@ export function Titlebar(props: { debugTools?: { visible: boolean; toggle: () =>
               if (route.type === "draft") {
                 return tabsStore.find((item) => item.type === "draft" && item.draftID === route.draftID)
               }
+              if (route.type === "error") {
+                return tabsStore.find((item) => item.type === "error" && item.errorID === route.errorID)
+              }
               if (route.type === "session") {
                 const main = tabsStore.find(
                   (item) =>

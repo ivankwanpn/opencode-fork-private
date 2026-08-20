@@ -79,8 +79,9 @@ function readStatus(error: unknown): number | undefined {
 }
 
 function unwrapNamedError(error: unknown): unknown {
-  if (error instanceof Error && error.cause && typeof error.cause === "object" && "body" in error.cause) {
-    return error.cause.body
+  if (error instanceof Error && error.cause && typeof error.cause === "object") {
+    if ("body" in error.cause) return error.cause.body
+    return error.cause
   }
   return error
 }

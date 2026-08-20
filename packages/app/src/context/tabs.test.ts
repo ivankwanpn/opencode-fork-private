@@ -3,6 +3,7 @@ import { createRoot, getOwner, onCleanup } from "solid-js"
 import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import type { SessionTab, Tab } from "./tabs"
+import { errorHref, tabHref, tabKey } from "./tab-route"
 import type { ServerConnection } from "./server"
 
 const server = "local\nhttp://localhost:4096" as ServerConnection.Key
@@ -10,6 +11,14 @@ const server = "local\nhttp://localhost:4096" as ServerConnection.Key
 function sessionTab(sessionId: string): SessionTab {
   return { type: "session", server, sessionId }
 }
+
+test("error tabs use a stable closable route identity", () => {
+  const tab = { type: "error" as const, errorID: "err_1", server }
+
+  expect(errorHref(tab.errorID)).toBe("/error/err_1")
+  expect(tabHref(tab)).toBe("/error/err_1")
+  expect(tabKey(tab)).toBe(`${server}\n/error/err_1`)
+})
 
 describe("tab memory", () => {
   test("keeps state until its tab is removed", () => {

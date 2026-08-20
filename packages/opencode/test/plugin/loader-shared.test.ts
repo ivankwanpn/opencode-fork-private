@@ -78,6 +78,7 @@ function load(
   flags?: Parameters<typeof RuntimeFlags.layer>[0],
   locations: Layer.Layer<LocationServiceMap.Service> = locationServiceMapLayer,
   marketplaceSources: ReadonlyArray<{ runtimeID: string; spec: string }> = [],
+  waitForDependencies: () => Effect.Effect<void> = () => Effect.void,
 ) {
   const source = path.join(dir, "opencode.json")
   return Effect.gen(function* () {
@@ -100,6 +101,7 @@ function load(
                   plugin_origins: plugins.map((plugin) => ({ spec: plugin, source, scope: "local" as const })),
                 }),
               directories: () => Effect.succeed([dir]),
+              waitForDependencies,
             }),
           ],
           [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true, ...flags })],
@@ -150,9 +152,13 @@ describe("plugin.loader.shared", () => {
           const added: string[] = []
           const removed: string[] = []
           const runtimeID = "claude-marketplace/official/marketplace-demo"
-          yield* load(tmp.path, undefined, recordingLocationServiceMap(added, removed), [
-            { runtimeID, spec: tmp.extra.spec },
-          ])
+          yield* load(
+            tmp.path,
+            undefined,
+            recordingLocationServiceMap(added, removed),
+            [{ runtimeID, spec: tmp.extra.spec }],
+            () => Effect.never,
+          )
 
           expect(yield* Effect.promise(() => Bun.file(tmp.extra.marker).text())).toBe("called")
           expect(added).toEqual([runtimeID])

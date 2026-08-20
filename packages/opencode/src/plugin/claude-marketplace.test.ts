@@ -17,7 +17,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, LayerMap } from "effect"
 import { Config } from "../config/config"
 import { ConfigCommand } from "../config/command"
-import { ClaudeMarketplaceManager, type MarketplacePaths } from "./claude-marketplace"
+import {
+  ClaudeMarketplaceManager,
+  pluginMutationRequiresLocationReload,
+  type MarketplacePaths,
+} from "./claude-marketplace"
 import { DirectExtensionManager } from "./direct-extension"
 import { NativeClaudeMarketplace } from "./native-claude-marketplace"
 import { Process } from "../util/process"
@@ -85,6 +89,26 @@ async function git(cwd: string, args: string[]) {
 }
 
 describe("ClaudeMarketplaceManager", () => {
+  test("reloads locations only for marketplace capabilities backed by location config", () => {
+    const descriptor = (capabilities: Array<"skills" | "plugin" | "commands" | "mcp">, enabled: boolean) => ({
+      id: "demo@official",
+      enabled,
+      capabilities,
+      commandNames: capabilities.includes("commands") ? ["demo"] : [],
+      mcpServers: capabilities.includes("mcp") ? ["demo"] : [],
+      toolSourceIDs: [],
+    })
+
+    expect(
+      pluginMutationRequiresLocationReload(
+        [descriptor(["skills", "plugin"], false)],
+        [descriptor(["skills", "plugin"], true)],
+      ),
+    ).toBe(false)
+    expect(pluginMutationRequiresLocationReload([descriptor(["mcp"], false)], [descriptor(["mcp"], true)])).toBe(true)
+    expect(pluginMutationRequiresLocationReload([descriptor(["commands"], true)], [])).toBe(true)
+  })
+
   test("installs and materializes a relative Claude plugin", async () => {
     const marketplace = path.join(temporaryDirectory, "source")
     await writeMarketplace(marketplace, "./plugins/demo")
@@ -119,7 +143,7 @@ describe("ClaudeMarketplaceManager", () => {
         id: "demo@local-marketplace",
         enabled: true,
         capabilities: ["skills", "commands", "mcp"],
-        skillDirectory: path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo"),
+        skillDirectory: path.join(testPaths().pluginDirectory, "local-marketplace__demo", "skills"),
         commandNames: ["claude/local-marketplace__demo/demo"],
         mcpServers: ["claude:local-marketplace:demo:demo"],
         toolSourceIDs: ["claude-marketplace/local-marketplace/demo"],
@@ -232,6 +256,9 @@ describe("ClaudeMarketplaceManager", () => {
         spec: pathToFileURL(path.join(testPaths().pluginDirectory, "local-marketplace__demo")).href,
       },
     ])
+    expect((await manager.runtimeDescriptors())[0]?.skillDirectory).toBe(
+      path.join(testPaths().pluginDirectory, "local-marketplace__demo", "skills"),
+    )
 
     await manager.disable("demo@local-marketplace")
     expect(await manager.enabledPluginSources()).toEqual([])
@@ -286,6 +313,7 @@ describe("NativeClaudeMarketplace", () => {
             init: () =>
               Effect.sync(() => {
                 initialized += 1
+                return true
               }),
           }),
         ),
@@ -298,7 +326,7 @@ describe("NativeClaudeMarketplace", () => {
             {
               name: "demo",
               location: AbsolutePath.make(
-                path.join(testPaths().generatedSkillDirectory, "local-marketplace__demo", "demo", "SKILL.md"),
+                path.join(testPaths().pluginDirectory, "local-marketplace__demo", "skills", "demo", "SKILL.md"),
               ),
               content: "Demo skill",
             },
@@ -384,7 +412,7 @@ describe("NativeClaudeMarketplace", () => {
           locations,
           events,
           Layer.mock(Service, {
-            init: () => Effect.void,
+            init: () => Effect.succeed(true),
           }),
         ),
       ),

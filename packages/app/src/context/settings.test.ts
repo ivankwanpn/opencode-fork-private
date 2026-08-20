@@ -4,10 +4,12 @@ import { createRoot } from "solid-js"
 let settingsModule: typeof import("./settings")
 let hasExistingWebState: typeof import("./settings")["hasExistingWebState"]
 let isAppUpgrade: typeof import("./settings")["isAppUpgrade"]
+let layoutTransitionEligibility: typeof import("./settings")["layoutTransitionEligibility"]
 let layoutTransitionState: typeof import("./settings")["layoutTransitionState"]
 let maximumSunsetTimeout: typeof import("./settings")["maximumSunsetTimeout"]
 let newLayoutDesignsDefault: typeof import("./settings")["newLayoutDesignsDefault"]
 let nextSunsetCheckDelay: typeof import("./settings")["nextSunsetCheckDelay"]
+let oldInterfaceRetirement: typeof import("./settings")["oldInterfaceRetirement"]
 let resolveNewLayoutDesigns: typeof import("./settings")["resolveNewLayoutDesigns"]
 let SettingsProvider: typeof import("./settings")["SettingsProvider"]
 let shouldDisplayTabsToast: typeof import("./settings")["shouldDisplayTabsToast"]
@@ -39,10 +41,12 @@ beforeAll(async () => {
   settingsModule = await import("./settings")
   hasExistingWebState = settingsModule.hasExistingWebState
   isAppUpgrade = settingsModule.isAppUpgrade
+  layoutTransitionEligibility = settingsModule.layoutTransitionEligibility
   layoutTransitionState = settingsModule.layoutTransitionState
   maximumSunsetTimeout = settingsModule.maximumSunsetTimeout
   newLayoutDesignsDefault = settingsModule.newLayoutDesignsDefault
   nextSunsetCheckDelay = settingsModule.nextSunsetCheckDelay
+  oldInterfaceRetirement = settingsModule.oldInterfaceRetirement
   resolveNewLayoutDesigns = settingsModule.resolveNewLayoutDesigns
   SettingsProvider = settingsModule.SettingsProvider
   shouldDisplayTabsToast = settingsModule.shouldDisplayTabsToast
@@ -61,6 +65,19 @@ describe("layout transition", () => {
 
   test("existing profiles can switch before sunset", () => {
     expect(layoutTransitionState(true, true, false, false)).toEqual({ available: true, notice: false })
+  })
+
+  test("dev can always switch layouts without an existing-install classification", () => {
+    expect(layoutTransitionEligibility("dev", undefined)).toBe(true)
+    expect(layoutTransitionEligibility("dev", false)).toBe(true)
+    expect(oldInterfaceRetirement("dev", new Date(0), Date.now())).toBe(false)
+  })
+
+  test("production preserves eligibility and sunset retirement", () => {
+    expect(layoutTransitionEligibility("prod", undefined)).toBe(false)
+    expect(layoutTransitionEligibility("prod", true)).toBe(true)
+    expect(oldInterfaceRetirement("prod", new Date(1_000), 999)).toBe(false)
+    expect(oldInterfaceRetirement("prod", new Date(1_000), 1_000)).toBe(true)
   })
 
   test("classifies web profiles from existing settings or a recorded version", () => {

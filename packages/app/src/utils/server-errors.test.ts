@@ -186,6 +186,7 @@ describe("isSessionNotFoundError", () => {
     } satisfies SessionNotFoundError
 
     expect(isSessionNotFoundError(new Error(body.message, { cause: { body, status: 404 } }), body.sessionID)).toBe(true)
+    expect(isSessionNotFoundError(new Error("Unknown error", { cause: body }), body.sessionID)).toBe(true)
   })
 
   test("rejects errors for other sessions and other 404 responses", () => {

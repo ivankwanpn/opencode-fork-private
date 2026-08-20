@@ -6,6 +6,7 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 import { it } from "../lib/effect"
 import { waitGlobalBusEvent } from "./global-bus"
+import { GlobalBus, type GlobalEvent } from "@/bus/global"
 
 function app() {
   return Server.Default().app
@@ -71,6 +72,40 @@ afterEach(async () => {
 })
 
 describe("config HttpApi", () => {
+  it.live(
+    "does not dispose active instances for an agent-only update",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+      yield* worker(tmp.path)
+      const disposed: GlobalEvent[] = []
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const handler = (event: GlobalEvent) => {
+            if (event.payload.type === "server.instance.disposed") disposed.push(event)
+          }
+          GlobalBus.on("event", handler)
+          return handler
+        }),
+        (handler) => Effect.sync(() => GlobalBus.off("event", handler)),
+      )
+
+      expect(
+        (yield* updateAgent({
+          route: "/api/config",
+          directory: tmp.path,
+          model: "deepseek/deepseek-v4-flash",
+          protocol: "anthropic-messages",
+          variant: "max",
+        })).status,
+      ).toBe(200)
+      expect(disposed).toEqual([])
+      expect(yield* worker(tmp.path)).toMatchObject({
+        model: { id: "deepseek-v4-flash", providerID: "deepseek", variant: "max" },
+      })
+    }),
+    15_000,
+  )
+
   it.live(
     "refreshes the V2 agent catalog before an agent config update returns",
     Effect.gen(function* () {

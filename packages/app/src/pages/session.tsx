@@ -32,7 +32,6 @@ import { Select } from "@opencode-ai/ui/select"
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode-ai/ui/scroll-view"
 import { Tabs } from "@opencode-ai/ui/tabs"
-import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
 import { Button } from "@opencode-ai/ui/button"
@@ -40,7 +39,6 @@ import { showToast } from "@/utils/toast"
 import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
 import { useLocation, useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
-import { ErrorPage } from "@/pages/error"
 import { CommentsProvider, useComments } from "@/context/comments"
 import { useCommand } from "@/context/command"
 import { DirectoryDataProvider } from "@/pages/directory-layout"
@@ -53,7 +51,7 @@ import { PromptProvider, usePrompt } from "@/context/prompt"
 import { usePlatform } from "@/context/platform"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
-import { ServerConnection, serverName, useServer } from "@/context/server"
+import { ServerConnection, useServer } from "@/context/server"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
@@ -189,7 +187,7 @@ export function SessionRouteErrorBoundary(
             </SessionPanelFrame>
           </SessionRouteFrame>
         ) : (
-          <ErrorPage error={error} />
+          <SessionErrorFallback error={error} sessionID={props.sessionID} serverKey={props.serverKey} />
         )
       }
     >
@@ -202,43 +200,31 @@ function SessionErrorFallback(props: { error: unknown; sessionID?: string; serve
   const language = useLanguage()
   const server = useServer()
   const tabs = useTabs()
-  const displayServer = createMemo(() => {
-    const key = props.serverKey ?? server.key
-    const conn = server.list.find((item) => ServerConnection.key(item) === key)
-    return conn ? serverName(conn) : key
+  const navigate = useNavigate()
+  onMount(() => {
+    const missing = isCurrentSessionNotFoundError(props.error, props.sessionID)
+    const title = language.t(missing ? "session.error.notFound" : "common.requestFailed")
+    const serverKey = props.serverKey ?? server.key
+    showToast({
+      title,
+      description: missing
+        ? language.t("session.error.notFound.description")
+        : formatServerError(props.error, language.t),
+      persistent: true,
+      actions: [
+        {
+          label: language.t("error.page.details.label"),
+          onClick: () => tabs.openError({ server: serverKey, title, error: props.error }),
+        },
+      ],
+    })
+    if (missing && props.sessionID) {
+      tabs.removeSessionTab({ server: serverKey, sessionId: props.sessionID })
+      return
+    }
+    navigate("/")
   })
-  const closeTab = () => {
-    if (!props.sessionID) return
-    tabs.removeSessionTab({ server: props.serverKey ?? server.key, sessionId: props.sessionID })
-  }
-  if (isCurrentSessionNotFoundError(props.error, props.sessionID)) {
-    return (
-      <div class="flex-1 min-h-0 overflow-hidden">
-        <div class="h-full px-6 pb-42 -mt-4 flex flex-col items-center justify-center text-center gap-4">
-          <div class="flex flex-col items-center gap-2">
-            <div class="text-16-medium text-text max-w-md">{language.t("session.error.notFound")}</div>
-            <div class="text-13-regular text-text-weak max-w-md">
-              {language.t("session.error.notFound.description")}
-            </div>
-          </div>
-          <Show when={props.sessionID}>
-            {(sessionID) => (
-              <div class="max-w-full flex flex-col items-center gap-1">
-                <div class="max-w-full text-11-regular text-text-faint break-all">{displayServer()}</div>
-                <code class="max-w-full rounded-[4px] px-1 py-0.5 font-mono text-xs font-medium leading-4 text-text-base break-all bg-[color-mix(in_oklch,var(--v2-text-text-base)_8%,transparent)]">
-                  {sessionID()}
-                </code>
-              </div>
-            )}
-          </Show>
-          <ButtonV2 variant="neutral" size="normal" icon="xmark-small" onClick={closeTab}>
-            {language.t("session.error.notFound.closeTab")}
-          </ButtonV2>
-        </div>
-      </div>
-    )
-  }
-  return <ErrorPage error={props.error} />
+  return null
 }
 
 function ResolvedTargetSessionRoute() {

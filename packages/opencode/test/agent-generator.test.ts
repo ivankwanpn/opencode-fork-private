@@ -189,7 +189,7 @@ function makeLayer(options: Options = {}) {
     trigger,
     list: () => Effect.succeed([]),
     entries: () => Effect.succeed([]),
-    init: () => Effect.void,
+    init: () => Effect.succeed(true),
   }))
   const layer = AppNodeBuilder.build(AgentGenerator.node, [
     [Config.node, Layer.mock(Config.Service, { get: () => Effect.succeed({}) })],

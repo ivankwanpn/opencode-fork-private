@@ -18,11 +18,12 @@ import { createPathHelpers } from "./file/path"
 import type { ProjectAvatarVariant } from "@opencode-ai/ui/v2/project-avatar-v2"
 import { migrateLegacySessionStateKeys, ServerScope, SessionStateKey } from "@/utils/server-scope"
 import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./layout-helpers"
-import { requireServerKey } from "@/utils/session-route"
 import { type DraftTab, useTabs } from "./tabs"
 import { closeSessionTab, openSessionTab, previewSessionTab, type SessionTabs } from "./layout-tabs"
+import { currentRoute, type LayoutRoute } from "./layout-route"
 
 export { createSessionKeyReader, ensureSessionKey, pruneSessionKeys }
+export { currentRoute, type LayoutRoute } from "./layout-route"
 
 export type { ProjectAvatarVariant }
 
@@ -89,12 +90,6 @@ export type ReviewDiffStyle = "unified" | "split"
 export type ReviewChangeMode = "git" | "branch" | "turn"
 export type ReviewPanelSource = "context-button" | "other"
 
-export type LayoutRoute =
-  | { type: "home" }
-  | { type: "draft"; draftID: string; server?: ServerConnection.Key }
-  | { type: "dir-new-sesssion"; dir: string; dirBase64: string; server?: ServerConnection.Key }
-  | { type: "session"; sessionId: string; server?: ServerConnection.Key }
-
 const sessionPath = (key: string) => {
   const dir = SessionStateKey.route(key).split("/")[0]
   if (!dir) return
@@ -127,35 +122,6 @@ const normalizeStoredSessionTabs = (key: string, tabs: SessionTabs) => {
   }
 }
 
-export const currentRoute = (pathname: string, search: string): LayoutRoute => {
-  const parts = pathname.split("/").filter(Boolean)
-  if (parts.length === 0) return { type: "home" }
-
-  if (parts[0] === "new-session") {
-    const draftID = new URLSearchParams(search).get("draftId")
-    if (!draftID) return { type: "home" }
-    return { type: "draft", draftID }
-  }
-
-  if (parts[0] === "server" && parts[2] === "session" && parts[3]) {
-    return {
-      type: "session",
-      sessionId: parts[3],
-      server: requireServerKey(parts[1]),
-    }
-  }
-
-  const dirBase64 = parts[0]
-  const dir = decode64(dirBase64)
-  if (!dir) return { type: "home" }
-
-  if (parts[1] !== "session") return { type: "home" }
-
-  const id = parts[2]
-  if (id) return { type: "session", sessionId: id }
-  return { type: "dir-new-sesssion", dir, dirBase64 }
-}
-
 export const { use: useLayout, provider: LayoutProvider } = createSimpleContext({
   name: "Layout",
   gate: false,
@@ -173,6 +139,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       if (value.type === "draft") {
         const draft = tabs.store.find((tab): tab is DraftTab => tab.type === "draft" && tab.draftID === value.draftID)
         if (draft) return { ...value, server: draft.server }
+      }
+      if (value.type === "error") {
+        const error = tabs.store.find((tab) => tab.type === "error" && tab.errorID === value.errorID)
+        if (error) return { ...value, server: error.server }
       }
       return { ...value, server: server.key }
     })

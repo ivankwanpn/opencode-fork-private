@@ -348,6 +348,7 @@ export function DraftTabItem(props: {
   dragging?: boolean
   pressed?: boolean
   hidden?: boolean
+  icon?: "edit" | "warning"
 }) {
   const closeTab = (event: MouseEvent) => {
     event.preventDefault()
@@ -399,7 +400,7 @@ export function DraftTabItem(props: {
         class="flex h-full min-w-0 flex-1 flex-row items-center gap-1.5 text-[13px] font-medium text-v2-text-text-faint group-data-[active='true']:text-v2-text-text-base [-webkit-user-drag:none]"
       >
         <span class="flex size-4 shrink-0 items-center justify-center">
-          <IconV2 name="edit" />
+          <IconV2 name={props.icon ?? "edit"} />
         </span>
         <span
           data-titlebar-tab-title

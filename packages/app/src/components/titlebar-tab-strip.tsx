@@ -121,13 +121,14 @@ function SessionTabSlot(props: {
 }
 
 function DraftTabSlot(props: {
-  tab: Extract<Tab, { type: "draft" }>
+  tab: Exclude<Tab, SessionTab>
   id: string
   index: () => number
   active: () => boolean
   title: string
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
+  icon?: "edit" | "warning"
 }) {
   const sortable = useSortable({
     get id() {
@@ -153,6 +154,7 @@ function DraftTabSlot(props: {
         }}
         href={tabHref(props.tab)}
         title={props.title}
+        icon={props.icon}
         onNavigate={() => props.onNavigate(ref)}
         onClose={props.onClose}
         active={props.active()}
@@ -173,6 +175,7 @@ export function TitlebarTabStrip(props: {
 }) {
   const global = useGlobal()
   const language = useLanguage()
+  const tabs = useTabs()
   let scrollRef!: HTMLDivElement
   let listRef!: HTMLDivElement
   let resizeFrame: number | undefined
@@ -288,6 +291,24 @@ export function TitlebarTabStrip(props: {
                         prefetch.remove(id)
                         props.onClose(tab)
                       }}
+                    />
+                  )
+                }
+
+                if (tab.type === "error") {
+                  return (
+                    <DraftTabSlot
+                      tab={tab}
+                      id={id}
+                      index={index}
+                      active={() => props.currentTab() === tab}
+                      title={tabs.info[id]?.title ?? language.t("error.page.title")}
+                      icon="warning"
+                      onNavigate={(element) => {
+                        ref = element
+                        navigate(element)
+                      }}
+                      onClose={() => props.onClose(tab)}
                     />
                   )
                 }

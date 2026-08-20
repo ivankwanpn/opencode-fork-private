@@ -3,6 +3,7 @@ import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginV1Compat } from "@opencode-ai/core/plugin/v1-compat"
+import { SkillV2 } from "@opencode-ai/core/skill"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import type {
   Hooks,
@@ -27,7 +28,7 @@ import { DigitalOceanAuthPlugin } from "./digitalocean"
 import { XaiAuthPlugin } from "./xai"
 import { ModalPlugin } from "./modal/modal"
 import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
-import { DateTime, Effect, Layer, Context } from "effect"
+import { Context, DateTime, Duration, Effect, Fiber, Layer, Option, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { errorMessage } from "@/util/error"
@@ -39,6 +40,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
 import { MarketplacePluginRuntime } from "./marketplace-runtime"
+import type { RuntimeDescriptor } from "./claude-marketplace"
 
 export type Entry = {
   readonly id: string
@@ -70,10 +72,46 @@ export interface Interface {
   ) => Effect.Effect<Output>
   readonly list: () => Effect.Effect<Hooks[]>
   readonly entries: () => Effect.Effect<ReadonlyArray<Entry>>
-  readonly init: () => Effect.Effect<void>
+  readonly init: () => Effect.Effect<boolean>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Plugin") {}
+
+const initializationTimeout = Duration.seconds(8)
+
+export function boundedInitialization<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  scope: Scope.Scope,
+  timeout: Duration.Input = initializationTimeout,
+) {
+  return Effect.gen(function* () {
+    const fiber = yield* effect.pipe(Effect.forkIn(scope, { startImmediately: true }))
+    const result = yield* Fiber.join(fiber).pipe(Effect.timeoutOption(timeout))
+    if (Option.isSome(result)) return true
+    yield* Effect.logWarning("plugin initialization timed out; continuing in background")
+    return false
+  })
+}
+
+export const registerManagedSkills = Effect.fn("Plugin.registerManagedSkills")(function* (
+  descriptors: readonly RuntimeDescriptor[],
+) {
+  const directories = descriptors.flatMap((descriptor) =>
+    descriptor.enabled && descriptor.skillDirectory ? [descriptor.skillDirectory] : [],
+  )
+  if (!directories.length) return
+  const skills = yield* SkillV2.Service
+  yield* skills.transform((draft) => {
+    for (const directory of directories) {
+      draft.source(
+        SkillV2.DirectorySource.make({
+          type: "directory",
+          path: AbsolutePath.make(directory),
+        }),
+      )
+    }
+  })
+})
 
 export function experimentalWebSocketsEnabled(input: { enabled: boolean; channel?: string }) {
   return input.enabled || ["local", "dev", "beta"].includes(input.channel ?? InstallationChannel)
@@ -163,6 +201,7 @@ async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput, runtim
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const scope = yield* Scope.Scope
     const events = yield* EventV2Bridge.Service
     const config = yield* Config.Service
     const flags = yield* RuntimeFlags.Service
@@ -175,14 +214,11 @@ const layer = Layer.effect(
         const failures = new Map<string, string>()
         const bridge = yield* EffectBridge.make()
         const workspaceID = yield* InstanceState.workspaceID
-        const location = locations
-          .get(
-            Location.Ref.make({
-              directory: AbsolutePath.make(ctx.directory),
-              ...(workspaceID === undefined ? {} : { workspaceID }),
-            }),
-          )
-          .pipe(Layer.orDie)
+        const locationRef = Location.Ref.make({
+          directory: AbsolutePath.make(ctx.directory),
+          ...(workspaceID === undefined ? {} : { workspaceID }),
+        })
+        const location = locations.get(locationRef).pipe(Layer.orDie)
 
         function publishPluginError(message: string) {
           bridge.fork(
@@ -239,7 +275,13 @@ const layer = Layer.effect(
           if (init._tag === "Some") loadedHooks.push({ id: internal.id, hooks: init.value })
         }
 
-        const managed = flags.pure ? [] : yield* marketplace.sources()
+        const [managed, descriptors] = flags.pure
+          ? [[], []]
+          : yield* Effect.all(
+              [marketplace.sources(), marketplace.descriptors ? marketplace.descriptors() : Effect.succeed([])],
+              { concurrency: "unbounded" },
+            )
+        yield* registerManagedSkills(descriptors).pipe(Effect.provide(location))
         const plugins = flags.pure
           ? []
           : ConfigPlugin.deduplicatePluginOrigins([
@@ -253,12 +295,11 @@ const layer = Layer.effect(
             ])
         if (flags.pure && cfg.plugin_origins?.length) {
         }
-        if (plugins.length) yield* config.waitForDependencies()
-
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({
             items: plugins,
             kind: "server",
+            wait: () => bridge.promise(config.waitForDependencies()),
             finish: async (load, origin) => {
               if (origin.runtimeID) failures.delete(origin.runtimeID)
               return { load, runtimeID: origin.runtimeID }
@@ -389,7 +430,7 @@ const layer = Layer.effect(
     })
 
     const init = Effect.fn("Plugin.init")(function* () {
-      yield* InstanceState.get(state)
+      return yield* boundedInitialization(InstanceState.get(state), scope)
     })
 
     return Service.of({ trigger, list, entries, init })

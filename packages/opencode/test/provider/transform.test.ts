@@ -589,7 +589,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
         plugin: {
           trigger: (_name: string, _input: unknown, output: unknown) => Effect.succeed(output),
           list: () => Effect.succeed([]),
-          init: () => Effect.void,
+          init: () => Effect.succeed(true),
         } as any,
         flags: { outputTokenMax: 32_000, client: "test" } as any,
         isWorkflow: false,

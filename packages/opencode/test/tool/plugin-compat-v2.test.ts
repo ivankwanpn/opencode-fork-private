@@ -69,7 +69,7 @@ function pluginLayer(entries: ReadonlyArray<Plugin.Entry>) {
   return Layer.succeed(
     Plugin.Service,
     Plugin.Service.of({
-      init: () => Effect.void,
+      init: () => Effect.succeed(true),
       trigger: ((_name: unknown, _input: unknown, output: unknown) =>
         Effect.succeed(output)) as Plugin.Interface["trigger"],
       list: () => Effect.succeed(entries.map((entry) => entry.hooks)),

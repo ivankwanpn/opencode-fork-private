@@ -8,11 +8,14 @@ import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { usePlatform } from "./platform"
 import { uuid } from "@/utils/uuid"
 import { SessionTabsRemovedDetail } from "@/components/titlebar-session-events"
-import { activeSessionIDForRoute, sessionHref } from "@/utils/session-route"
+import { activeSessionIDForRoute } from "@/utils/session-route"
 import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
+import { draftHref, errorHref, tabHref, tabKey } from "./tab-route"
+
+export { draftHref, errorHref, tabHref, tabKey } from "./tab-route"
 
 export type SessionTab = {
   type: "session"
@@ -28,7 +31,18 @@ export type DraftTab = {
   worktree?: string
 }
 
-export type Tab = SessionTab | DraftTab
+export type ErrorTab = {
+  type: "error"
+  errorID: string
+  server: ServerConnection.Key
+}
+
+export type ErrorTabData = {
+  title: string
+  error: unknown
+}
+
+export type Tab = SessionTab | DraftTab | ErrorTab
 
 export type TabInfo = {
   title?: string
@@ -38,13 +52,6 @@ export type TabInfo = {
 type RecentTab = {
   key?: string
 }
-
-export const draftHref = (draftID: string) => `/new-session?draftId=${encodeURIComponent(draftID)}`
-
-export const tabHref = (tab: Tab) =>
-  tab.type === "draft" ? draftHref(tab.draftID) : sessionHref(tab.server, tab.sessionId)
-
-export const tabKey = (tab: Tab) => (tab.type === "draft" ? `draft:${tab.draftID}` : `${tab.server}\n${tabHref(tab)}`)
 
 export function sessionHasOpenTab(tabs: Tab[], server: ServerConnection.Key, session: Session) {
   return tabs.some((tab) => tab.type === "session" && tab.server === server && tab.sessionId === session.id)
@@ -220,6 +227,31 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           navigate(draftHref(draftID))
         })
         return tab
+      },
+      openError(input: ErrorTabData & { server?: ServerConnection.Key }) {
+        const errorID = uuid()
+        const tab = { type: "error" as const, errorID, server: input.server ?? server.key }
+        const key = tabKey(tab)
+        memory.ensure<ErrorTabData>(key, "error", () => ({ title: input.title, error: input.error }))
+        setInfo(key, { title: input.title })
+        void startTransition(() => {
+          setStore(
+            produce((tabs) => {
+              tabs.push(tab)
+            }),
+          )
+          navigateTab(tab)
+        })
+        return tab
+      },
+      error(errorID: string) {
+        const tab = store.find((item): item is ErrorTab => item.type === "error" && item.errorID === errorID)
+        if (!tab) return
+        return memory.get<ErrorTabData>(tabKey(tab), "error")
+      },
+      removeErrorTab(errorID: string) {
+        const index = store.findIndex((item) => item.type === "error" && item.errorID === errorID)
+        if (index !== -1) removeTab(index)
       },
       updateDraft(draftID: string, draft: Partial<Omit<DraftTab, "type" | "draftID">>) {
         void startTransition(() => {

@@ -6,7 +6,7 @@ import { Effect, Layer } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { discover } from "@/provider/custom-provider/discovery"
 import { make as makeCustomProvider } from "@/provider/custom-provider/service"
-import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
+import { disposeAllInstancesAndEmitGlobalDisposed, emitGlobalDisposed } from "@/server/global-lifecycle"
 import { ServiceUnavailableError } from "@opencode-ai/protocol/errors"
 import { Config } from "./config"
 
@@ -23,21 +23,23 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const result = yield* config.updateGlobal(value as Config.Info)
           if (result.changed) {
+            if (Config.isAgentOnlyUpdate(value) && locations.reloadAgents) {
+              yield* locations.reloadAgents()
+              yield* emitGlobalDisposed("agent-config")
+              return result.info as ConfigCapability.Value
+            }
             if (locations.invalidateAll) yield* locations.invalidateAll()
             const bridge = yield* EffectBridge.make()
-            const reason = Config.isAgentOnlyUpdate(value) ? "agent-config" : undefined
             bridge.fork(
               disposeAllInstancesAndEmitGlobalDisposed({
                 swallowErrors: true,
-                ...(reason ? { reason } : {}),
               }),
             )
           }
           return result.info as ConfigCapability.Value
         }),
       discoverCustomProvider: (input) => discover(input),
-      configureCustomProvider: (input, location) =>
-        customProvider.configure(input, location),
+      configureCustomProvider: (input, location) => customProvider.configure(input, location),
       disconnectCustomProvider: (providerID, location) =>
         customProvider.disconnect(providerID, location).pipe(
           Effect.mapError(

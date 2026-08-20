@@ -143,6 +143,21 @@ export function buildLocationServiceMap(
               yield* Effect.forEach(active, (ref) => locations.invalidate(ref), { discard: true })
             })
           },
+          reloadAgents() {
+            return Effect.gen(function* () {
+              const active = [...(yield* RcMap.keys(locations.rcMap))]
+              yield* Effect.forEach(
+                active,
+                (ref) =>
+                  Effect.gen(function* () {
+                    const config = yield* Config.Service
+                    if (config.reload) yield* config.reload()
+                    yield* (yield* AgentV2.Service).reload()
+                  }).pipe(Effect.provide(locations.get(ref))),
+                { discard: true },
+              )
+            })
+          },
         }),
     ),
   )
@@ -150,9 +165,7 @@ export function buildLocationServiceMap(
 
 // This is temporary for backwards compatibility. V1 consumers do not execute V2 tools,
 // so their location map binds the global execution seam to the recording-only layer.
-export const locationServiceMapLayer = buildLocationServiceMap([
-  [SessionExecution.node, SessionExecution.noopLayer],
-])
+export const locationServiceMapLayer = buildLocationServiceMap([[SessionExecution.node, SessionExecution.noopLayer]])
 
 export const locationServiceMapV2Layer = buildLocationServiceMap([
   [SessionExecution.node, SessionExecution.forwardingLayer],

@@ -78,6 +78,7 @@ test("legacy Agent service is deleted and cannot be mounted by production runtim
 
 test("production runtime does not resolve or mount the legacy Provider service", async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src")
+  const repositoryRoot = path.resolve(root, "../../..")
   const offenders = (
     await Promise.all(
       [...new Bun.Glob("**/*.ts").scanSync(root)].map(async (file) => ({
@@ -90,6 +91,19 @@ test("production runtime does not resolve or mount the legacy Provider service",
     .map((entry) => entry.file)
     .sort()
 
+  const provider = await Bun.file(path.join(root, "provider/provider.ts")).text()
+  const deleted = [
+    "packages/opencode/test/provider/provider.test.ts",
+    "packages/opencode/test/provider/provider-live-models.test.ts",
+    "packages/opencode/test/provider/header-timeout.test.ts",
+    "packages/opencode/test/provider/digitalocean.test.ts",
+    "packages/opencode/test/provider/amazon-bedrock.test.ts",
+    "packages/opencode/test/fake/provider.ts",
+  ]
+  expect(provider).not.toMatch(/export class Service|export const node|export const use/)
+  expect(
+    await Promise.all(deleted.map(async (file) => [file, await Bun.file(path.join(repositoryRoot, file)).exists()])),
+  ).toEqual(deleted.map((file) => [file, false]))
   expect(offenders).toEqual([])
 })
 

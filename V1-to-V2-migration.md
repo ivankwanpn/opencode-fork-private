@@ -203,7 +203,7 @@ Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog so
 | CLI `run` | V2 执行 + `native-compat.ts` V1 形状外壳（事件对 V1 SDK 客户投影） | **V2 执行，V1 出口** |
 | ACP | `native-v1-*` compat 把 V2 降级成 V1 legacy 形状供 ACP/外部协议消费 | **刻意保留的 V1 出口** |
 | Config | V1 `ConfigV1.Info` + `ConfigMigrateV1`；httpapi config 组 V1-only | **V1-only** |
-| Provider | catalog/filter/default/small-model、模型執行與CLI/ACP/HTTP/share/project-copy reads均為Location-scoped V2；舊Provider service未掛載，只剩static DTO/transform相容shape與V1-only測試待拆 | **V2-only runtime，legacy static shape待收** |
+| Provider | catalog/filter/default/small-model、模型執行與CLI/ACP/HTTP/share/project-copy reads均為Location-scoped V2；舊Provider service/node、SDK loader與V1-only測試已刪，只剩DTO/transform相容shape | **V2-only runtime，legacy static shape待收** |
 
 ---
 
@@ -220,8 +220,8 @@ Location-scoped V2 catalog取得。OpenCode V1 `Agent.Service/node`、catalog so
 
 3. **Legacy Provider static/wire shape** — `opencode/src/provider/provider.ts`
    provider catalog/filter/default/small-model與模型執行均已改用V2；舊Service/node沒有production consumer，
-   目前同檔仍混有legacy DTO、transform所需model shape與test-only V1 service implementation。`provider/auth.ts`
-   與Auth runtime均已刪除；下一步要把現役compatibility shape移出後，刪除service implementation與V1-only測試。
+   Service/node、自帶SDK loader、model discovery與V1-only測試已刪。該檔目前只保留legacy DTO、transform所需model
+   shape、wire error與sort/parse helper；`provider/auth.ts`與Auth runtime亦已刪除，待外部wire/LLM projection收口後移出。
 
 4. ~~**V1 Agent service**~~ — 已完成。`LegacySessionExecution.select`與所有catalog consumer改用
    Location-scoped `AgentV2.Service`；`opencode/src/agent/agent.ts`已刪。外部wire shape移至
@@ -532,6 +532,13 @@ schema 删除，不再是 `packages/core/src/v1/` 的保留理由。
 > `/auth/:providerID` URL/payload保留為`compat/auth-wire.ts`純adapter，OAuth refresh會保留canonical method identity。
 > `packages/opencode/src/auth/index.ts`、`Auth.Service/node`、`OPENCODE_AUTH_CONTENT`與auth.json-only測試已刪除，
 > AppRuntime/HTTP layer不再掛載Auth；舊使用者auth.json依既定產品決策不遷移。
+>
+> **999.0.19 Provider service source closeout** ✅：將`provider/provider.ts`從混合V1 runtime/DTO模組縮為純
+> compatibility shape，刪除`Provider.Service/node/use`、bundled/dynamic SDK loader、legacy model discovery、
+> default/small-model選擇與plugin auth loader執行面。同步刪除`provider.test.ts`、`provider-live-models.test.ts`、
+> `header-timeout.test.ts`、DigitalOcean/Bedrock V1 service tests及fake Provider service；source gate阻止service與
+> test oracle回流。等價能力由Core V2 AISDK/ProviderModelDiscovery/ConfigProvider/Catalog與DigitalOcean/Bedrock
+> plugins承擔；focused parity為Core 41 pass，OpenCode transform/ACP/source gate 404 pass，legacy catalog wire 1 pass。
 >
 > **批次 8 下一步**：Session、Provider/ProviderAuth與Auth runtime hard cut均已完成。接下来盤點並拆除Config runtime facade，
 > 再逐一遷移legacy HTTP/plugin/CLI/ACP live/wire consumer；之后按 Config/Provider 与外部

@@ -30,6 +30,9 @@ export type Options = {
   scenarioTimeout: Duration.Duration
   progress: boolean
   trace: boolean
+  /** Split the selected scenarios across N shards; this run executes shard i. */
+  shardIndex?: number
+  shardCount?: number
 }
 
 export type RequestSpec = {

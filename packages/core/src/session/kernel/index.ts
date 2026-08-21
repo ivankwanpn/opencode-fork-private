@@ -7,6 +7,7 @@ import { makeGlobalNode } from "../../effect/app-node"
 import { SessionExecution } from "../execution"
 import { SessionSchema } from "../schema"
 import { SessionExecutionTable } from "../sql"
+import { KernelDiagnostics } from "./diagnostics"
 import { LifecycleStore } from "./lifecycle-store"
 import { RecoveryExecutor } from "./recovery-executor"
 import { RecoveryPlanner } from "./recovery-planner"
@@ -23,6 +24,8 @@ export interface KernelExecution {
    * is not implemented yet and fails as busy.
    */
   readonly execution: SessionExecution.Interface
+  /** Idempotent startup/restart reconciliation over non-idle executions. */
+  readonly reconcile: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, KernelExecution>()("@opencode/v2/Kernel") {}
@@ -33,36 +36,44 @@ const layer = Layer.effect(
     const lifecycle = yield* LifecycleStore.Service
     const planner = yield* RecoveryPlanner.Service
     const executor = yield* RecoveryExecutor.Service
+    const diagnostics = yield* KernelDiagnostics.Service
     const { db } = yield* Database.Service
 
-    // Startup reconciliation: classify every non-idle kernel execution and
-    // apply only idempotent terminal/read-model reconciliation. Startup never
-    // runs provider, tool, shell, compaction, or notification-as-turn work.
-    const stale = yield* db
-      .select({ sessionID: SessionExecutionTable.session_id })
-      .from(SessionExecutionTable)
-      .where(ne(SessionExecutionTable.state, "idle"))
-      .all()
-      .pipe(Effect.orDie)
-    for (const row of stale) {
-      yield* planner
-        .plan(row.sessionID)
-        .pipe(
-          Effect.flatMap((plan) => executor.apply(plan)),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Kernel startup reconciliation failed", {
-              sessionID: row.sessionID,
-              cause,
-            }),
-          ),
-        )
-    }
+    // Startup/restart reconciliation: classify every non-idle kernel
+    // execution and apply only idempotent terminal/read-model reconciliation.
+    // Never runs provider, tool, shell, compaction, or notification-as-turn
+    // work; zero provider calls by construction.
+    const reconcile = Effect.fn("Kernel.reconcile")(function* () {
+      const stale = yield* db
+        .select({ sessionID: SessionExecutionTable.session_id })
+        .from(SessionExecutionTable)
+        .where(ne(SessionExecutionTable.state, "idle"))
+        .all()
+        .pipe(Effect.orDie)
+      for (const row of stale) {
+        yield* planner
+          .plan(row.sessionID)
+          .pipe(
+            Effect.flatMap((plan) => executor.apply(plan)),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Kernel startup reconciliation failed", {
+                sessionID: row.sessionID,
+                cause,
+              }).pipe(Effect.flatMap(() => diagnostics.increment("startup.reconcile_failed"))),
+            ),
+            Effect.tap(() => diagnostics.increment("startup.reconciled")),
+            Effect.ignore,
+          )
+      }
+    })
+    yield* reconcile()
 
     const coordinator = yield* TurnCoordinator.Service
     return Service.of({
       lifecycle,
       coordinator,
       compact: (sessionID, reason) => coordinator.compact(sessionID, reason),
+      reconcile,
       execution: SessionExecution.Service.of({
         active: coordinator.active,
         resume: (sessionID) => coordinator.run(sessionID),
@@ -78,5 +89,12 @@ const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Database.node, LifecycleStore.node, RecoveryPlanner.node, RecoveryExecutor.node, TurnCoordinator.node],
+  deps: [
+    Database.node,
+    KernelDiagnostics.node,
+    LifecycleStore.node,
+    RecoveryPlanner.node,
+    RecoveryExecutor.node,
+    TurnCoordinator.node,
+  ],
 })

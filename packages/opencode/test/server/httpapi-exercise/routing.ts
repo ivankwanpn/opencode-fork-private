@@ -42,6 +42,14 @@ export function coverageResult(scenario: Scenario): Result {
 export function parseOptions(args: string[]): Options {
   const mode = option(args, "--mode") ?? "effect"
   if (mode !== "effect" && mode !== "coverage" && mode !== "auth") throw new Error(`invalid --mode ${mode}`)
+  const shardIndex = option(args, "--shard-index")
+  const shardCount = option(args, "--shard-count")
+  if ((shardIndex === undefined) !== (shardCount === undefined))
+    throw new Error("--shard-index and --shard-count must be provided together")
+  if (shardIndex !== undefined && !Number.isInteger(Number(shardIndex)))
+    throw new Error(`invalid --shard-index ${shardIndex}`)
+  if (shardCount !== undefined && (!Number.isInteger(Number(shardCount)) || Number(shardCount) < 1))
+    throw new Error(`invalid --shard-count ${shardCount}`)
   return {
     mode,
     include: option(args, "--include"),
@@ -52,6 +60,9 @@ export function parseOptions(args: string[]): Options {
     scenarioTimeout: parseScenarioTimeout(option(args, "--scenario-timeout") ?? "30 seconds"),
     progress: args.includes("--progress"),
     trace: args.includes("--trace"),
+    ...(shardIndex === undefined
+      ? {}
+      : { shardIndex: Number(shardIndex), shardCount: Number(shardCount) }),
   }
 }
 
@@ -72,7 +83,15 @@ export function selectedScenarios(options: Options, scenarios: Scenario[]) {
     : included.length - 1
   if (start === -1) throw new Error(`--start-at matched no scenario: ${options.startAt}`)
   if (end === -1) throw new Error(`--stop-at matched no scenario: ${options.stopAt}`)
-  return included.slice(start, end + 1)
+  let selected = included.slice(start, end + 1)
+  if (options.shardCount !== undefined && options.shardIndex !== undefined) {
+    if (options.shardIndex >= options.shardCount)
+      throw new Error(`--shard-index must be less than --shard-count`)
+    selected = selected.filter((_, index) => index % options.shardCount! === options.shardIndex)
+    if (selected.length === 0)
+      throw new Error(`shard ${options.shardIndex}/${options.shardCount} selected no scenarios`)
+  }
+  return selected
 }
 
 function matchesName(value: string, scenario: Scenario) {

@@ -28,7 +28,7 @@ export function printHeader(
   console.log("")
 }
 
-export function printResults(results: Result[], missing: string[], extra: Scenario[]) {
+export function printResults(results: Result[], missing: string[], extra: Scenario[], elapsedMs?: number) {
   for (const result of results) {
     if (result.status === "pass") {
       console.log(
@@ -56,8 +56,9 @@ export function printResults(results: Result[], missing: string[], extra: Scenar
     for (const scenario of extra)
       console.log(`${color.yellow}EXTRA${color.reset} ${routeKey(scenario)} ${scenario.name}`)
   }
+  const elapsed = elapsedMs === undefined ? "" : ` elapsed=${(elapsedMs / 1000).toFixed(1)}s`
   console.log(
-    `\n${color.dim}summary pass=${results.filter((result) => result.status === "pass").length} fail=${results.filter((result) => result.status === "fail").length} skip=${results.filter((result) => result.status === "skip").length} missing=${missing.length} extra=${extra.length}${color.reset}`,
+    `\n${color.dim}summary pass=${results.filter((result) => result.status === "pass").length} fail=${results.filter((result) => result.status === "fail").length} skip=${results.filter((result) => result.status === "skip").length} missing=${missing.length} extra=${extra.length}${elapsed}${color.reset}`,
   )
 }
 

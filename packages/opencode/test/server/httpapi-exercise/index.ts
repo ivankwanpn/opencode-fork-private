@@ -2255,6 +2255,7 @@ const main = Effect.gen(function* () {
     global: exerciseGlobalRoot,
   })
 
+  const startedAt = Date.now()
   const results =
     options.mode === "coverage"
       ? selected.map(coverageResult)
@@ -2263,11 +2264,21 @@ const main = Effect.gen(function* () {
           (scenario) =>
             Effect.gen(function* () {
               if (options.progress) console.log(`${color.dim}RUN ${routeKey(scenario)} ${scenario.name}${color.reset}`)
-              return yield* runScenario(options)(scenario)
+              // Watchdog: report the current scenario before any exit from the
+              // run loop, so a crashed run names its last scenario.
+              return yield* runScenario(options)(scenario).pipe(
+                Effect.catchCause((cause) => {
+                  console.log(
+                    `${color.yellow}WATCHDOG exited during ${routeKey(scenario)} ${scenario.name}: ${message(cause)}${color.reset}`,
+                  )
+                  return Effect.failCause(cause)
+                }),
+              )
             }),
           { concurrency: 1 },
         )
-  printResults(results, missing, extra)
+  const elapsedMs = Date.now() - startedAt
+  printResults(results, missing, extra, elapsedMs)
 
   if (results.some((result) => result.status === "fail"))
     return yield* Effect.fail(new Error("one or more scenarios failed"))

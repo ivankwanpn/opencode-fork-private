@@ -61,6 +61,18 @@ describe("PluginRuntime", () => {
     }),
   )
 
+  it.effect("runs hooks without manifest ownership", () =>
+    Effect.gen(function* () {
+      const runtime = yield* PluginRuntime.Service
+      const calls: string[] = []
+      yield* runtime.hook(PluginRuntime.HookName.shellEnv, () => {
+        calls.push("bare")
+      })
+      yield* runtime.run(PluginRuntime.HookName.shellEnv, {})
+      expect(calls).toEqual(["bare"])
+    }),
+  )
+
   it.effect("removes hooks when their registration scope closes", () =>
     Effect.gen(function* () {
       const runtime = yield* PluginRuntime.Service

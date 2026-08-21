@@ -59,6 +59,19 @@ const eventLayer = Layer.sync(EventV2.Service, () => {
         yield* Effect.forEach(listeners, (listener) => listener(event), { discard: true })
         return event
       }),
+    publishBatch: (options) =>
+      Effect.gen(function* () {
+        const events = options.events.map(
+          (item) =>
+            ({
+              id: item.id ?? EventV2.ID.create(),
+              type: item.definition.type,
+              data: item.data,
+            }) as EventV2.Payload<typeof item.definition>,
+        )
+        yield* Effect.forEach(events, (event) => Effect.forEach(listeners, (listener) => listener(event), { discard: true }), { discard: true })
+        return events
+      }),
     subscribe: () => Stream.empty,
     all: () => Stream.empty,
     durable: () => Stream.empty,

@@ -30,6 +30,7 @@ import { Pty } from "./pty"
 import { QuestionV2 } from "./question"
 import { Reference } from "./reference"
 import { ReferenceGuidance } from "./reference/guidance"
+import { KernelPluginHost } from "./session/kernel/plugin-host"
 import { SessionAttachment } from "./session/attachment"
 import { SessionCompaction } from "./session/compaction"
 import { SessionExecution } from "./session/execution"
@@ -95,6 +96,7 @@ export const locationServices = LayerNode.group([
   SessionPromptExpansion.node,
   SessionSkill.node,
   QuestionV2.node,
+  KernelPluginHost.node,
   ReadToolFileSystem.node,
   BuiltInTools.node,
   SessionRunnerModel.node,

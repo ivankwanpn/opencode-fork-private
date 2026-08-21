@@ -243,6 +243,39 @@ describe("PluginV2", () => {
     }),
   )
 
+  it.effect("generic runtime hooks keep functioning without kernel manifest ownership", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const runtime = yield* PluginRuntime.Service
+      const id = PluginV2.ID.make("manifest-free")
+      yield* plugins.add(
+        id,
+        define({
+          id,
+          effect: (ctx) =>
+            ctx.tool
+              .hook("execute.before", (event) => {
+                event.args.update((args) => ({ ...(args as object), manifestFree: true }))
+              })
+              .pipe(Effect.asVoid),
+        }).effect,
+      )
+
+      // The generic (V1-compatible, manifest-less) path remains available:
+      // hooks run through the runtime with owner identity only and no
+      // KernelPluginHost activation or lifecycle involvement.
+      const args = mutable<unknown>({})
+      yield* runtime.run(PluginRuntime.HookName.toolExecuteBefore, {
+        tool: "test",
+        sessionID: "ses_test",
+        callID: "call_test",
+        args: args.value,
+      })
+      expect(args.get()).toEqual({ manifestFree: true })
+      yield* plugins.remove(id)
+    }),
+  )
+
   it.effect("adapts Promise runtime hooks and event subscriptions onto the Effect host", () =>
     Effect.gen(function* () {
       const plugins = yield* PluginV2.Service

@@ -51,6 +51,104 @@ export const RuntimeSnapshot = Schema.Struct({
 }).annotate({ identifier: "PluginRuntimeSnapshot" })
 export type RuntimeSnapshot = typeof RuntimeSnapshot.Type
 
+export const Target = Schema.Literals(["core", "desktop", "web", "tui", "cli", "acp"]).annotate({
+  identifier: "PluginTarget",
+})
+export type Target = typeof Target.Type
+
+export const Capability = Schema.Literals([
+  "service",
+  "tool",
+  "hook",
+  "command",
+  "skill",
+  "agent",
+  "mcp",
+  "lsp",
+  "ui",
+]).annotate({ identifier: "PluginCapability" })
+export type Capability = typeof Capability.Type
+
+export const Permission = Schema.Literals([
+  "session.history.read",
+  "session.metadata.read",
+  "session.context.transform",
+  "tool.register",
+  "tool.exposure.transform",
+  "tool.policy",
+  "tool.execute.wrap",
+  "filesystem.read",
+  "filesystem.write",
+  "process.spawn",
+  "network.request",
+  "credential.use",
+  "credential.read",
+  "provider.transform",
+  "mcp.manage",
+  "lsp.manage",
+  "background-job.manage",
+  "ui.command.register",
+  "ui.panel.register",
+]).annotate({ identifier: "PluginPermission" })
+export type Permission = typeof Permission.Type
+
+export const RuntimeClass = Schema.Literals(["trusted-in-process", "isolated-worker", "external"]).annotate({
+  identifier: "PluginRuntimeClass",
+})
+export type RuntimeClass = typeof RuntimeClass.Type
+
+export const ServiceRequirement = Schema.Struct({
+  id: Schema.String,
+  optional: Schema.optional(Schema.Boolean),
+}).annotate({ identifier: "PluginServiceRequirement" })
+export type ServiceRequirement = typeof ServiceRequirement.Type
+
+export const Manifest = Schema.Struct({
+  id: ID,
+  version: Schema.String,
+  targets: Schema.Array(Target),
+  requires: Schema.Array(ServiceRequirement),
+  capabilities: Schema.Array(Capability),
+  permissions: Schema.Array(Permission),
+  runtime: RuntimeClass,
+}).annotate({ identifier: "PluginManifest" })
+export type Manifest = typeof Manifest.Type
+
+export const ActivationState = Schema.Literals([
+  "disabled",
+  "resolving",
+  "waiting_dependency",
+  "activating",
+  "ready",
+  "degraded",
+  "failed",
+  "disposing",
+]).annotate({ identifier: "PluginActivationState" })
+export type ActivationState = typeof ActivationState.Type
+
+export const ActivationError = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("dependency"), requirement: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("mount"), message: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("deadline"),
+    operation: Schema.Literals(["mount", "dispose"]),
+    durationMilliseconds: Schema.Number,
+  }),
+  Schema.Struct({ type: Schema.Literal("permission"), permission: Permission }),
+  Schema.Struct({ type: Schema.Literal("fenced"), generation: Schema.Number }),
+]).annotate({ identifier: "PluginActivationError" })
+export type ActivationError = typeof ActivationError.Type
+
+export const ActivationInfo = Schema.Struct({
+  id: ID,
+  version: Schema.String,
+  generation: Schema.Number,
+  state: ActivationState,
+  runtime: RuntimeClass,
+  group: Schema.optional(Schema.String),
+}).annotate({ identifier: "PluginActivationInfo" })
+export type ActivationInfo = typeof ActivationInfo.Type
+
 const Added = define({
   type: "plugin.added",
   schema: { id: ID },

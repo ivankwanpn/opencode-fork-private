@@ -2,8 +2,12 @@ import { QuestionV2 } from "@opencode-ai/core/question"
 import { Effect } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
-import { QuestionNotFoundError } from "@opencode-ai/protocol/errors"
+import { InvalidRequestError, QuestionNotFoundError } from "@opencode-ai/protocol/errors"
 import { response } from "../location"
+
+function staleRequest(requestID: QuestionV2.ID) {
+  return new InvalidRequestError({ message: `Question request is no longer current: ${requestID}` })
+}
 
 function missingRequest(id: QuestionV2.ID) {
   return new QuestionNotFoundError({ requestID: id, message: `Question request not found: ${id}` })
@@ -42,7 +46,17 @@ export const QuestionHandler = HttpApiBuilder.group(Api, "server.question", (han
           yield* withOwnedQuestion(ctx.params.sessionID, ctx.params.requestID, (question) =>
             question
               .reply({ requestID: ctx.params.requestID, answers: ctx.payload.answers })
-              .pipe(Effect.catchTag("QuestionV2.NotFoundError", () => missingRequest(ctx.params.requestID))),
+              .pipe(
+                Effect.match({
+                  onFailure: (error) =>
+                    Effect.fail(
+                      error._tag === "QuestionV2.NotFoundError"
+                        ? missingRequest(ctx.params.requestID)
+                        : staleRequest(ctx.params.requestID),
+                    ),
+                  onSuccess: () => Effect.succeed(undefined),
+                }),
+              ),
           )
           return HttpApiSchema.NoContent.make()
         }),
@@ -53,7 +67,17 @@ export const QuestionHandler = HttpApiBuilder.group(Api, "server.question", (han
           yield* withOwnedQuestion(ctx.params.sessionID, ctx.params.requestID, (question) =>
             question
               .reject(ctx.params.requestID)
-              .pipe(Effect.catchTag("QuestionV2.NotFoundError", () => missingRequest(ctx.params.requestID))),
+              .pipe(
+                Effect.match({
+                  onFailure: (error) =>
+                    Effect.fail(
+                      error._tag === "QuestionV2.NotFoundError"
+                        ? missingRequest(ctx.params.requestID)
+                        : staleRequest(ctx.params.requestID),
+                    ),
+                  onSuccess: () => Effect.succeed(undefined),
+                }),
+              ),
           )
           return HttpApiSchema.NoContent.make()
         }),

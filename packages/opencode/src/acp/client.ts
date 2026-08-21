@@ -17,6 +17,7 @@ import {
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { CommandV2 } from "@opencode-ai/core/command"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { createSessionEngineInput } from "@/util/execution-engine"
 import type { Provider } from "@/compat/provider-wire"
 import { legacyAgentFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
@@ -176,6 +177,7 @@ function sessionLifecycle(
                 }
               : undefined,
             location: location(input.directory),
+            ...createSessionEngineInput(),
           }),
         ),
       get: async (input: Parameters<Interface["session"]["get"]>[0]) =>

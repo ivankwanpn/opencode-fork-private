@@ -10,6 +10,8 @@ import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useLocal, type ModelSelection } from "@/context/local"
 import { usePermission } from "@/context/permission"
+import { useSettings } from "@/context/settings"
+import { isDevEnvironment, resolveNewSessionEngine } from "@/pages/new-session/execution-engine"
 import { type ContextItem, type ImageAttachmentPart, type Prompt, type usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSync, type DirectorySync } from "@/context/sync"
@@ -342,6 +344,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const prompt = input.prompt
   const layout = useLayout()
   const language = useLanguage()
+  const settings = useSettings()
   const params = useParams()
   const [search] = useSearchParams<{ draftId?: string }>()
   const tabs = useTabs()
@@ -509,11 +512,13 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     let session = input.info()
     if (!session && isNewSession) {
+      const engine = resolveNewSessionEngine(settings.general.executionEngine(), isDevEnvironment())
       const created = await submissionSessionApi
         .create({
           agent: currentAgent.name,
           model: { id: currentModel.id, providerID: currentModel.provider.id, variant, protocol },
           location: { directory: sessionDirectory },
+          ...(engine === "kernel" ? { engine } : {}),
         })
         .then(normalizeSessionInfo)
         .catch((err) => {

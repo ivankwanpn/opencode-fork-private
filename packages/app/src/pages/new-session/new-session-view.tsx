@@ -3,7 +3,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { WordmarkV2 } from "@opencode-ai/ui/v2/wordmark-v2"
-import { Show, createMemo, createSignal, type Accessor } from "solid-js"
+import { For, Show, createMemo, createSignal, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import createPresence from "solid-presence"
@@ -18,9 +18,11 @@ import { StatusPopoverV2 } from "@/components/status-popover"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { useServerSync } from "@/context/server-sync"
+import { useSettings } from "@/context/settings"
 import { useProviders } from "@/hooks/use-providers"
 import { NEW_SESSION_CONTENT_WIDTH } from "@/pages/session/new-session-layout"
 import { Persist, persisted } from "@/utils/persist"
+import { engineSelectorVisible, engineOptions, isDevEnvironment } from "./execution-engine"
 import type { NewSessionDraftController } from "./new-session-draft-controller"
 import type { NewSessionWorkspaceController } from "./new-session-workspace-controller"
 
@@ -42,6 +44,9 @@ export function NewSessionView(props: {
             <WordmarkV2 class="h-auto w-full text-v2-background-bg-inverse" />
             <div class="mt-8 flex flex-col gap-8">
               <PromptInputV2Composer controller={props.input} />
+              <Show when={engineSelectorVisible(isDevEnvironment())}>
+                <ExecutionEngineSelector />
+              </Show>
               <Show when={props.project.empty()}>
                 <PromptProjectAddButton controller={props.project} />
               </Show>
@@ -69,6 +74,34 @@ export function NewSessionView(props: {
           </div>
         </div>
         <ProviderTip />
+      </div>
+    </div>
+  )
+}
+
+/** DEV-only engine selector for newly created Sessions; production omits it. */
+function ExecutionEngineSelector() {
+  const settings = useSettings()
+  return (
+    <div class="flex items-center justify-center gap-2">
+      <span class="text-[12px] leading-none tracking-[-0.04px] text-v2-text-text-faint">Engine</span>
+      <div class="flex items-center rounded-[6px] bg-v2-overlay-simple-overlay-hover p-0.5">
+        <For each={engineOptions}>
+          {(option) => (
+            <button
+              type="button"
+              data-engine={option.id}
+              class="flex h-5 items-center rounded-[5px] px-2 text-[12px] leading-none tracking-[-0.04px] text-v2-text-text-muted transition-colors"
+              classList={{
+                "bg-v2-background-bg-layer-01 text-v2-text-text-base":
+                  settings.general.executionEngine() === option.id,
+              }}
+              onClick={() => settings.general.setExecutionEngine(option.id)}
+            >
+              {option.label}
+            </button>
+          )}
+        </For>
       </div>
     </div>
   )

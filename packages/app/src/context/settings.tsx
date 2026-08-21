@@ -37,6 +37,8 @@ export interface Settings {
     layoutTransitionEligible?: boolean
     newInterfaceNoticeDismissed?: boolean
     shouldDisplayTabsToast?: boolean
+    /** DEV-only preference for the engine of newly created Sessions. */
+    executionEngine?: "classic" | "kernel"
   }
   appearance: {
     fontSize: number
@@ -196,6 +198,7 @@ const defaultSettings: Settings = {
     editToolPartsExpanded: false,
     showCustomAgents: false,
     mobileTitlebarPosition: "top",
+    executionEngine: "classic",
   },
   appearance: {
     fontSize: 14,
@@ -405,6 +408,10 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         showCustomAgents,
         setShowCustomAgents(value: boolean) {
           setStore("general", "showCustomAgents", value)
+        },
+        executionEngine: () => store.general?.executionEngine ?? "classic",
+        setExecutionEngine(value: "classic" | "kernel") {
+          setStore("general", "executionEngine", value)
         },
         mobileTitlebarPosition: withFallback(
           () => store.general?.mobileTitlebarPosition,

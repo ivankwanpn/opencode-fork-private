@@ -1,4 +1,5 @@
 import type { Event, GlobalEvent, OpencodeClient, PermissionV2Request } from "@opencode-ai/sdk/v2"
+import { createSessionEngineInput } from "@/util/execution-engine"
 import { legacyAgentFromNative, legacyCommandFromNative, legacyProvidersFromNative } from "@/compat/native-v1-catalog"
 import { legacySessionFromNative } from "@/compat/native-v1-session"
 import { legacyTranscriptFromNative } from "@/compat/native-v1-transcript"
@@ -168,6 +169,7 @@ export function createNativeCompatClient(input: { native: NativeClient; director
           agent: value.agent,
           model: model(value.model),
           location: input.directory ? { directory: input.directory } : undefined,
+          ...createSessionEngineInput(),
         })
         const updated = value.title
           ? await native.sessions.update({ sessionID: created.id, title: value.title })

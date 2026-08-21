@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-21
 
-**Status:** Chat design approved; written-spec review pending
+**Status:** Approved for implementation planning
 
 **Repository:** `D:\agent-complete\opencode-fork-private-999.0.15`
 

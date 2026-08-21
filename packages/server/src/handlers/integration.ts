@@ -5,13 +5,16 @@ import { Api } from "../api"
 import { InvalidRequestError } from "@opencode-ai/protocol/errors"
 import { response } from "../location"
 
-const authorize = <A, R>(effect: Effect.Effect<A, Integration.AuthorizationError, R>) =>
+const authorize = <A, R>(
+  effect: Effect.Effect<A, Integration.AuthorizationError | Integration.InputValidationError, R>,
+) =>
   effect.pipe(
     Effect.mapError(
-      () =>
+      (error) =>
         new InvalidRequestError({
-          message: "Authentication failed",
-          kind: "integration_authorization",
+          message: error._tag === "Integration.InputValidation" ? error.message : "Authentication failed",
+          kind: error._tag === "Integration.InputValidation" ? "integration_validation" : "integration_authorization",
+          ...(error._tag === "Integration.InputValidation" ? { field: error.field } : {}),
         }),
     ),
   )
@@ -42,6 +45,7 @@ export const IntegrationHandler = HttpApiBuilder.group(Api, "server.integration"
               integrationID: ctx.params.integrationID,
               key: ctx.payload.key,
               label: ctx.payload.label,
+              inputs: ctx.payload.inputs,
             }),
           )
           return HttpApiSchema.NoContent.make()

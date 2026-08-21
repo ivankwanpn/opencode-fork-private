@@ -8,6 +8,7 @@ import { Account } from "@/account/account"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
+import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { legacySessionFromV2 } from "@/compat/native-v1-session"
 import { MessageV2 } from "@/session/message-v2"
 
@@ -247,6 +248,7 @@ const layer = Layer.effect(
     const state: InstanceState.InstanceState<State> = yield* InstanceState.make<State>(
       Effect.fn("ShareNext.state")(function* (_ctx) {
         const cache: State = { queue: new Map(), retries: new Set(), scope: yield* Scope.make(), shared: new Map() }
+        const workspaceID = yield* InstanceState.workspaceID
 
         yield* Effect.addFinalizer(() =>
           Scope.close(cache.scope, Exit.void).pipe(
@@ -269,6 +271,8 @@ const layer = Layer.effect(
           events.listen((event) => {
             if (event.type !== def.type || event.location?.directory !== _ctx.directory) return Effect.void
             return fn(event.data as EventV2.Data<D>).pipe(
+              Effect.provideService(InstanceRef, _ctx),
+              Effect.provideService(WorkspaceRef, event.location?.workspaceID ?? workspaceID),
               Effect.catchCause((cause) =>
                 Effect.logError("share subscriber failed", { type: def.type, cause: cause }),
               ),
@@ -288,6 +292,8 @@ const layer = Layer.effect(
           const sessionID = (event.data as { sessionID?: string }).sessionID
           if (!sessionID) return Effect.void
           return syncTranscript(sessionID as SessionID).pipe(
+            Effect.provideService(InstanceRef, _ctx),
+            Effect.provideService(WorkspaceRef, event.location?.workspaceID ?? workspaceID),
             Effect.catchCause((cause) =>
               Effect.logError("share transcript subscriber failed", { type: event.type, cause }),
             ),

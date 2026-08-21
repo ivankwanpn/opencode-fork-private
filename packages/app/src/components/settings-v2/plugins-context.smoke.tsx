@@ -41,6 +41,9 @@ mock.module("@/context/sync", () => ({
 }))
 
 const empty = () => null
+mock.module("@opencode-ai/ui/context/dialog", () => ({
+  useDialog: () => ({ show: () => {}, push: () => {}, close: () => {} }),
+}))
 mock.module("@opencode-ai/ui/v2/button-v2", () => ({ ButtonV2: empty }))
 mock.module("@opencode-ai/ui/v2/icon", () => ({ Icon: empty }))
 mock.module("@opencode-ai/ui/v2/icon-button-v2", () => ({ IconButtonV2: empty }))

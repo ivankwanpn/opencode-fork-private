@@ -194,7 +194,7 @@ const main = Effect.gen(function* () {
     return
   }
 
-  preferAppEnv(app.getPath("userData"))
+  preferAppEnv()
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
@@ -373,7 +373,6 @@ const main = Effect.gen(function* () {
     logger.log("spawning sidecar", { url })
     const { listener, health } = yield* Effect.promise(() =>
       spawnLocalServer(hostname, port, password, {
-        userDataPath: app.getPath("userData"),
         onStdout: (message) => writeLog("server", "stdout", { message }),
         onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
         onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),

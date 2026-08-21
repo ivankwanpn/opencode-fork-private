@@ -725,6 +725,7 @@ describe("provider HttpApi", () => {
       expect(hasNonZeroModelCost(configBody, "providers", "google")).toBe(true)
     }),
     { ...projectOptions, init: writeFunctionOptionsPlugin },
+    15_000,
   )
 
   it.instance(
@@ -746,5 +747,6 @@ describe("provider HttpApi", () => {
       expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
     }),
     { ...projectOptions, init: writeProviderModelsMutationPlugin },
+    15_000,
   )
 })

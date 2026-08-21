@@ -20,7 +20,10 @@ function error(name: ConstructorParameters<typeof ProviderAuthApiError>[0]["name
   return new ProviderAuthApiError({ name, data })
 }
 
-function authorizationError(value: Integration.AuthorizationError) {
+function authorizationError(value: Integration.AuthorizationError | Integration.InputValidationError) {
+  if (value instanceof Integration.InputValidationError) {
+    return error("ProviderAuthValidationFailed", { field: value.field, message: value.message })
+  }
   const cause = Cause.isCause(value.cause) ? Cause.squash(value.cause) : value.cause
   if (cause instanceof Integration.InputValidationError) {
     return error("ProviderAuthValidationFailed", { field: cause.field, message: cause.message })

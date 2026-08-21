@@ -124,7 +124,7 @@ export class InputValidationError extends Schema.TaggedErrorClass<InputValidatio
   message: Schema.String,
 }) {}
 
-export type Error = CodeRequiredError | AuthorizationError
+export type Error = CodeRequiredError | AuthorizationError | InputValidationError
 
 export const Event = Integration.Event
 
@@ -184,7 +184,7 @@ export interface Interface extends State.Transformable<Draft> {
       readonly metadata?: Readonly<Record<string, unknown>>
       /** String prompt answers passed to an optional key authorization implementation. */
       readonly inputs?: Inputs
-    }) => Effect.Effect<void, AuthorizationError>
+    }) => Effect.Effect<void, AuthorizationError | InputValidationError>
     /** Starts a stateful OAuth attempt. */
     readonly oauth: (input: {
       /** Integration being authenticated. */
@@ -195,7 +195,7 @@ export interface Interface extends State.Transformable<Draft> {
       readonly inputs: Inputs
       /** User-facing label for the credential created on completion. */
       readonly label?: string
-    }) => Effect.Effect<Attempt, AuthorizationError>
+    }) => Effect.Effect<Attempt, AuthorizationError | InputValidationError>
     /** Updates a stored credential exposed as a connection. */
     readonly update: (
       credentialID: Credential.ID,
@@ -465,8 +465,17 @@ export const locationLayer = Layer.effect(
         }),
         key: Effect.fn("Integration.connection.key")(function* (input) {
           const entry = state.get().integrations.get(input.integrationID)
+          if (!entry)
+            return yield* new InputValidationError({
+              field: "integrationID",
+              message: `Integration not found: ${input.integrationID}`,
+            })
           const method = entry?.methods.some((method) => method.type === "key")
-          if (entry && !method) return yield* Effect.die(`Key method not found: ${input.integrationID}`)
+          if (!method)
+            return yield* new InputValidationError({
+              field: "integrationID",
+              message: `Key method not found: ${input.integrationID}`,
+            })
           const result = entry?.key?.authorize
             ? yield* authorize(entry.key.authorize({ key: input.key, inputs: input.inputs ?? {} }))
             : Credential.Key.make({
@@ -484,9 +493,18 @@ export const locationLayer = Layer.effect(
           yield* events.publish(Event.Updated, {})
         }),
         oauth: Effect.fn("Integration.connection.oauth")(function* (input) {
-          const method = state.get().integrations.get(input.integrationID)?.implementations.get(input.methodID)
+          const entry = state.get().integrations.get(input.integrationID)
+          if (!entry)
+            return yield* new InputValidationError({
+              field: "integrationID",
+              message: `Integration not found: ${input.integrationID}`,
+            })
+          const method = entry.implementations.get(input.methodID)
           if (!method) {
-            return yield* Effect.die(`OAuth method not found: ${input.integrationID}/${input.methodID}`)
+            return yield* new InputValidationError({
+              field: "methodID",
+              message: `OAuth method not found: ${input.integrationID}/${input.methodID}`,
+            })
           }
           const attemptScope = yield* Scope.fork(scope)
           const authorization = yield* authorize(method.authorize(input.inputs)).pipe(

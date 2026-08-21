@@ -204,6 +204,7 @@ describe("SessionRunnerLLM recorded", () => {
       ).toEqual([
         "session.next.prompt.admitted.1",
         "session.next.prompted.1",
+        "session.next.turn.started.1",
         "session.next.provider.attempt.started.1",
         "session.next.provider.attempt.response.started.1",
         "session.next.step.started.1",
@@ -211,6 +212,7 @@ describe("SessionRunnerLLM recorded", () => {
         "session.next.text.ended.1",
         "session.next.step.ended.2",
         "session.next.provider.attempt.ended.1",
+        "session.next.turn.ended.1",
       ])
     }),
   )

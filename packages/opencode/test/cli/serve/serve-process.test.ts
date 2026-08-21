@@ -8,8 +8,9 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { copyFile } from "node:fs/promises"
+import { copyFile, mkdir } from "node:fs/promises"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { cliIt } from "../../lib/cli-process"
 import { createGeneratedLifecycleClient, runV2LifecycleContract } from "../../server/v2-lifecycle-contract"
@@ -74,6 +75,151 @@ describe("opencode serve (subprocess)", () => {
             "serve-process",
           ),
         )
+      }),
+    60_000,
+  )
+
+  cliIt.live(
+    "observes marketplace plugin registration through the request Location map",
+    ({ home, opencode }) =>
+      Effect.gen(function* () {
+        const marketplace = "test-marketplace"
+        const plugin = "runtime-probe"
+        const pluginID = `${plugin}@${marketplace}`
+        const cachePath = path.join(home, ".local", "share", "opencode", "claude-marketplaces", marketplace)
+        const installPath = path.join(
+          home,
+          ".local",
+          "share",
+          "opencode",
+          "claude-plugins",
+          `${marketplace}__${plugin}`,
+        )
+        const stateFile = path.join(home, ".local", "state", "opencode", "claude-marketplaces.json")
+
+        yield* Effect.promise(async () => {
+          await Promise.all([
+            mkdir(path.join(cachePath, ".claude-plugin"), { recursive: true }),
+            mkdir(path.join(installPath, "skills", "runtime-probe"), { recursive: true }),
+            mkdir(path.dirname(stateFile), { recursive: true }),
+          ])
+          await Promise.all([
+            Bun.write(
+              path.join(cachePath, ".claude-plugin", "marketplace.json"),
+              JSON.stringify({ name: marketplace, plugins: [{ name: plugin, source: "./runtime-probe" }] }),
+            ),
+            Bun.write(
+              path.join(installPath, "package.json"),
+              JSON.stringify({ name: plugin, type: "module", main: "server.js" }),
+            ),
+            Bun.write(path.join(installPath, "server.js"), "export default async () => ({})\n"),
+            Bun.write(
+              path.join(installPath, "skills", "runtime-probe", "SKILL.md"),
+              "---\nname: runtime-probe\ndescription: Runtime map probe\n---\nProbe.",
+            ),
+            Bun.write(
+              stateFile,
+              JSON.stringify({
+                version: 1,
+                marketplaces: {
+                  [marketplace]: {
+                    name: marketplace,
+                    source: cachePath,
+                    cachePath,
+                    lastUpdated: "2026-08-20T00:00:00.000Z",
+                  },
+                },
+                plugins: {
+                  [pluginID]: {
+                    id: pluginID,
+                    name: plugin,
+                    marketplace,
+                    installPath,
+                    installed: true,
+                    enabled: true,
+                    mcp: {},
+                  },
+                },
+              }),
+            ),
+          ])
+        })
+
+        const server = yield* opencode.serve({
+          env: { OPENCODE_PURE: "0", OPENCODE_DISABLE_DEFAULT_PLUGINS: "1" },
+        })
+        const url = new URL("/api/plugins/runtime", server.url)
+        url.searchParams.set("location[directory]", home)
+        const response = yield* Effect.promise(() => fetch(url))
+        const body = (yield* Effect.promise(() => response.json())) as {
+          data: { plugins: Array<{ id: string; state: string; capabilities: Array<{ name: string; state: string }> }> }
+        }
+        const observed = body.data.plugins.find((item) => item.id === pluginID)
+
+        expect(response.status).toBe(200)
+        expect(observed).toEqual({
+          id: pluginID,
+          state: "ready",
+          capabilities: [
+            { name: "skills", state: "ready" },
+            { name: "plugin", state: "ready" },
+          ],
+        })
+      }),
+    60_000,
+  )
+
+  cliIt.live(
+    "forwards key method prompt inputs through the HTTP contract",
+    ({ home, opencode }) =>
+      Effect.gen(function* () {
+        const plugin = path.join(home, "prompt-key-plugin.ts")
+        const marker = path.join(home, "prompt-key-inputs.json")
+        yield* Effect.promise(() =>
+          Bun.write(
+            plugin,
+            [
+              "export default async () => ({",
+              "  auth: {",
+              '    provider: "prompt-key",',
+              "    methods: [{",
+              '      type: "api",',
+              '      label: "Prompt key",',
+              "      prompts: [{",
+              '        type: "text",',
+              '        key: "tenant",',
+              '        message: "Tenant",',
+              "      }],",
+              "      async authorize(inputs) {",
+              `        await Bun.write(${JSON.stringify(marker)}, JSON.stringify(inputs))`,
+              '        return { type: "success", key: "accepted" }',
+              "      },",
+              "    }],",
+              "  },",
+              "})",
+              "",
+            ].join("\n"),
+          ),
+        )
+        const server = yield* opencode.serve({
+          env: {
+            OPENCODE_PURE: "0",
+            OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+            OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [pathToFileURL(plugin).href] }),
+          },
+        })
+        const url = new URL("/api/integration/prompt-key/connect/key", server.url)
+        url.searchParams.set("location[directory]", home)
+        const response = yield* Effect.promise(() =>
+          fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ key: "secret", inputs: { tenant: "acme" } }),
+          }),
+        )
+
+        expect(response.status).toBe(204)
+        expect(yield* Effect.promise(() => Bun.file(marker).json())).toEqual({ tenant: "acme" })
       }),
     60_000,
   )

@@ -650,6 +650,28 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
+  it.effect("does not restart reasoning after text output has started", () =>
+    Effect.gen(function* () {
+      const body = sseEvents(
+        { choices: [{ delta: { reasoning_content: "thinking" } }] },
+        { choices: [{ delta: { content: "Hello" } }] },
+        { choices: [{ delta: { reasoning_content: "late hidden text" } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      )
+
+      const response = yield* LLMClient.generate(request).pipe(Effect.provide(fixedResponse(body)))
+
+      expect(response.reasoning).toBe("thinking")
+      expect(response.text).toBe("Hello")
+      expect(response.events.filter((event) => event.type === "reasoning-start")).toEqual([
+        { type: "reasoning-start", id: "reasoning-0" },
+      ])
+      expect(response.events.filter((event) => event.type === "reasoning-delta")).toEqual([
+        { type: "reasoning-delta", id: "reasoning-0", text: "thinking" },
+      ])
+    }),
+  )
+
   it.effect("assembles streamed tool call input", () =>
     Effect.gen(function* () {
       const body = sseEvents(

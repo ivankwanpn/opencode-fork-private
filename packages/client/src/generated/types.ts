@@ -6322,7 +6322,30 @@ export type IntegrationsListOutput = {
               }
           >
         }
-      | { readonly type: "key"; readonly label?: string }
+      | {
+          readonly type: "key"
+          readonly label?: string
+          readonly prompts?: ReadonlyArray<
+            | {
+                readonly type: "text"
+                readonly key: string
+                readonly message: string
+                readonly placeholder?: string
+                readonly when?: { readonly key: string; readonly op: "eq" | "neq"; readonly value: string }
+              }
+            | {
+                readonly type: "select"
+                readonly key: string
+                readonly message: string
+                readonly options: ReadonlyArray<{
+                  readonly label: string
+                  readonly value: string
+                  readonly hint?: string
+                }>
+                readonly when?: { readonly key: string; readonly op: "eq" | "neq"; readonly value: string }
+              }
+          >
+        }
       | { readonly type: "env"; readonly names: ReadonlyArray<string> }
     >
     readonly connections: ReadonlyArray<
@@ -6374,7 +6397,30 @@ export type IntegrationsGetOutput = {
               }
           >
         }
-      | { readonly type: "key"; readonly label?: string }
+      | {
+          readonly type: "key"
+          readonly label?: string
+          readonly prompts?: ReadonlyArray<
+            | {
+                readonly type: "text"
+                readonly key: string
+                readonly message: string
+                readonly placeholder?: string
+                readonly when?: { readonly key: string; readonly op: "eq" | "neq"; readonly value: string }
+              }
+            | {
+                readonly type: "select"
+                readonly key: string
+                readonly message: string
+                readonly options: ReadonlyArray<{
+                  readonly label: string
+                  readonly value: string
+                  readonly hint?: string
+                }>
+                readonly when?: { readonly key: string; readonly op: "eq" | "neq"; readonly value: string }
+              }
+          >
+        }
       | { readonly type: "env"; readonly names: ReadonlyArray<string> }
     >
     readonly connections: ReadonlyArray<
@@ -6389,8 +6435,21 @@ export type IntegrationsConnectKeyInput = {
   readonly location?: {
     readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
   }["location"]
-  readonly key: { readonly key: string; readonly label?: string | undefined }["key"]
-  readonly label?: { readonly key: string; readonly label?: string | undefined }["label"]
+  readonly key: {
+    readonly key: string
+    readonly label?: string | undefined
+    readonly inputs?: { readonly [x: string]: string } | undefined
+  }["key"]
+  readonly label?: {
+    readonly key: string
+    readonly label?: string | undefined
+    readonly inputs?: { readonly [x: string]: string } | undefined
+  }["label"]
+  readonly inputs?: {
+    readonly key: string
+    readonly label?: string | undefined
+    readonly inputs?: { readonly [x: string]: string } | undefined
+  }["inputs"]
 }
 
 export type IntegrationsConnectKeyOutput = void

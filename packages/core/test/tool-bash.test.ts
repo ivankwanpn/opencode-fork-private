@@ -1480,6 +1480,34 @@ describe("BashTool", () => {
     ),
   )
 
+  it.live("rejects another user's home path before starting a shell process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (active) => {
+        reset()
+        configuredShell = "bash"
+        if (Shell.name(Shell.acceptable(configuredShell)) !== "bash") return Effect.void
+        return withTool(active.path, (registry) =>
+          Effect.gen(function* () {
+            expect(
+              yield* executeTool(
+                registry,
+                call({ command: "cat ~another-user/private.txt" }, "call-other-user-home"),
+              ),
+            ).toEqual({
+              type: "error",
+              value: "Cannot safely resolve another user's home path: ~another-user/private.txt",
+            })
+            expect(assertions).toEqual([])
+            expect(jobOperations).toEqual([])
+            expect(runs).toEqual([])
+          }),
+        )
+      },
+      (active) => Effect.promise(() => active[Symbol.asyncDispose]()),
+    ),
+  )
+
   it.live("denies an escaped native Bash path without starting a process", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),

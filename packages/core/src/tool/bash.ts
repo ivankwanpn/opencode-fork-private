@@ -217,7 +217,12 @@ const scannerPaths = (command: string, kind: ShellCommand.Kind) =>
       (/^[A-Za-z]:[\\/]/.test(value) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(value))
     const absolute = kind === "bash" ? value.startsWith("/") || native : path.isAbsolute(FSUtil.windowsPath(value))
     const relative = kind === "bash" ? /^\.{1,2}(?:\/|$)/.test(value) : /^\.\.?[\\/]/.test(value)
-    const home = token.home && (value === "~" || value.startsWith("~/") || (kind !== "bash" && value.startsWith("~\\")))
+    const home =
+      token.home &&
+      (value === "~" ||
+        value.startsWith("~/") ||
+        (kind !== "bash" && value.startsWith("~\\")) ||
+        /^~[^/\\]+(?:[/\\]|$)/.test(value))
     if (!absolute && !relative && !home) return []
     return [{ value, kind: token.kind }]
   })
@@ -276,6 +281,8 @@ const layer = Layer.effectDiscard(
       shell: string,
       kind: ShellCommand.Kind,
     ) {
+      if (/^~[^/\\]+(?:[/\\]|$)/.test(value))
+        return yield* new ToolFailure({ message: `Cannot safely resolve another user's home path: ${value}` })
       const expanded =
         value === "~"
           ? os.homedir()

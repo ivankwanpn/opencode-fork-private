@@ -692,6 +692,42 @@ describe("SessionProjector", () => {
     }),
   )
 
+  it.effect("does not duplicate an in-memory reasoning part when its start event is replayed", () =>
+    Effect.gen(function* () {
+      const assistantID = SessionMessage.ID.make("msg_reasoning_replayed")
+      const state = {
+        messages: [
+          SessionMessage.Assistant.make({
+            id: assistantID,
+            type: "assistant",
+            agent: "build",
+            model,
+            content: [],
+            time: { created },
+          }),
+        ],
+      }
+      const adapter = SessionMessageUpdater.memory(state)
+      const started = {
+        id: EventV2.ID.create(),
+        type: SessionEvent.Reasoning.Started.type,
+        data: {
+          sessionID,
+          assistantMessageID: assistantID,
+          timestamp: created,
+          reasoningID: "reasoning-0",
+        },
+      } as SessionEvent.Event
+
+      yield* SessionMessageUpdater.update(adapter, started)
+      yield* SessionMessageUpdater.update(adapter, { ...started, id: EventV2.ID.create() })
+
+      expect(state.messages[0]?.content).toEqual([
+        expect.objectContaining({ type: "reasoning", id: "reasoning-0", text: "" }),
+      ])
+    }),
+  )
+
   it.effect("updates only the newest incomplete assistant projection", () =>
     Effect.gen(function* () {
       const { db } = yield* Database.Service
@@ -1084,6 +1120,7 @@ describe("SessionProjector", () => {
         .pipe(Effect.orDie)
       const ids = {
         pending: SessionV2.ID.make("ses_startup_pending"),
+        queued: SessionV2.ID.make("ses_startup_queued"),
         promoted: SessionV2.ID.make("ses_startup_promoted"),
         continuation: SessionV2.ID.make("ses_startup_continuation"),
         recovering: SessionV2.ID.make("ses_startup_recovering"),
@@ -1112,6 +1149,14 @@ describe("SessionProjector", () => {
             session_id: ids.pending,
             prompt: Prompt.make({ text: "pending" }),
             delivery: "steer",
+            admitted_seq: 1,
+            time_created: 0,
+          },
+          {
+            id: SessionMessage.ID.make("msg_startup_queued"),
+            session_id: ids.queued,
+            prompt: Prompt.make({ text: "queued" }),
+            delivery: "queue",
             admitted_seq: 1,
             time_created: 0,
           },

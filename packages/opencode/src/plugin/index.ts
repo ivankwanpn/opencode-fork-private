@@ -159,10 +159,11 @@ function getLegacyPlugins(mod: Record<string, unknown>) {
     if (seen.has(entry)) continue
     seen.add(entry)
     const plugin = getServerPlugin(entry)
-    if (!plugin) throw new TypeError("Plugin export is not a function")
+    if (!plugin) continue
     result.push(plugin)
   }
 
+  if (result.length === 0) throw new TypeError("Plugin module does not export a plugin function")
   return result
 }
 
@@ -247,6 +248,7 @@ const layer = Layer.effect(
           ...(serverUrl ? {} : { fetch: async (...args) => Server.Default().app.fetch(...args) }),
         })
         const cfg = yield* config.get()
+        const legacyConfig = structuredClone(cfg)
         const input: PluginInput = {
           client,
           project: ctx.project,
@@ -356,7 +358,7 @@ const layer = Layer.effect(
         // Notify plugins of current config before exposing their runtime hooks.
         for (const loaded of loadedHooks) {
           const init = yield* Effect.tryPromise({
-            try: () => Promise.resolve((loaded.hooks as any).config?.(cfg)),
+            try: () => Promise.resolve((loaded.hooks as any).config?.(legacyConfig)),
             catch: errorMessage,
           }).pipe(
             Effect.tapError((error) =>

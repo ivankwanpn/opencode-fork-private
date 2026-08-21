@@ -604,12 +604,13 @@ type Endpoint8_2Input = {
   readonly location?: Endpoint8_2Request["query"]["location"]
   readonly key: Endpoint8_2Request["payload"]["key"]
   readonly label?: Endpoint8_2Request["payload"]["label"]
+  readonly inputs?: Endpoint8_2Request["payload"]["inputs"]
 }
 const Endpoint8_2 = (raw: RawClient["server.integration"]) => (input: Endpoint8_2Input) =>
   raw["integration.connect.key"]({
     params: { integrationID: input["integrationID"] },
     query: { location: input["location"] },
-    payload: { key: input["key"], label: input["label"] },
+    payload: { key: input["key"], label: input["label"], inputs: input["inputs"] },
   }).pipe(Effect.mapError(mapClientError))
 
 type Endpoint8_3Request = Parameters<RawClient["server.integration"]["integration.connect.oauth"]>[0]

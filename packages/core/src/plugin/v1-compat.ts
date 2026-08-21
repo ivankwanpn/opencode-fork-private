@@ -2,7 +2,7 @@ export * as PluginV1Compat from "./v1-compat"
 
 import { define, type MutableValue, type PluginContext, type ProviderContext } from "@opencode-ai/plugin/v2/effect"
 import type { Auth, Model, ModelV2Info, Provider } from "@opencode-ai/sdk/v2/types"
-import { Effect, Stream } from "effect"
+import { Cause, Effect, Stream } from "effect"
 import { Credential } from "../credential"
 import { Integration } from "../integration"
 import { ModelV2 } from "../model"
@@ -112,7 +112,17 @@ export function fromHooks(id: string, hooks: Hooks) {
         const eventHook = hooks.event
         if (eventHook) {
           yield* host.event.all().pipe(
-            Stream.runForEach((event) => Effect.promise(() => eventHook({ event: event as never }))),
+            Stream.runForEach((event) =>
+              Effect.promise(() => eventHook({ event: event as never })).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logError("V1 plugin event hook failed", {
+                    id,
+                    type: event.type,
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              ),
+            ),
             Effect.forkScoped,
           )
         }
@@ -120,8 +130,11 @@ export function fromHooks(id: string, hooks: Hooks) {
         const auth = hooks.auth
         if (auth) {
           yield* host.integration.transform((integrations) => {
+            // Reassigning through the draft proxy claims this provider in the plugin's
+            // State overlay. The value is unchanged, but removing the write makes a
+            // user auth plugin lose its methods when an internal plugin owns the base.
             integrations.update(auth.provider, (integration) => {
-              if (integration.name === auth.provider) integration.name = auth.provider
+              integration.name = integration.name
             })
             for (const [index, method] of (auth.methods ?? []).entries()) {
               const prompts = method.prompts?.map((prompt) => {
@@ -644,7 +657,13 @@ function resolveCredential(host: PluginContext, providerID: string) {
   return Effect.gen(function* () {
     const connection = yield* host.integration.connection.active(providerID)
     const credential = connection
-      ? yield* host.integration.connection.resolve(connection).pipe(Effect.orDie)
+      ? yield* host.integration.connection.resolve(connection).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("V1 plugin credential is unavailable", { providerID, error }).pipe(
+              Effect.as(undefined),
+            ),
+          ),
+        )
       : undefined
     return { connection, credential }
   })

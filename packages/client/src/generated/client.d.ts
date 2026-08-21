@@ -1730,7 +1730,23 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "project.updated";
+            readonly type: "catalog.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "integration.connection.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -1741,25 +1757,24 @@ export declare function make(options: ClientOptions): {
                 readonly workspaceID?: string | undefined;
             } | undefined;
             readonly data: {
-                readonly id: string;
-                readonly worktree: string;
-                readonly vcs?: "git" | undefined;
-                readonly name?: string | undefined;
-                readonly icon?: {
-                    readonly url?: string | undefined;
-                    readonly override?: string | undefined;
-                    readonly color?: string | undefined;
-                } | undefined;
-                readonly commands?: {
-                    readonly start?: string | undefined;
-                } | undefined;
-                readonly time: {
-                    readonly created: number;
-                    readonly updated: number;
-                    readonly initialized?: number | undefined;
-                };
-                readonly sandboxes: readonly string[];
+                readonly integrationID: string;
             };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "integration.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {};
         } | {
             readonly id: string;
             readonly metadata?: {
@@ -2319,23 +2334,6 @@ export declare function make(options: ClientOptions): {
                         readonly protocol?: "anthropic-messages" | "openai-compatible" | "openai-responses" | undefined;
                     };
                     readonly content: readonly ({
-                        readonly type: "text";
-                        readonly id: string;
-                        readonly text: string;
-                    } | {
-                        readonly type: "reasoning";
-                        readonly id: string;
-                        readonly text: string;
-                        readonly providerMetadata?: {
-                            readonly [x: string]: {
-                                readonly [x: string]: unknown;
-                            };
-                        } | undefined;
-                        readonly time?: {
-                            readonly created: number;
-                            readonly completed?: number | undefined;
-                        } | undefined;
-                    } | {
                         readonly type: "tool";
                         readonly id: string;
                         readonly name: string;
@@ -2543,6 +2541,23 @@ export declare function make(options: ClientOptions): {
                             readonly completed?: number | undefined;
                             readonly pruned?: number | undefined;
                         };
+                    } | {
+                        readonly type: "text";
+                        readonly id: string;
+                        readonly text: string;
+                    } | {
+                        readonly type: "reasoning";
+                        readonly id: string;
+                        readonly text: string;
+                        readonly providerMetadata?: {
+                            readonly [x: string]: {
+                                readonly [x: string]: unknown;
+                            };
+                        } | undefined;
+                        readonly time?: {
+                            readonly created: number;
+                            readonly completed?: number | undefined;
+                        } | undefined;
                     })[];
                     readonly snapshot?: {
                         readonly start?: string | undefined;
@@ -2675,23 +2690,6 @@ export declare function make(options: ClientOptions): {
                 readonly contentIndex: number;
                 readonly partID: string;
                 readonly content: {
-                    readonly type: "text";
-                    readonly id: string;
-                    readonly text: string;
-                } | {
-                    readonly type: "reasoning";
-                    readonly id: string;
-                    readonly text: string;
-                    readonly providerMetadata?: {
-                        readonly [x: string]: {
-                            readonly [x: string]: unknown;
-                        };
-                    } | undefined;
-                    readonly time?: {
-                        readonly created: number;
-                        readonly completed?: number | undefined;
-                    } | undefined;
-                } | {
                     readonly type: "tool";
                     readonly id: string;
                     readonly name: string;
@@ -2899,6 +2897,23 @@ export declare function make(options: ClientOptions): {
                         readonly completed?: number | undefined;
                         readonly pruned?: number | undefined;
                     };
+                } | {
+                    readonly type: "text";
+                    readonly id: string;
+                    readonly text: string;
+                } | {
+                    readonly type: "reasoning";
+                    readonly id: string;
+                    readonly text: string;
+                    readonly providerMetadata?: {
+                        readonly [x: string]: {
+                            readonly [x: string]: unknown;
+                        };
+                    } | undefined;
+                    readonly time?: {
+                        readonly created: number;
+                        readonly completed?: number | undefined;
+                    } | undefined;
                 };
             };
         } | {
@@ -4162,6 +4177,61 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "workspace.failed";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly message: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.ready";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly name: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "workspace.status";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly workspaceID: string;
+                readonly status: "connected" | "connecting" | "disconnected" | "error";
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "models-dev.refreshed";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4178,7 +4248,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "integration.connection.updated";
+            readonly type: "command.executed";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -4189,40 +4259,11 @@ export declare function make(options: ClientOptions): {
                 readonly workspaceID?: string | undefined;
             } | undefined;
             readonly data: {
-                readonly integrationID: string;
+                readonly name: string;
+                readonly sessionID: string;
+                readonly arguments: string;
+                readonly messageID: string;
             };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "integration.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "catalog.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {};
         } | {
             readonly id: string;
             readonly metadata?: {
@@ -4530,6 +4571,29 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "todo.updated";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly sessionID: string;
+                readonly todos: readonly {
+                    readonly content: string;
+                    readonly status: string;
+                    readonly priority: string;
+                }[];
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "tui.command.execute";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -4642,7 +4706,7 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
-            readonly type: "command.executed";
+            readonly type: "project.updated";
             readonly durable?: {
                 readonly aggregateID: string;
                 readonly seq: number;
@@ -4653,65 +4717,24 @@ export declare function make(options: ClientOptions): {
                 readonly workspaceID?: string | undefined;
             } | undefined;
             readonly data: {
-                readonly name: string;
-                readonly sessionID: string;
-                readonly arguments: string;
-                readonly messageID: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.failed";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly message: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.ready";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly name: string;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "workspace.status";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly workspaceID: string;
-                readonly status: "connected" | "connecting" | "disconnected" | "error";
+                readonly id: string;
+                readonly worktree: string;
+                readonly vcs?: "git" | undefined;
+                readonly name?: string | undefined;
+                readonly icon?: {
+                    readonly url?: string | undefined;
+                    readonly override?: string | undefined;
+                    readonly color?: string | undefined;
+                } | undefined;
+                readonly commands?: {
+                    readonly start?: string | undefined;
+                } | undefined;
+                readonly time: {
+                    readonly created: number;
+                    readonly updated: number;
+                    readonly initialized?: number | undefined;
+                };
+                readonly sandboxes: readonly string[];
             };
         } | {
             readonly id: string;
@@ -4749,29 +4772,6 @@ export declare function make(options: ClientOptions): {
             readonly data: {
                 readonly name: string;
                 readonly branch?: string | undefined;
-            };
-        } | {
-            readonly id: string;
-            readonly metadata?: {
-                readonly [x: string]: unknown;
-            } | undefined;
-            readonly type: "todo.updated";
-            readonly durable?: {
-                readonly aggregateID: string;
-                readonly seq: number;
-                readonly version: number;
-            } | undefined;
-            readonly location?: {
-                readonly directory: string;
-                readonly workspaceID?: string | undefined;
-            } | undefined;
-            readonly data: {
-                readonly sessionID: string;
-                readonly todos: readonly {
-                    readonly content: string;
-                    readonly status: string;
-                    readonly priority: string;
-                }[];
             };
         } | {
             readonly id: string;

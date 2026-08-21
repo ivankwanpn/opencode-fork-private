@@ -401,6 +401,7 @@ export const startupCandidates = Effect.fn("SessionInput.startupCandidates")(fun
     .where(
       or(
         and(
+          eq(SessionInputTable.delivery, "steer"),
           isNull(SessionInputTable.promoted_seq),
           isNull(SessionInputTable.terminal_outcome),
         ),

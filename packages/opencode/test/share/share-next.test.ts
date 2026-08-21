@@ -11,6 +11,9 @@ import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { Location } from "@opencode-ai/core/location"
+import { Project } from "@opencode-ai/core/project"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 
 import { AccessToken, AccountID, OrgID, RefreshToken } from "../../src/account/schema"
 import { AccountRepo } from "../../src/account/repo"
@@ -26,6 +29,7 @@ import { resetDatabase } from "../fixture/db"
 import { pollWithTimeout, testEffect } from "../lib/effect"
 import { locationServiceMapReplacement } from "../lib/location-service-map"
 import { TestSessionV2 } from "../fixture/session-v2"
+import { InstanceRef } from "@/effect/instance-ref"
 
 const env = LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node]))
 const it = testEffect(env)
@@ -528,6 +532,7 @@ describe("ShareNext", () => {
           const share = yield* ShareNext.Service
           const info = yield* TestSessionV2.create({ title: "canonical share" })
           yield* share.init()
+          yield* Effect.sleep(50)
           const { db } = yield* Database.Service
           yield* db
             .insert(SessionShareTable)
@@ -577,6 +582,94 @@ describe("ShareNext", () => {
     ),
   )
 
+  it.live("ShareNext restores Location context for process-global transcript events", () =>
+    provideTmpdirInstance(
+      () => {
+        const seen: string[] = []
+        const client = HttpClient.make((req) => {
+          if (req.url.endsWith("/sync") && req.body._tag === "Uint8Array") {
+            seen.push(new TextDecoder().decode(req.body.body))
+          }
+          return Effect.succeed(json(req, { ok: true }))
+        })
+
+        return Effect.gen(function* () {
+          const events = yield* EventV2Bridge.Service
+          const share = yield* ShareNext.Service
+          const instance = yield* InstanceRef
+          if (!instance) return yield* Effect.die(new Error("missing test instance"))
+          const info = yield* TestSessionV2.create({ title: "global canonical share" })
+          yield* share.init()
+          yield* Effect.sleep(50)
+          const { db } = yield* Database.Service
+          yield* db
+            .insert(SessionShareTable)
+            .values({
+              session_id: info.id,
+              id: "shr_global_canonical",
+              url: "https://legacy-share.example.com/share/global-canonical",
+              secret: "sec_global_canonical",
+            })
+            .run()
+            .pipe(Effect.orDie)
+
+          yield* events
+            .publish(
+              SessionEvent.MessageImported,
+              {
+                sessionID: info.id,
+                timestamp: DateTime.makeUnsafe(1),
+                message: SessionMessage.Assistant.make({
+                  id: SessionMessage.ID.make("msg_global_canonical_share"),
+                  type: "assistant",
+                  agent: "build",
+                  model: {
+                    providerID: ProviderV2.ID.make("test"),
+                    id: ModelV2.ID.make("test"),
+                    variant: ModelV2.VariantID.make("default"),
+                  },
+                  content: [
+                    SessionMessage.AssistantText.make({
+                      type: "text",
+                      id: "text_global_share",
+                      text: "shared globally",
+                    }),
+                  ],
+                  time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
+                }),
+              },
+              {
+                location: new Location.Info({
+                  directory: AbsolutePath.make(instance.directory),
+                  project: {
+                    id: Project.ID.make(instance.project.id),
+                    directory: AbsolutePath.make(instance.worktree),
+                  },
+                }),
+              },
+            )
+            .pipe(Effect.provideService(InstanceRef, undefined))
+
+          yield* pollWithTimeout(
+            Effect.sync(() => (seen.length === 1 ? true : undefined)),
+            "timed out waiting for process-global transcript share sync",
+            "5 seconds",
+          )
+          const body = JSON.parse(seen[0]) as { data: Array<{ type: string; data: Record<string, unknown> }> }
+          expect(body.data).toContainEqual({
+            type: "part",
+            data: expect.objectContaining({
+              messageID: "msg_global_canonical_share",
+              type: "text",
+              text: "shared globally",
+            }),
+          })
+        }).pipe(Effect.provide(integrationLayer(client)))
+      },
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
+    ),
+  )
+
   it.live("ShareNext syncs canonical user transcript when model lookup fails", () =>
     provideTmpdirInstance(
       () => {
@@ -593,6 +686,7 @@ describe("ShareNext", () => {
           const share = yield* ShareNext.Service
           const info = yield* TestSessionV2.create({ title: "canonical user share" })
           yield* share.init()
+          yield* Effect.sleep(50)
           const { db } = yield* Database.Service
           yield* db
             .insert(SessionShareTable)

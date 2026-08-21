@@ -106,6 +106,13 @@ export const locationServices = LayerNode.group([
 export type LocationServices = LayerNode.Output<typeof locationServices>
 export type LocationError = LayerNode.Error<typeof locationServices>
 
+export function normalizeLocationRef(ref: Location.Ref) {
+  return Location.Ref.make({
+    directory: ref.directory,
+    ...(ref.workspaceID === undefined ? {} : { workspaceID: ref.workspaceID }),
+  })
+}
+
 export function buildLocationServiceMap(
   replacements: LayerNode.Replacements = [],
 ): Layer.Layer<LocationServiceMap.Service> {
@@ -137,6 +144,9 @@ export function buildLocationServiceMap(
       (locations) =>
         LocationServiceMap.Service.of({
           ...locations,
+          get: (ref) => locations.get(normalizeLocationRef(ref)),
+          contextEffect: (ref) => locations.contextEffect(normalizeLocationRef(ref)),
+          invalidate: (ref) => locations.invalidate(normalizeLocationRef(ref)),
           invalidateAll() {
             return Effect.gen(function* () {
               const active = [...(yield* RcMap.keys(locations.rcMap))]

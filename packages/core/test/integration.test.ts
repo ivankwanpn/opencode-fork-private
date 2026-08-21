@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Duration, Effect, Exit, Fiber, Scope, Stream } from "effect"
+import { Cause, Duration, Effect, Exit, Fiber, Scope, Stream } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { Credential } from "@opencode-ai/core/credential"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -130,6 +130,35 @@ describe("Integration", () => {
         }),
       ])
       expect((yield* Fiber.join(updated)).length).toBe(1)
+    }),
+  )
+
+  it.effect("rejects connection methods for an unknown integration without storing credentials", () =>
+    Effect.gen(function* () {
+      const integrations = yield* Integration.Service
+      const credentials = yield* Credential.Service
+      const integrationID = Integration.ID.make("missing")
+
+      const key = yield* integrations.connection
+        .key({ integrationID, key: "secret" })
+        .pipe(Effect.exit)
+      const oauth = yield* integrations.connection
+        .oauth({ integrationID, methodID: Integration.MethodID.make("missing"), inputs: {} })
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(key)).toBe(true)
+      expect(Exit.isFailure(oauth)).toBe(true)
+      if (Exit.isFailure(key)) {
+        expect(Cause.squash(key.cause)).toEqual(
+          new Integration.InputValidationError({ field: "integrationID", message: "Integration not found: missing" }),
+        )
+      }
+      if (Exit.isFailure(oauth)) {
+        expect(Cause.squash(oauth.cause)).toEqual(
+          new Integration.InputValidationError({ field: "integrationID", message: "Integration not found: missing" }),
+        )
+      }
+      expect(yield* credentials.list(integrationID)).toEqual([])
     }),
   )
 

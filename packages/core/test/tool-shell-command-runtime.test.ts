@@ -10,6 +10,7 @@ const nodeMajor = Number(nodeVersion.match(/^v(\d+)/)?.[1] ?? 0)
 const nodeTest = node ? test : test.skip
 const nodeSourceTest = nodeMajor >= 24 ? test : test.skip
 const worker = path.join(import.meta.dir, "fixture", "shell-command-runtime.ts")
+const bundler = path.join(import.meta.dir, "fixture", "shell-command-bundle.ts")
 
 const expected = {
   bash: {
@@ -35,7 +36,7 @@ test("emits every parser WASM asset in a Bun node-target split bundle", async ()
   expect(build.success).toBe(true)
   expect(
     build.outputs
-      .map((output) => path.basename(output.path))
+      .map((output) => path.basename(output))
       .filter((name) => name.endsWith(".wasm"))
       .sort(),
   ).toEqual([
@@ -54,18 +55,20 @@ nodeTest("runs shell analysis from a Bun node-target split bundle in Node", asyn
 })
 
 async function bundle(outdir: string) {
-  return Bun.build({
-    entrypoints: [worker],
-    format: "esm",
-    target: "node",
-    splitting: true,
-    outdir,
-    naming: {
-      entry: "shell-command-runtime.mjs",
-      chunk: "[name]-[hash].[ext]",
-      asset: "[name]-[hash].[ext]",
-    },
+  const child = Bun.spawn([process.execPath, bundler, outdir, worker], {
+    cwd: path.resolve(import.meta.dir, ".."),
+    stdout: "pipe",
+    stderr: "pipe",
   })
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ])
+
+  expect(stderr).toBe("")
+  expect(exitCode).toBe(0)
+  return JSON.parse(stdout) as { success: boolean; outputs: string[] }
 }
 
 async function runNode(args: ReadonlyArray<string>) {

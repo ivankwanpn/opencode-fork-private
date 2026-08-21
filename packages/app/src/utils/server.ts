@@ -356,8 +356,24 @@ type CompatibleLocationApi = OpenCodeClient["location"] & Pick<CurrentClient["lo
 type CompatibleMcpApi = OpenCodeClient["mcp"] & {
   readonly authenticate: CurrentClient["mcps"]["authenticate"]
 }
+type CompatibleIntegrationApi = {
+  readonly list: CurrentClient["integrations"]["list"]
+  readonly get: CurrentClient["integrations"]["get"]
+  readonly connect: {
+    readonly key: CurrentClient["integrations"]["connectKey"]
+  }
+  readonly oauth: {
+    readonly connect: CurrentClient["integrations"]["connectOauth"]
+    readonly status: CurrentClient["integrations"]["attemptStatus"]
+    readonly complete: CurrentClient["integrations"]["attemptComplete"]
+    readonly cancel: CurrentClient["integrations"]["attemptCancel"]
+  }
+}
 
-export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "project" | "worktree"> & {
+export type ServerApi = Omit<
+  OpenCodeClient,
+  "file" | "session" | "location" | "project" | "worktree" | "integration"
+> & {
   readonly session: OpenCodeClient["session"] &
     Pick<
       CurrentClient["sessions"],
@@ -365,6 +381,7 @@ export type ServerApi = Omit<OpenCodeClient, "file" | "session" | "location" | "
     > & { readonly backgroundSelected: CurrentClient["sessions"]["background"] }
   readonly location: CompatibleLocationApi
   readonly mcp: CompatibleMcpApi
+  readonly integration: CompatibleIntegrationApi
   readonly project: CompatibleProjectApi
   readonly worktree: CurrentClient["worktrees"]
   readonly file: Omit<OpenCodeClient["file"], "read"> & {

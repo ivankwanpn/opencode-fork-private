@@ -26,6 +26,7 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
+import { shouldShowThinking } from "./session-turn-state"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -370,10 +371,12 @@ export function SessionTurn(
   const assistantVisible = createMemo(() => assistantDerived().visible)
   const reasoningHeading = createMemo(() => assistantDerived().reason)
   const showThinking = createMemo(() => {
-    if (!working() || !!error()) return false
-    if (status().type === "retry") return false
-    if (showReasoningSummaries()) return assistantVisible() === 0
-    return true
+    return shouldShowThinking({
+      working: working(),
+      error: !!error(),
+      retry: status().type === "retry",
+      visible: assistantVisible(),
+    })
   })
 
   const autoScroll = createAutoScroll({

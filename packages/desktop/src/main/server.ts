@@ -8,6 +8,7 @@ import { getStore } from "./store"
 import { checkHealth } from "./server-health"
 import type { SystemProxyState } from "./system-proxy"
 import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
+import { createDesktopServerEnvironment, createSidecarEnvironment } from "./server-environment"
 
 export { checkHealth } from "./server-health"
 
@@ -33,7 +34,6 @@ const SIDECAR_START_STALL_TIMEOUT = 15 * 60_000
 const SIDECAR_STOP_TIMEOUT = 6_000
 
 type SpawnLocalServerOptions = {
-  userDataPath: string
   onStdout?: (message: string) => void
   onStderr?: (message: string) => void
   onExit?: (code: number) => void
@@ -53,16 +53,9 @@ export function setDefaultServerUrl(url: string | null) {
   getStore().delete(DEFAULT_SERVER_URL_KEY)
 }
 
-export function preferAppEnv(userDataPath: string) {
+export function preferAppEnv() {
   const shell = process.platform === "win32" ? null : getUserShell()
-  Object.assign(process.env, {
-    ...(shell ? loadShellEnv(shell, getLogger()) : null),
-    OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true",
-    OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
-    OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
-    OPENCODE_CLIENT: "desktop",
-    XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? userDataPath,
-  })
+  Object.assign(process.env, createDesktopServerEnvironment(shell ? loadShellEnv(shell, getLogger()) : null))
 }
 
 export async function spawnLocalServer(
@@ -74,7 +67,7 @@ export async function spawnLocalServer(
   const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
   const child = utilityProcess.fork(sidecar, [], {
     cwd: process.cwd(),
-    env: createSidecarEnv(),
+    env: createSidecarEnvironment(process.env, { packaged: app.isPackaged, platform: process.platform }),
     serviceName: SIDECAR_SERVICE_NAME,
     stdio: "pipe",
   })
@@ -150,7 +143,6 @@ export async function spawnLocalServer(
       hostname,
       port,
       password,
-      userDataPath: options.userDataPath,
     })
   }).catch((error) => {
     if (!exited) child.kill()
@@ -201,16 +193,6 @@ export async function spawnLocalServer(
     },
     health: { wait },
   }
-}
-
-function createSidecarEnv(): Record<string, string> {
-  const env = Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
-  )
-  delete env.DEBUG
-  if (process.platform === "linux") delete env.LD_PRELOAD
-  if (!app.isPackaged) env.OPENCODE_DISABLE_CHANNEL_DB = "1"
-  return env
 }
 
 function delay(ms: number) {

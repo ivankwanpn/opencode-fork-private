@@ -425,7 +425,8 @@ const step = (state: ParserState, event: OpenAIChatEvent) =>
 
     let lifecycle = state.lifecycle
 
-    if (delta?.reasoning_content)
+    const outputStarted = state.lifecycle.text.size > 0 || Object.keys(state.tools).length > 0
+    if (delta?.reasoning_content && !outputStarted)
       lifecycle = Lifecycle.reasoningDelta(lifecycle, events, "reasoning-0", delta.reasoning_content)
 
     if (delta?.content) {

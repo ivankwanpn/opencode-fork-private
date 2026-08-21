@@ -1,4 +1,4 @@
-import type { IntegrationMethod, IntegrationOauthConnectOutput } from "@opencode-ai/client/promise"
+import type { IntegrationsConnectOauthOutput, IntegrationsGetOutput } from "../../../client/src"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Dialog } from "@opencode-ai/ui/dialog"
@@ -40,7 +40,7 @@ import { decode64 } from "@/utils/base64"
 import { createOAuthAttemptLifecycle } from "@/utils/oauth-attempt-lifecycle"
 
 const CUSTOM_ID = "_custom"
-type ConnectMethod = Extract<IntegrationMethod, { type: "key" | "oauth" }>
+type ConnectMethod = Extract<NonNullable<IntegrationsGetOutput["data"]>["methods"][number], { type: "key" | "oauth" }>
 
 export function useProviderConnectController(options: { onBack?: () => void } = {}) {
   const [store, setStore] = createStore({ selected: undefined as string | undefined })
@@ -395,12 +395,11 @@ function ProviderConnection(props: {
     const value = directory()
     return value ? { directory: value } : undefined
   }
-  const oauth = createOAuthAttemptLifecycle<IntegrationOauthConnectOutput["data"]>((authorization) =>
+  const oauth = createOAuthAttemptLifecycle<IntegrationsConnectOauthOutput["data"]>((authorization) =>
     serverSDK()
       .apiForGeneration()
       .then((api) =>
         api.integration.oauth.cancel({
-          integrationID: props.provider,
           attemptID: authorization.attemptID,
           location: location(),
         }),
@@ -449,7 +448,7 @@ function ProviderConnection(props: {
   })
   const [store, setStore] = createStore({
     methodIndex: undefined as undefined | number,
-    authorization: undefined as undefined | IntegrationOauthConnectOutput["data"],
+    authorization: undefined as undefined | IntegrationsConnectOauthOutput["data"],
     promptInputs: undefined as undefined | Record<string, string>,
     state: "pending" as undefined | "pending" | "complete" | "error" | "prompt",
     error: undefined as string | undefined,
@@ -461,7 +460,7 @@ function ProviderConnection(props: {
     | { type: "auth.prompt" }
     | { type: "auth.inputs"; inputs: Record<string, string> }
     | { type: "auth.pending" }
-    | { type: "auth.complete"; authorization: IntegrationOauthConnectOutput["data"] }
+    | { type: "auth.complete"; authorization: IntegrationsConnectOauthOutput["data"] }
     | { type: "auth.error"; error: string }
 
   function dispatch(action: Action) {
@@ -556,11 +555,15 @@ function ProviderConnection(props: {
     const method = methods()[index]
     dispatch({ type: "method.select", index })
 
+    if (method.prompts?.length && !inputs) {
+      dispatch({ type: "auth.prompt" })
+      return
+    }
+    if (method.type === "key") {
+      if (inputs) dispatch({ type: "auth.inputs", inputs })
+      return
+    }
     if (method.type === "oauth") {
-      if (method.prompts?.length && !inputs) {
-        dispatch({ type: "auth.prompt" })
-        return
-      }
       dispatch({ type: "auth.pending" })
       const generation = oauth.begin()
       await serverSDK()
@@ -596,7 +599,7 @@ function ProviderConnection(props: {
 
     const prompts = createMemo(() => {
       const value = method()
-      return value?.type === "oauth" ? (value.prompts ?? []) : []
+      return value?.prompts ?? []
     })
     const matches = (prompt: NonNullable<ReturnType<typeof prompts>[number]>, value: Record<string, string>) => {
       if (!prompt.when) return true
@@ -675,7 +678,7 @@ function ProviderConnection(props: {
               <div>
                 <List
                   class="px-3"
-                  items={select()?.options ?? []}
+                  items={[...(select()?.options ?? [])]}
                   key={(x) => x.value}
                   current={select()?.options.find((x) => x.value === formStore.value[select()!.key])}
                   onSelect={(value) => {
@@ -849,6 +852,7 @@ function ProviderConnection(props: {
             integrationID: props.provider,
             location: location(),
             key: apiKey,
+            inputs: store.promptInputs,
           }),
         )
       await complete()
@@ -979,7 +983,6 @@ function ProviderConnection(props: {
         .apiForGeneration()
         .then((api) =>
           api.integration.oauth.complete({
-            integrationID: props.provider,
             attemptID: store.authorization!.attemptID,
             location: location(),
             code,
@@ -1079,7 +1082,6 @@ function ProviderConnection(props: {
           .apiForGeneration()
           .then((api) =>
             api.integration.oauth.status({
-              integrationID: props.provider,
               attemptID: authorization.attemptID,
               location: location(),
             }),

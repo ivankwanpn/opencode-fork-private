@@ -79,6 +79,7 @@ function load(
   locations: Layer.Layer<LocationServiceMap.Service> = locationServiceMapLayer,
   marketplaceSources: ReadonlyArray<{ runtimeID: string; spec: string }> = [],
   waitForDependencies: () => Effect.Effect<void> = () => Effect.void,
+  configState?: Config.Info,
 ) {
   const source = path.join(dir, "opencode.json")
   return Effect.gen(function* () {
@@ -96,10 +97,12 @@ function load(
             Config.node,
             TestConfig.layer({
               get: () =>
-                Effect.succeed({
-                  plugin: plugins,
-                  plugin_origins: plugins.map((plugin) => ({ spec: plugin, source, scope: "local" as const })),
-                }),
+                Effect.succeed(
+                  configState ?? {
+                    plugin: plugins,
+                    plugin_origins: plugins.map((plugin) => ({ spec: plugin, source, scope: "local" as const })),
+                  },
+                ),
               directories: () => Effect.succeed([dir]),
               waitForDependencies,
             }),
@@ -123,6 +126,38 @@ function load(
 }
 
 describe("plugin.loader.shared", () => {
+  it.live("does not let V1 config hooks mutate the shared Config state", () =>
+    withTmp(
+      async (dir) => {
+        const file = path.join(dir, "mutating-config-plugin.ts")
+        const spec = pathToFileURL(file).href
+        const source = path.join(dir, "opencode.json")
+        await Bun.write(
+          file,
+          [
+            "export default async () => ({",
+            '  config: async (config) => { config.username = "mutated-by-plugin" },',
+            "})",
+            "",
+          ].join("\n"),
+        )
+        await Bun.write(source, JSON.stringify({ plugin: [spec] }))
+        return {
+          state: {
+            plugin: [spec],
+            plugin_origins: [{ spec, source, scope: "local" as const }],
+            username: "original-user",
+          } satisfies Config.Info,
+        }
+      },
+      (tmp) =>
+        Effect.gen(function* () {
+          yield* load(tmp.path, undefined, locationServiceMapLayer, [], () => Effect.void, tmp.extra.state)
+          expect(tmp.extra.state.username).toBe("original-user")
+        }),
+    ),
+  )
+
   it.live("loads a host-managed Marketplace plugin under its stable runtime identity", () =>
     withTmp(
       async (dir) => {
@@ -227,6 +262,36 @@ describe("plugin.loader.shared", () => {
         Effect.gen(function* () {
           yield* load(tmp.path)
           expect(yield* Effect.promise(() => fs.readFile(tmp.extra.mark, "utf8"))).toBe("called")
+        }),
+    ),
+  )
+
+  it.live("ignores non-plugin exports beside a valid plugin function", () =>
+    withTmp(
+      async (dir) => {
+        const file = path.join(dir, "plugin.ts")
+        const mark = path.join(dir, "called.txt")
+        await Bun.write(
+          file,
+          [
+            "export const metadata = { name: 'demo' }",
+            "export default async () => {",
+            `  await Bun.write(${JSON.stringify(mark)}, "called")`,
+            "  return {}",
+            "}",
+            "",
+          ].join("\n"),
+        )
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({ plugin: [pathToFileURL(file).href] }, null, 2),
+        )
+        return { mark }
+      },
+      (tmp) =>
+        Effect.gen(function* () {
+          yield* load(tmp.path)
+          expect(yield* Effect.promise(() => Bun.file(tmp.extra.mark).text())).toBe("called")
         }),
     ),
   )

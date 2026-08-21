@@ -439,6 +439,64 @@ describe("PluginV1Compat", () => {
     }),
   )
 
+  it.effect("loads V1 provider models when an expired OAuth refresh fails", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const credentials = yield* Credential.Service
+      const integrations = yield* Integration.Service
+      const plugins = yield* PluginV2.Service
+      const providerID = ProviderV2.ID.make("expired-oauth")
+      const integrationID = Integration.ID.make(providerID)
+      const modelID = ModelV2.ID.make("model")
+      const methodID = Integration.MethodID.make("oauth")
+      let observedAuth: Parameters<NonNullable<NonNullable<Hooks["provider"]>["models"]>>[1]["auth"]
+
+      yield* catalog.transform((draft) => {
+        draft.provider.update(providerID, (provider) => {
+          provider.name = "Expired OAuth"
+          provider.api = { type: "aisdk", package: "@ai-sdk/openai-compatible" }
+        })
+        draft.model.update(providerID, modelID, (model) => {
+          model.name = "Model"
+        })
+      })
+      yield* integrations.transform((draft) => {
+        draft.update(integrationID, (integration) => {
+          integration.name = "Expired OAuth"
+        })
+        draft.method.update({
+          integrationID,
+          method: { id: methodID, type: "oauth", label: "OAuth", prompts: [] },
+          authorize: () => Effect.die("not used"),
+          refresh: () => Effect.fail(new Error("Request failed: 403")),
+        })
+      })
+      yield* credentials.create({
+        integrationID,
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          refresh: "expired",
+          access: "expired",
+          expires: 0,
+        }),
+      })
+
+      yield* add(plugins, "v1-expired-oauth", {
+        provider: {
+          id: providerID,
+          models: async (provider, context) => {
+            observedAuth = context.auth
+            return provider.models
+          },
+        },
+      })
+
+      expect(observedAuth).toBeUndefined()
+      expect(yield* catalog.model.get(providerID, modelID)).toBeDefined()
+    }),
+  )
+
   it.effect("adapts V1 auth loaders to AISDK options with live credentials and scoped disposal", () =>
     Effect.gen(function* () {
       const aisdk = yield* AISDK.Service
@@ -684,6 +742,33 @@ describe("PluginV1Compat", () => {
         type: "catalog.updated",
         properties: {},
       })
+    }),
+  )
+
+  it.effect("continues the V1 event subscription after a handler failure", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const events = yield* EventV2.Service
+      const received = yield* Deferred.make<any>()
+      let calls = 0
+
+      yield* add(plugins, "v1-event-failure", {
+        event: async ({ event }) => {
+          calls++
+          if (calls === 1) throw new Error("event hook failed")
+          Deferred.doneUnsafe(received, Effect.succeed(event))
+        },
+      })
+
+      yield* Effect.yieldNow
+      yield* events.publish(Catalog.Event.Updated, {})
+      yield* Effect.yieldNow
+      yield* events.publish(Catalog.Event.Updated, {})
+
+      expect(yield* Deferred.await(received).pipe(Effect.timeout("1 second"))).toMatchObject({
+        type: "catalog.updated",
+      })
+      expect(calls).toBe(2)
     }),
   )
 

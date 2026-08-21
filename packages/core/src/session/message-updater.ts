@@ -383,6 +383,11 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
       "session.next.tool-discovery.completed": () => Effect.void,
       "session.next.reasoning.started": (event) => {
         return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
+          const match = latestReasoning(draft, event.data.reasoningID)
+          if (match) {
+            if (event.data.providerMetadata !== undefined) match.providerMetadata = event.data.providerMetadata
+            return
+          }
           draft.content.push(
             castDraft(
               SessionMessage.AssistantReasoning.make({

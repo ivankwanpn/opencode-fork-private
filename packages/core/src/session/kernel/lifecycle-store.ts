@@ -11,6 +11,7 @@ import { SessionInput } from "../input"
 import { SessionMessage } from "../message"
 import { SessionSchema } from "../schema"
 import { SessionExecutionTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "../sql"
+import { processIncarnation } from "./incarnation"
 import {
   ConflictError,
   InvariantError,
@@ -20,6 +21,7 @@ import {
 import type {
   CheckpointInput,
   ExecutionLease,
+  ExecutionPhase,
   ExecutionSnapshot,
   InterruptInput,
   ReconcileInput,
@@ -77,6 +79,13 @@ export interface Interface {
   readonly reconcile: (input: ReconcileInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
   /** Post-interrupt terminal settlement under the fenced generation. */
   readonly settle: (input: SettleInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
+  /** Idle → phase lease: generation+1 with a fresh token for non-turn phases (compaction). */
+  readonly acquireIdle: (
+    sessionID: SessionSchema.ID,
+    phase: ExecutionPhase,
+  ) => Effect.Effect<ExecutionLease, ConflictError | InvariantError>
+  /** Releases a phase lease back to idle; every release is fenced by generation/token. */
+  readonly releaseIdle: (lease: ExecutionLease) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/LifecycleStore") {}
@@ -451,6 +460,93 @@ const layer = Layer.effect(
       )
     })
 
+    const acquireIdle = Effect.fn("LifecycleStore.acquireIdle")(function* (
+      sessionID: SessionSchema.ID,
+      phase: ExecutionPhase,
+    ) {
+      const token = crypto.randomUUID()
+      const now = yield* DateTime.now
+      yield* catchCoordinationDefects(
+        db
+          .update(SessionExecutionTable)
+          .set({
+            generation: sql`${SessionExecutionTable.generation} + 1`,
+            lease_token: token,
+            process_incarnation: processIncarnation,
+            state: "active",
+            phase,
+            time_updated: DateTime.toEpochMillis(now),
+          })
+          .where(
+            and(
+              eq(SessionExecutionTable.session_id, sessionID),
+              eq(SessionExecutionTable.state, "idle"),
+              isNull(SessionExecutionTable.lease_token),
+            ),
+          )
+          .returning({ sessionID: SessionExecutionTable.session_id })
+          .get()
+          .pipe(
+            Effect.orDie,
+            Effect.flatMap((row) =>
+              row
+                ? Effect.void
+                : Effect.die(new ConflictError({ sessionID, message: "Session execution is not idle" })),
+            ),
+          ),
+        [ConflictError, InvariantError],
+      )
+      const snapshot = yield* get(sessionID).pipe(
+        Effect.catchTag("Session.NotFoundError", () =>
+          Effect.die(new InvariantError({ sessionID, message: "Phase acquisition row is missing" })),
+        ),
+      )
+      return { sessionID, generation: snapshot.generation, token } satisfies ExecutionLease
+    })
+
+    const releaseIdle = Effect.fn("LifecycleStore.releaseIdle")(function* (lease: ExecutionLease) {
+      const now = yield* DateTime.now
+      yield* catchCoordinationDefects(
+        db
+          .update(SessionExecutionTable)
+          .set({
+            state: "idle",
+            phase: null,
+            lease_token: null,
+            time_updated: DateTime.toEpochMillis(now),
+          })
+          .where(
+            and(
+              eq(SessionExecutionTable.session_id, lease.sessionID),
+              eq(SessionExecutionTable.generation, lease.generation),
+              eq(SessionExecutionTable.lease_token, lease.token),
+            ),
+          )
+          .returning({ sessionID: SessionExecutionTable.session_id })
+          .get()
+          .pipe(
+            Effect.orDie,
+            Effect.flatMap((row) =>
+              row
+                ? Effect.void
+                : Effect.die(
+                    new StaleExecutionError({
+                      sessionID: lease.sessionID,
+                      generation: lease.generation,
+                      expectedState: "active",
+                    }),
+                  ),
+            ),
+          ),
+        [StaleExecutionError],
+      )
+      return yield* get(lease.sessionID).pipe(
+        Effect.catchTag("Session.NotFoundError", () =>
+          Effect.die(new InvariantError({ sessionID: lease.sessionID, message: "Phase release row is missing" })),
+        ),
+      )
+    })
+
     const acceptInterrupt = Effect.fn("LifecycleStore.acceptInterrupt")(function* (input: InterruptInput) {
       const now = yield* DateTime.now
       const updated = yield* db
@@ -678,7 +774,7 @@ const layer = Layer.effect(
       )
     })
 
-    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt, reconcile, settle })
+    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt, reconcile, settle, acquireIdle, releaseIdle })
   }),
 )
 

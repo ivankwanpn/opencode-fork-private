@@ -15,6 +15,8 @@ import { TurnCoordinator } from "./coordinator"
 export interface KernelExecution {
   readonly lifecycle: LifecycleStore.Interface
   readonly coordinator: TurnCoordinator.Interface
+  /** Fenced compaction; durable Started/Ended/Failed plus release under lease. */
+  readonly compact: (sessionID: SessionSchema.ID, reason: "auto" | "manual") => Effect.Effect<void>
   /**
    * Live execution surface: provider turns run through the coordinator, which
    * never falls back to Classic. Non-drain work (shell, compaction, recovery)
@@ -60,6 +62,7 @@ const layer = Layer.effect(
     return Service.of({
       lifecycle,
       coordinator,
+      compact: (sessionID, reason) => coordinator.compact(sessionID, reason),
       execution: SessionExecution.Service.of({
         active: coordinator.active,
         resume: (sessionID) => coordinator.run(sessionID),

@@ -14,6 +14,7 @@ import { SessionMessage } from "../message"
 import { SessionSchema } from "../schema"
 import { SessionStore } from "../store"
 import { SessionRunnerModel } from "../runner/model"
+import { SessionCompaction } from "../compaction"
 import { toLLMMessages } from "../runner/to-llm-message"
 import { SessionRunCoordinator } from "../run-coordinator"
 import { LifecycleStore } from "./lifecycle-store"
@@ -30,6 +31,8 @@ export interface Interface {
   readonly wait: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   /** Durable fence first, then abort provider/tool scopes. */
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  /** Fenced compaction phase: acquire idle, compact, release idle. */
+  readonly compact: (sessionID: SessionSchema.ID, reason: "auto" | "manual") => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/TurnCoordinator") {}
@@ -207,6 +210,31 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
     })
   })
 
+  const compact = Effect.fn("TurnCoordinator.compact")(function* (
+    sessionID: SessionSchema.ID,
+    reason: "auto" | "manual",
+  ) {
+    const session = yield* store.get(sessionID)
+    if (!session || session.engine !== "kernel") return
+    const lease = yield* lifecycle.acquireIdle(sessionID, "compacting").pipe(Effect.orDie)
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const compaction = yield* SessionCompaction.Service.use((service) => Effect.succeed(service)).pipe(
+          Effect.provide(locations.get(session.location)),
+        )
+        yield* restore(compaction.compact({ session, reason }).pipe(Effect.orDie))
+      }).pipe(
+        Effect.ensuring(
+          lifecycle.releaseIdle(lease).pipe(
+            // A fenced release only means a newer owner already took over; the
+            // durable compaction facts still stand.
+            Effect.catchTag("StaleExecutionError", () => Effect.void),
+          ),
+        ),
+      ),
+    )
+  })
+
   const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, never>({
     drain: (sessionID) =>
       // The drain absorbs its own interruption: the interrupt fence is
@@ -258,6 +286,7 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
     wake: coordinator.wake,
     wait: coordinator.wait,
     interrupt,
+    compact,
   } satisfies Interface
 })
 

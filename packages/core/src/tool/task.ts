@@ -292,6 +292,10 @@ export const layerWithOptions = (options: LayerOptions = {}) =>
               model,
               location: parent.location,
               permissions: grantRules(input.permission, blocked),
+              // Kernel parents create Kernel children: parent and child never
+              // share a publisher, lease, or cancellation controller. Classic
+              // parents keep Classic children until the cutover.
+              ...(parent.engine === "kernel" ? { engine: "kernel" as const } : {}),
             }))
           if (!resumed && acquired.kind === "new")
             yield* permits.rekey(acquired, child.id).pipe(Effect.flatMap((next) => Ref.set(reservationRef, next)))

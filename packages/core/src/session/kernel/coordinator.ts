@@ -53,14 +53,21 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
   const scope = yield* Scope.Scope
   const currentActor = yield* Ref.make<Option.Option<PublicationActor.Interface>>(Option.none())
 
+  const morePending = Effect.fn("TurnCoordinator.morePending")(function* (sessionID: SessionSchema.ID) {
+    if (yield* SessionInput.hasPending(db, sessionID, "steer")) return true
+    return yield* SessionInput.hasPending(db, sessionID, "queue")
+  })
+
   const runTurn = Effect.fn("TurnCoordinator.runTurn")(function* (sessionID: SessionSchema.ID) {
     const snapshot = yield* lifecycle.get(sessionID)
-    if (snapshot.state !== "idle") return
+    if (snapshot.state !== "idle") return false
     const session = yield* store.get(sessionID)
-    if (!session || session.engine !== "kernel") return
-    const pending = yield* SessionInput.pending(db, sessionID, "steer")
-    const input = pending[0]
-    if (!input) return
+    if (!session || session.engine !== "kernel") return false
+    // Idle promotes exactly one durable input per turn: steers first, then
+    // the oldest queue entry. Anything still pending is the next loop pass.
+    const steer = yield* SessionInput.pending(db, sessionID, "steer")
+    const input = steer[0] ?? (yield* SessionInput.pending(db, sessionID, "queue"))[0]
+    if (!input) return false
 
     const attemptID = EventV2.ID.create()
     const turnID = SessionMessage.ID.create()
@@ -175,7 +182,7 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
         if (result.kind === "interrupted") {
           if (finalActor) yield* finalActor.close("cancelled")
           yield* settleAfterInterrupt(sessionID)
-          return
+          return yield* morePending(sessionID)
         }
         if (result.kind === "error") {
           if (finalActor) yield* finalActor.close("error")
@@ -192,6 +199,7 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
           outcome: "completed",
           resultMessageID: assistantMessageID,
         })
+        return yield* morePending(sessionID)
       }),
     )
   })
@@ -244,17 +252,23 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
       Effect.uninterruptibleMask((restore) =>
         restore(
           Effect.gen(function* () {
-            yield* runTurn(sessionID)
+            // Durable pending check drives the loop instead of an effect
+            // return value: each pass runs one fenced turn and promotes at
+            // most one queue entry, so FIFO delivery is stable across turns.
+            let pending = yield* morePending(sessionID)
+            while (pending) {
+              yield* runTurn(sessionID)
+              pending = yield* morePending(sessionID)
+            }
           }),
         )
           .pipe(
             // The catch runs uninterruptibly so a pending interrupt from the
             // drain is consumed here and the drain completes successfully.
-            Effect.catchCause((cause) => {
-              return Effect.asVoid(Effect.logWarning("Kernel turn failed", { sessionID, cause }))
-            }),
-          )
-          ,
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Kernel turn failed", { sessionID, cause }).pipe(Effect.asVoid),
+            ),
+          ),
       ),
   })
 

@@ -54,6 +54,9 @@ export const Request = Schema.Struct({
   sessionID: SessionID,
   questions: Schema.Array(Info).annotate({ description: "Questions to ask" }),
   tool: Tool.pipe(optional),
+  // Kernel-binding: the execution generation that owns the question. A reply
+  // bound to a fenced generation is rejected as stale.
+  generation: Schema.Number.pipe(optional),
 }).annotate({ identifier: "QuestionV2.Request" })
 export interface Request extends Schema.Schema.Type<typeof Request> {}
 

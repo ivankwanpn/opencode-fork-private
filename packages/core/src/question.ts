@@ -5,6 +5,7 @@ import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Question } from "@opencode-ai/schema/question"
 import { EventV2 } from "./event"
 import { SessionSchema } from "./session/schema"
+import { LifecycleStore } from "./session/kernel/lifecycle-store"
 
 export const ID = Question.ID
 export type ID = typeof ID.Type
@@ -42,10 +43,18 @@ export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Que
   requestID: ID,
 }) {}
 
+/** The question is bound to a fenced execution generation. */
+export class StaleQuestionError extends Schema.TaggedErrorClass<StaleQuestionError>()("QuestionV2.StaleQuestion", {
+  requestID: ID,
+  expectedGeneration: Schema.Number,
+}) {}
+
 export interface AskInput {
   readonly sessionID: SessionSchema.ID
   readonly questions: ReadonlyArray<Info>
   readonly tool?: Tool
+  /** Kernel execution generation that owns the question. */
+  readonly generation?: number
 }
 
 export interface ReplyInput {
@@ -55,7 +64,7 @@ export interface ReplyInput {
 
 export interface Interface {
   readonly ask: (input: AskInput) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
-  readonly reply: (input: ReplyInput) => Effect.Effect<void, NotFoundError>
+  readonly reply: (input: ReplyInput) => Effect.Effect<void, NotFoundError | StaleQuestionError>
   readonly reject: (requestID: ID) => Effect.Effect<void, NotFoundError>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 }
@@ -76,6 +85,7 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const events = yield* EventV2.Service
+    const lifecycle = yield* LifecycleStore.Service
     const pending = new Map<ID, Pending>()
 
     yield* Effect.addFinalizer(() =>
@@ -114,6 +124,18 @@ const layer = Layer.effect(
         Effect.gen(function* () {
           const existing = pending.get(input.requestID)
           if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+          // Generation binding: the question dies with its owner.
+          const requested = existing.request.generation
+          if (requested !== undefined) {
+            const current = yield* lifecycle
+              .get(existing.request.sessionID)
+              .pipe(Effect.catchTag("Session.NotFoundError", () => Effect.die("Question session vanished")))
+            if (current.generation !== requested)
+              return yield* new StaleQuestionError({
+                requestID: input.requestID,
+                expectedGeneration: requested,
+              })
+          }
           yield* events.publish(Event.Replied, {
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,
@@ -150,4 +172,4 @@ const layer = Layer.effect(
 
 export const locationLayer = layer
 
-export const node = makeLocationNode({ service: Service, layer, deps: [EventV2.node] })
+export const node = makeLocationNode({ service: Service, layer, deps: [EventV2.node, LifecycleStore.node] })

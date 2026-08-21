@@ -374,6 +374,7 @@ describe("LocationServiceMap", () => {
                 tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
                 time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
                 location,
+                engine: "classic",
               }),
             ),
           ).pipe(Effect.provide(LocationServiceMap.Service.get(location)))
@@ -424,6 +425,7 @@ describe("LocationServiceMap", () => {
                 tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
                 time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
                 location,
+                engine: "classic",
               }),
             ),
           ).pipe(Effect.provide(LocationServiceMap.Service.get(location)), Effect.flip)

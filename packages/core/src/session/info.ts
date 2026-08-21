@@ -69,6 +69,7 @@ export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.In
           : DateTime.makeUnsafe(row.time_archived),
     },
     share: row.share_url ? { url: row.share_url } : undefined,
+    engine: row.engine ?? "classic",
   })
 }
 

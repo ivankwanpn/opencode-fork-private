@@ -77,6 +77,9 @@ export const SessionSnapshot = Schema.Struct({
   location: Location.Ref,
   subpath: RelativePath.pipe(optional),
   revert: Revert.State.pipe(optional),
+  // Mirrors Session.ExecutionEngine without importing ./session (module cycle).
+  // Optional so pre-engine durable events keep replaying as classic.
+  engine: Schema.Literals(["classic", "kernel"]).pipe(optional),
 }).annotate({ identifier: "session.next.session.snapshot" })
 export interface SessionSnapshot extends Schema.Schema.Type<typeof SessionSnapshot> {}
 

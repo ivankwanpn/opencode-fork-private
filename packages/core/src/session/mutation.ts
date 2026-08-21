@@ -33,6 +33,7 @@ export function rowToSnapshot(row: typeof SessionTable.$inferSelect): SessionEve
     location: info.location,
     subpath: info.subpath,
     revert: info.revert,
+    engine: info.engine,
   })
 }
 

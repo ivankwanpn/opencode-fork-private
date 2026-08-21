@@ -11,6 +11,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { SessionMessage } from "@opencode-ai/core/session/message"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { DateTime, Schema } from "effect"
@@ -1701,7 +1702,7 @@ describe("session.message-v2.toLegacy", () => {
       providerID,
       id: ModelV2.ID.make("test-model"),
     }
-    const session = {
+    const session: SessionSchema.Info = {
       id: sessionID,
       projectID: ProjectV2.ID.make("project"),
       agent: AgentV2.ID.make("build"),
@@ -1711,6 +1712,7 @@ describe("session.message-v2.toLegacy", () => {
       time: { created: time, updated: time },
       title: "compatibility",
       location: { directory: AbsolutePath.make("/project") },
+      engine: "classic",
     }
     const messages: SessionMessage.Message[] = [
       SessionMessage.User.make({
@@ -1801,6 +1803,7 @@ describe("session.message-v2.toLegacy", () => {
         time: { created: time, updated: time },
         title: "compatibility",
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       },
       [
         SessionMessage.Assistant.make({

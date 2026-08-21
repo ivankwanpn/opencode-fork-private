@@ -60,6 +60,7 @@ function sessionRowFromSnapshot(snapshot: SessionEvent.SessionSnapshot): typeof 
       ? { ...snapshot.revert, messageID: SessionMessage.ID.make(snapshot.revert.messageID) }
       : null,
     permission: snapshot.permission ? [...snapshot.permission] : undefined,
+    engine: snapshot.engine ?? "classic",
     time_created: DateTime.toEpochMillis(snapshot.time.created),
     time_updated: DateTime.toEpochMillis(snapshot.time.updated),
     time_compacting: snapshot.time.compacting ? DateTime.toEpochMillis(snapshot.time.compacting) : null,

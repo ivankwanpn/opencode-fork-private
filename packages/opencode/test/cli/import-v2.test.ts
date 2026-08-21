@@ -81,8 +81,8 @@ describe("V2 session import", () => {
           title: "Imported canonical archive",
           share: { url: "https://example.test/share/import" },
           location: Location.Ref.make({ directory: AbsolutePath.make("/archive/source") }),
+          engine: "classic",
           subpath: RelativePath.make("source/subpath"),
-          revert: { messageID: first.id, partID: "text_import", removedMessageIDs: [second.id] },
         },
         messages: [first, second],
       })
@@ -154,6 +154,7 @@ describe("V2 session import", () => {
           time: { created: DateTime.makeUnsafe(1), updated: DateTime.makeUnsafe(1) },
           title: "retry",
           location: Location.Ref.make({ directory: AbsolutePath.make("/archive/source") }),
+          engine: "classic",
         },
         messages: [],
       })

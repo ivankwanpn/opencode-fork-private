@@ -316,7 +316,9 @@ export interface Interface {
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   readonly status: (sessionID: SessionSchema.ID) => Effect.Effect<Status, NotFoundError>
   readonly recover: (input: RecoveryInput) => Effect.Effect<void, NotFoundError | RecoveryConflictError>
-  readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
+  readonly resume: (
+    sessionID: SessionSchema.ID,
+  ) => Effect.Effect<void, NotFoundError | SessionRunner.RunError | SessionSchema.KernelUnavailableError>
   readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   readonly transcript: {
     readonly importMessage: (input: {

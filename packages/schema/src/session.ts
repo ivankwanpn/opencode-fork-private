@@ -15,6 +15,16 @@ export type ID = SessionID
 
 export const Event = SessionEvent
 
+/** Execution engine fixed at Session creation; a Session never changes engine. */
+export const ExecutionEngine = Schema.Literals(["classic", "kernel"])
+export type ExecutionEngine = typeof ExecutionEngine.Type
+
+/** The Kernel engine is not installed in this process (or not yet available). */
+export class KernelUnavailableError extends Schema.TaggedErrorClass<KernelUnavailableError>()(
+  "KernelUnavailableError",
+  { sessionID: ID },
+) {}
+
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   id: ID,
@@ -44,6 +54,7 @@ export const Info = Schema.Struct({
   location: Location.Ref,
   subpath: RelativePath.pipe(optional),
   revert: Revert.State.pipe(optional),
+  engine: ExecutionEngine,
 }).annotate({ identifier: "SessionV2.Info" })
 
 export const ListAnchor = Schema.Struct({

@@ -59,6 +59,12 @@ export class Cancelled extends Schema.TaggedErrorClass<Cancelled>()("Session.Can
   sessionID: SessionSchema.ID,
 }) {}
 
+/**
+ * Process-level default engine for newly created Sessions. The first product
+ * release keeps Classic as the default; a later gate flips it to Kernel.
+ */
+export const DefaultEngine: SessionSchema.ExecutionEngine = "classic"
+
 export type CreateInput = {
   readonly id?: SessionSchema.ID
   readonly parentID?: SessionSchema.ID
@@ -68,6 +74,8 @@ export type CreateInput = {
   readonly metadata?: Readonly<Record<string, Schema.Json>>
   readonly location: Location.Ref
   readonly permissions?: PermissionV2.Ruleset
+  /** Execution engine fixed at creation; omission resolves to DefaultEngine. */
+  readonly engine?: SessionSchema.ExecutionEngine
 }
 
 export type RestoreInput = {
@@ -267,6 +275,7 @@ const layer = Layer.effect(
           permission: input.permissions,
           location: target.location,
           subpath: target.subpath,
+          engine: input.engine ?? DefaultEngine,
         })
         return yield* publishCreated(snapshot, DateTime.makeUnsafe(now))
       }),
@@ -274,6 +283,7 @@ const layer = Layer.effect(
         const target = yield* prepareLocation(input.location)
         const expected = SessionSchema.Info.make({
           ...input.session,
+          engine: input.session.engine ?? "classic",
           model: input.session.model
             ? {
                 ...input.session.model,

@@ -21,6 +21,7 @@ describe("legacySessionFromNative", () => {
       time: { created: 1000, updated: 2000 },
       title: "wire session",
       location: { directory: "D:/work" },
+      engine: "classic",
       revert: {
         messageID: "msg_1",
         removedMessageIDs: ["msg_2"],
@@ -60,6 +61,7 @@ describe("legacySessionFromV2", () => {
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created, updated },
       location: { directory: AbsolutePath.make("D:/work/app"), workspaceID: WorkspaceV2.ID.make("wrk_1") },
+      engine: "classic",
       subpath: RelativePath.make("packages/opencode"),
       agent: AgentV2.ID.make("build"),
       model: {
@@ -114,6 +116,7 @@ describe("legacySessionFromV2", () => {
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: DateTime.makeUnsafe(1000), updated: DateTime.makeUnsafe(1000) },
       location: { directory: AbsolutePath.make("D:/work") },
+      engine: "classic",
       model: {
         id: ModelV2.ID.make("claude-sonnet-5"),
         providerID: ProviderV2.ID.make("anthropic"),
@@ -133,6 +136,7 @@ describe("legacySessionFromV2", () => {
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: DateTime.makeUnsafe(1000), updated: DateTime.makeUnsafe(1000) },
       location: { directory: AbsolutePath.make("D:/work") },
+      engine: "classic",
       model: {
         id: ModelV2.ID.make("claude-sonnet-5"),
         providerID: ProviderV2.ID.make("anthropic"),
@@ -151,6 +155,7 @@ describe("legacySessionFromV2", () => {
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: DateTime.makeUnsafe(1000), updated: DateTime.makeUnsafe(1000) },
       location: { directory: AbsolutePath.make("D:/work") },
+      engine: "classic",
     })
 
     const projected = legacySessionFromV2(info)

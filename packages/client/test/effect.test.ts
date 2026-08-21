@@ -212,6 +212,7 @@ const session = {
     },
     title: "Test",
     location: { directory: "/tmp/project" },
+    engine: "classic",
   },
 }
 

@@ -7,6 +7,7 @@ import type { Snapshot } from "../snapshot"
 import type { PermissionV2 } from "../permission"
 import { ProjectV2 } from "../project"
 import type { SessionSchema } from "./schema"
+import type { ExecutionEngine } from "@opencode-ai/schema/session"
 import { WorkspaceV2 } from "../workspace"
 import { Timestamps } from "../database/schema.sql"
 import type { SystemContext } from "../system-context/index"
@@ -47,6 +48,8 @@ export const SessionTable = sqliteTable(
     tokens_cache_write: integer().notNull().default(0),
     revert: text({ mode: "json" }).$type<Revert.State>(),
     permission: text({ mode: "json" }).$type<PermissionV2.Ruleset>(),
+    // Execution engine fixed at Session creation; existing rows decode as classic.
+    engine: text().$type<ExecutionEngine>().notNull().default("classic"),
     agent: text(),
     model: text({ mode: "json" }).$type<{
       id: string

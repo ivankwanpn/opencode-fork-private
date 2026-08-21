@@ -97,6 +97,11 @@ describe("DatabaseMigration", () => {
           ),
         ).toEqual([{ name: "session_tool_discovery" }, { name: "session_tool_discovery_call" }])
         expect(
+          yield* db.all<{ name: string; notnull: number; dflt_value: string | null }>(
+            sql`SELECT name, "notnull", dflt_value FROM pragma_table_info('session') WHERE name = 'engine'`,
+          ),
+        ).toEqual([{ name: "engine", notnull: 1, dflt_value: "'classic'" }])
+        expect(
           yield* db.all<{ name: string; pk: number }>(
             sql`SELECT name, pk FROM pragma_table_info('session_tool_discovery_call') WHERE pk > 0 ORDER BY pk`,
           ),

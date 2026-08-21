@@ -276,6 +276,7 @@ const canonicalSession = (input: {
       directory: AbsolutePath.make(input.directory),
       workspaceID: input.workspaceID,
     },
+    engine: "classic",
   })
 
 const unusedSessionMembers = {

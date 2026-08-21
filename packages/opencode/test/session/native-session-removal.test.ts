@@ -11,16 +11,19 @@ import { SessionRemoval } from "@/session/removal"
 import { testEffect } from "../lib/effect"
 
 const sessionID = SessionV2.ID.make("ses_native_removal_boot_failure")
-const info = SessionEvent.SessionSnapshot.make({
-  id: sessionID,
-  projectID: ProjectV2.ID.global,
-  slug: "native-removal",
-  version: "test",
-  cost: 0,
-  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-  time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
-  title: "native removal",
-  location: { directory: AbsolutePath.make("/missing/project") },
+const info = SessionV2.Info.make({
+  ...SessionEvent.SessionSnapshot.make({
+    id: sessionID,
+    projectID: ProjectV2.ID.global,
+    slug: "native-removal",
+    version: "test",
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
+    title: "native removal",
+    location: { directory: AbsolutePath.make("/missing/project") },
+  }),
+  engine: "classic",
 })
 
 const durable: SessionV2.ID[] = []

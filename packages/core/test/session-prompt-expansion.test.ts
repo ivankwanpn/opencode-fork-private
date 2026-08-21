@@ -179,6 +179,7 @@ const session = SessionV2.Info.make({
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
   location: { directory },
+  engine: "classic",
 })
 
 describe("SessionPromptExpansion", () => {

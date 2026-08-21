@@ -153,6 +153,9 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
           agent: Agent.ID.pipe(Schema.optional),
           model: Model.Ref.pipe(Schema.optional),
           location: Location.Ref.pipe(Schema.optional),
+          // DEV/test-only engine selection; production omits it and resolves the
+          // process-level default. A Session never changes engine after creation.
+          engine: Session.ExecutionEngine.pipe(Schema.optional),
         }),
         success: Schema.Struct({ data: Session.Info }),
       }).annotateMerge(

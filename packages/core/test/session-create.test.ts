@@ -241,6 +241,21 @@ const toctouIt = testEffect(
 )
 
 describe("SessionV2.create", () => {
+  it.effect("stores an immutable execution engine and defaults existing rows to classic", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const classic = yield* session.create({ location, id: SessionV2.ID.make("ses_engine_classic") })
+      const kernel = yield* session.create({ location, id: SessionV2.ID.make("ses_engine_kernel"), engine: "kernel" })
+      expect(classic.engine).toBe("classic")
+      expect(kernel.engine).toBe("kernel")
+      expect((yield* session.get(kernel.id)).engine).toBe("kernel")
+      // The engine is fixed at creation: later mutations never change it.
+      yield* session.update({ sessionID: kernel.id, title: "renamed" })
+      expect((yield* session.get(kernel.id)).engine).toBe("kernel")
+      expect((yield* session.list()).find((item) => item.id === classic.id)?.engine).toBe("classic")
+    }),
+  )
+
   it.effect("creates a fresh projected session when the ID is omitted", () =>
     Effect.gen(function* () {
       const session = yield* SessionV2.Service

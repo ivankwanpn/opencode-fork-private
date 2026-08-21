@@ -59,6 +59,7 @@ const stubSessions = Layer.succeed(
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
           location: Location.Ref.make({ directory: AbsolutePath.make("/project") }),
+          engine: "classic",
         }),
       ),
     permissions: () => Effect.sync(() => [...sessionPermissions]),

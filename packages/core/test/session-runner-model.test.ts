@@ -78,6 +78,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)
@@ -110,6 +111,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)
@@ -166,6 +168,7 @@ describe("SessionRunnerModel", () => {
             tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
             time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
             location: { directory: AbsolutePath.make("/project") },
+            engine: "classic",
           })
           const resolved = yield* SessionRunnerModel.resolve(session, catalog)
           const prepared = yield* LLMClient.prepare(LLM.request({ model: resolved, prompt: "Hello" }))
@@ -210,6 +213,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)
@@ -291,6 +295,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)
@@ -327,6 +332,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog, undefined, {
@@ -364,6 +370,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)
@@ -405,6 +412,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)
@@ -430,6 +438,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const failure = yield* SessionRunnerModel.resolve(session, catalog).pipe(Effect.flip)
@@ -462,6 +471,7 @@ describe("SessionRunnerModel", () => {
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
         location: { directory: AbsolutePath.make("/project") },
+        engine: "classic",
       })
 
       const resolved = yield* SessionRunnerModel.resolve(session, catalog)

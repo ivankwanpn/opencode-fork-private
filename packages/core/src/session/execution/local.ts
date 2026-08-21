@@ -20,6 +20,7 @@ import { SessionAttemptTable, SessionInputTable, TaskSubmissionTable } from "../
 import { SessionEvent } from "../event"
 import { mutateSession } from "../mutation"
 import { EventV2 } from "../../event"
+import { SessionExecutionRouter } from "./router"
 
 type DB = Database.Interface["db"]
 
@@ -329,7 +330,7 @@ const layer = Layer.effect(
       }),
     })
 
-    const service = SessionExecution.Service.of({
+    const classic = SessionExecution.Service.of({
       active: coordinator.active,
       interrupt: Effect.fn("SessionExecutionLocal.interrupt")(function* (sessionID) {
         const turn = yield* SessionTurn.get(db, sessionID)
@@ -364,6 +365,9 @@ const layer = Layer.effect(
       wake: coordinator.wake,
       wait: coordinator.wait,
     })
+    // Kernel Sessions route through the same facade; until the Kernel engine is
+    // installed they fail with KernelUnavailableError and never touch Classic.
+    const service = SessionExecution.routingFacade(SessionExecutionRouter.make({ classic }, db))
     current.service = service
 
     for (const turn of yield* SessionTurn.open(db)) {

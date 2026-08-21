@@ -52,5 +52,6 @@ export const migrations = (
     import("./migration/20260815012419_session_share_revocation"),
     import("./migration/20260815025712_share_removal_intent"),
     import("./migration/20260815080734_session-tool-discovery"),
+    import("./migration/20260821010000_session_execution_engine"),
   ])
 ).map((module) => module.default) satisfies DatabaseMigration.Migration[]

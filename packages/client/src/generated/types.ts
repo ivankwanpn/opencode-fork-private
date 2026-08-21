@@ -421,6 +421,7 @@ export type SessionsListOutput = {
         readonly patch: string
       }>
     }
+    readonly engine: "classic" | "kernel"
   }>
   readonly cursor: { readonly previous?: string | null; readonly next?: string | null }
 }
@@ -436,6 +437,7 @@ export type SessionsCreateInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly location?: { readonly directory: string; readonly workspaceID?: string } | null
+    readonly engine?: "classic" | "kernel" | null
   }["id"]
   readonly agent?: {
     readonly id?: string | null
@@ -447,6 +449,7 @@ export type SessionsCreateInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly location?: { readonly directory: string; readonly workspaceID?: string } | null
+    readonly engine?: "classic" | "kernel" | null
   }["agent"]
   readonly model?: {
     readonly id?: string | null
@@ -458,6 +461,7 @@ export type SessionsCreateInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly location?: { readonly directory: string; readonly workspaceID?: string } | null
+    readonly engine?: "classic" | "kernel" | null
   }["model"]
   readonly location?: {
     readonly id?: string | null
@@ -469,7 +473,20 @@ export type SessionsCreateInput = {
       readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
     } | null
     readonly location?: { readonly directory: string; readonly workspaceID?: string } | null
+    readonly engine?: "classic" | "kernel" | null
   }["location"]
+  readonly engine?: {
+    readonly id?: string | null
+    readonly agent?: string | null
+    readonly model?: {
+      readonly id: string
+      readonly providerID: string
+      readonly variant?: string
+      readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages"
+    } | null
+    readonly location?: { readonly directory: string; readonly workspaceID?: string } | null
+    readonly engine?: "classic" | "kernel" | null
+  }["engine"]
 }
 
 export type SessionsCreateOutput = {
@@ -517,6 +534,7 @@ export type SessionsCreateOutput = {
         readonly patch: string
       }>
     }
+    readonly engine: "classic" | "kernel"
   }
 }["data"]
 
@@ -578,6 +596,7 @@ export type SessionsGetOutput = {
         readonly patch: string
       }>
     }
+    readonly engine: "classic" | "kernel"
   }
 }["data"]
 
@@ -628,6 +647,7 @@ export type SessionsChildrenOutput = {
         readonly patch: string
       }>
     }
+    readonly engine: "classic" | "kernel"
   }>
 }["data"]
 
@@ -687,6 +707,7 @@ export type SessionsForkOutput = {
         readonly patch: string
       }>
     }
+    readonly engine: "classic" | "kernel"
   }
 }["data"]
 
@@ -741,6 +762,7 @@ export type SessionsUpdateOutput = {
         readonly patch: string
       }>
     }
+    readonly engine: "classic" | "kernel"
   }
 }["data"]
 
@@ -2244,6 +2266,7 @@ export type SessionsHistoryOutput = {
                 readonly patch: string
               }>
             }
+            readonly engine?: "classic" | "kernel"
           }
         }
       }
@@ -2307,6 +2330,7 @@ export type SessionsHistoryOutput = {
                 readonly patch: string
               }>
             }
+            readonly engine?: "classic" | "kernel"
           }
         }
       }
@@ -2370,6 +2394,7 @@ export type SessionsHistoryOutput = {
                 readonly patch: string
               }>
             }
+            readonly engine?: "classic" | "kernel"
           }
         }
       }
@@ -3747,6 +3772,7 @@ export type SessionsEventsOutput =
               readonly patch: string
             }>
           }
+          readonly engine?: "classic" | "kernel"
         }
       }
     }
@@ -3810,6 +3836,7 @@ export type SessionsEventsOutput =
               readonly patch: string
             }>
           }
+          readonly engine?: "classic" | "kernel"
         }
       }
     }
@@ -3873,6 +3900,7 @@ export type SessionsEventsOutput =
               readonly patch: string
             }>
           }
+          readonly engine?: "classic" | "kernel"
         }
       }
     }

@@ -1,6 +1,6 @@
 export * as ToolScheduler from "./tool-scheduler"
 
-import { Deferred, Effect, Exit, Scope } from "effect"
+import { Deferred, Effect, Exit, FiberSet, Scope } from "effect"
 import { DateTime } from "effect"
 import type { ToolCall } from "@opencode-ai/llm"
 import type { ToolRegistry } from "../../tool/registry"
@@ -33,13 +33,16 @@ export interface Interface {
    * run alone, and the returned settlements are index-ordered so the caller
    * commits exactly the contiguous settled prefix in model order.
    */
-  readonly run: (calls: readonly PreparedToolCall[]) => Effect.Effect<readonly ToolSettlement[], never, Scope.Scope>
+  readonly run: (calls: readonly PreparedToolCall[]) => Effect.Effect<readonly ToolSettlement[], never, never>
 }
 
 /** Maximum concurrent tool bodies. */
 export const MaxActiveBodies = 10
 
-const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (calls: readonly PreparedToolCall[]) {
+const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (
+  calls: readonly PreparedToolCall[],
+  fibers: FiberSet.FiberSet<void, never>,
+) {
   const total = calls.length
   if (total === 0) return [] as ToolSettlement[]
   const settled = new Array<ToolSettlement>(total)
@@ -47,17 +50,20 @@ const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (calls: readonl
   for (let index = 0; index < total; index++) completions[index] = yield* Deferred.make<void>()
 
   const launch = (index: number) =>
-    Effect.forkScoped(
-      Effect.gen(function* () {
-        const prepared = calls[index]!
-        const exit = yield* prepared.execute().pipe(Effect.exit)
-        settled[index] = Exit.isSuccess(exit)
-          ? { index, callID: prepared.call.id, outcome: "success", result: exit.value }
-          : { index, callID: prepared.call.id, outcome: "error" }
-        yield* Deferred.succeed(completions[index], undefined)
-      }),
-      { startImmediately: true },
-    )
+    Effect.gen(function* () {
+      const prepared = calls[index]!
+      yield* FiberSet.run(
+        fibers,
+        Effect.gen(function* () {
+          const exit = yield* prepared.execute().pipe(Effect.exit)
+          settled[index] = Exit.isSuccess(exit)
+            ? { index, callID: prepared.call.id, outcome: "success", result: exit.value }
+            : { index, callID: prepared.call.id, outcome: "error" }
+          yield* Deferred.succeed(completions[index], undefined)
+        }),
+        { startImmediately: true },
+      ).pipe(Effect.asVoid)
+    })
 
   const awaitOne = (index: number) => Effect.asVoid(Deferred.await(completions[index]))
 
@@ -93,4 +99,20 @@ const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (calls: readonl
   return ordered
 })
 
-export const make = (): Interface => ({ run: runBodies })
+export const make = (): Interface => ({
+  run: (calls) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // A turn interrupt cancels every dispatched body (foreground shell
+        // waiters cancel their jobs) while bodies that were never started are
+        // never launched; the ordered settlement assertion dies with the drain.
+        const fibers = yield* FiberSet.make<void, never>()
+        return yield* Effect.uninterruptibleMask((restore) =>
+          restore(runBodies(calls, fibers)).pipe(
+            Effect.onInterrupt(() => FiberSet.clear(fibers)),
+          ),
+        )
+      }),
+    ),
+})
+

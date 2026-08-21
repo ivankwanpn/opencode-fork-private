@@ -9,12 +9,12 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(89)
+    expect(EventManifest.ServerDefinitions.length).toBe(92)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
-    expect(EventManifest.Durable.size).toBe(47)
+    expect(EventManifest.Durable.size).toBe(50)
     for (const type of [
       "session.created.1",
       "session.updated.1",

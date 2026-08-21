@@ -1,6 +1,6 @@
 export * as PublicationActor from "./publication-actor"
 
-import { DateTime, Deferred, Effect, Queue, Ref } from "effect"
+import { DateTime, Deferred, Duration, Effect, Queue, Ref } from "effect"
 import { LLMEvent, type Usage } from "@opencode-ai/llm"
 import { EventV2 } from "../../event"
 import { SessionEvent } from "../event"
@@ -8,6 +8,8 @@ import { SessionMessage } from "../message"
 import { SessionSchema } from "../schema"
 import type { Location } from "../../location"
 import type { ModelV2 } from "../../model"
+import { Checkpoint, DefaultCheckpointPolicy } from "./checkpoint"
+import type { CheckpointKind, PendingCheckpoint } from "./checkpoint"
 import type { InterruptReason, TurnOutcome } from "./types"
 
 export type PublicationCommand =
@@ -49,14 +51,20 @@ const tokens = (usage: Usage | undefined) => ({
 })
 
 /** Creates the PublicationActor for one kernel turn; the processor runs in the caller's scope. */
-export const make = Effect.fn("PublicationActor.make")(function* (events: EventV2.Interface, input: {
-  readonly sessionID: SessionSchema.ID
-  readonly attemptID: EventV2.ID
-  readonly assistantMessageID: SessionMessage.ID
-  readonly agent: string
-  readonly model: ModelV2.Ref
-  readonly location?: Location.Ref
-}) {
+export const make = Effect.fn("PublicationActor.make")(function* (
+  events: EventV2.Interface,
+  input: {
+    readonly sessionID: SessionSchema.ID
+    readonly attemptID: EventV2.ID
+    readonly assistantMessageID: SessionMessage.ID
+    readonly agent: string
+    readonly model: ModelV2.Ref
+    readonly location?: Location.Ref
+    /** Durable checkpoint sink; the caller commits the incremental batch under the active lease. */
+    readonly flush?: (items: readonly EventV2.BatchItem[]) => Effect.Effect<void>
+    readonly policy?: Checkpoint.CheckpointPolicy
+  },
+) {
   const queue = yield* Queue.bounded<PublicationCommand>(256)
   interface ActorState {
     readonly interrupted: boolean
@@ -74,6 +82,8 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
   const reasoningChunks = new Map<string, string[]>()
   const openText = new Set<string>()
   const openReasoning = new Set<string>()
+  const policy = input.policy ?? DefaultCheckpointPolicy
+  const buffer = yield* Checkpoint.makeBuffer()
 
   const publish = <D extends EventV2.Definition>(definition: D, data: EventV2.Data<D>) =>
     events.publish(definition, data, input.location === undefined ? undefined : { location: input.location }).pipe(
@@ -82,6 +92,55 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
       ),
       Effect.asVoid,
     )
+
+  const toBatchItems = (
+    items: readonly PendingCheckpoint[],
+  ): Effect.Effect<readonly EventV2.BatchItem[]> =>
+    Effect.gen(function* () {
+      const timestamp = yield* DateTime.now
+      return items.map((item) => {
+        if (item.kind === "text")
+          return {
+            definition: SessionEvent.Text.Checkpoint,
+            data: {
+              sessionID: input.sessionID,
+              timestamp,
+              assistantMessageID: input.assistantMessageID,
+              textID: item.key,
+              text: item.text,
+            },
+          }
+        if (item.kind === "reasoning")
+          return {
+            definition: SessionEvent.Reasoning.Checkpoint,
+            data: {
+              sessionID: input.sessionID,
+              timestamp,
+              assistantMessageID: input.assistantMessageID,
+              reasoningID: item.key,
+              text: item.text,
+            },
+          }
+        return {
+          definition: SessionEvent.Tool.Input.Checkpoint,
+          data: {
+            sessionID: input.sessionID,
+            timestamp,
+            assistantMessageID: input.assistantMessageID,
+            callID: item.key,
+            text: item.text,
+          },
+        }
+      })
+    })
+
+  const flushIfAny: Effect.Effect<void> = Effect.gen(function* () {
+    if (!input.flush) return
+    const items = yield* buffer.drain()
+    if (items.length === 0) return
+    const batch = yield* toBatchItems(items)
+    yield* input.flush(batch)
+  })
 
   const publishLLMEvent = Effect.fn("PublicationActor.publishLLMEvent")(function* (event: LLMEvent) {
     if (LLMEvent.is.stepStart(event)) {
@@ -108,6 +167,10 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
     if (LLMEvent.is.textDelta(event)) {
       if (!openText.has(event.id)) return yield* Effect.die(`Text delta before start: ${event.id}`)
       textChunks.get(event.id)!.push(event.text)
+      yield* buffer.offer("text", event.id, event.text)
+      // Byte threshold: flush immediately so reconnect stays bounded.
+      const pendingBytes = yield* buffer.pendingBytes
+      if (pendingBytes >= policy.bytes) yield* flushIfAny
       yield* publish(SessionEvent.Text.Delta, {
         sessionID: input.sessionID,
         timestamp: yield* DateTime.now,
@@ -122,6 +185,9 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
       openText.delete(event.id)
       const value = textChunks.get(event.id)!.join("")
       textChunks.delete(event.id)
+      // Capture the incremental tail before the authoritative full value.
+      yield* flushIfAny
+      yield* buffer.close(event.id)
       yield* publish(SessionEvent.Text.Ended, {
         sessionID: input.sessionID,
         timestamp: yield* DateTime.now,
@@ -145,6 +211,7 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
     if (LLMEvent.is.reasoningDelta(event)) {
       if (!openReasoning.has(event.id)) return yield* Effect.die(`Reasoning delta before start: ${event.id}`)
       reasoningChunks.get(event.id)!.push(event.text)
+      yield* buffer.offer("reasoning", event.id, event.text)
       yield* publish(SessionEvent.Reasoning.Delta, {
         sessionID: input.sessionID,
         timestamp: yield* DateTime.now,
@@ -159,6 +226,8 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
       openReasoning.delete(event.id)
       const value = reasoningChunks.get(event.id)!.join("")
       reasoningChunks.delete(event.id)
+      yield* flushIfAny
+      yield* buffer.close(event.id)
       yield* publish(SessionEvent.Reasoning.Ended, {
         sessionID: input.sessionID,
         timestamp: yield* DateTime.now,
@@ -217,6 +286,20 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
     Effect.forkScoped,
   )
 
+  // Checkpoint cadence: flush accumulated incremental content at the policy
+  // interval so reconnect can hydrate bounded progress while a turn streams.
+  yield* Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(policy.interval)
+      yield* flushIfAny
+    }
+  })
+    .pipe(
+      Effect.catchCause((cause) => Effect.logWarning("PublicationActor checkpoint failed", { cause })),
+      Effect.forever,
+      Effect.forkScoped,
+    )
+
   return {
     sessionID: input.sessionID,
     attemptID: input.attemptID,
@@ -226,6 +309,9 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
       const reply = yield* Deferred.make<void>()
       yield* Queue.offer(queue, { type: "barrier", reply })
       yield* Deferred.await(reply)
+      // A barrier is a durable boundary: everything before it is published
+      // durably, so the incremental tail flushes before the reply.
+      yield* flushIfAny
     }),
     interrupt: (reason) =>
       Effect.gen(function* () {
@@ -233,8 +319,13 @@ export const make = Effect.fn("PublicationActor.make")(function* (events: EventV
         // immediately; the ordered command still records the reason.
         yield* Ref.update(state, (current) => ({ ...current, interrupted: true }))
         yield* Queue.offer(queue, { type: "interrupt", reason })
+        yield* flushIfAny
       }),
-    close: (outcome) => Queue.offer(queue, { type: "close", outcome }).pipe(Effect.asVoid),
+    close: (outcome) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(queue, { type: "close", outcome })
+        yield* flushIfAny
+      }),
     outcome: Ref.get(state).pipe(Effect.map((current) => current.outcome)),
     interrupted: Ref.get(state).pipe(Effect.map((current) => current.interrupted)),
     finished: Ref.get(state).pipe(Effect.map((current) => current.finished)),

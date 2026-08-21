@@ -411,6 +411,18 @@ export function createV2SessionReducer() {
           { type: "text", text: event.data.delta },
         )
       }
+      case "session.next.text.checkpoint": {
+        const ordinal = contentOrdinal(sessionID, event.data.assistantMessageID, "text", event.data.textID)
+        return updateContent(
+          source,
+          event.data.assistantMessageID,
+          sessionID,
+          "text",
+          ordinal,
+          (item) => ({ ...item, text: item.text + event.data.text }),
+          { type: "text", text: event.data.text },
+        )
+      }
       case "session.next.text.ended": {
         const ordinal = contentOrdinal(sessionID, event.data.assistantMessageID, "text", event.data.textID)
         return updateContent(
@@ -465,7 +477,23 @@ export function createV2SessionReducer() {
           },
         )
       }
-      case "session.next.reasoning.ended": {
+      case "session.next.reasoning.checkpoint": {
+        const ordinal = contentOrdinal(sessionID, event.data.assistantMessageID, "reasoning", event.data.reasoningID)
+        return updateContent(
+          source,
+          event.data.assistantMessageID,
+          sessionID,
+          "reasoning",
+          ordinal,
+          (item) => ({ ...item, text: item.text + event.data.text }),
+          {
+            type: "reasoning",
+            text: event.data.text,
+            time: { created: event.data.timestamp },
+          },
+        )
+      }
+            case "session.next.reasoning.ended": {
         const ordinal = contentOrdinal(sessionID, event.data.assistantMessageID, "reasoning", event.data.reasoningID)
         return updateContent(
           source,
@@ -541,6 +569,12 @@ export function createV2SessionReducer() {
         return updateTool(source, event.data.assistantMessageID, event.data.callID, sessionID, (tool) =>
           tool.state.status === "streaming"
             ? { ...tool, state: { ...tool.state, input: tool.state.input + event.data.delta } }
+            : tool,
+        )
+      case "session.next.tool.input.checkpoint":
+        return updateTool(source, event.data.assistantMessageID, event.data.callID, sessionID, (tool) =>
+          tool.state.status === "streaming"
+            ? { ...tool, state: { ...tool.state, input: tool.state.input + event.data.text } }
             : tool,
         )
       case "session.next.tool.input.ended":

@@ -97,6 +97,20 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
             agent: session.agent ?? "build",
             model: session.model ?? ModelV2.Ref.make({ id: ModelV2.ID.make(""), providerID: ProviderV2.ID.make("") }),
             location: session.location,
+            // Incremental durable checkpoints commit under the current lease.
+            // Once the interrupt fence fires, the lease is stale: the remaining
+            // incremental content is dropped — the fenced settle publishes the
+            // authoritative Ended full value instead.
+            flush: (items) =>
+              lifecycle.checkpoint({ lease, events: items }).pipe(
+                Effect.catchTag("StaleExecutionError", () =>
+                  Effect.logWarning("Dropping checkpoint for fenced lease", {
+                    sessionID,
+                    generation: lease.generation,
+                  }).pipe(Effect.asVoid),
+                ),
+                Effect.asVoid,
+              ),
           }).pipe(Effect.provideService(Scope.Scope, scope))
           actor = turnActor
           yield* Ref.set(currentActor, Option.some(turnActor))

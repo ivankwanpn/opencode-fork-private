@@ -42,11 +42,14 @@ export type Event =
   | EventSessionNextTextStarted
   | EventSessionNextTextDelta
   | EventSessionNextTextEnded
+  | EventSessionNextTextCheckpoint
   | EventSessionNextReasoningStarted
   | EventSessionNextReasoningDelta
   | EventSessionNextReasoningEnded
+  | EventSessionNextReasoningCheckpoint
   | EventSessionNextToolInputStarted
   | EventSessionNextToolInputDelta
+  | EventSessionNextToolInputCheckpoint
   | EventSessionNextToolInputEnded
   | EventSessionNextToolCalled
   | EventSessionNextToolProgress
@@ -565,6 +568,17 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "session.next.text.checkpoint"
+        properties: {
+          timestamp: number
+          sessionID: string
+          assistantMessageID: string
+          textID: string
+          text: string
+        }
+      }
+    | {
+        id: string
         type: "session.next.reasoning.started"
         properties: {
           timestamp: number
@@ -599,6 +613,17 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "session.next.reasoning.checkpoint"
+        properties: {
+          timestamp: number
+          sessionID: string
+          assistantMessageID: string
+          reasoningID: string
+          text: string
+        }
+      }
+    | {
+        id: string
         type: "session.next.tool.input.started"
         properties: {
           timestamp: number
@@ -617,6 +642,17 @@ export type GlobalEvent = {
           assistantMessageID: string
           callID: string
           delta: string
+        }
+      }
+    | {
+        id: string
+        type: "session.next.tool.input.checkpoint"
+        properties: {
+          timestamp: number
+          sessionID: string
+          assistantMessageID: string
+          callID: string
+          text: string
         }
       }
     | {
@@ -1140,9 +1176,12 @@ export type GlobalEvent = {
     | SyncEventSessionNextStepFailed
     | SyncEventSessionNextTextStarted
     | SyncEventSessionNextTextEnded
+    | SyncEventSessionNextTextCheckpoint
     | SyncEventSessionNextReasoningStarted
     | SyncEventSessionNextReasoningEnded
+    | SyncEventSessionNextReasoningCheckpoint
     | SyncEventSessionNextToolInputStarted
+    | SyncEventSessionNextToolInputCheckpoint
     | SyncEventSessionNextToolInputEnded
     | SyncEventSessionNextToolCalled
     | SyncEventSessionNextToolProgress
@@ -2659,7 +2698,17 @@ export type SessionActive = {
   type: "running"
   turnID?: string
   phase?: "pending" | "active"
-  activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user"
+  activity?:
+    | "admitting"
+    | "compacting"
+    | "dispatching"
+    | "responding"
+    | "running-tool"
+    | "settling"
+    | "waiting-user"
+    | "cancelling"
+    | "retry_wait"
+    | "needs_recovery"
 }
 
 export type SessionNotFoundError = {
@@ -2756,8 +2805,11 @@ export type SessionDurableEvent =
   | SessionNextStepFailed
   | SessionNextTextStarted
   | SessionNextTextEnded
+  | SessionNextTextCheckpoint
+  | SessionNextReasoningCheckpoint
   | SessionNextToolInputStarted
   | SessionNextToolInputEnded
+  | SessionNextToolInputCheckpoint
   | SessionNextToolCalled
   | SessionNextToolProgress
   | SessionNextToolSuccess
@@ -3011,11 +3063,14 @@ export type V2Event =
   | SessionNextTextStarted
   | SessionNextTextDelta
   | SessionNextTextEnded
+  | SessionNextTextCheckpoint
   | SessionNextReasoningStarted
   | SessionNextReasoningDelta
   | SessionNextReasoningEnded
+  | SessionNextReasoningCheckpoint
   | SessionNextToolInputStarted
   | SessionNextToolInputDelta
+  | SessionNextToolInputCheckpoint
   | SessionNextToolInputEnded
   | SessionNextToolCalled
   | SessionNextToolProgress
@@ -3234,6 +3289,7 @@ export type SessionNextSessionSnapshot = {
   location: LocationRef
   subpath?: string
   revert?: RevertState
+  engine?: "classic" | "kernel"
 }
 
 export type SessionErrorInfo = {
@@ -4185,6 +4241,24 @@ export type SyncEventSessionNextTextEnded = {
   }
 }
 
+export type SyncEventSessionNextTextCheckpoint = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.text.checkpoint.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      assistantMessageID: string
+      textID: string
+      text: string
+    }
+  }
+}
+
 export type SyncEventSessionNextReasoningStarted = {
   type: "sync"
   id: string
@@ -4222,6 +4296,24 @@ export type SyncEventSessionNextReasoningEnded = {
   }
 }
 
+export type SyncEventSessionNextReasoningCheckpoint = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.reasoning.checkpoint.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      assistantMessageID: string
+      reasoningID: string
+      text: string
+    }
+  }
+}
+
 export type SyncEventSessionNextToolInputStarted = {
   type: "sync"
   id: string
@@ -4236,6 +4328,24 @@ export type SyncEventSessionNextToolInputStarted = {
       assistantMessageID: string
       callID: string
       name: string
+    }
+  }
+}
+
+export type SyncEventSessionNextToolInputCheckpoint = {
+  type: "sync"
+  id: string
+  syncEvent: {
+    type: "session.next.tool.input.checkpoint.1"
+    id: string
+    seq: number
+    aggregateID: string
+    data: {
+      timestamp: number
+      sessionID: string
+      assistantMessageID: string
+      callID: string
+      text: string
     }
   }
 }
@@ -4718,6 +4828,7 @@ export type SessionV2Info = {
   location: LocationRef
   subpath?: string
   revert?: RevertState
+  engine: "classic" | "kernel"
 }
 
 export type PromptInputFileAttachment = {
@@ -5307,6 +5418,48 @@ export type SessionNextTextEnded = {
   }
 }
 
+export type SessionNextTextCheckpoint = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.text.checkpoint"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    textID: string
+    text: string
+  }
+}
+
+export type SessionNextReasoningCheckpoint = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.reasoning.checkpoint"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    reasoningID: string
+    text: string
+  }
+}
+
 export type SessionNextToolInputStarted = {
   id: string
   metadata?: {
@@ -5334,6 +5487,27 @@ export type SessionNextToolInputEnded = {
     [key: string]: unknown
   }
   type: "session.next.tool.input.ended"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    callID: string
+    text: string
+  }
+}
+
+export type SessionNextToolInputCheckpoint = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.tool.input.checkpoint"
   durable?: {
     aggregateID: string
     seq: number
@@ -7461,6 +7635,18 @@ export type EventSessionNextTextEnded = {
   }
 }
 
+export type EventSessionNextTextCheckpoint = {
+  id: string
+  type: "session.next.text.checkpoint"
+  properties: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    textID: string
+    text: string
+  }
+}
+
 export type EventSessionNextReasoningStarted = {
   id: string
   type: "session.next.reasoning.started"
@@ -7498,6 +7684,18 @@ export type EventSessionNextReasoningEnded = {
   }
 }
 
+export type EventSessionNextReasoningCheckpoint = {
+  id: string
+  type: "session.next.reasoning.checkpoint"
+  properties: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    reasoningID: string
+    text: string
+  }
+}
+
 export type EventSessionNextToolInputStarted = {
   id: string
   type: "session.next.tool.input.started"
@@ -7519,6 +7717,18 @@ export type EventSessionNextToolInputDelta = {
     assistantMessageID: string
     callID: string
     delta: string
+  }
+}
+
+export type EventSessionNextToolInputCheckpoint = {
+  id: string
+  type: "session.next.tool.input.checkpoint"
+  properties: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    callID: string
+    text: string
   }
 }
 
@@ -12369,6 +12579,7 @@ export type V2SessionCreateData = {
     agent?: string
     model?: ModelRef
     location?: LocationRef
+    engine?: "classic" | "kernel"
   }
   path?: never
   query?: never
@@ -14120,6 +14331,9 @@ export type V2IntegrationConnectKeyData = {
   body: {
     key: string
     label?: string
+    inputs?: {
+      [key: string]: string
+    }
   }
   path: {
     integrationID: string

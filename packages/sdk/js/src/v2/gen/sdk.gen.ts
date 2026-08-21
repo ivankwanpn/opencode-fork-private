@@ -5799,6 +5799,7 @@ export class Session3 extends HeyApiClient {
       agent?: string
       model?: ModelRef
       location?: LocationRef
+      engine?: "classic" | "kernel"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5811,6 +5812,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "agent" },
             { in: "body", key: "model" },
             { in: "body", key: "location" },
+            { in: "body", key: "engine" },
           ],
         },
       ],
@@ -6862,6 +6864,9 @@ export class Connect extends HeyApiClient {
       }
       key?: string
       label?: string
+      inputs?: {
+        [key: string]: string
+      }
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6874,6 +6879,7 @@ export class Connect extends HeyApiClient {
             { in: "query", key: "location" },
             { in: "body", key: "key" },
             { in: "body", key: "label" },
+            { in: "body", key: "inputs" },
           ],
         },
       ],

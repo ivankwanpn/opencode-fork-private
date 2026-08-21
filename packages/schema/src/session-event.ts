@@ -481,6 +481,20 @@ export namespace Text {
   })
   export type Delta = typeof Delta.Type
 
+  // Durable checkpoint: content since the previous checkpoint, replayed as an
+  // append by the projector. Text.Ended stays the authoritative full value.
+  export const Checkpoint = Event.define({
+    type: "session.next.text.checkpoint",
+    ...options,
+    schema: {
+      ...Base,
+      assistantMessageID: SessionMessage.ID,
+      textID: Schema.String,
+      text: Schema.String,
+    },
+  })
+  export type Checkpoint = typeof Checkpoint.Type
+
   export const Ended = Event.define({
     type: "session.next.text.ended",
     ...options,
@@ -518,6 +532,19 @@ export namespace Reasoning {
     },
   })
   export type Delta = typeof Delta.Type
+
+  // Durable checkpoint: incremental content since the previous checkpoint.
+  export const Checkpoint = Event.define({
+    type: "session.next.reasoning.checkpoint",
+    ...options,
+    schema: {
+      ...Base,
+      assistantMessageID: SessionMessage.ID,
+      reasoningID: Schema.String,
+      text: Schema.String,
+    },
+  })
+  export type Checkpoint = typeof Checkpoint.Type
 
   export const Ended = Event.define({
     type: "session.next.reasoning.ended",
@@ -560,6 +587,17 @@ export namespace Tool {
       },
     })
     export type Delta = typeof Delta.Type
+
+    // Durable checkpoint: incremental raw input since the previous checkpoint.
+    export const Checkpoint = Event.define({
+      type: "session.next.tool.input.checkpoint",
+      ...options,
+      schema: {
+        ...ToolBase,
+        text: Schema.String,
+      },
+    })
+    export type Checkpoint = typeof Checkpoint.Type
 
     export const Ended = Event.define({
       type: "session.next.tool.input.ended",
@@ -849,8 +887,11 @@ const DurableTranscriptDefinitions = Event.inventory(
   Step.Failed,
   Text.Started,
   Text.Ended,
+  Text.Checkpoint,
+  Reasoning.Checkpoint,
   Tool.Input.Started,
   Tool.Input.Ended,
+  Tool.Input.Checkpoint,
   Tool.Called,
   Tool.Progress,
   Tool.Success,
@@ -914,14 +955,17 @@ const TranscriptDefinitions = Event.inventory(
   Text.Started,
   Text.Delta,
   Text.Ended,
+  Text.Checkpoint,
   Reasoning.Started,
   Reasoning.Delta,
   Reasoning.Ended,
+  Reasoning.Checkpoint,
 )
 
 const ExecutionDefinitions = Event.inventory(
   Tool.Input.Started,
   Tool.Input.Delta,
+  Tool.Input.Checkpoint,
   Tool.Input.Ended,
   Tool.Called,
   Tool.Progress,

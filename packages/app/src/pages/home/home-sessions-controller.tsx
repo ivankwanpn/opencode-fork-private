@@ -73,7 +73,14 @@ export function createHomeSessionsController(home: HomeController) {
       const sessionList = (
         input: Parameters<typeof ctx.sdk.api.session.list>[0],
         options?: Parameters<typeof ctx.sdk.api.session.list>[1],
-      ) => api.session.list(input, options)
+      ) =>
+        // The vendored client ships without the engine field; the live API
+        // returns engine on every row, so the wire shape is already
+        // HomeSessionInfo-shaped.
+        api.session.list(input, options) as unknown as Promise<{
+          data: ReadonlyArray<import("@opencode-ai/sdk/v2/client").SessionV2Info>
+          cursor: { next?: string | null }
+        }>
       const index = await loadHomeSessionIndex(sessionList, eventSequence, signal)
       cache.complete(eventSequence)
       return index

@@ -468,6 +468,11 @@ const layer = Layer.effectDiscard(
     yield* events.project(SessionEvent.Step.Failed, (event) => run(db, event))
     yield* events.project(SessionEvent.Text.Started, (event) => run(db, event))
     yield* events.project(SessionEvent.Text.Ended, (event) => run(db, event))
+    // Checkpoints are durable incremental fragments; the projector appends them
+    // to the matching open part exactly like a live delta.
+    yield* events.project(SessionEvent.Text.Checkpoint, (event) => run(db, event))
+    yield* events.project(SessionEvent.Reasoning.Checkpoint, (event) => run(db, event))
+    yield* events.project(SessionEvent.Tool.Input.Checkpoint, (event) => run(db, event))
     yield* events.project(SessionEvent.Tool.Input.Started, (event) => run(db, event))
     yield* events.project(SessionEvent.Tool.Input.Ended, (event) => run(db, event))
     yield* events.project(SessionEvent.Tool.Called, (event) => run(db, event))

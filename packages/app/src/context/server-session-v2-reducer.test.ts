@@ -773,4 +773,65 @@ describe("v2 session reducer", () => {
       touched: [],
     })
   })
+
+  test("hydrates streaming text from durable checkpoints after reconnect", () => {
+    const reducer = createV2SessionReducer()
+    const event = (input: object) => input as OpenCodeEvent | V2Event
+    const events = [
+      event({
+        id: "evt_ck_1",
+        type: "session.next.prompted",
+        metadata: {},
+        data: { timestamp: 1, sessionID: "ses_1", messageID: "msg_user", prompt: { text: "hello" }, delivery: "steer" },
+      }),
+      event({
+        id: "evt_ck_2",
+        type: "session.next.step.started",
+        metadata: {},
+        data: {
+          timestamp: 2,
+          sessionID: "ses_1",
+          assistantMessageID: "msg_assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+        },
+      }),
+      event({
+        id: "evt_ck_3",
+        type: "session.next.text.started",
+        metadata: {},
+        data: { timestamp: 3, sessionID: "ses_1", assistantMessageID: "msg_assistant", textID: "text-0" },
+      }),
+      event({
+        id: "evt_ck_4",
+        type: "session.next.text.checkpoint",
+        metadata: {},
+        data: { timestamp: 4, sessionID: "ses_1", assistantMessageID: "msg_assistant", textID: "text-0", text: "Hello " },
+      }),
+      event({
+        id: "evt_ck_5",
+        type: "session.next.text.checkpoint",
+        metadata: {},
+        data: { timestamp: 5, sessionID: "ses_1", assistantMessageID: "msg_assistant", textID: "text-0", text: "world" },
+      }),
+      event({
+        id: "evt_ck_6",
+        type: "session.next.text.ended",
+        metadata: {},
+        data: { timestamp: 6, sessionID: "ses_1", assistantMessageID: "msg_assistant", textID: "text-0", text: "Hello world" },
+      }),
+    ]
+    const messages = events.reduce(
+      (current, evt) => reducer.reduce(current, evt)?.messages ?? current,
+      [] as SessionMessageInfo[],
+    )
+    expect(messages).toMatchObject([
+      { id: "msg_user", type: "user", text: "hello" },
+      {
+        id: "msg_assistant",
+        type: "assistant",
+        content: [{ type: "text", text: "Hello world" }],
+      },
+    ])
+  })
 })

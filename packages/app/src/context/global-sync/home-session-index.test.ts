@@ -29,6 +29,7 @@ const session = (input: {
   time: { created: 1, updated: input.updated ?? 1, archived: input.archived },
   title: input.id,
   location: { directory: input.directory ?? "/project" },
+  engine: "classic" as const,
 })
 
 describe("Home V2 session index", () => {

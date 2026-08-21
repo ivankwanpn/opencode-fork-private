@@ -78,13 +78,14 @@ export declare function make(options: ClientOptions): {
                     readonly patch: string;
                 }[] | undefined;
             } | undefined;
+            readonly engine: "classic" | "kernel";
         }>;
         active: (requestOptions?: RequestOptions | undefined) => Promise<{
             readonly [x: string]: {
                 readonly type: "running";
                 readonly turnID?: string | undefined;
                 readonly phase?: "active" | "pending" | undefined;
-                readonly activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user" | undefined;
+                readonly activity?: "admitting" | "cancelling" | "compacting" | "dispatching" | "needs_recovery" | "responding" | "retry_wait" | "running-tool" | "settling" | "waiting-user" | undefined;
             };
         }>;
         get: (input: SessionsGetInput, requestOptions?: RequestOptions | undefined) => Promise<{
@@ -141,6 +142,7 @@ export declare function make(options: ClientOptions): {
                     readonly patch: string;
                 }[] | undefined;
             } | undefined;
+            readonly engine: "classic" | "kernel";
         }>;
         children: (input: SessionsChildrenInput, requestOptions?: RequestOptions | undefined) => Promise<readonly {
             readonly id: string;
@@ -196,6 +198,7 @@ export declare function make(options: ClientOptions): {
                     readonly patch: string;
                 }[] | undefined;
             } | undefined;
+            readonly engine: "classic" | "kernel";
         }[]>;
         todo: (input: SessionsTodoInput, requestOptions?: RequestOptions | undefined) => Promise<readonly {
             readonly content: string;
@@ -256,6 +259,7 @@ export declare function make(options: ClientOptions): {
                     readonly patch: string;
                 }[] | undefined;
             } | undefined;
+            readonly engine: "classic" | "kernel";
         }>;
         update: (input: SessionsUpdateInput, requestOptions?: RequestOptions | undefined) => Promise<{
             readonly id: string;
@@ -311,6 +315,7 @@ export declare function make(options: ClientOptions): {
                     readonly patch: string;
                 }[] | undefined;
             } | undefined;
+            readonly engine: "classic" | "kernel";
         }>;
         remove: (input: SessionsRemoveInput, requestOptions?: RequestOptions | undefined) => Promise<void>;
         share: (input: SessionsShareInput, requestOptions?: RequestOptions | undefined) => Promise<{
@@ -1854,6 +1859,7 @@ export declare function make(options: ClientOptions): {
                             readonly patch: string;
                         }[] | undefined;
                     } | undefined;
+                    readonly engine?: "classic" | "kernel" | undefined;
                 };
             };
         } | {
@@ -1935,6 +1941,7 @@ export declare function make(options: ClientOptions): {
                             readonly patch: string;
                         }[] | undefined;
                     } | undefined;
+                    readonly engine?: "classic" | "kernel" | undefined;
                 };
             };
         } | {
@@ -2016,6 +2023,7 @@ export declare function make(options: ClientOptions): {
                             readonly patch: string;
                         }[] | undefined;
                     } | undefined;
+                    readonly engine?: "classic" | "kernel" | undefined;
                 };
             };
         } | {
@@ -3409,6 +3417,28 @@ export declare function make(options: ClientOptions): {
             readonly metadata?: {
                 readonly [x: string]: unknown;
             } | undefined;
+            readonly type: "session.next.text.checkpoint";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly textID: string;
+                readonly text: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
             readonly type: "session.next.text.ended";
             readonly durable?: {
                 readonly aggregateID: string;
@@ -3473,6 +3503,28 @@ export declare function make(options: ClientOptions): {
                 readonly assistantMessageID: string;
                 readonly reasoningID: string;
                 readonly delta: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.reasoning.checkpoint";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly reasoningID: string;
+                readonly text: string;
             };
         } | {
             readonly id: string;
@@ -3544,6 +3596,28 @@ export declare function make(options: ClientOptions): {
                 readonly assistantMessageID: string;
                 readonly callID: string;
                 readonly delta: string;
+            };
+        } | {
+            readonly id: string;
+            readonly metadata?: {
+                readonly [x: string]: unknown;
+            } | undefined;
+            readonly type: "session.next.tool.input.checkpoint";
+            readonly durable?: {
+                readonly aggregateID: string;
+                readonly seq: number;
+                readonly version: number;
+            } | undefined;
+            readonly location?: {
+                readonly directory: string;
+                readonly workspaceID?: string | undefined;
+            } | undefined;
+            readonly data: {
+                readonly timestamp: number;
+                readonly sessionID: string;
+                readonly assistantMessageID: string;
+                readonly callID: string;
+                readonly text: string;
             };
         } | {
             readonly id: string;

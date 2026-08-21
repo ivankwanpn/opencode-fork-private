@@ -411,6 +411,7 @@ export type SessionsListOutput = {
                 readonly patch: string;
             }>;
         };
+        readonly engine: "classic" | "kernel";
     }>;
     readonly cursor: {
         readonly previous?: string | null;
@@ -431,6 +432,7 @@ export type SessionsCreateInput = {
             readonly directory: string;
             readonly workspaceID?: string;
         } | null;
+        readonly engine?: "classic" | "kernel" | null;
     }["id"];
     readonly agent?: {
         readonly id?: string | null;
@@ -445,6 +447,7 @@ export type SessionsCreateInput = {
             readonly directory: string;
             readonly workspaceID?: string;
         } | null;
+        readonly engine?: "classic" | "kernel" | null;
     }["agent"];
     readonly model?: {
         readonly id?: string | null;
@@ -459,6 +462,7 @@ export type SessionsCreateInput = {
             readonly directory: string;
             readonly workspaceID?: string;
         } | null;
+        readonly engine?: "classic" | "kernel" | null;
     }["model"];
     readonly location?: {
         readonly id?: string | null;
@@ -473,7 +477,23 @@ export type SessionsCreateInput = {
             readonly directory: string;
             readonly workspaceID?: string;
         } | null;
+        readonly engine?: "classic" | "kernel" | null;
     }["location"];
+    readonly engine?: {
+        readonly id?: string | null;
+        readonly agent?: string | null;
+        readonly model?: {
+            readonly id: string;
+            readonly providerID: string;
+            readonly variant?: string;
+            readonly protocol?: "openai-responses" | "openai-compatible" | "anthropic-messages";
+        } | null;
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        } | null;
+        readonly engine?: "classic" | "kernel" | null;
+    }["engine"];
 };
 export type SessionsCreateOutput = {
     readonly data: {
@@ -530,6 +550,7 @@ export type SessionsCreateOutput = {
                 readonly patch: string;
             }>;
         };
+        readonly engine: "classic" | "kernel";
     };
 }["data"];
 export type SessionsActiveOutput = {
@@ -538,7 +559,7 @@ export type SessionsActiveOutput = {
             readonly type: "running";
             readonly turnID?: string | undefined;
             readonly phase?: "pending" | "active" | undefined;
-            readonly activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user" | undefined;
+            readonly activity?: "admitting" | "compacting" | "dispatching" | "responding" | "running-tool" | "settling" | "waiting-user" | "cancelling" | "retry_wait" | "needs_recovery" | undefined;
         };
     };
 }["data"];
@@ -602,6 +623,7 @@ export type SessionsGetOutput = {
                 readonly patch: string;
             }>;
         };
+        readonly engine: "classic" | "kernel";
     };
 }["data"];
 export type SessionsChildrenInput = {
@@ -664,6 +686,7 @@ export type SessionsChildrenOutput = {
                 readonly patch: string;
             }>;
         };
+        readonly engine: "classic" | "kernel";
     }>;
 }["data"];
 export type SessionsTodoInput = {
@@ -741,6 +764,7 @@ export type SessionsForkOutput = {
                 readonly patch: string;
             }>;
         };
+        readonly engine: "classic" | "kernel";
     };
 }["data"];
 export type SessionsUpdateInput = {
@@ -811,6 +835,7 @@ export type SessionsUpdateOutput = {
                 readonly patch: string;
             }>;
         };
+        readonly engine: "classic" | "kernel";
     };
 }["data"];
 export type SessionsRemoveInput = {
@@ -2866,6 +2891,7 @@ export type SessionsHistoryOutput = {
                         readonly patch: string;
                     }>;
                 };
+                readonly engine?: "classic" | "kernel";
             };
         };
     } | {
@@ -2947,6 +2973,7 @@ export type SessionsHistoryOutput = {
                         readonly patch: string;
                     }>;
                 };
+                readonly engine?: "classic" | "kernel";
             };
         };
     } | {
@@ -3028,6 +3055,7 @@ export type SessionsHistoryOutput = {
                         readonly patch: string;
                     }>;
                 };
+                readonly engine?: "classic" | "kernel";
             };
         };
     } | {
@@ -4377,6 +4405,50 @@ export type SessionsHistoryOutput = {
         readonly metadata?: {
             readonly [x: string]: JsonValue;
         };
+        readonly type: "session.next.text.checkpoint";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly assistantMessageID: string;
+            readonly textID: string;
+            readonly text: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.reasoning.checkpoint";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly assistantMessageID: string;
+            readonly reasoningID: string;
+            readonly text: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
         readonly type: "session.next.tool.input.started";
         readonly durable?: {
             readonly aggregateID: string;
@@ -4400,6 +4472,28 @@ export type SessionsHistoryOutput = {
             readonly [x: string]: JsonValue;
         };
         readonly type: "session.next.tool.input.ended";
+        readonly durable?: {
+            readonly aggregateID: string;
+            readonly seq: number;
+            readonly version: number;
+        };
+        readonly location?: {
+            readonly directory: string;
+            readonly workspaceID?: string;
+        };
+        readonly data: {
+            readonly timestamp: number;
+            readonly sessionID: string;
+            readonly assistantMessageID: string;
+            readonly callID: string;
+            readonly text: string;
+        };
+    } | {
+        readonly id: string;
+        readonly metadata?: {
+            readonly [x: string]: JsonValue;
+        };
+        readonly type: "session.next.tool.input.checkpoint";
         readonly durable?: {
             readonly aggregateID: string;
             readonly seq: number;
@@ -5075,6 +5169,7 @@ export type SessionsEventsOutput = {
                     readonly patch: string;
                 }>;
             };
+            readonly engine?: "classic" | "kernel";
         };
     };
 } | {
@@ -5156,6 +5251,7 @@ export type SessionsEventsOutput = {
                     readonly patch: string;
                 }>;
             };
+            readonly engine?: "classic" | "kernel";
         };
     };
 } | {
@@ -5237,6 +5333,7 @@ export type SessionsEventsOutput = {
                     readonly patch: string;
                 }>;
             };
+            readonly engine?: "classic" | "kernel";
         };
     };
 } | {
@@ -6586,6 +6683,50 @@ export type SessionsEventsOutput = {
     readonly metadata?: {
         readonly [x: string]: unknown;
     };
+    readonly type: "session.next.text.checkpoint";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly assistantMessageID: string;
+        readonly textID: string;
+        readonly text: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.reasoning.checkpoint";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly assistantMessageID: string;
+        readonly reasoningID: string;
+        readonly text: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
     readonly type: "session.next.tool.input.started";
     readonly durable?: {
         readonly aggregateID: string;
@@ -6609,6 +6750,28 @@ export type SessionsEventsOutput = {
         readonly [x: string]: unknown;
     };
     readonly type: "session.next.tool.input.ended";
+    readonly durable?: {
+        readonly aggregateID: string;
+        readonly seq: number;
+        readonly version: number;
+    };
+    readonly location?: {
+        readonly directory: string;
+        readonly workspaceID?: string;
+    };
+    readonly data: {
+        readonly timestamp: number;
+        readonly sessionID: string;
+        readonly assistantMessageID: string;
+        readonly callID: string;
+        readonly text: string;
+    };
+} | {
+    readonly id: string;
+    readonly metadata?: {
+        readonly [x: string]: unknown;
+    };
+    readonly type: "session.next.tool.input.checkpoint";
     readonly durable?: {
         readonly aggregateID: string;
         readonly seq: number;

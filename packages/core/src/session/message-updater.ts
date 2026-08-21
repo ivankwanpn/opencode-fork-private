@@ -279,6 +279,15 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
           if (match) match.text += event.data.delta
         })
       },
+      // Durable checkpoint: incremental content since the previous checkpoint,
+      // appended with the same semantics as a delta. Replay order guarantees
+      // every checkpoint precedes its Ended event, which stays authoritative.
+      "session.next.text.checkpoint": (event) => {
+        return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
+          const match = latestText(draft, event.data.textID)
+          if (match) match.text += event.data.text
+        })
+      },
       "session.next.text.ended": (event) => {
         return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
           const match = latestText(draft, event.data.textID)
@@ -301,6 +310,16 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
         })
       },
       "session.next.tool.input.delta": () => Effect.void,
+      // Durable checkpoint: incremental raw input since the previous
+      // checkpoint, appended to the matching pending tool input.
+      "session.next.tool.input.checkpoint": (event) => {
+        return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
+          const match = latestTool(draft, event.data.callID)
+          if (match && match.state.status === "pending") {
+            match.state.input = typeof match.state.input === "string" ? match.state.input + event.data.text : event.data.text
+          }
+        })
+      },
       "session.next.tool.input.ended": (event) => {
         return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
           const match = latestTool(draft, event.data.callID)
@@ -405,6 +424,13 @@ export function update(adapter: Adapter, event: SessionEvent.Event) {
         return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
           const match = latestReasoning(draft, event.data.reasoningID)
           if (match) match.text += event.data.delta
+        })
+      },
+      // Durable checkpoint: incremental content since the previous checkpoint.
+      "session.next.reasoning.checkpoint": (event) => {
+        return updateOwnedAssistant(event.data.assistantMessageID, (draft) => {
+          const match = latestReasoning(draft, event.data.reasoningID)
+          if (match) match.text += event.data.text
         })
       },
       "session.next.reasoning.ended": (event) => {

@@ -99,6 +99,16 @@ export interface InterruptInput {
   readonly reason: InterruptReason
 }
 
+/** Post-interrupt terminal settlement: the fence cleared the lease, so the
+ * coordinator settles under the fenced generation with the cancelling state. */
+export interface SettleInput {
+  readonly sessionID: SessionSchema.ID
+  readonly expectedGeneration: number
+  readonly outcome: TurnOutcome
+  readonly resultMessageID?: SessionMessage.ID
+  readonly error?: SessionEvent.ErrorInfo
+}
+
 /** Recovery application for an execution whose owner is absent. */
 export interface ReconcileInput {
   readonly sessionID: SessionSchema.ID

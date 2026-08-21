@@ -1,0 +1,263 @@
+export * as TurnCoordinator from "./coordinator"
+
+import { Cause, Clock, Context, DateTime, Duration, Effect, Layer, Option, Ref, Scope } from "effect"
+import { LLM } from "@opencode-ai/llm"
+import { Database } from "../../database/database"
+import { EventV2 } from "../../event"
+import { makeGlobalNode } from "../../effect/app-node"
+import { LocationServiceMap } from "../../location-service-map"
+import { ModelV2 } from "../../model"
+import { ProviderV2 } from "../../provider"
+import { SessionEvent } from "../event"
+import { SessionInput } from "../input"
+import { SessionMessage } from "../message"
+import { SessionSchema } from "../schema"
+import { SessionStore } from "../store"
+import { SessionRunnerModel } from "../runner/model"
+import { toLLMMessages } from "../runner/to-llm-message"
+import { SessionRunCoordinator } from "../run-coordinator"
+import { LifecycleStore } from "./lifecycle-store"
+import { PublicationActor } from "./publication-actor"
+import { ProviderReader } from "./provider-reader"
+import { processIncarnation } from "./incarnation"
+
+const retryDelayMs = (attempt: number) => Math.min(500 * 2 ** Math.max(0, attempt - 1), 10_000)
+
+export interface Interface {
+  readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
+  readonly run: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  readonly wait: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  /** Durable fence first, then abort provider/tool scopes. */
+  readonly interrupt: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/v2/TurnCoordinator") {}
+
+/**
+ * One process-local coordinator per active Kernel Session: coalesces
+ * same-Session wakes, allows different Sessions concurrently, creates the
+ * turn cancellation scope, waits for publication and terminal commit, and
+ * releases ownership only after durable settlement.
+ */
+export const make = Effect.fn("TurnCoordinator.make")(function* () {
+  const { db } = yield* Database.Service
+  const events = yield* EventV2.Service
+  const lifecycle = yield* LifecycleStore.Service
+  const reader = yield* ProviderReader.Service
+  const store = yield* SessionStore.Service
+  const locations = yield* LocationServiceMap.Service
+  const scope = yield* Scope.Scope
+  const currentActor = yield* Ref.make<Option.Option<PublicationActor.Interface>>(Option.none())
+
+  const runTurn = Effect.fn("TurnCoordinator.runTurn")(function* (sessionID: SessionSchema.ID) {
+    const snapshot = yield* lifecycle.get(sessionID)
+    if (snapshot.state !== "idle") return
+    const session = yield* store.get(sessionID)
+    if (!session || session.engine !== "kernel") return
+    const pending = yield* SessionInput.pending(db, sessionID, "steer")
+    const input = pending[0]
+    if (!input) return
+
+    const attemptID = EventV2.ID.create()
+    const turnID = SessionMessage.ID.create()
+    const assistantMessageID = SessionMessage.ID.create()
+    const lease = yield* lifecycle.start({
+      sessionID,
+      inputID: input.id,
+      turnID,
+      attemptID,
+      assistantMessageID,
+      processIncarnation,
+    })
+
+    // The provider reader is interruptible; every settlement step is
+    // uninterruptible so the interrupt fence is followed by durable terminal
+    // facts instead of a half-settled drain.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        let currentAttempt = attemptID
+        let attemptNumber = 1
+        let retryOf: EventV2.ID | undefined
+        let actor: PublicationActor.Interface | undefined
+        let result: ProviderReader.ProviderTurnResult = { kind: "completed" }
+
+        // One bounded retry for Task 5; later tasks generalize the retry budget.
+        for (let round = 0; round < 2; round++) {
+          const model = yield* SessionRunnerModel.Service.use((models) => models.resolve(session)).pipe(
+            Effect.provide(locations.get(session.location)),
+            Effect.orDie,
+          )
+          const history = yield* store.context(sessionID)
+          const request = LLM.request({ model, messages: toLLMMessages(history, model) })
+          const turnActor = yield* PublicationActor.make(events, {
+            sessionID,
+            attemptID: currentAttempt,
+            assistantMessageID,
+            agent: session.agent ?? "build",
+            model: session.model ?? ModelV2.Ref.make({ id: ModelV2.ID.make(""), providerID: ProviderV2.ID.make("") }),
+            location: session.location,
+          }).pipe(Effect.provideService(Scope.Scope, scope))
+          actor = turnActor
+          yield* Ref.set(currentActor, Option.some(turnActor))
+          result = yield* restore(reader.run({ actor: turnActor, request }))
+          yield* Ref.set(currentActor, Option.none())
+          if (result.kind !== "error" || !result.retryable) break
+
+          const now = yield* Clock.currentTimeMillis
+          const delay = retryDelayMs(attemptNumber)
+          yield* lifecycle.transition({
+            lease,
+            expectedState: "active",
+            state: "retry_wait",
+            retryAt: DateTime.makeUnsafe(now + delay),
+            events: [
+              {
+                definition: SessionEvent.Retried,
+                data: {
+                  sessionID,
+                  timestamp: DateTime.makeUnsafe(now),
+                  attemptID: currentAttempt,
+                  attempt: attemptNumber + 1,
+                  next: DateTime.makeUnsafe(now + delay),
+                  error: {
+                    message: String((result.error.data as { message?: unknown } | undefined)?.message ?? result.error.name),
+                    isRetryable: true,
+                  },
+                },
+              },
+            ],
+          })
+          yield* Effect.sleep(Duration.millis(delay))
+          const nextAttempt = EventV2.ID.create()
+          yield* lifecycle.transition({
+            lease,
+            expectedState: "retry_wait",
+            state: "active",
+            phase: "dispatching",
+            events: [
+              {
+                definition: SessionEvent.ProviderAttempt.Started,
+                data: {
+                  sessionID,
+                  timestamp: yield* DateTime.now,
+                  attemptID: nextAttempt,
+                  assistantMessageID,
+                  attempt: attemptNumber + 1,
+                  retryOf: currentAttempt,
+                },
+              },
+            ],
+          })
+          currentAttempt = nextAttempt
+          attemptNumber += 1
+        }
+
+        const finalActor = actor
+        if (finalActor) yield* finalActor.barrier
+        if (result.kind === "interrupted") {
+          if (finalActor) yield* finalActor.close("cancelled")
+          yield* settleAfterInterrupt(sessionID)
+          return
+        }
+        if (result.kind === "error") {
+          if (finalActor) yield* finalActor.close("error")
+          yield* lifecycle.terminalize({
+            lease,
+            outcome: "error",
+            error: result.error,
+          })
+          return
+        }
+        if (finalActor) yield* finalActor.close("completed")
+        yield* lifecycle.terminalize({
+          lease,
+          outcome: "completed",
+          resultMessageID: assistantMessageID,
+        })
+      }),
+    )
+  })
+
+  const settleAfterInterrupt = Effect.fn("TurnCoordinator.settleAfterInterrupt")(function* (
+    sessionID: SessionSchema.ID,
+  ) {
+    const current = yield* lifecycle.get(sessionID)
+    if (current.state === "idle") return
+    // The durable fence cleared the lease and moved the row to cancelling;
+    // settle under the fenced generation.
+    yield* lifecycle.settle({
+      sessionID,
+      expectedGeneration: current.generation,
+      outcome: "cancelled",
+    })
+  })
+
+  const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, never>({
+    drain: (sessionID) =>
+      // The drain absorbs its own interruption: the interrupt fence is
+      // accepted by the store first, the reader stops interruptibly, the
+      // settlement runs uninterruptibly (inside runTurn), and the drained
+      // cause is consumed so the drain completes successfully.
+      Effect.uninterruptibleMask((restore) =>
+        restore(
+          Effect.gen(function* () {
+            yield* runTurn(sessionID)
+          }),
+        )
+          .pipe(
+            // The catch runs uninterruptibly so a pending interrupt from the
+            // drain is consumed here and the drain completes successfully.
+            Effect.catchCause((cause) => {
+              return Effect.asVoid(Effect.logWarning("Kernel turn failed", { sessionID, cause }))
+            }),
+          )
+          ,
+      ),
+  })
+
+  const interrupt = Effect.fn("TurnCoordinator.interrupt")(function* (sessionID: SessionSchema.ID) {
+    // Durable fence before any cancellation work; the UI may only claim the
+    // interrupt accepted after this commits. Persistence failure surfaces as a
+    // defect so acceptance is never claimed silently.
+    const snapshot = yield* lifecycle.get(sessionID).pipe(
+      Effect.catchTag("Session.NotFoundError", () => Effect.die(`Session execution not found: ${sessionID}`)),
+    )
+    yield* lifecycle
+      .acceptInterrupt({
+        sessionID,
+        expectedGeneration: snapshot.generation,
+        reason: "user",
+      })
+      .pipe(Effect.catchTag("PersistenceError", (error) => Effect.die(error)))
+    // Signal the actor (high-priority ingress) so the provider reader stops at
+    // its next event and the drain settles durably in the background. Accepted
+    // returns after the fence, not settlement; the reader's own interrupt is
+    // consumed by the drain's uninterruptible catch.
+    const actor = yield* Ref.get(currentActor)
+    if (Option.isSome(actor)) yield* actor.value.interrupt("user")
+  })
+
+  return {
+    active: coordinator.active,
+    run: coordinator.run,
+    wake: coordinator.wake,
+    wait: coordinator.wait,
+    interrupt,
+  } satisfies Interface
+})
+
+const layer = Layer.effect(Service, make())
+
+export const node = makeGlobalNode({
+  service: Service,
+  layer,
+  deps: [
+    Database.node,
+    EventV2.node,
+    LifecycleStore.node,
+    ProviderReader.node,
+    SessionStore.node,
+    LocationServiceMap.node,
+  ],
+})

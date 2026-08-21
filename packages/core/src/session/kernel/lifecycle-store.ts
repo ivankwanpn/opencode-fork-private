@@ -24,6 +24,7 @@ import type {
   InterruptInput,
   ReconcileInput,
   RecoveryReason,
+  SettleInput,
   StartInput,
   TerminalInput,
   TransitionInput,
@@ -74,6 +75,8 @@ export interface Interface {
   readonly acceptInterrupt: (input: InterruptInput) => Effect.Effect<ExecutionSnapshot, PersistenceError>
   /** Fenced recovery application for an absent owner; never used by live execution. */
   readonly reconcile: (input: ReconcileInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
+  /** Post-interrupt terminal settlement under the fenced generation. */
+  readonly settle: (input: SettleInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/LifecycleStore") {}
@@ -294,6 +297,7 @@ const layer = Layer.effect(
     })
 
     const terminalize = Effect.fn("LifecycleStore.terminalize")(function* (input: TerminalInput) {
+      console.log("TERM STEP 1")
       const snapshot = yield* get(input.lease.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
           Effect.die(
@@ -326,6 +330,7 @@ const layer = Layer.effect(
         )
       const now = yield* DateTime.now
       const outcome = attemptOutcome(input.outcome)
+      console.log("TERM STEP 2")
       yield* catchCoordinationDefects(
         events.publishBatch({
           aggregateID: input.lease.sessionID,
@@ -339,7 +344,14 @@ const layer = Layer.effect(
                 assistantMessageID: snapshot.assistantMessageID,
                 outcome,
                 continuation: false,
-                error: input.error,
+                error: input.error
+                  ? {
+                      type: "unknown" as const,
+                      message: String(
+                        (input.error.data as { message?: unknown } | undefined)?.message ?? input.error.name,
+                      ),
+                    }
+                  : undefined,
               },
             },
             {
@@ -426,6 +438,7 @@ const layer = Layer.effect(
         }),
         [StaleExecutionError],
       )
+      console.log("TERM STEP 3")
       return yield* get(input.lease.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
           Effect.die(
@@ -539,7 +552,133 @@ const layer = Layer.effect(
       )
     })
 
-    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt, reconcile })
+    const settle = Effect.fn("LifecycleStore.settle")(function* (input: SettleInput) {
+      const snapshot = yield* get(input.sessionID).pipe(
+        Effect.catchTag("Session.NotFoundError", () =>
+          Effect.die(
+            new InvariantError({
+              sessionID: input.sessionID,
+              message: "Cannot settle a missing execution row",
+            }),
+          ),
+        ),
+      )
+      if (snapshot.state === "idle") return snapshot
+      if (snapshot.state !== "cancelling" || snapshot.generation !== input.expectedGeneration)
+        return yield* Effect.fail(
+          new StaleExecutionError({
+            sessionID: input.sessionID,
+            generation: input.expectedGeneration,
+            expectedState: "cancelling",
+          }),
+        )
+      if (!snapshot.attemptID || !snapshot.turnID || !snapshot.inputID || !snapshot.assistantMessageID)
+        return yield* Effect.die(
+          new InvariantError({
+            sessionID: input.sessionID,
+            message: `Cannot settle execution with incomplete identities`,
+          }),
+        )
+      const now = yield* DateTime.now
+      yield* catchCoordinationDefects(
+        events.publishBatch({
+          aggregateID: input.sessionID,
+          events: [
+            {
+              definition: SessionEvent.ProviderAttempt.Ended,
+              data: {
+                sessionID: input.sessionID,
+                timestamp: now,
+                attemptID: snapshot.attemptID,
+                assistantMessageID: snapshot.assistantMessageID,
+                outcome: "interrupted",
+                continuation: false,
+                error: input.error
+                  ? {
+                      type: "unknown" as const,
+                      message: String(
+                        (input.error.data as { message?: unknown } | undefined)?.message ?? input.error.name,
+                      ),
+                    }
+                  : undefined,
+              },
+            },
+            {
+              definition: SessionEvent.Turn.Ended,
+              data: {
+                sessionID: input.sessionID,
+                timestamp: now,
+                turnID: snapshot.turnID,
+                outcome: "interrupted",
+              },
+            },
+            {
+              definition: SessionEvent.Input.Terminalized,
+              data: {
+                sessionID: input.sessionID,
+                timestamp: now,
+                inputID: snapshot.inputID,
+                outcome: input.outcome,
+                resultMessageID: input.resultMessageID,
+                error: input.error,
+              },
+            },
+          ],
+          commit: ({ finalSeq }) =>
+            db
+              .update(SessionExecutionTable)
+              .set({
+                state: "idle",
+                phase: null,
+                lease_token: null,
+                turn_id: null,
+                input_id: null,
+                attempt_id: null,
+                assistant_message_id: null,
+                retry_at: null,
+                recovery_reason: null,
+                updated_seq: finalSeq,
+                time_updated: DateTime.toEpochMillis(now),
+              })
+              .where(
+                and(
+                  eq(SessionExecutionTable.session_id, input.sessionID),
+                  eq(SessionExecutionTable.generation, input.expectedGeneration),
+                  eq(SessionExecutionTable.state, "cancelling"),
+                ),
+              )
+              .returning({ sessionID: SessionExecutionTable.session_id })
+              .get()
+              .pipe(
+                Effect.orDie,
+                Effect.flatMap((row) =>
+                  row
+                    ? Effect.void
+                    : Effect.die(
+                        new StaleExecutionError({
+                          sessionID: input.sessionID,
+                          generation: input.expectedGeneration,
+                          expectedState: "cancelling",
+                        }),
+                      ),
+                ),
+              ),
+        }),
+        [StaleExecutionError],
+      )
+      return yield* get(input.sessionID).pipe(
+        Effect.catchTag("Session.NotFoundError", () =>
+          Effect.die(
+            new InvariantError({
+              sessionID: input.sessionID,
+              message: "Settlement committed but the execution row is missing",
+            }),
+          ),
+        ),
+      )
+    })
+
+    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt, reconcile, settle })
   }),
 )
 

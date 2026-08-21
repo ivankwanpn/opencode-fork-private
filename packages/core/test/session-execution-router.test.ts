@@ -80,14 +80,16 @@ describe("SessionExecutionRouter", () => {
     }),
   )
 
-  it.effect("never falls back when a kernel engine is unavailable", () =>
+  it.effect("routes kernel sessions to the kernel engine without touching classic", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const execution = yield* SessionExecution.Service
       classicCalls.length = 0
       const session = yield* sessions.create({ location, engine: "kernel" })
-      const error = yield* execution.resume(session.id).pipe(Effect.flip)
-      expect(error).toMatchObject({ _tag: "KernelUnavailableError", sessionID: session.id })
+      // No pending input, so the kernel drain settles as a no-op; classic is
+      // never consulted.
+      yield* execution.resume(session.id)
+      yield* execution.wake(session.id)
       expect(classicCalls).toEqual([])
     }),
   )

@@ -10,21 +10,20 @@ import { SessionExecutionTable } from "../sql"
 import { LifecycleStore } from "./lifecycle-store"
 import { RecoveryExecutor } from "./recovery-executor"
 import { RecoveryPlanner } from "./recovery-planner"
+import { TurnCoordinator } from "./coordinator"
 
 export interface KernelExecution {
   readonly lifecycle: LifecycleStore.Interface
+  readonly coordinator: TurnCoordinator.Interface
   /**
-   * Inert execution surface until Task 5 installs the coordinator: the Kernel
-   * may create/read/fence execution rows, but provider work fails loudly with
-   * KernelUnavailableError and never falls back to Classic.
+   * Live execution surface: provider turns run through the coordinator, which
+   * never falls back to Classic. Non-drain work (shell, compaction, recovery)
+   * is not implemented yet and fails as busy.
    */
   readonly execution: SessionExecution.Interface
 }
 
 export class Service extends Context.Service<Service, KernelExecution>()("@opencode/v2/Kernel") {}
-
-const unavailable = (sessionID: SessionSchema.ID) =>
-  Effect.fail(new SessionSchema.KernelUnavailableError({ sessionID }))
 
 const layer = Layer.effect(
   Service,
@@ -57,18 +56,17 @@ const layer = Layer.effect(
         )
     }
 
+    const coordinator = yield* TurnCoordinator.Service
     return Service.of({
       lifecycle,
+      coordinator,
       execution: SessionExecution.Service.of({
-        active: Effect.succeed(new Set()),
-        // Provider work fails loudly. wake/wait/interrupt are truthful no-ops:
-        // nothing can be running while the Kernel coordinator is not installed.
-        resume: (sessionID) => unavailable(sessionID),
-        exclusive: (sessionID) =>
-          Effect.fail(new SessionExecution.BusyError({ sessionID })),
-        wake: () => Effect.void,
-        wait: () => Effect.void,
-        interrupt: () => Effect.void,
+        active: coordinator.active,
+        resume: (sessionID) => coordinator.run(sessionID),
+        exclusive: (sessionID) => Effect.fail(new SessionExecution.BusyError({ sessionID })),
+        wake: (sessionID) => coordinator.wake(sessionID),
+        wait: (sessionID) => coordinator.wait(sessionID),
+        interrupt: (sessionID) => coordinator.interrupt(sessionID),
       }),
     })
   }),
@@ -77,5 +75,5 @@ const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Database.node, LifecycleStore.node, RecoveryPlanner.node, RecoveryExecutor.node],
+  deps: [Database.node, LifecycleStore.node, RecoveryPlanner.node, RecoveryExecutor.node, TurnCoordinator.node],
 })

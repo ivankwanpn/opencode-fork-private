@@ -1,18 +1,16 @@
 export * as SessionExecution from "./execution"
 
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, LayerMap, Schema } from "effect"
 import { LayerNode } from "../effect/layer-node"
 import { Node } from "../effect/app-node"
 import { Database } from "../database/database"
-import { EventV2 } from "../event"
+import { LocationServiceMap } from "../location-service-map"
+import type { LocationServices } from "../location-services"
 import { SessionRunner } from "./runner/index"
 import { SessionSchema } from "./schema"
 import { SessionExecutionRouter } from "./execution/router"
 import { SessionCommand } from "./command"
 import { Kernel } from "./kernel"
-import { LifecycleStore } from "./kernel/lifecycle-store"
-import { RecoveryExecutor } from "./kernel/recovery-executor"
-import { RecoveryPlanner } from "./kernel/recovery-planner"
 
 export class BusyError extends Schema.TaggedErrorClass<BusyError>()("Session.ExecutionBusyError", {
   sessionID: SessionSchema.ID,
@@ -75,32 +73,19 @@ export const routingLayer = (
   engines: Readonly<Partial<Record<SessionSchema.ExecutionEngine, Interface>>>,
 ) => {
   // Replacement layers compile with no dependencies, so the router's
-  // Database/EventV2/LifecycleStore/Kernel requirements are closed inside
-  // against the graph's own nodes (mirroring the flaky-events layer in
-  // session-create tests). Each provide builds its provider first, so the
-  // closure is composed from the leaves up.
-  const eventV2Closed = (EventV2.node.implementation as Layer.Layer<EventV2.Service>).pipe(
-    Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>),
+  // Database/Kernel requirements are closed inside against the graph's own
+  // nodes (mirroring the flaky-events layer in session-create tests). The
+  // Kernel graph is compiled as one self-contained layer; its unbound
+  // LocationServiceMap is replaced with a stub because the router's kernel
+  // surface is never exercised here — callers replace the map in their own
+  // graphs when they run Kernel turns.
+  const stubLocationMap = Layer.effect(
+    LocationServiceMap.Service,
+    LayerMap.make(() => Layer.empty as unknown as Layer.Layer<LocationServices>),
   )
-  const lifecycleClosed = (LifecycleStore.node.implementation as Layer.Layer<LifecycleStore.Service>).pipe(
-    Layer.provide(eventV2Closed),
-  )
-  const plannerClosed = (RecoveryPlanner.node.implementation as Layer.Layer<RecoveryPlanner.Service>).pipe(
-    Layer.provide(lifecycleClosed),
-  )
-  const executorClosed = (RecoveryExecutor.node.implementation as Layer.Layer<RecoveryExecutor.Service>).pipe(
-    Layer.provide(lifecycleClosed),
-  )
-  const kernelClosed = (Kernel.node.implementation as Layer.Layer<Kernel.Service>).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        lifecycleClosed,
-        plannerClosed,
-        executorClosed,
-        Database.node.implementation as Layer.Layer<Database.Service>,
-      ),
-    ),
-  )
+  const kernelClosed = LayerNode.compile(Kernel.node, [
+    [LocationServiceMap.node, stubLocationMap],
+  ]) as Layer.Layer<Kernel.Service>
   const routerClosed = SessionExecutionRouter.layer(engines).pipe(
     Layer.provide(kernelClosed),
   )

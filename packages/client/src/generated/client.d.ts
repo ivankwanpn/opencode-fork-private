@@ -4600,6 +4600,7 @@ export declare function make(options: ClientOptions): {
                     readonly messageID: string;
                     readonly callID: string;
                 } | undefined;
+                readonly generation?: number | undefined;
             };
         } | {
             readonly id: string;

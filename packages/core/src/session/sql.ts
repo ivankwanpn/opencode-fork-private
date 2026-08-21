@@ -275,6 +275,46 @@ export const SessionTurnTable = sqliteTable(
   (table) => [index("session_turn_status_idx").on(table.status, table.time_updated)],
 )
 
+export type KernelExecutionState = "idle" | "active" | "retry_wait" | "needs_recovery" | "cancelling"
+export type KernelExecutionPhase =
+  | "admitting"
+  | "dispatching"
+  | "responding"
+  | "tools"
+  | "compacting"
+  | "settling"
+
+/**
+ * Durable kernel execution coordination: current generation, opaque lease,
+ * phase, and recovery state. Kernel-only; classic Sessions never touch it.
+ * The event log stays authoritative for domain history.
+ */
+export const SessionExecutionTable = sqliteTable(
+  "session_execution",
+  {
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .primaryKey()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    engine: text().$type<"kernel">().notNull().default("kernel"),
+    generation: integer().notNull().default(0),
+    lease_token: text(),
+    process_incarnation: text(),
+    state: text().$type<KernelExecutionState>().notNull().default("idle"),
+    phase: text().$type<KernelExecutionPhase>(),
+    turn_id: text().$type<SessionMessage.ID>(),
+    input_id: text().$type<SessionMessage.ID>(),
+    attempt_id: text().$type<EventID>(),
+    assistant_message_id: text().$type<SessionMessage.ID>(),
+    retry_at: integer(),
+    recovery_reason: text(),
+    started_seq: integer(),
+    updated_seq: integer(),
+    time_updated: integer().notNull().$default(() => Date.now()),
+  },
+  (table) => [index("session_execution_state_idx").on(table.state)],
+)
+
 export const SessionContextEpochTable = sqliteTable("session_context_epoch", {
   session_id: text()
     .$type<SessionSchema.ID>()

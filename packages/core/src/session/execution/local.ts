@@ -21,6 +21,7 @@ import { SessionEvent } from "../event"
 import { mutateSession } from "../mutation"
 import { EventV2 } from "../../event"
 import { SessionExecutionRouter } from "./router"
+import { Kernel } from "../kernel"
 
 type DB = Database.Interface["db"]
 
@@ -365,9 +366,13 @@ const layer = Layer.effect(
       wake: coordinator.wake,
       wait: coordinator.wait,
     })
-    // Kernel Sessions route through the same facade; until the Kernel engine is
-    // installed they fail with KernelUnavailableError and never touch Classic.
-    const service = SessionExecution.routingFacade(SessionExecutionRouter.make({ classic }, db))
+    // Kernel Sessions route through the same facade; the inert Kernel surface
+    // rejects provider work with KernelUnavailableError until Task 5 installs
+    // the coordinator, and never touches Classic.
+    const kernel = yield* Kernel.Service
+    const service = SessionExecution.routingFacade(
+      SessionExecutionRouter.make({ classic, kernel: kernel.execution }, db),
+    )
     current.service = service
 
     for (const turn of yield* SessionTurn.open(db)) {
@@ -433,6 +438,7 @@ export const node = makeGlobalNode({
     SessionCommand.node,
     TaskNotification.node,
     TaskSubmission.node,
+    Kernel.node,
   ],
 })
 

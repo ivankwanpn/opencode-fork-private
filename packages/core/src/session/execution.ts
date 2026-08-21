@@ -4,10 +4,13 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { LayerNode } from "../effect/layer-node"
 import { Node } from "../effect/app-node"
 import { Database } from "../database/database"
+import { EventV2 } from "../event"
 import { SessionRunner } from "./runner/index"
 import { SessionSchema } from "./schema"
 import { SessionExecutionRouter } from "./execution/router"
 import { SessionCommand } from "./command"
+import { Kernel } from "./kernel"
+import { LifecycleStore } from "./kernel/lifecycle-store"
 
 export class BusyError extends Schema.TaggedErrorClass<BusyError>()("Session.ExecutionBusyError", {
   sessionID: SessionSchema.ID,
@@ -68,19 +71,34 @@ export const routingFacade = (router: SessionExecutionRouter.Interface): Interfa
 /** Provides the routing facade over the engines registered with the router. */
 export const routingLayer = (
   engines: Readonly<Partial<Record<SessionSchema.ExecutionEngine, Interface>>>,
-) =>
-  Layer.effect(
+) => {
+  // Replacement layers compile with no dependencies, so the router's
+  // Database/EventV2/LifecycleStore/Kernel requirements are closed inside
+  // against the graph's own nodes (mirroring the flaky-events layer in
+  // session-create tests). Each provide builds its provider first, so the
+  // closure is composed from the leaves up.
+  const eventV2Closed = (EventV2.node.implementation as Layer.Layer<EventV2.Service>).pipe(
+    Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>),
+  )
+  const lifecycleClosed = (LifecycleStore.node.implementation as Layer.Layer<LifecycleStore.Service>).pipe(
+    Layer.provide(eventV2Closed),
+  )
+  const kernelClosed = (Kernel.node.implementation as Layer.Layer<Kernel.Service>).pipe(
+    Layer.provide(lifecycleClosed),
+  )
+  const routerClosed = SessionExecutionRouter.layer(engines).pipe(
+    Layer.provide(kernelClosed),
+  )
+  return Layer.effect(
     Service,
     Effect.gen(function* () {
       const router = yield* SessionExecutionRouter.Service
       return Service.of(routingFacade(router))
     }),
   )
-    .pipe(Layer.provide(SessionExecutionRouter.layer(engines)))
-    // Replacement layers compile with no dependencies, so the router's Database
-    // requirement is closed inside against the graph's own Database node
-    // (mirroring the flaky-events layer in session-create tests).
+    .pipe(Layer.provide(routerClosed))
     .pipe(Layer.provide(Database.node.implementation as Layer.Layer<Database.Service>))
+}
 
 /** Routes execution from a Session ID to the runner owned by that Session's Location. */
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionExecution") {}

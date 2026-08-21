@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Deferred, Effect, Fiber, Schema } from "effect"
+import { DateTime, Deferred, Effect, Exit, Fiber, Schema } from "effect"
 import { asc, eq } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -496,6 +496,66 @@ describe("SessionProjector", () => {
       expect(
         yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, id)).get().pipe(Effect.orDie),
       ).toMatchObject({ promoted_seq: event.durable?.seq })
+    }),
+  )
+
+  it.effect("terminalizes an inbox row exactly once from the durable event", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "test",
+          directory: "/project",
+          title: "test",
+          version: "test",
+        })
+        .run()
+        .pipe(Effect.orDie)
+      const events = yield* EventV2.Service
+      const id = SessionMessage.ID.make("msg_terminalized")
+      const admitted = yield* SessionInput.admit(db, events, {
+        id,
+        sessionID,
+        prompt: Prompt.make({ text: "terminalize me" }),
+        delivery: "steer",
+      })
+      if (!admitted) return yield* Effect.die("Prompt admission failed")
+      yield* SessionInput.promote(db, events, sessionID, id)
+      const resultMessageID = SessionMessage.ID.make("msg_result")
+      const event = yield* events.publish(SessionEvent.Input.Terminalized, {
+        sessionID,
+        inputID: id,
+        timestamp: DateTime.makeUnsafe(10),
+        outcome: "completed",
+        resultMessageID,
+      })
+      const row = yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, id)).get().pipe(Effect.orDie)
+      expect(row).toMatchObject({
+        terminal_outcome: "completed",
+        terminal_message_id: resultMessageID,
+        terminal_seq: event.durable?.seq,
+      })
+      expect(row?.terminal_time).toBe(10)
+      // A second durable terminal fact for the same input is rejected; the
+      // input terminalizes at most once.
+      const exit = yield* events
+        .publish(SessionEvent.Input.Terminalized, {
+          sessionID,
+          inputID: id,
+          timestamp: DateTime.makeUnsafe(11),
+          outcome: "completed",
+          resultMessageID,
+        })
+        .pipe(Effect.exit)
+      expect(Exit.isFailure(exit)).toBe(true)
     }),
   )
 

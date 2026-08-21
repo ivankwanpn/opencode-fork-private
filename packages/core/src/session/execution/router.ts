@@ -7,6 +7,7 @@ import { SessionCommand } from "../command"
 import { SessionSchema } from "../schema"
 import { SessionTable } from "../sql"
 import type { SessionExecution } from "../execution"
+import { Kernel } from "../kernel"
 
 /**
  * Chooses the execution engine for a Session. Each Session fixes its engine at
@@ -56,6 +57,7 @@ export const layer = (engines: Readonly<Partial<Record<SessionSchema.ExecutionEn
     Service,
     Effect.gen(function* () {
       const { db } = yield* Database.Service
-      return Service.of(make(engines, db))
+      const kernel = yield* Kernel.Service
+      return Service.of(make({ ...engines, kernel: kernel.execution }, db))
     }),
   )

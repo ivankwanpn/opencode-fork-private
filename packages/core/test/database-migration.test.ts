@@ -102,6 +102,33 @@ describe("DatabaseMigration", () => {
           ),
         ).toEqual([{ name: "engine", notnull: 1, dflt_value: "'classic'" }])
         expect(
+          yield* db.get(
+            sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_execution'`,
+          ),
+        ).toEqual({ name: "session_execution" })
+        expect(
+          yield* db.all<{ name: string; dflt_value: string | null }>(
+            sql`SELECT name, dflt_value FROM pragma_table_info('session_execution') ORDER BY name`,
+          ),
+        ).toEqual([
+          { name: "assistant_message_id", dflt_value: null },
+          { name: "attempt_id", dflt_value: null },
+          { name: "engine", dflt_value: "'kernel'" },
+          { name: "generation", dflt_value: "0" },
+          { name: "input_id", dflt_value: null },
+          { name: "lease_token", dflt_value: null },
+          { name: "phase", dflt_value: null },
+          { name: "process_incarnation", dflt_value: null },
+          { name: "recovery_reason", dflt_value: null },
+          { name: "retry_at", dflt_value: null },
+          { name: "session_id", dflt_value: null },
+          { name: "started_seq", dflt_value: null },
+          { name: "state", dflt_value: "'idle'" },
+          { name: "time_updated", dflt_value: null },
+          { name: "turn_id", dflt_value: null },
+          { name: "updated_seq", dflt_value: null },
+        ])
+        expect(
           yield* db.all<{ name: string; pk: number }>(
             sql`SELECT name, pk FROM pragma_table_info('session_tool_discovery_call') WHERE pk > 0 ORDER BY pk`,
           ),

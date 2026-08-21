@@ -302,6 +302,21 @@ export const Prompted = Event.define({
 })
 export type Prompted = typeof Prompted.Type
 
+export namespace Input {
+  export const Terminalized = Event.define({
+    type: "session.next.input.terminalized",
+    ...options,
+    schema: {
+      ...Base,
+      inputID: SessionMessage.ID,
+      outcome: Schema.Literals(["completed", "error", "cancelled", "recovery-required"]),
+      resultMessageID: SessionMessage.ID.pipe(optional),
+      error: ErrorInfo.pipe(optional),
+    },
+  })
+  export type Terminalized = typeof Terminalized.Type
+}
+
 export const PromptAdmitted = Event.define({
   type: "session.next.prompt.admitted",
   ...options,

@@ -158,6 +158,27 @@ export default {
         );
       `)
       yield* tx.run(`
+        CREATE TABLE \`session_execution\` (
+          \`session_id\` text PRIMARY KEY,
+          \`engine\` text DEFAULT 'kernel' NOT NULL,
+          \`generation\` integer DEFAULT 0 NOT NULL,
+          \`lease_token\` text,
+          \`process_incarnation\` text,
+          \`state\` text DEFAULT 'idle' NOT NULL,
+          \`phase\` text,
+          \`turn_id\` text,
+          \`input_id\` text,
+          \`attempt_id\` text,
+          \`assistant_message_id\` text,
+          \`retry_at\` integer,
+          \`recovery_reason\` text,
+          \`started_seq\` integer,
+          \`updated_seq\` integer,
+          \`time_updated\` integer NOT NULL,
+          CONSTRAINT \`fk_session_execution_session_id_session_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session\`(\`id\`) ON DELETE CASCADE
+        );
+      `)
+      yield* tx.run(`
         CREATE TABLE \`session_input\` (
           \`id\` text PRIMARY KEY,
           \`session_id\` text NOT NULL,
@@ -357,6 +378,7 @@ export default {
       yield* tx.run(
         `CREATE INDEX \`session_provider_attempt_status_retry_idx\` ON \`session_provider_attempt\` (\`status\`,\`retry_at\`);`,
       )
+      yield* tx.run(`CREATE INDEX \`session_execution_state_idx\` ON \`session_execution\` (\`state\`);`)
       yield* tx.run(
         `CREATE INDEX \`session_input_session_pending_delivery_seq_idx\` ON \`session_input\` (\`session_id\`,\`promoted_seq\`,\`delivery\`,\`admitted_seq\`);`,
       )

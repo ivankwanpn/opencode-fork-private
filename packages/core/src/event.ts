@@ -434,10 +434,6 @@ export const layerWith = (options?: LayerOptions) =>
 
       function commitDurableEvents(options: PublishBatchOptions) {
         return Effect.gen(function* () {
-          if (options.events.length === 0)
-            yield* Effect.die(
-              new InvalidDurableEventError({ type: "batch", message: "A durable batch must not be empty" }),
-            )
           if (options.replaceAggregate === true && options.events.length > 1)
             yield* Effect.die(
               new InvalidDurableEventError({
@@ -544,34 +540,35 @@ export const layerWith = (options?: LayerOptions) =>
                           )
                         for (const projector of projectors.get(payload.type) ?? []) yield* projector(payload)
                       }
-                      if (options.commit)
-                        yield* options.commit({
-                          firstSeq,
-                          finalSeq: firstSeq + prepared.length - 1,
-                          events: payloads,
-                        })
-                      yield* db
-                        .insert(EventSequenceTable)
-                        .values([{ aggregate_id: options.aggregateID, seq: firstSeq + prepared.length - 1 }])
-                        .onConflictDoUpdate({
-                          target: EventSequenceTable.aggregate_id,
-                          set: { seq: firstSeq + prepared.length - 1 },
-                        })
-                        .run()
-                        .pipe(Effect.orDie)
-                      yield* db
-                        .insert(EventTable)
-                        .values(
-                          prepared.map((item, index) => ({
-                            id: item.id,
-                            aggregate_id: options.aggregateID,
-                            seq: firstSeq + index,
-                            type: versionedType(item.definition.type, item.version),
-                            data: item.encoded,
-                          })),
-                        )
-                        .run()
-                        .pipe(Effect.orDie)
+                      // An empty batch is a pure coordination transition: the
+                      // commit hook still runs (fenced CAS), but no sequence or
+                      // event rows advance.
+                      const finalSeq = firstSeq + prepared.length - 1
+                      if (options.commit) yield* options.commit({ firstSeq, finalSeq, events: payloads })
+                      if (prepared.length > 0) {
+                        yield* db
+                          .insert(EventSequenceTable)
+                          .values([{ aggregate_id: options.aggregateID, seq: finalSeq }])
+                          .onConflictDoUpdate({
+                            target: EventSequenceTable.aggregate_id,
+                            set: { seq: finalSeq },
+                          })
+                          .run()
+                          .pipe(Effect.orDie)
+                        yield* db
+                          .insert(EventTable)
+                          .values(
+                            prepared.map((item, index) => ({
+                              id: item.id,
+                              aggregate_id: options.aggregateID,
+                              seq: firstSeq + index,
+                              type: versionedType(item.definition.type, item.version),
+                              data: item.encoded,
+                            })),
+                          )
+                          .run()
+                          .pipe(Effect.orDie)
+                      }
                       return payloads
                     }),
                   { behavior: "immediate" },

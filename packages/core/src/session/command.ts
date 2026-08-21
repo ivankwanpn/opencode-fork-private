@@ -29,7 +29,7 @@ import { SessionMessage } from "./message"
 import { Prompt, dematerialize } from "./prompt"
 import { SessionProjector } from "./projector"
 import { SessionSchema } from "./schema"
-import { SessionCancellationTable, SessionTable } from "./sql"
+import { SessionCancellationTable, SessionExecutionTable, SessionTable } from "./sql"
 import { SessionTurn } from "./turn"
 import { Slug } from "../util/slug"
 import { isDeepStrictEqual } from "node:util"
@@ -277,7 +277,19 @@ const layer = Layer.effect(
           subpath: target.subpath,
           engine: input.engine ?? DefaultEngine,
         })
-        return yield* publishCreated(snapshot, DateTime.makeUnsafe(now))
+        const created = yield* publishCreated(snapshot, DateTime.makeUnsafe(now))
+        // Kernel Sessions create their durable execution row with the Session:
+        // generation 0, idle, no lease/identities. The first atomic start sets
+        // started_seq/updated_seq and fences every later transition.
+        if (created.engine === "kernel") {
+          yield* db
+            .insert(SessionExecutionTable)
+            .values({ session_id: created.id, engine: "kernel", time_updated: now })
+            .onConflictDoNothing()
+            .run()
+            .pipe(Effect.orDie)
+        }
+        return created
       }),
       restore: Effect.fn("SessionCommand.restore")(function* (input) {
         const target = yield* prepareLocation(input.location)

@@ -327,6 +327,48 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
     .pipe(Effect.orDie)
 })
 
+export const projectTerminalized = Effect.fn("SessionInput.projectTerminalized")(function* (
+  db: DatabaseService,
+  event: SessionEvent.Input.Terminalized,
+) {
+  const terminalSeq = event.durable?.seq
+  if (terminalSeq === undefined)
+    return yield* Effect.die("Durable Session event is missing aggregate sequence")
+  const updated = yield* db
+    .update(SessionInputTable)
+    .set({
+      terminal_outcome: event.data.outcome,
+      terminal_message_id: event.data.resultMessageID ?? null,
+      terminal_error: event.data.error ?? null,
+      terminal_time: DateTime.toEpochMillis(event.data.timestamp),
+      terminal_seq: terminalSeq,
+    })
+    .where(
+      and(
+        eq(SessionInputTable.id, event.data.inputID),
+        eq(SessionInputTable.session_id, event.data.sessionID),
+        isNull(SessionInputTable.terminal_outcome),
+      ),
+    )
+    .returning({ id: SessionInputTable.id })
+    .get()
+    .pipe(Effect.orDie)
+  if (updated) return
+  // Idempotent: a prior terminal projection with the same outcome/sequence is
+  // the same durable fact; anything else is a lifecycle conflict.
+  const stored = yield* db
+    .select({
+      terminalOutcome: SessionInputTable.terminal_outcome,
+      terminalSeq: SessionInputTable.terminal_seq,
+    })
+    .from(SessionInputTable)
+    .where(and(eq(SessionInputTable.id, event.data.inputID), eq(SessionInputTable.session_id, event.data.sessionID)))
+    .get()
+    .pipe(Effect.orDie)
+  if (stored?.terminalOutcome === event.data.outcome && stored.terminalSeq === terminalSeq) return
+  return yield* Effect.die(new LifecycleConflict({ id: event.data.inputID }))
+})
+
 export const hasPending = Effect.fn("SessionInput.hasPending")(function* (
   db: DatabaseService,
   sessionID: SessionSchema.ID,

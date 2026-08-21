@@ -41,6 +41,13 @@ export const Status = Schema.Union([
     attempt: NonNegativeInt,
     reason: Schema.Literals(["dispatch-unknown", "response-interrupted"]),
   }),
+  Schema.Struct({
+    type: Schema.Literal("kernel"),
+    state: Schema.Literals(["idle", "active", "retry_wait", "needs_recovery", "cancelling"]),
+    phase: Schema.Literals(["admitting", "dispatching", "responding", "tools", "compacting", "settling"]).pipe(
+      Schema.optional,
+    ),
+  }),
 ]).annotate({ identifier: "SessionProviderAttemptStatus" })
 export type Status = typeof Status.Type
 

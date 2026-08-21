@@ -1,13 +1,13 @@
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionTurn } from "@opencode-ai/core/session/turn"
-import { SessionAttemptTable } from "@opencode-ai/core/session/sql"
+import { SessionAttemptTable, SessionExecutionTable } from "@opencode-ai/core/session/sql"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
 import { EventTable } from "@opencode-ai/core/event/sql"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { DateTime, Effect, Stream } from "effect"
-import { and, desc, inArray } from "drizzle-orm"
+import { and, desc, inArray, ne } from "drizzle-orm"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import { SessionsCursor } from "@opencode-ai/protocol/groups/session"
@@ -165,7 +165,17 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               readonly type: "running"
               readonly turnID?: SessionMessage.ID
               readonly phase?: "pending" | "active"
-              readonly activity?: "compacting" | "dispatching" | "responding"
+              readonly activity?:
+                | "admitting"
+                | "compacting"
+                | "dispatching"
+                | "responding"
+                | "running-tool"
+                | "settling"
+                | "waiting-user"
+                | "cancelling"
+                | "retry_wait"
+                | "needs_recovery"
             }
           >()
           for (const sessionID of sessionIDs) {
@@ -183,6 +193,43 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               type: "running",
               turnID: turn ? SessionMessage.ID.make(turn.turn_id) : undefined,
               phase: turn ? (turn.status === "pending" ? "pending" : "active") : undefined,
+              activity,
+            })
+          }
+          // Kernel executions surface their derived coordination state through
+          // the same transient activity vocabulary.
+          const kernelRows = yield* database.db
+            .select({
+              sessionID: SessionExecutionTable.session_id,
+              state: SessionExecutionTable.state,
+              phase: SessionExecutionTable.phase,
+              turnID: SessionExecutionTable.turn_id,
+            })
+            .from(SessionExecutionTable)
+            .where(ne(SessionExecutionTable.state, "idle"))
+            .all()
+            .pipe(Effect.orDie)
+          for (const row of kernelRows) {
+            const activity =
+              row.state === "retry_wait"
+                ? ("retry_wait" as const)
+                : row.state === "cancelling"
+                  ? ("cancelling" as const)
+                  : row.state === "needs_recovery"
+                    ? ("needs_recovery" as const)
+                    : row.phase === "compacting"
+                      ? ("compacting" as const)
+                      : row.phase === "responding"
+                        ? ("responding" as const)
+                        : row.phase === "tools"
+                          ? ("running-tool" as const)
+                          : row.phase === "settling"
+                            ? ("settling" as const)
+                            : ("dispatching" as const)
+            statuses.set(Session.ID.make(row.sessionID), {
+              type: "running",
+              turnID: row.turnID ? SessionMessage.ID.make(row.turnID) : undefined,
+              phase: "active",
               activity,
             })
           }

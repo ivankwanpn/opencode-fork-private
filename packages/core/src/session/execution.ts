@@ -11,6 +11,8 @@ import { SessionExecutionRouter } from "./execution/router"
 import { SessionCommand } from "./command"
 import { Kernel } from "./kernel"
 import { LifecycleStore } from "./kernel/lifecycle-store"
+import { RecoveryExecutor } from "./kernel/recovery-executor"
+import { RecoveryPlanner } from "./kernel/recovery-planner"
 
 export class BusyError extends Schema.TaggedErrorClass<BusyError>()("Session.ExecutionBusyError", {
   sessionID: SessionSchema.ID,
@@ -83,8 +85,21 @@ export const routingLayer = (
   const lifecycleClosed = (LifecycleStore.node.implementation as Layer.Layer<LifecycleStore.Service>).pipe(
     Layer.provide(eventV2Closed),
   )
-  const kernelClosed = (Kernel.node.implementation as Layer.Layer<Kernel.Service>).pipe(
+  const plannerClosed = (RecoveryPlanner.node.implementation as Layer.Layer<RecoveryPlanner.Service>).pipe(
     Layer.provide(lifecycleClosed),
+  )
+  const executorClosed = (RecoveryExecutor.node.implementation as Layer.Layer<RecoveryExecutor.Service>).pipe(
+    Layer.provide(lifecycleClosed),
+  )
+  const kernelClosed = (Kernel.node.implementation as Layer.Layer<Kernel.Service>).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        lifecycleClosed,
+        plannerClosed,
+        executorClosed,
+        Database.node.implementation as Layer.Layer<Database.Service>,
+      ),
+    ),
   )
   const routerClosed = SessionExecutionRouter.layer(engines).pipe(
     Layer.provide(kernelClosed),

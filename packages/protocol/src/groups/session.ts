@@ -101,7 +101,18 @@ const SessionActive = Schema.Struct({
   turnID: Schema.optional(SessionMessage.ID),
   phase: Schema.optional(Schema.Literals(["pending", "active"])),
   activity: Schema.optional(
-    Schema.Literals(["compacting", "dispatching", "responding", "running-tool", "waiting-user"]),
+    Schema.Literals([
+      "admitting",
+      "compacting",
+      "dispatching",
+      "responding",
+      "running-tool",
+      "settling",
+      "waiting-user",
+      "cancelling",
+      "retry_wait",
+      "needs_recovery",
+    ]),
   ),
 }).annotate({ identifier: "SessionActive" })
 

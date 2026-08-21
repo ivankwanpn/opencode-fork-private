@@ -544,7 +544,18 @@ export type SessionsActiveOutput = {
       readonly type: "running"
       readonly turnID?: string | undefined
       readonly phase?: "pending" | "active" | undefined
-      readonly activity?: "compacting" | "dispatching" | "responding" | "running-tool" | "waiting-user" | undefined
+      readonly activity?:
+        | "admitting"
+        | "compacting"
+        | "dispatching"
+        | "responding"
+        | "running-tool"
+        | "settling"
+        | "waiting-user"
+        | "cancelling"
+        | "retry_wait"
+        | "needs_recovery"
+        | undefined
     }
   }
 }["data"]

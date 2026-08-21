@@ -22,6 +22,7 @@ import type {
   ExecutionLease,
   ExecutionSnapshot,
   InterruptInput,
+  ReconcileInput,
   RecoveryReason,
   StartInput,
   TerminalInput,
@@ -71,6 +72,8 @@ export interface Interface {
   readonly checkpoint: (input: CheckpointInput) => Effect.Effect<readonly EventV2.Payload[], StaleExecutionError>
   readonly terminalize: (input: TerminalInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
   readonly acceptInterrupt: (input: InterruptInput) => Effect.Effect<ExecutionSnapshot, PersistenceError>
+  /** Fenced recovery application for an absent owner; never used by live execution. */
+  readonly reconcile: (input: ReconcileInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/LifecycleStore") {}
@@ -474,7 +477,69 @@ const layer = Layer.effect(
       )
     })
 
-    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt })
+    const reconcile = Effect.fn("LifecycleStore.reconcile")(function* (input: ReconcileInput) {
+      const now = yield* DateTime.now
+      yield* catchCoordinationDefects(
+        events.publishBatch({
+          aggregateID: input.sessionID,
+          expectedSeq: input.expectedSeq,
+          events: input.events,
+          commit: ({ finalSeq }) =>
+            Effect.gen(function* () {
+              const updated = yield* db
+                .update(SessionExecutionTable)
+                .set({
+                  state: input.state,
+                  phase: null,
+                  lease_token: null,
+                  retry_at: null,
+                  recovery_reason: input.recoveryReason ?? null,
+                  ...(input.state === "idle"
+                    ? {
+                        turn_id: null,
+                        input_id: null,
+                        attempt_id: null,
+                        assistant_message_id: null,
+                        started_seq: null,
+                      }
+                    : {}),
+                  updated_seq: finalSeq,
+                  time_updated: DateTime.toEpochMillis(now),
+                })
+                .where(
+                  and(
+                    eq(SessionExecutionTable.session_id, input.sessionID),
+                    eq(SessionExecutionTable.generation, input.expectedGeneration),
+                  ),
+                )
+                .returning({ sessionID: SessionExecutionTable.session_id })
+                .get()
+                .pipe(Effect.orDie)
+              if (!updated)
+                return yield* Effect.die(
+                  new StaleExecutionError({
+                    sessionID: input.sessionID,
+                    generation: input.expectedGeneration,
+                    expectedState: input.state,
+                  }),
+                )
+            }),
+        }),
+        [StaleExecutionError],
+      )
+      return yield* get(input.sessionID).pipe(
+        Effect.catchTag("Session.NotFoundError", () =>
+          Effect.die(
+            new InvariantError({
+              sessionID: input.sessionID,
+              message: "Reconciliation committed but the execution row is missing",
+            }),
+          ),
+        ),
+      )
+    })
+
+    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt, reconcile })
   }),
 )
 

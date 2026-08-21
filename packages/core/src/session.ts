@@ -37,6 +37,8 @@ import { SessionPromptExpansion } from "./session/prompt-expansion"
 import { PluginRuntime } from "./plugin/runtime"
 import { SessionCompaction } from "./session/compaction"
 import { SessionSkill } from "./session/skill"
+import { LifecycleStore } from "./session/kernel/lifecycle-store"
+import { StatusProjector } from "./session/kernel/status-projector"
 import { Snapshot } from "./snapshot"
 import { SessionRevert } from "./session/revert"
 import { Revert } from "@opencode-ai/schema/revert"
@@ -380,6 +382,7 @@ const layer = Layer.effect(
     const execution = yield* SessionExecution.Service
     const store = yield* SessionStore.Service
     const locations = yield* LocationServiceMap.Service
+    const lifecycle = yield* LifecycleStore.Service
     const scope = yield* Scope.Scope
     const decodeMessage = Schema.decodeUnknownEffect(SessionMessage.Message)
     const encodeMessage = Schema.encodeSync(SessionMessage.Message)
@@ -994,7 +997,13 @@ const layer = Layer.effect(
       }),
       active: execution.active,
       status: Effect.fn("V2Session.status")(function* (sessionID) {
-        yield* result.get(sessionID)
+        const session = yield* result.get(sessionID)
+        // Kernel status is derived transiently from the execution snapshot; it
+        // is never written as a second durable truth.
+        if (session.engine === "kernel") {
+          const snapshot = yield* lifecycle.get(sessionID)
+          return StatusProjector.deriveStatus(snapshot)
+        }
         const active = yield* execution.active
         return yield* SessionAttempt.status(db, sessionID, active.has(sessionID))
       }),
@@ -1202,5 +1211,6 @@ export const node = makeGlobalNode({
     SessionStore.node,
     LocationServiceMap.node,
     SessionProjector.node,
+    LifecycleStore.node,
   ],
 })

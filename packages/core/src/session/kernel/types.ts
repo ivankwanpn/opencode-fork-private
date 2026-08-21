@@ -99,6 +99,17 @@ export interface InterruptInput {
   readonly reason: InterruptReason
 }
 
+/** Recovery application for an execution whose owner is absent. */
+export interface ReconcileInput {
+  readonly sessionID: SessionSchema.ID
+  readonly expectedGeneration: number
+  /** Optimistic event-sequence guard; a newer commit makes the plan stale. */
+  readonly expectedSeq: number
+  readonly events: readonly EventV2.BatchItem[]
+  readonly state: ExecutionState
+  readonly recoveryReason?: RecoveryReason
+}
+
 /** A commit tried to use a fenced generation/lease or an unexpected state. */
 export class StaleExecutionError extends Schema.TaggedErrorClass<StaleExecutionError>()(
   "StaleExecutionError",

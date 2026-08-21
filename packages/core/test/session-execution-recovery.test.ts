@@ -26,8 +26,13 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionRunner } from "@opencode-ai/core/session/runner"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
+import { Kernel } from "@opencode-ai/core/session/kernel"
+import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
+import { RecoveryExecutor } from "@opencode-ai/core/session/kernel/recovery-executor"
+import { RecoveryPlanner } from "@opencode-ai/core/session/kernel/recovery-planner"
 import {
   SessionAttemptTable,
+  SessionExecutionTable,
   SessionInputTable,
   SessionMessageTable,
   SessionTable,
@@ -37,7 +42,18 @@ import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
-  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node, TaskSubmission.node])),
+  AppNodeBuilder.build(
+    LayerNode.group([
+      Database.node,
+      EventV2.node,
+      SessionProjector.node,
+      TaskSubmission.node,
+      Kernel.node,
+      LifecycleStore.node,
+      RecoveryPlanner.node,
+      RecoveryExecutor.node,
+    ]),
+  ),
 )
 
 const encodeMessage = Schema.encodeSync(SessionMessage.Message)
@@ -962,6 +978,61 @@ describe("SessionExecution recovery", () => {
       expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
       expect(yield* SessionExecutionLocal.startupRecoveryCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
       expect(yield* SessionExecutionLocal.startupCandidates(db, Number.MAX_SAFE_INTEGER)).toEqual([])
+    }),
+  )
+
+  it.effect("marks an abandoned kernel execution recovery-required without running provider work", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: SessionSchema.ID.make("ses_kernel_recovery"),
+          project_id: Project.ID.global,
+          slug: "kernel-recovery",
+          directory: "/project",
+          title: "kernel recovery",
+          version: "test",
+          engine: "kernel",
+        })
+        .run()
+        .pipe(Effect.orDie)
+      const attemptID = EventV2.ID.make("evt_kernel_recovery")
+      yield* db
+        .insert(SessionExecutionTable)
+        .values({
+          session_id: SessionSchema.ID.make("ses_kernel_recovery"),
+          engine: "kernel",
+          generation: 1,
+          lease_token: "stale",
+          process_incarnation: "old-process",
+          state: "active",
+          phase: "responding",
+          turn_id: SessionMessage.ID.make("msg_kernel_turn"),
+          input_id: SessionMessage.ID.make("msg_kernel_input"),
+          attempt_id: attemptID,
+          assistant_message_id: SessionMessage.ID.make("msg_kernel_assistant"),
+          started_seq: 2,
+          updated_seq: 4,
+          time_updated: 1,
+        })
+        .run()
+        .pipe(Effect.orDie)
+      const planner = yield* RecoveryPlanner.Service
+      const executor = yield* RecoveryExecutor.Service
+      const lifecycle = yield* LifecycleStore.Service
+      const plan = yield* planner.plan(SessionSchema.ID.make("ses_kernel_recovery"))
+      expect(plan.classification).toBe("needs-user-decision")
+      yield* executor.apply(plan)
+      expect(yield* lifecycle.get(SessionSchema.ID.make("ses_kernel_recovery"))).toMatchObject({
+        state: "needs_recovery",
+        recoveryReason: "provider-dispatch-ambiguous",
+      })
     }),
   )
 })

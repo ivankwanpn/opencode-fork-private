@@ -133,12 +133,44 @@ export interface PublishOptions {
   readonly replaceAggregate?: boolean
 }
 
+export interface BatchItem<D extends Definition = Definition> {
+  readonly definition: D
+  readonly data: Data<D>
+  readonly id?: ID
+  readonly metadata?: Record<string, unknown>
+}
+
+export interface PublishBatchOptions {
+  readonly aggregateID: string
+  /** Optimistic guard: the whole batch fails with ConflictError (defect) when the aggregate's current seq differs. */
+  readonly expectedSeq?: number
+  readonly location?: Location.Ref
+  /** Durable typed events committed contiguously in array order inside one transaction. */
+  readonly events: readonly BatchItem[]
+  /** Local operational projection committed atomically with the batch. Not replayed or serialized. */
+  readonly commit?: (result: {
+    readonly firstSeq: number
+    readonly finalSeq: number
+    readonly events: readonly Payload[]
+  }) => Effect.Effect<void>
+  /** Isolated to single-event batches; multi-event batches reject it. */
+  readonly replaceAggregate?: boolean
+}
+
 export interface Interface {
   readonly publish: <D extends Definition>(
     definition: D,
     data: Data<D>,
     options?: PublishOptions,
   ) => Effect.Effect<Payload<D>>
+  /**
+   * Atomically commits a durable event batch: one aggregate, one
+   * expected-sequence check, contiguous sequence allocation, projectors and the
+   * commit hook inside one transaction. One failure rolls back events,
+   * sequence, read models, and coordination state; live listeners receive
+   * events only after commit, in batch order.
+   */
+  readonly publishBatch: (options: PublishBatchOptions) => Effect.Effect<readonly Payload[]>
   readonly subscribe: <D extends Definition>(definition: D) => Stream.Stream<Payload<D>>
   readonly all: () => Stream.Stream<Payload>
   readonly durable: (input: { readonly aggregateID: string; readonly after?: number }) => Stream.Stream<Payload>
@@ -400,50 +432,175 @@ export const layerWith = (options?: LayerOptions) =>
         })
       }
 
-      function publishEvent<D extends Definition>(
-        definition: D,
-        event: Payload<D>,
-        commit?: PublishOptions["commit"],
-        expectedSeq?: number,
-        replaceAggregate?: boolean,
-      ) {
+      function commitDurableEvents(options: PublishBatchOptions) {
         return Effect.gen(function* () {
-          if (!definition?.durable && commit)
-            return yield* Effect.die(
+          if (options.events.length === 0)
+            yield* Effect.die(
+              new InvalidDurableEventError({ type: "batch", message: "A durable batch must not be empty" }),
+            )
+          if (options.replaceAggregate === true && options.events.length > 1)
+            yield* Effect.die(
               new InvalidDurableEventError({
-                type: event.type,
-                message: "Local commit hooks require a durable event",
+                type: options.events[0]!.definition.type,
+                message: "Aggregate replacement is isolated to single-event batches",
               }),
             )
-          if (!definition?.durable && replaceAggregate === true)
-            return yield* Effect.die(
-              new InvalidDurableEventError({
-                type: event.type,
-                message: "Aggregate replacement requires a durable event",
+          // Validate and encode every item before opening the transaction.
+          const prepared = yield* Effect.forEach(
+            options.events,
+            (item, index) =>
+              Effect.gen(function* () {
+                const durable = item.definition?.durable
+                if (!durable)
+                  return yield* Effect.die(
+                    new InvalidDurableEventError({
+                      type: item.definition.type,
+                      message: "Transient definitions cannot enter a durable batch",
+                    }),
+                  )
+                const aggregateID = (item.data as Record<string, unknown>)[durable.aggregate]
+                if (typeof aggregateID !== "string")
+                  return yield* Effect.die(
+                    new InvalidDurableEventError({
+                      type: item.definition.type,
+                      message: `Expected string aggregate field ${durable.aggregate}`,
+                    }),
+                  )
+                if (aggregateID !== options.aggregateID)
+                  return yield* Effect.die(
+                    new InvalidDurableEventError({
+                      type: item.definition.type,
+                      message: `Aggregate mismatch at index ${index}: expected ${options.aggregateID}, got ${aggregateID}`,
+                    }),
+                  )
+                const id = item.id ?? ID.create()
+                const encoded = yield* Effect.sync(
+                  () => Schema.encodeUnknownSync(item.definition.data)(item.data) as Record<string, unknown>,
+                )
+                return { ...item, id, encoded, version: durable.version }
               }),
-            )
-          if (definition?.durable) {
-            const committed = yield* commitDurableEvent(
-              definition,
-              event as Payload,
-              expectedSeq === undefined && replaceAggregate !== true
-                ? undefined
-                : { expectedSeq, replaceAggregate },
-              commit,
-            )
-            if (committed) {
-              event = {
-                ...event,
-                durable: {
-                  aggregateID: committed.aggregateID,
-                  seq: committed.seq,
-                  version: definition.durable.version,
-                },
-              }
-              yield* notify(event as Payload, true)
-              return event
-            }
+          )
+          const ids = new Set<string>()
+          for (const item of prepared) {
+            if (ids.has(item.id))
+              yield* Effect.die(
+                new InvalidDurableEventError({
+                  type: item.definition.type,
+                  message: `Duplicate event ID in batch: ${item.id}`,
+                }),
+              )
+            ids.add(item.id)
           }
+          return yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const committed = yield* db
+                .transaction(
+                  () =>
+                    Effect.gen(function* () {
+                      const row = yield* db
+                        .select({ seq: EventSequenceTable.seq })
+                        .from(EventSequenceTable)
+                        .where(eq(EventSequenceTable.aggregate_id, options.aggregateID))
+                        .get()
+                        .pipe(Effect.orDie)
+                      const latest = row?.seq ?? -1
+                      if (options.expectedSeq !== undefined && options.expectedSeq !== latest) {
+                        yield* Effect.die(
+                          new ConflictError({
+                            aggregateID: options.aggregateID,
+                            expectedSeq: options.expectedSeq,
+                            actualSeq: latest,
+                          }),
+                        )
+                      }
+                      if (options.replaceAggregate === true)
+                        yield* db.delete(EventTable).where(eq(EventTable.aggregate_id, options.aggregateID)).run()
+                      const firstSeq = latest + 1
+                      const payloads = prepared.map((item, index) => {
+                        const seq = firstSeq + index
+                        return {
+                          id: item.id,
+                          ...(item.metadata ? { metadata: item.metadata } : {}),
+                          type: item.definition.type,
+                          ...(options.location ? { location: options.location } : {}),
+                          data: item.data as Data<Definition>,
+                          durable: { aggregateID: options.aggregateID, seq, version: item.version },
+                        } as Payload
+                      })
+                      for (const [index, item] of prepared.entries()) {
+                        const payload = payloads[index]!
+                        const stored = yield* db
+                          .select({ aggregateID: EventTable.aggregate_id, seq: EventTable.seq })
+                          .from(EventTable)
+                          .where(eq(EventTable.id, item.id))
+                          .get()
+                          .pipe(Effect.orDie)
+                        if (stored)
+                          yield* Effect.die(
+                            new InvalidDurableEventError({
+                              type: payload.type,
+                              message: `Event ${item.id} already exists at aggregate ${stored.aggregateID} sequence ${stored.seq}`,
+                            }),
+                          )
+                        for (const projector of projectors.get(payload.type) ?? []) yield* projector(payload)
+                      }
+                      if (options.commit)
+                        yield* options.commit({
+                          firstSeq,
+                          finalSeq: firstSeq + prepared.length - 1,
+                          events: payloads,
+                        })
+                      yield* db
+                        .insert(EventSequenceTable)
+                        .values([{ aggregate_id: options.aggregateID, seq: firstSeq + prepared.length - 1 }])
+                        .onConflictDoUpdate({
+                          target: EventSequenceTable.aggregate_id,
+                          set: { seq: firstSeq + prepared.length - 1 },
+                        })
+                        .run()
+                        .pipe(Effect.orDie)
+                      yield* db
+                        .insert(EventTable)
+                        .values(
+                          prepared.map((item, index) => ({
+                            id: item.id,
+                            aggregate_id: options.aggregateID,
+                            seq: firstSeq + index,
+                            type: versionedType(item.definition.type, item.version),
+                            data: item.encoded,
+                          })),
+                        )
+                        .run()
+                        .pipe(Effect.orDie)
+                      return payloads
+                    }),
+                  { behavior: "immediate" },
+                )
+                .pipe(Effect.orDie)
+              // Durable aggregate subscribers receive one wake for the whole batch.
+              yield* Effect.forEach(
+                pubsub.durable.get(options.aggregateID) ?? [],
+                (wake) => PubSub.publish(wake, undefined),
+                { discard: true },
+              )
+              return committed
+            }),
+          )
+        })
+      }
+
+      function publishBatch(options: PublishBatchOptions) {
+        return Effect.gen(function* () {
+          const committed = yield* commitDurableEvents(options)
+          yield* Effect.forEach(committed, (event) => notify(event, true), { discard: true })
+          return committed
+        })
+      }
+
+      function publishEvent<D extends Definition>(definition: D, event: Payload<D>) {
+        return Effect.gen(function* () {
+          // Transient events have no durable batch path; they notify live
+          // listeners without any persistence.
           yield* notify(event as Payload, false)
           return event
         })
@@ -478,19 +635,49 @@ export const layerWith = (options?: LayerOptions) =>
             (serviceLocation
               ? { directory: serviceLocation.directory, workspaceID: serviceLocation.workspaceID }
               : undefined)
-          return yield* publishEvent(
-            definition,
-            {
+          if (!definition?.durable) {
+            if (options?.commit)
+              yield* Effect.die(
+                new InvalidDurableEventError({
+                  type: definition.type,
+                  message: "Local commit hooks require a durable event",
+                }),
+              )
+            if (options?.replaceAggregate === true)
+              yield* Effect.die(
+                new InvalidDurableEventError({
+                  type: definition.type,
+                  message: "Aggregate replacement requires a durable event",
+                }),
+              )
+            return yield* publishEvent(definition, {
               id: options?.id ?? ID.create(),
               ...(options?.metadata ? { metadata: options.metadata } : {}),
               type: definition.type,
               ...(location ? { location } : {}),
               data,
-            } as Payload<D>,
-            options?.commit,
-            options?.expectedSeq,
-            options?.replaceAggregate,
-          )
+            } as Payload<D>)
+          }
+          const aggregateID = (data as Record<string, unknown>)[definition.durable.aggregate]
+          if (typeof aggregateID !== "string")
+            return yield* Effect.die(
+              new InvalidDurableEventError({
+                type: definition.type,
+                message: `Expected string aggregate field ${definition.durable.aggregate}`,
+              }),
+            )
+          // Single-event publish is a one-item batch wrapper with identical
+          // external behavior: same transaction, same sequence, same listeners.
+          const commit = options?.commit
+          const [committed] = yield* publishBatch({
+            aggregateID,
+            expectedSeq: options?.expectedSeq,
+            location,
+            events: [{ definition, data, id: options?.id, metadata: options?.metadata }],
+            commit: commit ? ({ firstSeq }) => commit(firstSeq) : undefined,
+            replaceAggregate: options?.replaceAggregate,
+          })
+          return committed as Payload<D>
         })
       }
 
@@ -677,6 +864,7 @@ export const layerWith = (options?: LayerOptions) =>
 
       return Service.of({
         publish,
+        publishBatch,
         subscribe,
         all: streamAll,
         durable,

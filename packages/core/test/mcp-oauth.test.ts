@@ -34,20 +34,27 @@ const configLayer = Layer.succeed(
 )
 
 const published: Array<{ type: string; data: unknown }> = []
+const publish = ((definition: any, data: any, options?: any) =>
+  Effect.sync(() => {
+    const event = {
+      id: options?.id ?? EventV2.ID.create(),
+      type: definition.type,
+      ...(options?.location ? { location: options.location } : {}),
+      data,
+    }
+    published.push(event)
+    return event
+  })) as EventV2.Interface["publish"]
 const eventLayer = Layer.succeed(
   EventV2.Service,
   EventV2.Service.of({
-    publish: ((definition: any, data: any, options?: any) =>
-      Effect.sync(() => {
-        const event = {
-          id: options?.id ?? EventV2.ID.create(),
-          type: definition.type,
-          ...(options?.location ? { location: options.location } : {}),
-          data,
-        }
-        published.push(event)
-        return event
-      })) as EventV2.Interface["publish"],
+    publish,
+    publishBatch: ((options: any) =>
+      Effect.forEach(
+        options.events,
+        (item: any) => publish(item.definition, item.data, { id: item.id, metadata: item.metadata }),
+        { discard: false },
+      )) as EventV2.Interface["publishBatch"],
     subscribe: (() => Stream.empty) as EventV2.Interface["subscribe"],
     all: () => Stream.empty,
     durable: () => Stream.empty,

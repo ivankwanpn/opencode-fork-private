@@ -168,6 +168,22 @@ const events = Layer.effect(
           yield* PubSub.publish(pubsub, value)
           return value
         })) as EventV2.Interface["publish"],
+      publishBatch: ((options: any) =>
+        Effect.forEach(
+          options.events,
+          (item: any) =>
+            Effect.gen(function* () {
+              const value = {
+                id: item.id ?? EventV2.ID.create(),
+                type: item.definition.type,
+                ...(options.location ? { location: options.location } : {}),
+                data: item.data,
+              }
+              yield* PubSub.publish(pubsub, value)
+              return value
+            }),
+          { discard: false },
+        )) as EventV2.Interface["publishBatch"],
       subscribe: ((event: any) =>
         Stream.fromPubSub(pubsub).pipe(
           Stream.filter((value) => value.type === event.type),

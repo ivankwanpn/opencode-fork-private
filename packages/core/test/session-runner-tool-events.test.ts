@@ -14,18 +14,21 @@ const base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
 
 const capture = (protocol?: "openai-responses") => {
   const published: Array<{ readonly type: string; readonly data: unknown }> = []
+  const publish = <D extends EventV2.Definition>(definition: D, data: EventV2.Data<D>) =>
+    Effect.sync(() => {
+      const event = { id: EventV2.ID.create(), type: definition.type, data } as EventV2.Payload<D>
+      published.push({
+        type: definition.durable
+          ? EventV2.versionedType(definition.type, definition.durable.version)
+          : definition.type,
+        data,
+      })
+      return event
+    })
   const events = EventV2.Service.of({
-    publish: (definition, data) =>
-      Effect.sync(() => {
-        const event = { id: EventV2.ID.create(), type: definition.type, data } as EventV2.Payload<typeof definition>
-        published.push({
-          type: definition.durable
-            ? EventV2.versionedType(definition.type, definition.durable.version)
-            : definition.type,
-          data,
-        })
-        return event
-      }),
+    publish,
+    publishBatch: (options) =>
+      Effect.forEach(options.events, (item) => publish(item.definition, item.data), { discard: false }),
     subscribe: () => Stream.empty,
     all: () => Stream.empty,
     durable: () => Stream.empty,

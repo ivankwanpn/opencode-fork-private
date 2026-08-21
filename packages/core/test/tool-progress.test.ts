@@ -9,14 +9,17 @@ import { Effect, Layer, Stream } from "effect"
 import { testEffect } from "./lib/effect"
 
 const published: Array<{ readonly type: string; readonly data: unknown }> = []
+const publish = <D extends EventV2.Definition>(definition: D, data: EventV2.Data<D>) =>
+  Effect.sync(() => {
+    published.push({ type: definition.type, data })
+    return { id: EventV2.ID.create(), type: definition.type, data } as EventV2.Payload<D>
+  })
 const events = Layer.succeed(
   EventV2.Service,
   EventV2.Service.of({
-    publish: (definition, data) =>
-      Effect.sync(() => {
-        published.push({ type: definition.type, data })
-        return { id: EventV2.ID.create(), type: definition.type, data } as EventV2.Payload<typeof definition>
-      }),
+    publish,
+    publishBatch: (options) =>
+      Effect.forEach(options.events, (item) => publish(item.definition, item.data), { discard: false }),
     subscribe: () => Stream.empty,
     all: () => Stream.empty,
     durable: () => Stream.empty,

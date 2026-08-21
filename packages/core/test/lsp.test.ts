@@ -12,11 +12,14 @@ import { location } from "./fixture/location"
 import { testEffect } from "./lib/effect"
 
 const directory = AbsolutePath.make(process.cwd())
+const publish = <D extends EventV2.Definition>(definition: D, data: EventV2.Data<D>) =>
+  Effect.succeed({ id: EventV2.ID.create(), type: definition.type, data } as EventV2.Payload<D>)
 const events = Layer.succeed(
   EventV2.Service,
   EventV2.Service.of({
-    publish: (definition, data) =>
-      Effect.succeed({ id: EventV2.ID.create(), type: definition.type, data } as EventV2.Payload<typeof definition>),
+    publish,
+    publishBatch: (options) =>
+      Effect.forEach(options.events, (item) => publish(item.definition, item.data), { discard: false }),
     subscribe: () => Stream.empty,
     all: () => Stream.empty,
     durable: () => Stream.empty,

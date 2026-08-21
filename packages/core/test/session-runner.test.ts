@@ -3745,7 +3745,10 @@ describe("SessionRunnerLLM", () => {
       streamFailure = undefined
       streamGate = undefined
       streamStarted = undefined
-      yield* Effect.yieldNow
+      // The retry drain runs as a coordinator successor fiber; wait until it
+      // dispatches instead of assuming one scheduler turn (same idiom as the
+      // other successor tests in this file).
+      while (requests.length < 2) yield* Effect.yieldNow
 
       expect(requests).toHaveLength(2)
       expect(userTexts(requests[1]!)).toEqual(["Start working", "Recover with this"])

@@ -1,7 +1,7 @@
 export * as PublicationActor from "./publication-actor"
 
 import { DateTime, Deferred, Duration, Effect, Queue, Ref } from "effect"
-import { LLMEvent, type Usage } from "@opencode-ai/llm"
+import { LLMEvent, type ToolCall, type Usage } from "@opencode-ai/llm"
 import { EventV2 } from "../../event"
 import { SessionEvent } from "../event"
 import { SessionMessage } from "../message"
@@ -11,12 +11,14 @@ import type { ModelV2 } from "../../model"
 import { Checkpoint, DefaultCheckpointPolicy } from "./checkpoint"
 import type { CheckpointKind, PendingCheckpoint } from "./checkpoint"
 import type { InterruptReason, TurnOutcome } from "./types"
+import type { ToolSettlement } from "./tool-scheduler"
 
 export type PublicationCommand =
   | { readonly type: "provider-event"; readonly event: LLMEvent }
   | { readonly type: "barrier"; readonly reply: Deferred.Deferred<void> }
   | { readonly type: "interrupt"; readonly reason: InterruptReason }
   | { readonly type: "close"; readonly outcome: TurnOutcome }
+  | { readonly type: "tool-settlement"; readonly settlement: ToolSettlement }
 
 /**
  * The sole owner of mutable provider-turn publication state: assistant
@@ -39,6 +41,10 @@ export interface Interface {
   readonly interrupted: Effect.Effect<boolean>
   readonly finished: Effect.Effect<boolean>
   readonly error: Effect.Effect<SessionEvent.ErrorInfo | undefined>
+  /** Provider tool calls collected this turn, in model order. */
+  readonly toolCalls: Effect.Effect<readonly ToolCall[]>
+  /** Publishes Tool.Called + Tool.Success/Tool.Failed for settled calls, in order. */
+  readonly publishSettlements: (settlements: readonly ToolSettlement[]) => Effect.Effect<void>
 }
 
 const safe = (value: number | undefined) => Math.max(0, Number.isFinite(value) ? (value ?? 0) : 0)
@@ -82,6 +88,9 @@ export const make = Effect.fn("PublicationActor.make")(function* (
   const reasoningChunks = new Map<string, string[]>()
   const openText = new Set<string>()
   const openReasoning = new Set<string>()
+  const openToolInputs = new Set<string>()
+  const toolInputChunks = new Map<string, string[]>()
+  const toolCallsRef = yield* Ref.make<ToolCall[]>([])
   const policy = input.policy ?? DefaultCheckpointPolicy
   const buffer = yield* Checkpoint.makeBuffer()
 
@@ -140,6 +149,44 @@ export const make = Effect.fn("PublicationActor.make")(function* (
     if (items.length === 0) return
     const batch = yield* toBatchItems(items)
     yield* input.flush(batch)
+  })
+
+  const publishSettlement = Effect.fn("PublicationActor.publishSettlement")(function* (settlement: ToolSettlement) {
+    const call = (yield* Ref.get(toolCallsRef)).find((item) => item.id === settlement.callID)
+    if (!call) return yield* Effect.die(`Settlement for unknown tool call: ${settlement.callID}`)
+    yield* publish(SessionEvent.Tool.Called, {
+      sessionID: input.sessionID,
+      timestamp: yield* DateTime.now,
+      assistantMessageID: input.assistantMessageID,
+      callID: call.id,
+      tool: call.name,
+      input: (call.input ?? {}) as Record<string, unknown>,
+      provider: { executed: true },
+    })
+    if (settlement.outcome === "success" && settlement.result) {
+      const result = settlement.result.result
+      yield* publish(SessionEvent.Tool.Success, {
+        sessionID: input.sessionID,
+        timestamp: yield* DateTime.now,
+        assistantMessageID: input.assistantMessageID,
+        callID: call.id,
+        structured: {},
+        content: [],
+        ...(settlement.result.output ? { outputPaths: settlement.result.outputPaths } : {}),
+        ...(settlement.result.output && "result" in settlement.result ? { result: (settlement.result as { result?: unknown }).result } : { result }),
+        provider: { executed: true },
+      })
+    } else {
+      yield* publish(SessionEvent.Tool.Failed, {
+        sessionID: input.sessionID,
+        timestamp: yield* DateTime.now,
+        assistantMessageID: input.assistantMessageID,
+        callID: call.id,
+        error: { type: "unknown", message: settlement.error?.message ?? "Tool failed" },
+        result: settlement.error?.message ?? "Tool failed",
+        provider: { executed: true },
+      })
+    }
   })
 
   const publishLLMEvent = Effect.fn("PublicationActor.publishLLMEvent")(function* (event: LLMEvent) {
@@ -238,6 +285,52 @@ export const make = Effect.fn("PublicationActor.make")(function* (
       })
       return
     }
+    if (LLMEvent.is.toolInputStart(event)) {
+      openToolInputs.add(event.id)
+      toolInputChunks.set(event.id, [])
+      yield* buffer.offer("tool-input", event.id, "")
+      yield* publish(SessionEvent.Tool.Input.Started, {
+        sessionID: input.sessionID,
+        timestamp: yield* DateTime.now,
+        assistantMessageID: input.assistantMessageID,
+        callID: event.id,
+        name: event.name,
+      })
+      return
+    }
+    if (LLMEvent.is.toolInputDelta(event)) {
+      if (!openToolInputs.has(event.id)) return yield* Effect.die(`Tool input delta before start: ${event.id}`)
+      toolInputChunks.get(event.id)!.push(event.text)
+      yield* buffer.offer("tool-input", event.id, event.text)
+      yield* publish(SessionEvent.Tool.Input.Delta, {
+        sessionID: input.sessionID,
+        timestamp: yield* DateTime.now,
+        assistantMessageID: input.assistantMessageID,
+        callID: event.id,
+        delta: event.text,
+      })
+      return
+    }
+    if (LLMEvent.is.toolInputEnd(event)) {
+      if (!openToolInputs.has(event.id)) return yield* Effect.die(`Tool input end before start: ${event.id}`)
+      openToolInputs.delete(event.id)
+      const value = toolInputChunks.get(event.id)!.join("")
+      toolInputChunks.delete(event.id)
+      yield* flushIfAny
+      yield* buffer.close(event.id)
+      yield* publish(SessionEvent.Tool.Input.Ended, {
+        sessionID: input.sessionID,
+        timestamp: yield* DateTime.now,
+        assistantMessageID: input.assistantMessageID,
+        callID: event.id,
+        text: value,
+      })
+      return
+    }
+    if (LLMEvent.is.toolCall(event)) {
+      yield* Ref.update(toolCallsRef, (current) => [...current, event])
+      return
+    }
     if (LLMEvent.is.stepFinish(event)) {
       yield* publish(SessionEvent.Step.Ended, {
         sessionID: input.sessionID,
@@ -280,6 +373,7 @@ export const make = Effect.fn("PublicationActor.make")(function* (
           yield* Ref.update(state, (current) => ({ ...current, interrupted: true }))
         if (command.type === "close")
           yield* Ref.update(state, (current) => ({ ...current, outcome: command.outcome }))
+        if (command.type === "tool-settlement") yield* publishSettlement(command.settlement)
       }),
     ),
     Effect.forever,
@@ -330,5 +424,12 @@ export const make = Effect.fn("PublicationActor.make")(function* (
     interrupted: Ref.get(state).pipe(Effect.map((current) => current.interrupted)),
     finished: Ref.get(state).pipe(Effect.map((current) => current.finished)),
     error: Ref.get(state).pipe(Effect.map((current) => current.error)),
+    toolCalls: Ref.get(toolCallsRef),
+    publishSettlements: (settlements) =>
+      Effect.forEach(
+        settlements,
+        (settlement) => Queue.offer(queue, { type: "tool-settlement", settlement }),
+        { discard: true },
+      ),
   } satisfies Interface
 })

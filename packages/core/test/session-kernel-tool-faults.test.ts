@@ -9,7 +9,7 @@ const runEffect = <A, R>(effect: Effect.Effect<A, unknown, R>) =>
 
 const call = (id: string): ToolCall => ({ type: "tool-call", id, name: "echo", input: { text: id } })
 const settlement = (id: string): ToolRegistry.Settlement => ({
-  result: { type: "text", text: `result-${id}` },
+  result: { type: "text", value: `result-${id}` },
 })
 const prepared = (index: number, callID: string, execute: () => Effect.Effect<ToolRegistry.Settlement>) => ({
   index,

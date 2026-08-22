@@ -76,6 +76,8 @@ export interface TransitionInput {
   readonly phase?: ExecutionPhase
   readonly retryAt?: DateTime.Utc
   readonly recoveryReason?: RecoveryReason
+  /** Switches the durable attempt identity to a new provider attempt. */
+  readonly attemptID?: EventV2.ID
   readonly events: readonly EventV2.BatchItem[]
 }
 

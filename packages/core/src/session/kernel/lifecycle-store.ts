@@ -240,6 +240,10 @@ const layer = Layer.effect(
                 phase: input.phase ?? null,
                 retry_at: input.retryAt ? DateTime.toEpochMillis(input.retryAt) : null,
                 recovery_reason: input.recoveryReason ?? null,
+                // A retry boundary switches the durable attempt identity so
+                // the eventual terminalize closes the current attempt, never a
+                // stale one.
+                ...(input.attemptID === undefined ? {} : { attempt_id: input.attemptID }),
                 updated_seq: finalSeq,
                 time_updated: DateTime.toEpochMillis(now),
               })
@@ -306,7 +310,7 @@ const layer = Layer.effect(
     })
 
     const terminalize = Effect.fn("LifecycleStore.terminalize")(function* (input: TerminalInput) {
-      console.log("TERM STEP 1")
+
       const snapshot = yield* get(input.lease.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
           Effect.die(
@@ -339,7 +343,7 @@ const layer = Layer.effect(
         )
       const now = yield* DateTime.now
       const outcome = attemptOutcome(input.outcome)
-      console.log("TERM STEP 2")
+
       yield* catchCoordinationDefects(
         events.publishBatch({
           aggregateID: input.lease.sessionID,
@@ -447,7 +451,7 @@ const layer = Layer.effect(
         }),
         [StaleExecutionError],
       )
-      console.log("TERM STEP 3")
+
       return yield* get(input.lease.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
           Effect.die(

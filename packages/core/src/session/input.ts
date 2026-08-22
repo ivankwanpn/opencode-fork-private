@@ -9,7 +9,7 @@ import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { Prompt } from "./prompt"
 import { SessionSchema } from "./schema"
-import { SessionAttemptTable, SessionInputTable, SessionMessageTable } from "./sql"
+import { SessionAttemptTable, SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
 
 type DatabaseService = Database.Interface["db"]
 
@@ -439,18 +439,24 @@ export const startupCandidates = Effect.fn("SessionInput.startupCandidates")(fun
   return yield* db
     .selectDistinct({ sessionID: SessionInputTable.session_id })
     .from(SessionInputTable)
+    .innerJoin(SessionTable, eq(SessionTable.id, SessionInputTable.session_id))
     .leftJoin(SessionAttemptTable, eq(SessionAttemptTable.session_id, SessionInputTable.session_id))
     .where(
-      or(
-        and(
-          eq(SessionInputTable.delivery, "steer"),
-          isNull(SessionInputTable.promoted_seq),
-          isNull(SessionInputTable.terminal_outcome),
-        ),
-        and(
-          isNotNull(SessionInputTable.promoted_seq),
-          isNull(SessionInputTable.terminal_outcome),
-          or(isNull(SessionAttemptTable.seq), gt(SessionInputTable.promoted_seq, SessionAttemptTable.seq)),
+      // Classic startup scans Classic Sessions only; kernel Sessions recover
+      // through Kernel.reconcile and must never run a Classic provider turn.
+      and(
+        eq(SessionTable.engine, "classic"),
+        or(
+          and(
+            eq(SessionInputTable.delivery, "steer"),
+            isNull(SessionInputTable.promoted_seq),
+            isNull(SessionInputTable.terminal_outcome),
+          ),
+          and(
+            isNotNull(SessionInputTable.promoted_seq),
+            isNull(SessionInputTable.terminal_outcome),
+            or(isNull(SessionAttemptTable.seq), gt(SessionInputTable.promoted_seq, SessionAttemptTable.seq)),
+          ),
         ),
       ),
     )

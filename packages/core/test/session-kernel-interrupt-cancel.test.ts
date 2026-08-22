@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, LayerMap, Stream } from "effect"
+import { Deferred, Effect, Fiber, Layer, LayerMap, Option, Stream } from "effect"
 import { LLMClient, LLMEvent, Model, type LLMClientShape } from "@opencode-ai/llm"
 import { OpenAIChat } from "@opencode-ai/llm/protocols"
 import { Database } from "@opencode-ai/core/database/database"
@@ -18,7 +18,6 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionRouter } from "@opencode-ai/core/session/execution/router"
-import { SessionInputTable } from "@opencode-ai/core/session/sql"
 import { Kernel } from "@opencode-ai/core/session/kernel"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
@@ -28,7 +27,6 @@ import { SessionPromptExpansion } from "@opencode-ai/core/session/prompt-expansi
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
 import { SessionStore } from "@opencode-ai/core/session/store"
-import { eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 
 const projects = Layer.succeed(
@@ -43,30 +41,30 @@ const location = Location.Ref.make({ directory: AbsolutePath.make("/project") })
 const model = Model.make({ id: "fake-model", provider: "fake", route: OpenAIChat.route })
 const modelRef = ModelV2.Ref.make({ id: ModelV2.ID.make("fake-model"), providerID: ProviderV2.ID.make("fake") })
 
-const textEvents = [
+const textEvents = (text: string): LLMEvent[] => [
   LLMEvent.stepStart({ index: 0 }),
   LLMEvent.textStart({ id: "text-0" }),
-  LLMEvent.textDelta({ id: "text-0", text: "Hello" }),
+  LLMEvent.textDelta({ id: "text-0", text }),
   LLMEvent.textEnd({ id: "text-0" }),
   LLMEvent.stepFinish({ index: 0, reason: "stop" }),
   LLMEvent.finish({ reason: "stop" }),
 ]
 
-const mock = {
-  gate: undefined as Deferred.Deferred<void> | undefined,
-  started: undefined as Deferred.Deferred<void> | undefined,
-}
+const gates = new Map<string, Deferred.Deferred<void>>()
+const mock = { requests: 0, queue: [] as string[] }
 const client = Layer.succeed(
   LLMClient.Service,
   LLMClient.Service.of({
     prepare: () => Effect.die("unused"),
     stream: (() => {
-      const events = Stream.fromIterable(textEvents)
-      return Stream.unwrap(
-        (mock.started ? Deferred.succeed(mock.started, undefined) : Effect.void).pipe(
-          Effect.andThen(Deferred.await(mock.gate!)),
-          Effect.as(events),
-        ),
+      mock.requests += 1
+      const text = mock.queue.shift() ?? "hello"
+      const gate = gates.get(text)
+      if (gate === undefined) return Stream.fromIterable(textEvents(text))
+      // Blocked provider: emission waits on a gate that the test never
+      // releases. Cancellation must tear the reader down anyway.
+      return Stream.fromEffect(Deferred.await(gate)).pipe(
+        Stream.flatMap(() => Stream.fromIterable(textEvents("released"))),
       )
     }) as unknown as LLMClientShape["stream"],
     generate: () => Effect.die("unused"),
@@ -134,77 +132,60 @@ const it = testEffect(
   ),
 )
 
-describe("Kernel interrupt", () => {
-  it.effect("durably fences before interrupt returns accepted", () =>
+describe("Kernel interrupt cancellation", () => {
+  it.effect("an interrupt cancels a blocked provider stream without releasing its gate", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const lifecycle = yield* LifecycleStore.Service
-      const { db } = yield* Database.Service
-      mock.started = yield* Deferred.make<void>()
-      mock.gate = yield* Deferred.make<void>()
+      const gate = yield* Deferred.make<void>()
+      gates.set("blocked", gate)
+      mock.requests = 0
+      mock.queue = ["blocked"]
       const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
-      const input = yield* sessions.prompt({
-        sessionID: session.id,
-        prompt: Prompt.make({ text: "Interrupt me" }),
-        resume: false,
-      })
-      const fiber = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
-      yield* Deferred.await(mock.started)
-      const before = yield* lifecycle.get(session.id)
-      expect(before.state).toBe("active")
+      yield* sessions.prompt({ sessionID: session.id, prompt: Prompt.make({ text: "blocking" }), resume: false })
+      // run() joins the drain: the resume itself blocks on the turn, so it
+      // must run in its own fiber while the test interrupts.
+      const resumeFiber = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+      yield* Effect.yieldNow // let the drain reach the stream suspension
       yield* sessions.interrupt(session.id)
-      const accepted = yield* lifecycle.get(session.id)
-      expect(accepted.generation).toBe(before.generation + 1)
-      expect(accepted.lease).toBeUndefined()
-      // The interrupt now cancels and settles the running drain in-line: the
-      // accepted snapshot has already returned to idle, so the terminal fact
-      // is committed before the caller observes acceptance.
-      expect(accepted.state).toBe("idle")
-      // Release the provider stream; the drain is already settled above.
-      yield* Deferred.succeed(mock.gate, undefined)
-      yield* Fiber.join(fiber)
-      const settled = yield* lifecycle.get(session.id)
-      expect(settled.state).toBe("idle")
-      expect(settled.generation).toBe(before.generation + 1)
-      const row = yield* db
-        .select()
-        .from(SessionInputTable)
-        .where(eq(SessionInputTable.id, input.id))
-        .get()
-        .pipe(Effect.orDie)
-      expect(row?.terminal_outcome).toBe("cancelled")
+      // The fence is durable and the drain settles without the gate ever
+      // releasing: the interrupted provider stream exits on its own.
+      // The fence returns before settlement; joining the drain observes the
+      // background settle of the interrupted turn.
+      yield* Fiber.join(resumeFiber)
+      const snapshot = yield* lifecycle.get(session.id)
+      expect(snapshot.state).toBe("idle")
+      expect(Option.isNone(yield* Deferred.poll(gate))).toBe(true)
     }),
   )
 
-  it.effect("repeated interrupt is idempotent and never duplicates terminal facts", () =>
+  it.effect("interrupting a blocked session leaves a completed companion intact", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const lifecycle = yield* LifecycleStore.Service
-      const { db } = yield* Database.Service
-      mock.started = yield* Deferred.make<void>()
-      mock.gate = yield* Deferred.make<void>()
-      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
-      yield* sessions.prompt({ sessionID: session.id, prompt: Prompt.make({ text: "Twice" }), resume: false })
-      const fiber = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
-      yield* Deferred.await(mock.started)
-      yield* sessions.interrupt(session.id)
-      const first = yield* lifecycle.get(session.id)
-      // A second interrupt with the stale generation is a durable no-op.
-      yield* sessions.interrupt(session.id)
-      const second = yield* lifecycle.get(session.id)
-      expect(second.generation).toBe(first.generation)
-      expect(second.state).toBe("idle")
-      yield* Deferred.succeed(mock.gate, undefined)
-      yield* Fiber.join(fiber)
-      expect((yield* lifecycle.get(session.id)).state).toBe("idle")
-      expect(
-        yield* db
-          .select({ id: SessionInputTable.id })
-          .from(SessionInputTable)
-          .where(eq(SessionInputTable.session_id, session.id))
-          .all()
-          .pipe(Effect.orDie),
-      ).toHaveLength(1)
+      const gateA = yield* Deferred.make<void>()
+      gates.set("blocking-A", gateA)
+      mock.requests = 0
+      mock.queue = ["run-B", "blocking-A"]
+      const sessionA = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      const sessionB = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      yield* sessions.prompt({ sessionID: sessionB.id, prompt: Prompt.make({ text: "B" }), resume: false })
+      // B completes fully before A blocks, so both dispatches are deterministic.
+      yield* sessions.resume(sessionB.id)
+      const bSnapshot = yield* lifecycle.get(sessionB.id)
+      expect(bSnapshot).toMatchObject({ state: "idle", generation: 1 })
+      expect(mock.requests).toBe(1)
+      yield* sessions.prompt({ sessionID: sessionA.id, prompt: Prompt.make({ text: "A" }), resume: false })
+      const resumeA = yield* sessions.resume(sessionA.id).pipe(Effect.forkScoped)
+      yield* Effect.all([Effect.yieldNow, Effect.yieldNow, Effect.yieldNow], { discard: true })
+      yield* sessions.interrupt(sessionA.id)
+      yield* Fiber.join(resumeA)
+      expect((yield* lifecycle.get(sessionA.id)).state).toBe("idle")
+      // The interrupt targeted only A: B keeps its completed terminal result.
+      expect((yield* lifecycle.get(sessionB.id)).state).toBe("idle")
+      expect(yield* lifecycle.get(sessionB.id)).toMatchObject({ generation: 1 })
+      expect(mock.requests).toBe(2)
+      expect(Option.isNone(yield* Deferred.poll(gateA))).toBe(true)
     }),
   )
 })

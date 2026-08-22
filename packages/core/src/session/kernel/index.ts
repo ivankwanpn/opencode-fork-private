@@ -1,6 +1,6 @@
 export * as Kernel from "./index"
 
-import { Context, Effect, Layer } from "effect"
+import { Cause, Context, Effect, Layer } from "effect"
 import { ne } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { makeGlobalNode } from "../../effect/app-node"
@@ -76,7 +76,15 @@ const layer = Layer.effect(
       reconcile,
       execution: SessionExecution.Service.of({
         active: coordinator.active,
-        resume: (sessionID) => coordinator.run(sessionID),
+        // A turn interrupted by the user fence settles durably in the drain;
+        // resume joiners observe the interruption as the desired outcome and
+        // complete successfully instead of surfacing a cancelled turn.
+        resume: (sessionID) =>
+          coordinator.run(sessionID).pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.void : Effect.die(cause),
+            ),
+          ),
         exclusive: (sessionID) => Effect.fail(new SessionExecution.BusyError({ sessionID })),
         wake: (sessionID) => coordinator.wake(sessionID),
         wait: (sessionID) => coordinator.wait(sessionID),

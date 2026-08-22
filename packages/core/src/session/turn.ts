@@ -3,6 +3,7 @@ export * as SessionTurn from "./turn"
 import { eq, inArray } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
 import { EventV2 } from "../event"
+import { SessionAttempt } from "./attempt"
 import { SessionEvent } from "./event"
 import { SessionInput } from "./input"
 import { SessionMessage } from "./message"
@@ -88,6 +89,10 @@ export const projectStarted = Effect.fn("SessionTurn.projectStarted")(function* 
   db: DB,
   event: SessionEvent.Turn.Started,
 ) {
+  // Engine isolation: kernel turn lifecycle is durable in
+  // SessionExecutionTable; Classic turn rows must not exist for kernel
+  // sessions (the cross-engine startup scan relies on this).
+  if (!(yield* SessionAttempt.classicOnly(db, event.data.sessionID))) return
   if (event.durable === undefined) return yield* Effect.die("Turn start event is missing aggregate sequence")
   const current = yield* get(db, event.data.sessionID)
   if (current && current.status !== "ended" && current.turn_id !== event.data.turnID)
@@ -105,6 +110,7 @@ export const projectEnded = Effect.fn("SessionTurn.projectEnded")(function* (
   db: DB,
   event: SessionEvent.Turn.Ended,
 ) {
+  if (!(yield* SessionAttempt.classicOnly(db, event.data.sessionID))) return
   if (event.durable === undefined) return yield* Effect.die("Turn end event is missing aggregate sequence")
   const current = yield* get(db, event.data.sessionID)
   if (!current || current.status === "ended") return

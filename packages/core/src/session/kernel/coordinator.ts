@@ -51,7 +51,9 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
   const store = yield* SessionStore.Service
   const locations = yield* LocationServiceMap.Service
   const scope = yield* Scope.Scope
-  const currentActor = yield* Ref.make<Option.Option<PublicationActor.Interface>>(Option.none())
+  // Per-session actor ownership: a global actor ref would let one session's
+  // run stamp over another's, so interrupting session A could signal B.
+  const currentActors = yield* Ref.make<ReadonlyMap<SessionSchema.ID, PublicationActor.Interface>>(new Map())
 
   const morePending = Effect.fn("TurnCoordinator.morePending")(function* (sessionID: SessionSchema.ID) {
     if (yield* SessionInput.hasPending(db, sessionID, "steer")) return true
@@ -123,9 +125,26 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
               ),
           }).pipe(Effect.provideService(Scope.Scope, scope))
           actor = turnActor
-          yield* Ref.set(currentActor, Option.some(turnActor))
-          result = yield* restore(reader.run({ actor: turnActor, request }))
-          yield* Ref.set(currentActor, Option.none())
+          yield* Ref.update(currentActors, (map) => new Map(map).set(sessionID, turnActor))
+          // Hard interruption (fiber-level, e.g. the user stop button) skips
+          // the return path entirely; the settlement must run from the
+          // interruption finalizer so a cancelled turn is durably settled.
+          result = yield* restore(
+            reader.run({ actor: turnActor, request }).pipe(
+              Effect.onInterrupt(() =>
+                settleAfterInterrupt(sessionID).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Kernel interrupt settlement failed", { sessionID, cause }),
+                  ),
+                ),
+              ),
+            ),
+          )
+          yield* Ref.update(currentActors, (map) => {
+            const next = new Map(map)
+            next.delete(sessionID)
+            return next
+          })
           if (result.kind !== "error" || !result.retryable) break
 
           const now = yield* Clock.currentTimeMillis
@@ -136,6 +155,20 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
             state: "retry_wait",
             retryAt: DateTime.makeUnsafe(now + delay),
             events: [
+              // Each provider attempt is terminal before the next starts:
+              // attempt-1 closes here, the row switches to attempt-2 below,
+              // and the final terminalize closes attempt-2 exactly once.
+              {
+                definition: SessionEvent.ProviderAttempt.Ended,
+                data: {
+                  sessionID,
+                  timestamp: DateTime.makeUnsafe(now),
+                  attemptID: currentAttempt,
+                  assistantMessageID,
+                  outcome: "failed",
+                  continuation: false,
+                },
+              },
               {
                 definition: SessionEvent.Retried,
                 data: {
@@ -159,6 +192,7 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
             expectedState: "retry_wait",
             state: "active",
             phase: "dispatching",
+            attemptID: nextAttempt,
             events: [
               {
                 definition: SessionEvent.ProviderAttempt.Started,
@@ -287,11 +321,14 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
       })
       .pipe(Effect.catchTag("PersistenceError", (error) => Effect.die(error)))
     // Signal the actor (high-priority ingress) so the provider reader stops at
-    // its next event and the drain settles durably in the background. Accepted
-    // returns after the fence, not settlement; the reader's own interrupt is
-    // consumed by the drain's uninterruptible catch.
-    const actor = yield* Ref.get(currentActor)
-    if (Option.isSome(actor)) yield* actor.value.interrupt("user")
+    // its next event, and interrupt the session's own drain fiber so a
+    // provider stream blocked on the network is cancelled without waiting for
+    // the next event. Accepted returns after the fence, not settlement; the
+    // reader's own interrupt is consumed by the drain's uninterruptible catch.
+    const actors = yield* Ref.get(currentActors)
+    const actor = actors.get(sessionID)
+    if (actor) yield* actor.interrupt("user")
+    yield* coordinator.interrupt(sessionID)
   })
 
   return {

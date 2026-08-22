@@ -148,7 +148,12 @@ export function makeSeams(): Seams {
       name: SeamName,
       event: unknown,
     ): Effect.fn.Return<unknown> {
-      const snapshot = (registrations.get(name) ?? []).filter((entry) => entry.fence)
+      // Evaluate every fence: an Effect object is always truthy, so a stale
+      // registration filtered before evaluation would run after disable.
+      const snapshot: SeamEntry[] = []
+      for (const entry of registrations.get(name) ?? []) {
+        if (yield* entry.fence) snapshot.push(entry)
+      }
       // Handler failures surface as defects: a transform that mutates its
       // frozen input or throws rejects the seam run instead of silently
       // forwarding a corrupt value.

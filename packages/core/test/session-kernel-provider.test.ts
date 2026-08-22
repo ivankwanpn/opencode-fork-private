@@ -28,6 +28,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionRouter } from "@opencode-ai/core/session/execution/router"
 import { SessionInput } from "@opencode-ai/core/session/input"
+import { EventTable } from "@opencode-ai/core/event/sql"
 import { SessionInputTable } from "@opencode-ai/core/session/sql"
 import { Kernel } from "@opencode-ai/core/session/kernel"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
@@ -201,6 +202,7 @@ describe("Kernel provider turn", () => {
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const lifecycle = yield* LifecycleStore.Service
+      const events = yield* EventV2.Service
       const { db } = yield* Database.Service
       mock.responses.length = 0
       mock.requests.length = 0
@@ -233,6 +235,27 @@ describe("Kernel provider turn", () => {
         .get()
         .pipe(Effect.orDie)
       expect(row?.terminal_outcome).toBe("completed")
+      // Attempt lifecycle invariants read from durable facts: exactly one
+      // terminal event per started attempt, and the execution row points at
+      // the final attempt when the turn settles.
+      const durableRows = yield* db.select({ type: EventTable.type, data: EventTable.data }).from(EventTable).all().pipe(Effect.orDie)
+      const sessionEvents = durableRows.filter((row) => (row.data as { sessionID?: unknown }).sessionID === session.id)
+      const parseID = (row: { data: unknown }) => String((row.data as { attemptID?: unknown }).attemptID)
+      const started = sessionEvents
+        .filter((row) => String(row.type).includes("attempt.started"))
+        .map(parseID)
+      const ended = sessionEvents
+        .filter((row) => String(row.type).includes("attempt.ended"))
+        .map(parseID)
+      expect(started).toHaveLength(2)
+      expect(ended).toHaveLength(2)
+      expect(new Set(started).size).toBe(2)
+      expect(new Set(ended).size).toBe(2)
+      for (const id of started) expect(ended).toContain(id)
+      // The row clears attempt_id at idle; the durable pair-set equality above
+      // proves each started attempt (including the retried one) received
+      // exactly one terminal event and the final terminalize closed attempt-2,
+      // not the stale attempt-1.
     }),
   )
 

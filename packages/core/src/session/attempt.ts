@@ -9,7 +9,26 @@ import { NonNegativeInt } from "../schema"
 import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
-import { SessionAttemptTable, SessionCancellationTable } from "./sql"
+import { SessionAttemptTable, SessionCancellationTable, SessionTable } from "./sql"
+
+/**
+ * Classic-only coordination guard: kernel Sessions must never gain Classic
+ * attempt rows. Kernel lifecycle events carry their own durable fenced state
+ * in SessionExecutionTable; projecting them here would let the Classic loop
+ * observe and act on kernel executions.
+ */
+export const classicOnly = Effect.fn("SessionAttempt.classicOnly")(function* (
+  db: Database.Interface["db"],
+  sessionID: SessionSchema.ID,
+) {
+  const row = yield* db
+    .select({ engine: SessionTable.engine })
+    .from(SessionTable)
+    .where(eq(SessionTable.id, sessionID))
+    .get()
+    .pipe(Effect.orDie)
+  return row === undefined || row.engine === "classic"
+})
 
 export const Status = Schema.Union([
   Schema.Struct({ type: Schema.Literal("idle") }),
@@ -215,6 +234,7 @@ export const projectStarted = Effect.fn("SessionAttempt.projectStarted")(functio
       () =>
         Effect.gen(function* () {
           if (yield* isCancelled(db, event.data.sessionID)) return
+          if (!(yield* classicOnly(db, event.data.sessionID))) return
           yield* db
             .insert(SessionAttemptTable)
             .values({
@@ -259,6 +279,7 @@ export const projectResponseStarted = Effect.fn("SessionAttempt.projectResponseS
       () =>
         Effect.gen(function* () {
           if (yield* isCancelled(db, event.data.sessionID)) return
+          if (!(yield* classicOnly(db, event.data.sessionID))) return
           yield* db
             .update(SessionAttemptTable)
             .set({
@@ -289,6 +310,7 @@ export const projectEnded = Effect.fn("SessionAttempt.projectEnded")(function* (
       () =>
         Effect.gen(function* () {
           if (yield* isCancelled(db, event.data.sessionID)) return
+          if (!(yield* classicOnly(db, event.data.sessionID))) return
           yield* db
             .update(SessionAttemptTable)
             .set({
@@ -327,6 +349,7 @@ export const projectRetried = Effect.fn("SessionAttempt.projectRetried")(functio
       () =>
         Effect.gen(function* () {
           if (yield* isCancelled(db, event.data.sessionID)) return
+          if (!(yield* classicOnly(db, event.data.sessionID))) return
           yield* db
             .update(SessionAttemptTable)
             .set({
@@ -360,6 +383,7 @@ export const projectRecoveryDecided = Effect.fn("SessionAttempt.projectRecoveryD
       () =>
         Effect.gen(function* () {
           if (yield* isCancelled(db, event.data.sessionID)) return
+          if (!(yield* classicOnly(db, event.data.sessionID))) return
           yield* db
             .update(SessionAttemptTable)
             .set({

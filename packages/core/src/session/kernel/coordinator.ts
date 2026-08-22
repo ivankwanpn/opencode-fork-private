@@ -1,6 +1,6 @@
 export * as TurnCoordinator from "./coordinator"
 
-import { Cause, Clock, Context, DateTime, Duration, Effect, Layer, Option, Ref, Scope } from "effect"
+import { Clock, Context, DateTime, Duration, Effect, Layer, Ref, Scope } from "effect"
 import { LLM } from "@opencode-ai/llm"
 import { Database } from "../../database/database"
 import { EventV2 } from "../../event"
@@ -83,14 +83,15 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
       processIncarnation,
     })
 
-    // The provider reader is interruptible; every settlement step is
-    // uninterruptible so the interrupt fence is followed by durable terminal
-    // facts instead of a half-settled drain.
-    yield* Effect.uninterruptibleMask((restore) =>
+    // The complete owned turn is interruptible, including retry backoff and
+    // model/history preparation. Durable writes are already atomic and
+    // uninterruptible at EventV2's transaction boundary; keeping the rest of
+    // the turn masked would make the stop button wait for retry timers or a
+    // blocked dependency before the cancellation finalizer can settle.
+    return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         let currentAttempt = attemptID
         let attemptNumber = 1
-        let retryOf: EventV2.ID | undefined
         let actor: PublicationActor.Interface | undefined
         let result: ProviderReader.ProviderTurnResult = { kind: "completed" }
 
@@ -126,20 +127,7 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
           }).pipe(Effect.provideService(Scope.Scope, scope))
           actor = turnActor
           yield* Ref.update(currentActors, (map) => new Map(map).set(sessionID, turnActor))
-          // Hard interruption (fiber-level, e.g. the user stop button) skips
-          // the return path entirely; the settlement must run from the
-          // interruption finalizer so a cancelled turn is durably settled.
-          result = yield* restore(
-            reader.run({ actor: turnActor, request }).pipe(
-              Effect.onInterrupt(() =>
-                settleAfterInterrupt(sessionID).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("Kernel interrupt settlement failed", { sessionID, cause }),
-                  ),
-                ),
-              ),
-            ),
-          )
+          result = yield* reader.run({ actor: turnActor, request })
           yield* Ref.update(currentActors, (map) => {
             const next = new Map(map)
             next.delete(sessionID)
@@ -225,7 +213,7 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
             outcome: "error",
             error: result.error,
           })
-          return
+          return false
         }
         if (finalActor) yield* finalActor.close("completed")
         yield* lifecycle.terminalize({
@@ -234,7 +222,24 @@ export const make = Effect.fn("TurnCoordinator.make")(function* () {
           resultMessageID: assistantMessageID,
         })
         return yield* morePending(sessionID)
-      }),
+      }).pipe(
+        restore,
+        // Fiber interruption skips the ordinary return path from any phase of
+        // the turn. Settle the durable fence once, then always release the
+        // process-local actor ownership entry.
+        Effect.onInterrupt(() =>
+          settleAfterInterrupt(sessionID).pipe(
+            Effect.catchCause((cause) => Effect.logWarning("Kernel interrupt settlement failed", { sessionID, cause })),
+          ),
+        ),
+        Effect.ensuring(
+          Ref.update(currentActors, (map) => {
+            const next = new Map(map)
+            next.delete(sessionID)
+            return next
+          }),
+        ),
+      ),
     )
   })
 

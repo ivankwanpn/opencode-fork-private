@@ -202,7 +202,6 @@ describe("Kernel provider turn", () => {
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const lifecycle = yield* LifecycleStore.Service
-      const events = yield* EventV2.Service
       const { db } = yield* Database.Service
       mock.responses.length = 0
       mock.requests.length = 0
@@ -256,6 +255,51 @@ describe("Kernel provider turn", () => {
       // proves each started attempt (including the retried one) received
       // exactly one terminal event and the final terminalize closed attempt-2,
       // not the stale attempt-1.
+    }),
+  )
+
+  it.effect("interrupts retry backoff without waiting for the retry clock", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const lifecycle = yield* LifecycleStore.Service
+      mock.responses.length = 0
+      mock.requests.length = 0
+      mock.setGate(undefined)
+      mock.setStarted(undefined)
+      mock.responses.push(() =>
+        Stream.fail(
+          new LLMError({
+            module: "test",
+            method: "stream",
+            reason: new RateLimitReason({ message: "temporary" }),
+          }),
+        ),
+      )
+      mock.responses.push(() => Stream.fromIterable(textEvents))
+      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      yield* sessions.prompt({
+        sessionID: session.id,
+        prompt: Prompt.make({ text: "Stop the retry" }),
+        resume: false,
+      })
+      const resume = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+      for (let index = 0; index < 50; index++) {
+        if ((yield* lifecycle.get(session.id)).state === "retry_wait") break
+        yield* Effect.yieldNow
+      }
+      expect((yield* lifecycle.get(session.id)).state).toBe("retry_wait")
+
+      const interrupt = yield* sessions.interrupt(session.id).pipe(Effect.forkScoped)
+      for (let index = 0; index < 50; index++) yield* Effect.yieldNow
+      const completedBeforeBackoff = (yield* lifecycle.get(session.id)).state === "idle"
+
+      // Always release the TestClock so a failing assertion cannot leave the
+      // scoped drain suspended during test cleanup.
+      yield* TestClock.adjust(Duration.millis(501))
+      yield* Fiber.join(interrupt)
+      yield* Fiber.join(resume)
+      expect(completedBeforeBackoff).toBe(true)
+      expect((yield* lifecycle.get(session.id)).state).toBe("idle")
     }),
   )
 

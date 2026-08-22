@@ -188,4 +188,38 @@ describe("Kernel interrupt cancellation", () => {
       expect(Option.isNone(yield* Deferred.poll(gateA))).toBe(true)
     }),
   )
+
+  it.effect("interrupting one of two concurrently blocked sessions does not signal its companion", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const lifecycle = yield* LifecycleStore.Service
+      const gateA = yield* Deferred.make<void>()
+      const gateB = yield* Deferred.make<void>()
+      gates.set("concurrent-A", gateA)
+      gates.set("concurrent-B", gateB)
+      mock.requests = 0
+      mock.queue = ["concurrent-A", "concurrent-B"]
+      const sessionA = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      const sessionB = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      yield* sessions.prompt({ sessionID: sessionA.id, prompt: Prompt.make({ text: "A" }), resume: false })
+      yield* sessions.prompt({ sessionID: sessionB.id, prompt: Prompt.make({ text: "B" }), resume: false })
+      const resumeA = yield* sessions.resume(sessionA.id).pipe(Effect.forkScoped)
+      for (let index = 0; index < 50 && mock.requests < 1; index++) yield* Effect.yieldNow
+      const resumeB = yield* sessions.resume(sessionB.id).pipe(Effect.forkScoped)
+      for (let index = 0; index < 50 && mock.requests < 2; index++) yield* Effect.yieldNow
+      expect(mock.requests).toBe(2)
+
+      yield* sessions.interrupt(sessionA.id)
+      yield* Fiber.join(resumeA)
+      expect((yield* lifecycle.get(sessionA.id)).state).toBe("idle")
+      expect((yield* lifecycle.get(sessionB.id)).state).toBe("active")
+      expect(Option.isNone(yield* Deferred.poll(gateA))).toBe(true)
+      expect(Option.isNone(yield* Deferred.poll(gateB))).toBe(true)
+
+      yield* Deferred.succeed(gateB, undefined)
+      yield* Fiber.join(resumeB)
+      expect((yield* lifecycle.get(sessionB.id)).state).toBe("idle")
+      expect(mock.requests).toBe(2)
+    }),
+  )
 })

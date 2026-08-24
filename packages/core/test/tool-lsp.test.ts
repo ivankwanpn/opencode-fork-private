@@ -32,9 +32,7 @@ const permission = Layer.succeed(
     assert: (input) =>
       Effect.sync(() => assertions.push(input)).pipe(
         Effect.andThen(
-          input.action === denyAction
-            ? Effect.fail(new PermissionV2.BlockedError({ rules: [] }))
-            : Effect.void,
+          input.action === denyAction ? Effect.fail(new PermissionV2.BlockedError({ rules: [] })) : Effect.void,
         ),
       ),
     ask: () => Effect.die("unused"),
@@ -74,6 +72,7 @@ const lsp = Layer.succeed(
   LSP.Service,
   LSP.Service.of({
     init: () => Effect.void,
+    contribute: () => Effect.die("unused"),
     status: () => Effect.succeed([]),
     hasClients: () => Effect.succeed(available),
     touchFile: (input, diagnostics) => record("touchFile", { input, diagnostics }, undefined).pipe(Effect.asVoid),
@@ -90,10 +89,7 @@ const lsp = Layer.succeed(
   }),
 )
 
-const activeLocation = Layer.succeed(
-  Location.Service,
-  Location.Service.of(location(Location.Ref.make({ directory }))),
-)
+const activeLocation = Layer.succeed(Location.Service, Location.Service.of(location(Location.Ref.make({ directory }))))
 
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([ToolRegistry.node, ToolRegistry.toolsNode, LSPTool.node]), [
@@ -105,7 +101,7 @@ const it = testEffect(
   ]),
 )
 
-const call = (operation: typeof LSPTool.Input.Type["operation"], id: string = operation, query?: string) => ({
+const call = (operation: (typeof LSPTool.Input.Type)["operation"], id: string = operation, query?: string) => ({
   sessionID,
   ...toolIdentity,
   call: {
@@ -145,11 +141,7 @@ describe("LSPTool", () => {
       for (const operation of operations) {
         const settlement = yield* settleTool(registry, call(operation, operation, "Needle"))
         const detail =
-          operation === "workspaceSymbol"
-            ? ""
-            : operation === "documentSymbol"
-              ? "package.json"
-              : "package.json:3:7"
+          operation === "workspaceSymbol" ? "" : operation === "documentSymbol" ? "package.json" : "package.json:3:7"
         expect(settlement.output?.structured).toMatchObject({
           title: detail ? `${operation} ${detail}` : operation,
         })

@@ -9,13 +9,14 @@ import { SessionAttachment } from "@opencode-ai/core/session/attachment"
 import { SessionPromptExpansion } from "@opencode-ai/core/session/prompt-expansion"
 import { Layer, LayerMap, Effect } from "effect"
 
-export const pluginLocationMap = (
+export const pluginLocationMap = <Extra = never>(
   runtime: PluginRuntime.Interface = PluginRuntime.make(),
   attachment: SessionAttachment.Interface = {
     materializeFile: (file) => Effect.succeed(file),
     materialize: (prompt) => Effect.succeed(prompt),
   },
   materializeAgents: SessionPromptExpansion.Interface["materializeAgents"] = (prompt) => Effect.succeed(prompt),
+  extra?: Layer.Layer<Extra>,
 ) => {
   const expansion = SessionPromptExpansion.Service.of({
     resolve: (prompt) =>
@@ -49,11 +50,12 @@ export const pluginLocationMap = (
             subtask: false,
           }),
   })
-  const services = Layer.mergeAll(
+  const base = Layer.mergeAll(
     Layer.succeed(PluginRuntime.Service, runtime),
     Layer.succeed(SessionAttachment.Service, SessionAttachment.Service.of(attachment)),
     Layer.succeed(SessionPromptExpansion.Service, expansion),
   )
+  const services = extra === undefined ? base : Layer.merge(base, extra)
   const layer = Layer.effect(
     LocationServiceMap.Service,
     LayerMap.make(() => services as unknown as Layer.Layer<LocationServices>, { idleTimeToLive: "1 minute" }),

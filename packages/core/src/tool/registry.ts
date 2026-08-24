@@ -18,6 +18,7 @@ import {
   definition,
   exposure,
   catalog,
+  concurrency,
   catalogPermissions,
   RegistrationError,
   settle,
@@ -25,6 +26,7 @@ import {
   type AnyTool,
   type ExecutionError,
   type Failure,
+  type Concurrency,
 } from "./tool"
 import { Tools } from "./tools"
 import { makeLocationNode } from "../effect/app-node"
@@ -34,6 +36,7 @@ export type ExecuteInput = {
   readonly sessionID: SessionSchema.ID
   readonly agent: AgentV2.ID
   readonly assistantMessageID: SessionMessage.ID
+  readonly generation?: number
   readonly call: ToolCall
 }
 
@@ -59,6 +62,8 @@ export interface Materialization {
   readonly catalog: ToolCatalog.Snapshot
   /** Snapshot of exact deferred tool identities selected for this materialization. */
   readonly selected: ReadonlyMap<ToolCatalog.Key, string>
+  /** Scheduler policy for the exact callable definitions advertised in this materialization. */
+  readonly concurrency?: ReadonlyMap<string, Concurrency>
   readonly settle: (input: ExecuteInput) => Effect.Effect<Settlement, SettlementError>
 }
 
@@ -155,6 +160,7 @@ const registryLayer = Layer.effect(
         agent: input.agent,
         assistantMessageID: input.assistantMessageID,
         toolCallID: input.call.id,
+        ...(input.generation === undefined ? {} : { generation: input.generation }),
       }).pipe(
         Effect.map((output) => ({ output })),
         Effect.catchTag("LLM.ToolFailure", (failure) =>
@@ -299,6 +305,7 @@ const registryLayer = Layer.effect(
         const deferredRegistrations = new Map<string, Registration>()
         const definitions: ToolDefinition[] = []
         const deferred: ToolDefinition[] = []
+        const concurrencyByName = new Map<string, Concurrency>()
         const catalogTools: ToolCatalog.SearchableTool[] = []
         const visibleSources = new Set<string>()
         for (const [name, registration] of registrations) {
@@ -366,6 +373,7 @@ const registryLayer = Layer.effect(
             // advertised. A same-key replacement must be searched again.
             if (context?.selected?.get(searchable.key) === searchable.definitionHash) {
               advertised.set(name, registration)
+              concurrencyByName.set(name, concurrency(registration.tool))
               definitions.push(
                 new ToolDefinition({
                   ...toolDefinition,
@@ -379,6 +387,7 @@ const registryLayer = Layer.effect(
             }
           } else {
             advertised.set(name, registration)
+            concurrencyByName.set(name, concurrency(registration.tool))
             definitions.push(toolDefinition)
           }
         }
@@ -419,13 +428,17 @@ const registryLayer = Layer.effect(
             : undefined
         if (toolSearchRegistration) {
           const toolSearchDefinition = definition(ToolSearch.name, toolSearchRegistration.tool, permissions)
-          if (toolSearchDefinition) definitions.push(new ToolDefinition({ ...toolSearchDefinition, kind: "tool-search" }))
+          if (toolSearchDefinition) {
+            definitions.push(new ToolDefinition({ ...toolSearchDefinition, kind: "tool-search" }))
+            concurrencyByName.set(ToolSearch.name, concurrency(toolSearchRegistration.tool))
+          }
         }
         return {
           definitions,
           deferred,
           catalog,
           selected: context?.selected ?? new Map(),
+          concurrency: concurrencyByName,
           settle: (input) => {
             if (input.call.name === ToolSearch.name && toolSearchRegistration)
               return settleWith(input, toolSearchRegistration.identity, toolSearchRegistration)

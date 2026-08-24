@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import type { Marketplace, Plugin } from "@opencode-ai/protocol/groups/plugin"
 import { Global } from "@opencode-ai/core/global"
 import { Plugin as PluginSchema } from "@opencode-ai/schema/plugin"
+import { glob } from "glob"
 import { Process } from "@/util/process"
 
 type RecordValue = Record<string, unknown>
@@ -708,9 +709,7 @@ export class ClaudeMarketplaceManager {
   private async commandNames(directory: string) {
     if (!(await isDirectory(directory))) return []
     const root = path.dirname(this.paths.generatedCommandDirectory)
-    const files = await Array.fromAsync(
-      new Bun.Glob("**/*.md").scan({ cwd: directory, absolute: true, onlyFiles: true }),
-    )
+    const files = await glob("**/*.md", { cwd: directory, absolute: true, nodir: true })
     return files.map((file) => path.relative(root, file).replaceAll("\\", "/").replace(/\.md$/, "")).toSorted()
   }
 

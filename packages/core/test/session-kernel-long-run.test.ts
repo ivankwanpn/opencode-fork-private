@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer, LayerMap, Stream } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer, LayerMap, Scope, Stream } from "effect"
 import { LLMClient, LLMEvent, Model, type LLMClientShape } from "@opencode-ai/llm"
 import { OpenAIChat } from "@opencode-ai/llm/protocols"
 import { Database } from "@opencode-ai/core/database/database"
@@ -16,6 +16,7 @@ import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionRouter } from "@opencode-ai/core/session/execution/router"
 import { SessionExecutionTable, SessionInputTable } from "@opencode-ai/core/session/sql"
@@ -46,6 +47,11 @@ const modelRef = ModelV2.Ref.make({ id: ModelV2.ID.make("fake-model"), providerI
 const mock = {
   requests: 0,
   queue: [] as string[],
+  active: 0,
+  maxActive: 0,
+  target: 0,
+  allStarted: undefined as Deferred.Deferred<void> | undefined,
+  gate: undefined as Deferred.Deferred<void> | undefined,
 }
 const client = Layer.succeed(
   LLMClient.Service,
@@ -62,7 +68,23 @@ const client = Layer.succeed(
         LLMEvent.stepFinish({ index: 0, reason: "stop" }),
         LLMEvent.finish({ reason: "stop" }),
       ]
-      return Stream.fromIterable(events)
+      const stream = Stream.fromIterable(events)
+      const gate = mock.gate
+      const allStarted = mock.allStarted
+      const target = mock.target
+      return Stream.unwrap(
+        Effect.sync(() => {
+          mock.active += 1
+          mock.maxActive = Math.max(mock.maxActive, mock.active)
+        }).pipe(
+          Effect.tap(() =>
+            allStarted && mock.active === target ? Deferred.succeed(allStarted, undefined) : Effect.void,
+          ),
+          Effect.andThen(gate ? Deferred.await(gate) : Effect.void),
+          Effect.as(stream),
+          Effect.ensuring(Effect.sync(() => (mock.active -= 1))),
+        ),
+      )
     }) as unknown as LLMClientShape["stream"],
     generate: () => Effect.die("unused"),
   }),
@@ -129,17 +151,60 @@ const it = testEffect(
   ),
 )
 
-describe("Kernel long-run gates", () => {
-  it.effect("twenty-five scripted queue turns run FIFO without permanent busy", () =>
+const resetMock = () => {
+  mock.requests = 0
+  mock.queue = []
+  mock.active = 0
+  mock.maxActive = 0
+  mock.target = 0
+  mock.allStarted = undefined
+  mock.gate = undefined
+}
+
+const makeOwnedKernelHarness = Effect.gen(function* () {
+  const sessions = yield* SessionV2.Service
+  expect(mock.active).toBe(0)
+  const scope = yield* Scope.fork(yield* Scope.Scope)
+  const owned = new Set<SessionSchema.ID>()
+  let closed = false
+  const create = (input: Parameters<typeof sessions.create>[0]) =>
+    sessions.create(input).pipe(Effect.tap((session) => Effect.sync(() => owned.add(session.id))))
+  const resume = (sessionID: SessionSchema.ID) =>
+    sessions.resume(sessionID).pipe(Effect.forkIn(scope, { startImmediately: true }))
+  const close = Effect.uninterruptible(
     Effect.gen(function* () {
-      const sessions = yield* SessionV2.Service
+      if (closed) return
+      closed = true
+      yield* Effect.forEach(
+        Array.from(owned),
+        (sessionID) =>
+          sessions.interrupt(sessionID).pipe(
+            Effect.andThen(sessions.wait(sessionID)),
+            Effect.catchCause(() => Effect.void),
+          ),
+        { concurrency: "unbounded", discard: true },
+      )
+      yield* Scope.close(scope, Exit.void)
+      expect(mock.active).toBe(0)
+      yield* Effect.sync(resetMock)
+    }),
+  )
+  yield* Effect.addFinalizer(() => close)
+  return { sessions, create, resume, close }
+})
+
+describe("Kernel long-run gates", () => {
+  it.effect("one thousand scripted queue turns run FIFO without permanent busy", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeOwnedKernelHarness
+      const { sessions } = harness
       const lifecycle = yield* LifecycleStore.Service
       const { db } = yield* Database.Service
-      mock.requests = 0
-      mock.queue = Array.from({ length: 25 }, (_, index) => `turn-${index + 1}`)
-      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      resetMock()
+      mock.queue = Array.from({ length: 1_000 }, (_, index) => `turn-${index + 1}`)
+      const session = yield* harness.create({ location, engine: "kernel", model: modelRef })
       const admitted: string[] = []
-      for (let index = 0; index < 25; index++) {
+      for (let index = 0; index < 1_000; index++) {
         const input = yield* sessions.prompt({
           sessionID: session.id,
           prompt: Prompt.make({ text: `queued ${index + 1}` }),
@@ -148,10 +213,10 @@ describe("Kernel long-run gates", () => {
         })
         admitted.push(input.id)
       }
-      yield* sessions.resume(session.id)
+      yield* Fiber.join(yield* harness.resume(session.id))
       const snapshot = yield* lifecycle.get(session.id)
-      expect(snapshot).toMatchObject({ state: "idle", generation: 25 })
-      expect(mock.requests).toBe(25)
+      expect(snapshot).toMatchObject({ state: "idle", generation: 1_000 })
+      expect(mock.requests).toBe(1_000)
       const rows = yield* db
         .select()
         .from(SessionInputTable)
@@ -160,7 +225,7 @@ describe("Kernel long-run gates", () => {
         .pipe(Effect.orDie)
       const terminalized = rows.filter((row) => row.terminal_outcome !== null)
       // Every input terminalized exactly once: one outcome each, none missing.
-      expect(terminalized).toHaveLength(25)
+      expect(terminalized).toHaveLength(1_000)
       expect(rows.every((row) => row.terminal_outcome === "completed")).toBe(true)
       // Exactly one execution row with no lease at rest: valid active leases
       // per Session is at most one, and idle sessions hold none.
@@ -176,17 +241,23 @@ describe("Kernel long-run gates", () => {
       const seqs = rows.map((row) => row.terminal_seq ?? 0)
       expect([...seqs].toSorted((a, b) => a - b)).toEqual(seqs)
     }),
+    { timeout: 180_000 },
   )
 
-  it.effect("ten concurrent kernel sessions complete independently", () =>
+  it.effect("one hundred concurrent kernel sessions enter the provider independently", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionV2.Service
+      const harness = yield* makeOwnedKernelHarness
+      const { sessions } = harness
       const lifecycle = yield* LifecycleStore.Service
       const { db } = yield* Database.Service
-      mock.requests = 0
-      mock.queue = Array.from({ length: 10 }, (_, index) => `concurrent-${index + 1}`)
-      const created = yield* Effect.forEach(Array.from({ length: 10 }, (_, index) => index), () =>
-        sessions.create({ location, engine: "kernel", model: modelRef }),
+      resetMock()
+      mock.target = 100
+      mock.allStarted = yield* Deferred.make<void>()
+      mock.gate = yield* Deferred.make<void>()
+      mock.queue = Array.from({ length: 100 }, (_, index) => `concurrent-${index + 1}`)
+      const created = yield* Effect.forEach(
+        Array.from({ length: 100 }, (_, index) => index),
+        () => harness.create({ location, engine: "kernel", model: modelRef }),
       )
       yield* Effect.forEach(
         created,
@@ -198,10 +269,13 @@ describe("Kernel long-run gates", () => {
           }),
         { discard: true },
       )
-      yield* Effect.forEach(created, (session, index) => sessions.resume(session.id).pipe(Effect.ignore), {
-        discard: true,
+      const resumes = yield* Effect.forEach(created, (session) => harness.resume(session.id), {
+        concurrency: "unbounded",
       })
-      yield* Effect.forEach(created, () => Effect.yieldNow, { discard: true })
+      yield* Deferred.await(mock.allStarted)
+      const maxActive = mock.maxActive
+      yield* Deferred.succeed(mock.gate, undefined)
+      yield* Effect.forEach(resumes, (resume) => Fiber.join(resume), { discard: true })
       for (const session of created) {
         expect(yield* lifecycle.get(session.id)).toMatchObject({ state: "idle", generation: 1 })
         const inputs = yield* db
@@ -213,18 +287,55 @@ describe("Kernel long-run gates", () => {
         expect(inputs).toHaveLength(1)
         expect(inputs[0]!.terminal_outcome).toBe("completed")
       }
-      expect(mock.requests).toBe(10)
+      expect(maxActive).toBe(100)
+      expect(mock.requests).toBe(100)
+    }),
+  )
+
+  it.effect("closes an interrupted drain before the next case resets provider state", () =>
+    Effect.gen(function* () {
+      const first = yield* makeOwnedKernelHarness
+      const { sessions } = first
+      resetMock()
+      mock.target = 1
+      mock.gate = yield* Deferred.make<void>()
+      mock.queue = ["aborted"]
+      const session = yield* first.create({ location, engine: "kernel", model: modelRef })
+      yield* sessions.prompt({
+        sessionID: session.id,
+        prompt: Prompt.make({ text: "aborted turn" }),
+        resume: false,
+      })
+      const resume = yield* first.resume(session.id)
+      for (let index = 0; index < 50 && mock.active < 1; index++) yield* Effect.yieldNow
+      expect(mock.active).toBe(1)
+      yield* Fiber.interrupt(resume)
+      expect((yield* sessions.active).size).toBe(1)
+      yield* first.close
+      expect(mock.active).toBe(0)
+
+      const second = yield* makeOwnedKernelHarness
+      const secondSession = yield* second.create({ location, engine: "kernel", model: modelRef })
+      yield* second.sessions.prompt({
+        sessionID: secondSession.id,
+        prompt: Prompt.make({ text: "fresh turn" }),
+        resume: false,
+      })
+      yield* Fiber.join(yield* second.resume(secondSession.id))
+      expect(mock.requests).toBe(1)
+      yield* second.close
     }),
   )
 
   it.effect("repeated interrupt and resume cycles settle exactly once", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionV2.Service
+      const harness = yield* makeOwnedKernelHarness
+      const { sessions } = harness
       const lifecycle = yield* LifecycleStore.Service
       const { db } = yield* Database.Service
-      mock.requests = 0
+      resetMock()
       mock.queue = ["interrupt-answer"]
-      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      const session = yield* harness.create({ location, engine: "kernel", model: modelRef })
       const admitted = yield* sessions.prompt({
         sessionID: session.id,
         prompt: Prompt.make({ text: "never interrupting" }),

@@ -1,6 +1,6 @@
 export * as ToolScheduler from "./tool-scheduler"
 
-import { Deferred, Effect, Exit, FiberSet, Scope } from "effect"
+import { Deferred, Duration, Effect, Exit, Fiber } from "effect"
 import { DateTime } from "effect"
 import type { ToolCall } from "@opencode-ai/llm"
 import type { ToolRegistry } from "../../tool/registry"
@@ -13,8 +13,10 @@ export type ToolSettlementOutcome = "success" | "error" | "cancelled" | "abandon
 export interface PreparedToolCall {
   readonly index: number
   readonly call: ToolCall
-  readonly execute: () => Effect.Effect<ToolRegistry.Settlement>
+  readonly execute: () => Effect.Effect<ToolRegistry.Settlement, ToolRegistry.SettlementError>
   readonly concurrency: ToolConcurrency
+  readonly onStart?: Effect.Effect<void>
+  readonly onInterrupt?: (outcome: "cancelled" | "abandoned") => Effect.Effect<void>
   readonly deadline: DateTime.Utc
 }
 
@@ -41,7 +43,7 @@ export const MaxActiveBodies = 10
 
 const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (
   calls: readonly PreparedToolCall[],
-  fibers: FiberSet.FiberSet<void, never>,
+  launched: Array<Fiber.Fiber<void, never> | undefined>,
 ) {
   const total = calls.length
   if (total === 0) return [] as ToolSettlement[]
@@ -52,17 +54,15 @@ const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (
   const launch = (index: number) =>
     Effect.gen(function* () {
       const prepared = calls[index]!
-      yield* FiberSet.run(
-        fibers,
-        Effect.gen(function* () {
-          const exit = yield* prepared.execute().pipe(Effect.exit)
-          settled[index] = Exit.isSuccess(exit)
-            ? { index, callID: prepared.call.id, outcome: "success", result: exit.value }
-            : { index, callID: prepared.call.id, outcome: "error" }
-          yield* Deferred.succeed(completions[index], undefined)
-        }),
-        { startImmediately: true },
-      ).pipe(Effect.asVoid)
+      const fiber = yield* Effect.gen(function* () {
+        yield* prepared.onStart ?? Effect.void
+        const exit = yield* prepared.execute().pipe(Effect.exit)
+        settled[index] = Exit.isSuccess(exit)
+          ? { index, callID: prepared.call.id, outcome: "success", result: exit.value }
+          : { index, callID: prepared.call.id, outcome: "error" }
+        yield* Deferred.succeed(completions[index], undefined)
+      }).pipe(Effect.forkDetach({ startImmediately: false }))
+      launched[index] = fiber
     })
 
   const awaitOne = (index: number) => Effect.asVoid(Deferred.await(completions[index]))
@@ -99,6 +99,24 @@ const runBodies = Effect.fn("ToolScheduler.runBodies")(function* (
   return ordered
 })
 
+const interruptBodies = Effect.fn("ToolScheduler.interruptBodies")(function* (
+  calls: readonly PreparedToolCall[],
+  launched: readonly (Fiber.Fiber<void, never> | undefined)[],
+) {
+  const active = launched.filter((fiber): fiber is Fiber.Fiber<void, never> => fiber !== undefined)
+  yield* Effect.sync(() => active.forEach((fiber) => fiber.interruptUnsafe()))
+  if (active.length > 0)
+    yield* Effect.raceFirst(Effect.forEach(active, Fiber.await, { discard: true }), Effect.sleep(Duration.seconds(3)))
+  yield* Effect.forEach(
+    calls,
+    (call, index) => {
+      const fiber = launched[index]
+      const outcome = fiber !== undefined && fiber.pollUnsafe() === undefined ? "abandoned" : "cancelled"
+      return call.onInterrupt?.(outcome) ?? Effect.void
+    },
+    { discard: true },
+  )
+})
 export const make = (): Interface => ({
   run: (calls) =>
     Effect.scoped(
@@ -106,13 +124,10 @@ export const make = (): Interface => ({
         // A turn interrupt cancels every dispatched body (foreground shell
         // waiters cancel their jobs) while bodies that were never started are
         // never launched; the ordered settlement assertion dies with the drain.
-        const fibers = yield* FiberSet.make<void, never>()
+        const launched: Array<Fiber.Fiber<void, never> | undefined> = []
         return yield* Effect.uninterruptibleMask((restore) =>
-          restore(runBodies(calls, fibers)).pipe(
-            Effect.onInterrupt(() => FiberSet.clear(fibers)),
-          ),
+          restore(runBodies(calls, launched)).pipe(Effect.onInterrupt(() => interruptBodies(calls, launched))),
         )
       }),
     ),
 })
-

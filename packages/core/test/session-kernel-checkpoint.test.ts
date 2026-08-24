@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
+import path from "node:path"
 import { Deferred, Duration, Effect, Fiber, Layer, LayerMap, Stream } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { LLMClient, LLMEvent, Model, type LLMClientShape } from "@opencode-ai/llm"
@@ -21,6 +22,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionRouter } from "@opencode-ai/core/session/execution/router"
 import { Kernel } from "@opencode-ai/core/session/kernel"
+import { KernelDiagnostics } from "@opencode-ai/core/session/kernel/diagnostics"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
 import { Checkpoint } from "@opencode-ai/core/session/kernel/checkpoint"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
@@ -34,6 +36,7 @@ import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { asc, and, eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
+import { tmpdir } from "./fixture/tmpdir"
 
 const projects = Layer.succeed(
   ProjectV2.Service,
@@ -136,6 +139,7 @@ const it = testEffect(
       SessionStore.node,
       SessionV2.node,
       Kernel.node,
+      KernelDiagnostics.node,
       LifecycleStore.node,
     ]),
     [
@@ -194,6 +198,8 @@ describe("Kernel streaming checkpoints", () => {
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const { db } = yield* Database.Service
+      const diagnostics = yield* KernelDiagnostics.Service
+      yield* diagnostics.reset()
       mock.started = yield* Deferred.make<void>()
       // Two parts, each crossing 8192 bytes.
       const events: LLMEvent[] = [
@@ -214,6 +220,9 @@ describe("Kernel streaming checkpoints", () => {
       const texts = rows.map((row) => (row.data as { text: string }).text)
       expect(texts[0]).toBe("a".repeat(8192))
       expect(texts[1] ?? "").toBe("b".repeat(200))
+      expect(
+        (yield* diagnostics.snapshot()).counters.find((sample) => sample.key === "checkpoint.committed"),
+      ).toEqual({ key: "checkpoint.committed", count: 2 })
     }),
   )
 
@@ -257,3 +266,154 @@ describe("Kernel streaming checkpoints", () => {
     }),
   )
 })
+
+test(
+  "persists large reasoning checkpoints through file-backed SQLite writer contention",
+  async () => {
+    await using tmp = await tmpdir()
+    const filename = path.join(tmp.path, "kernel-reasoning-contention.sqlite")
+    const marker = path.join(tmp.path, "writer-locked")
+    const reasoningText = "r".repeat(512 * 1_024)
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const providerStarted = yield* Deferred.make<void>()
+          const releaseProvider = yield* Deferred.make<void>()
+          const events: LLMEvent[] = [
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.reasoningStart({ id: "reasoning-large" }),
+            ...Array.from({ length: 512 }, () =>
+              LLMEvent.reasoningDelta({ id: "reasoning-large", text: "r".repeat(1_024) }),
+            ),
+            LLMEvent.reasoningEnd({ id: "reasoning-large" }),
+            LLMEvent.textStart({ id: "text-final" }),
+            LLMEvent.textDelta({ id: "text-final", text: "done" }),
+            LLMEvent.textEnd({ id: "text-final" }),
+            LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+            LLMEvent.finish({ reason: "stop" }),
+          ]
+          const fileClient = Layer.succeed(
+            LLMClient.Service,
+            LLMClient.Service.of({
+              prepare: () => Effect.die("unused"),
+              stream: (() =>
+                Stream.unwrap(
+                  Deferred.succeed(providerStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseProvider)),
+                    Effect.as(Stream.fromIterable(events)),
+                  ),
+                )) as unknown as LLMClientShape["stream"],
+              generate: () => Effect.die("unused"),
+            }),
+          )
+          const runtime = AppNodeBuilder.build(
+            LayerNode.group([
+              Database.node,
+              EventV2.node,
+              SessionProjector.node,
+              SessionStore.node,
+              SessionV2.node,
+              Kernel.node,
+              KernelDiagnostics.node,
+              LifecycleStore.node,
+            ]),
+            [
+              [Database.node, Database.layerFromPath(filename)],
+              [ProjectV2.node, projects],
+              [SessionExecution.node, executionNode],
+              [LayerNodePlatform.llmClient, fileClient],
+              [LocationServiceMap.node, locationMap],
+            ],
+          )
+
+          yield* Effect.gen(function* () {
+            const sessions = yield* SessionV2.Service
+            const lifecycle = yield* LifecycleStore.Service
+            const store = yield* SessionStore.Service
+            const { db } = yield* Database.Service
+            const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+            yield* sessions.prompt({
+              sessionID: session.id,
+              prompt: Prompt.make({ text: "Persist large reasoning under contention" }),
+              resume: false,
+            })
+            const running = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+            yield* Deferred.await(providerStarted)
+
+            const locker = yield* Effect.acquireRelease(
+              Effect.sync(() =>
+                Bun.spawn(
+                  [
+                    "bun",
+                    "-e",
+                    [
+                      'import { Database } from "bun:sqlite"',
+                      "const database = new Database(process.argv.at(-2))",
+                      'database.exec("PRAGMA journal_mode = WAL")',
+                      'database.exec("BEGIN IMMEDIATE")',
+                      'await Bun.write(process.argv.at(-1), "locked")',
+                      "await Bun.sleep(400)",
+                      'database.exec("COMMIT")',
+                      "database.close()",
+                    ].join(";"),
+                    filename,
+                    marker,
+                  ],
+                  { stdout: "pipe", stderr: "pipe" },
+                ),
+              ),
+              (process) =>
+                Effect.promise(() => {
+                  process.kill()
+                  return process.exited
+                }).pipe(Effect.ignore),
+            )
+            yield* Effect.promise(async () => {
+              const deadline = Date.now() + 5_000
+              while (Date.now() < deadline) {
+                if (await Bun.file(marker).exists()) return
+                await Bun.sleep(10)
+              }
+              throw new Error("SQLite contention writer did not acquire its lock")
+            })
+
+            const startedAt = Date.now()
+            yield* Deferred.succeed(releaseProvider, undefined)
+            yield* Fiber.join(running)
+            expect(Date.now() - startedAt).toBeGreaterThanOrEqual(300)
+            expect(yield* Effect.promise(() => locker.exited)).toBe(0)
+            expect(yield* lifecycle.get(session.id)).toMatchObject({ state: "idle", phase: undefined })
+
+            const context = yield* store.context(session.id)
+            const assistant = context.find((message) => message.type === "assistant")
+            const reasoning =
+              assistant?.type === "assistant"
+                ? assistant.content.find((part) => part.type === "reasoning")
+                : undefined
+            expect(reasoning?.text).toBe(reasoningText)
+
+            const checkpoints = yield* db
+              .select({ data: EventTable.data })
+              .from(EventTable)
+              .where(
+                and(
+                  eq(EventTable.aggregate_id, session.id),
+                  eq(
+                    EventTable.type,
+                    EventV2.versionedType(SessionEvent.Reasoning.Checkpoint.type, 1),
+                  ),
+                ),
+              )
+              .orderBy(asc(EventTable.seq))
+              .all()
+              .pipe(Effect.orDie)
+            expect(checkpoints.length).toBeGreaterThan(1)
+            expect(checkpoints.map((row) => (row.data as { text: string }).text).join("")).toBe(reasoningText)
+          }).pipe(Effect.provide(Layer.fresh(runtime)))
+        }),
+      ),
+    )
+  },
+  30_000,
+)

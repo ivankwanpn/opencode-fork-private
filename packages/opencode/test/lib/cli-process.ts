@@ -127,6 +127,11 @@ export type ServeHandle = {
   // finalizer also calls this, so tests rarely need
   // to invoke it directly — useful for tests that assert exit behavior.
   readonly kill: () => void
+  // Terminates the process without giving the server a graceful interrupt
+  // boundary, leaving durable execution state for the restart reconciler.
+  readonly crash: () => void
+  /** Current stderr tail for diagnosing failures before the process exits. */
+  readonly stderr: () => string
   // Resolves with the exit code once the process exits. Bun returns a number.
   readonly exited: Promise<number>
 }
@@ -382,6 +387,10 @@ export function withCliFixture<A, E>(
         kill: () => {
           proc.kill("SIGINT")
         },
+        crash: () => {
+          proc.kill()
+        },
+        stderr: () => stderrChunks.join("").slice(-4_000),
         exited: proc.exited as Promise<number>,
       } satisfies ServeHandle
     })

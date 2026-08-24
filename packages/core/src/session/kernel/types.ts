@@ -46,20 +46,6 @@ export interface ExecutionSnapshot {
   readonly timeUpdated: DateTime.Utc
 }
 
-export interface TaskTerminalMutation {
-  readonly submissionID: string
-  readonly outcome: TurnOutcome
-  readonly resultMessageID?: SessionMessage.ID
-}
-
-export interface TaskNotificationMutation {
-  readonly id: string
-  readonly submissionID: string
-  readonly parentSessionID: SessionSchema.ID
-  readonly messageID: SessionMessage.ID
-  readonly wake: boolean
-}
-
 export interface StartInput {
   readonly sessionID: SessionSchema.ID
   readonly inputID: SessionMessage.ID
@@ -78,6 +64,8 @@ export interface TransitionInput {
   readonly recoveryReason?: RecoveryReason
   /** Switches the durable attempt identity to a new provider attempt. */
   readonly attemptID?: EventV2.ID
+  /** Switches the durable assistant identity with a continuation attempt. */
+  readonly assistantMessageID?: SessionMessage.ID
   readonly events: readonly EventV2.BatchItem[]
 }
 
@@ -88,11 +76,10 @@ export interface CheckpointInput {
 
 export interface TerminalInput {
   readonly lease: ExecutionLease
+  readonly events?: readonly EventV2.BatchItem[]
   readonly outcome: TurnOutcome
   readonly resultMessageID?: SessionMessage.ID
   readonly error?: SessionEvent.ErrorInfo
-  readonly task?: TaskTerminalMutation
-  readonly outbox?: TaskNotificationMutation
 }
 
 export interface InterruptInput {
@@ -107,6 +94,7 @@ export interface SettleInput {
   readonly sessionID: SessionSchema.ID
   readonly expectedGeneration: number
   readonly outcome: TurnOutcome
+  readonly events?: readonly EventV2.BatchItem[]
   readonly resultMessageID?: SessionMessage.ID
   readonly error?: SessionEvent.ErrorInfo
 }
@@ -123,14 +111,11 @@ export interface ReconcileInput {
 }
 
 /** A commit tried to use a fenced generation/lease or an unexpected state. */
-export class StaleExecutionError extends Schema.TaggedErrorClass<StaleExecutionError>()(
-  "StaleExecutionError",
-  {
-    sessionID: SessionSchema.ID,
-    generation: Schema.Number,
-    expectedState: Schema.String,
-  },
-) {}
+export class StaleExecutionError extends Schema.TaggedErrorClass<StaleExecutionError>()("StaleExecutionError", {
+  sessionID: SessionSchema.ID,
+  generation: Schema.Number,
+  expectedState: Schema.String,
+}) {}
 
 /** The kernel invariant was violated (missing identities, wrong engine, ...). */
 export class InvariantError extends Schema.TaggedErrorClass<InvariantError>()("InvariantError", {

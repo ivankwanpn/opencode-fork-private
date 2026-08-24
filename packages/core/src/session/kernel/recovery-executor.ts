@@ -12,7 +12,7 @@ import { SessionInputTable, TaskSubmissionTable } from "../sql"
 import { LifecycleStore } from "./lifecycle-store"
 import type { RecoveryPlan, RecoveryAction } from "./recovery-planner"
 import type { ExecutionSnapshot } from "./types"
-import { processIncarnation } from "./incarnation"
+import { ownsExecution } from "./incarnation"
 
 /** The plan's generation/sequence/owner revalidation failed; the plan is stale. */
 export class RecoveryPlanStaleError extends Schema.TaggedErrorClass<RecoveryPlanStaleError>()(
@@ -49,14 +49,18 @@ const layer = Layer.effect(
       yield* Effect.gen(function* () {
         // Revalidation: the execution must still carry the planned generation
         // and sequence, and a non-idle plan must not race a live owner.
-        const snapshot = yield* lifecycle.get(plan.sessionID).pipe(
-          Effect.catchTag("Session.NotFoundError", () => Effect.die(`Recovery target session vanished: ${plan.sessionID}`)),
-        )
+        const snapshot = yield* lifecycle
+          .get(plan.sessionID)
+          .pipe(
+            Effect.catchTag("Session.NotFoundError", () =>
+              Effect.die(`Recovery target session vanished: ${plan.sessionID}`),
+            ),
+          )
         const latestSeq = yield* EventV2.latestSequence(db, plan.sessionID)
         if (
           snapshot.generation !== plan.generation ||
           latestSeq !== plan.latestSeq ||
-          (plan.classification !== "no-action" && snapshot.processIncarnation === processIncarnation)
+          (plan.classification !== "no-action" && ownsExecution(snapshot))
         )
           return yield* Effect.fail(stale())
         // Terminal-evidence classifications clear the stale coordination row

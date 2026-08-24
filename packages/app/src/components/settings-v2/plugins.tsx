@@ -20,7 +20,7 @@ import {
   resolvePluginLoad,
   type PluginLoadState,
 } from "./plugin-load-state"
-import { pluginRuntimePresentation } from "./plugin-runtime-status"
+import { pluginRuntimePresentation, pluginUIContributions } from "./plugin-runtime-status"
 import { pluginRuntimeNeedsRefresh } from "./plugin-runtime-poll"
 import "./settings-v2.css"
 
@@ -546,6 +546,7 @@ export const SettingsPluginsV2: Component = () => {
                       <DirectPluginRow
                         item={item}
                         busy={busy()}
+                        runtime={runtimeState()}
                         onToggle={toggleDirect}
                         onUninstall={uninstallDirect}
                       />
@@ -657,6 +658,17 @@ const PluginRow: Component<{
               </For>
             </span>
           </Show>
+          <Show when={runtime().ui?.length}>
+            <span class="settings-v2-plugin-capabilities">
+              <For each={runtime().ui}>
+                {(contribution) => (
+                  <span class="settings-v2-plugin-runtime" title={contribution.description ?? undefined}>
+                    {contribution.kind} · {contribution.id}
+                  </span>
+                )}
+              </For>
+            </span>
+          </Show>
         </span>
       }
     >
@@ -693,10 +705,13 @@ const PluginRow: Component<{
 const DirectPluginRow: Component<{
   item: DirectPluginItem
   busy?: string
+  runtime: PluginLoadState<Runtime>
   onToggle: (item: DirectPluginItem, enabled: boolean) => void
   onUninstall: (item: DirectPluginItem) => void
-}> = (props) => (
-  <SettingsRowV2
+}> = (props) => {
+  const ui = createMemo(() => pluginUIContributions(props.item.id, props.runtime))
+  return (
+    <SettingsRowV2
     title={props.item.name}
     description={
       <span class="settings-v2-plugin-description">
@@ -704,6 +719,17 @@ const DirectPluginRow: Component<{
         <span>{props.item.targets.join(" + ")}</span>
         <Show when={props.item.requestedCapabilities.length > 0}>
           <span>{props.item.requestedCapabilities.map((item) => `${item.name} (${item.tier})`).join(", ")}</span>
+        </Show>
+        <Show when={ui().length > 0}>
+          <span class="settings-v2-plugin-capabilities">
+            <For each={ui()}>
+              {(contribution) => (
+                <span class="settings-v2-plugin-runtime" title={contribution.description ?? undefined}>
+                  {contribution.kind} · {contribution.id}
+                </span>
+              )}
+            </For>
+          </span>
         </Show>
       </span>
     }
@@ -734,8 +760,9 @@ const DirectPluginRow: Component<{
         Uninstall
       </ButtonV2>
     </div>
-  </SettingsRowV2>
-)
+    </SettingsRowV2>
+  )
+}
 
 const McpRow: Component<{
   item: McpItem

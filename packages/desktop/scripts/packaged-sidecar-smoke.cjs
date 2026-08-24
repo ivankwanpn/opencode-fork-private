@@ -3,6 +3,7 @@ const http = require("node:http")
 const net = require("node:net")
 const os = require("node:os")
 const path = require("node:path")
+const { DatabaseSync } = require("node:sqlite")
 const { app, utilityProcess } = require("electron")
 
 const asarArgument =
@@ -14,6 +15,8 @@ const asarPath = asarArgument
 const sidecarPath = path.join(asarPath, "out/main/sidecar.js")
 const reportPath = process.env.OPENCODE_PACKAGED_SMOKE_REPORT ?? path.join(os.tmpdir(), "opencode-packaged-sidecar-smoke.json")
 const password = `smoke-${Date.now()}`
+const restartPrompt = "packaged Kernel restart boundary"
+const kernelRestartGate = process.argv.includes("--kernel-restart-gate")
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-packaged-sidecar-"))
 const workspace = path.join(tempRoot, "workspace")
 const marketplaceRoot = path.join(tempRoot, "marketplace")
@@ -100,6 +103,9 @@ async function startFakeLlm() {
       }
 
       requests.push(body)
+      if (JSON.stringify(body.messages ?? []).includes(restartPrompt)) {
+        return
+      }
       const model = typeof body.model === "string" ? body.model : "test-model"
       const id = `chatcmpl-packaged-smoke-${requests.length}`
       const created = Math.floor(Date.now() / 1000)
@@ -140,6 +146,7 @@ async function startFakeLlm() {
     requests,
     async stop() {
       if (!server.listening) return
+      server.closeAllConnections?.()
       await new Promise((resolve) => server.close(() => resolve()))
     },
   }
@@ -236,7 +243,13 @@ function createEventReader(response) {
         const timeout = setTimeout(() => {
           const position = waiters.findIndex((item) => item.resolve === resolve)
           if (position >= 0) waiters.splice(position, 1)
-          reject(new Error(`Timed out waiting for packaged sidecar event; received ${events.length} events`))
+          reject(
+            new Error(
+              `Timed out waiting for packaged sidecar event; received ${events.length}: ${events
+                .map((event) => event.type)
+                .join(", ")}`,
+            ),
+          )
         }, timeoutMs)
         waiters.push({ predicate, resolve, reject, timeout })
       })
@@ -270,6 +283,7 @@ async function startSidecar(port, configContent) {
     stdio: "pipe",
   })
   const logs = []
+  const exited = new Promise((resolve) => child.once("exit", resolve))
   child.stdout?.on("data", (chunk) => logs.push(`stdout: ${chunk.toString().trimEnd()}`))
   child.stderr?.on("data", (chunk) => logs.push(`stderr: ${chunk.toString().trimEnd()}`))
 
@@ -308,6 +322,10 @@ async function startSidecar(port, configContent) {
 
   return {
     child,
+    exited,
+    crash() {
+      child.kill()
+    },
     async stop() {
       if (child.killed) return
       await new Promise((resolve) => {
@@ -329,42 +347,44 @@ async function startSidecar(port, configContent) {
 async function run() {
   assert(fs.existsSync(sidecarPath), `Packaged sidecar not found: ${sidecarPath}`)
   const packagedMetadata = JSON.parse(fs.readFileSync(path.join(asarPath, "package.json"), "utf8"))
-  assert(packagedMetadata.version === "999.0.13", `Packaged Desktop version is ${packagedMetadata.version}, expected 999.0.13`)
+  const expectedMetadata = JSON.parse(fs.readFileSync(path.join(__dirname, "../package.json"), "utf8"))
+  assert(
+    packagedMetadata.version === expectedMetadata.version,
+    `Packaged Desktop version is ${packagedMetadata.version}, expected ${expectedMetadata.version}`,
+  )
   const port = await getPort()
   const base = `http://127.0.0.1:${port}`
   const llm = await startFakeLlm()
-  let sidecar
-  try {
-    sidecar = await startSidecar(
-      port,
-      JSON.stringify({
-        formatter: false,
-        lsp: false,
-        provider: {
-          test: {
-            name: "Packaged Smoke Test",
-            id: "test",
-            env: [],
-            npm: "@ai-sdk/openai-compatible",
-            models: {
-              "test-model": {
-                id: "test-model",
-                name: "Packaged Smoke Model",
-                attachment: false,
-                reasoning: false,
-                temperature: false,
-                tool_call: true,
-                release_date: "2025-01-01",
-                limit: { context: 100_000, output: 10_000 },
-                cost: { input: 0, output: 0 },
-                options: {},
-              },
-            },
-            options: { apiKey: "test-key", baseURL: llm.url },
+  const configContent = JSON.stringify({
+    formatter: false,
+    lsp: false,
+    provider: {
+      test: {
+        name: "Packaged Smoke Test",
+        id: "test",
+        env: [],
+        npm: "@ai-sdk/openai-compatible",
+        models: {
+          "test-model": {
+            id: "test-model",
+            name: "Packaged Smoke Model",
+            attachment: false,
+            reasoning: false,
+            temperature: false,
+            tool_call: true,
+            release_date: "2025-01-01",
+            limit: { context: 100_000, output: 10_000 },
+            cost: { input: 0, output: 0 },
+            options: {},
           },
         },
-      }),
-    )
+        options: { apiKey: "test-key", baseURL: llm.url },
+      },
+    },
+  })
+  let sidecar
+  try {
+    sidecar = await startSidecar(port, configContent)
   } catch (error) {
     await llm.stop()
     throw error
@@ -397,7 +417,8 @@ async function run() {
     )
     const sessionID = created.data?.id
     assert(typeof sessionID === "string" && sessionID.startsWith("ses"), "session.create returned no V2 session")
-    await events.waitFor((event) => event.type === "session.created" && event.data?.sessionID === sessionID)
+    assert(created.data?.engine === "classic", "packaged Desktop unexpectedly changed the default Session engine")
+    await events.waitFor((event) => event.type === "session.next.created" && event.data?.sessionID === sessionID)
 
     const permissionID = `per_smoke_${Date.now()}`
     const permission = await json(
@@ -582,7 +603,9 @@ async function run() {
       typeof executionSessionID === "string" && executionSessionID.startsWith("ses"),
       "execution session.create returned no V2 session",
     )
-    await events.waitFor((event) => event.type === "session.created" && event.data?.sessionID === executionSessionID)
+    await events.waitFor(
+      (event) => event.type === "session.next.created" && event.data?.sessionID === executionSessionID,
+    )
 
     const executionMessageID = `msg_execution_${Date.now()}`
     const executionPrompt = await json(
@@ -608,13 +631,13 @@ async function run() {
     await waitFor(() => llm.requests.length > 0, "fake LLM provider request")
     await events.waitFor(
       (event) =>
-        event.type === "session.status" &&
+        event.type === "session.next.status" &&
         event.data?.sessionID === executionSessionID &&
         event.data?.status?.type === "busy",
     )
     await events.waitFor(
       (event) =>
-        event.type === "session.status" &&
+        event.type === "session.next.status" &&
         event.data?.sessionID === executionSessionID &&
         event.data?.status?.type === "idle",
     )
@@ -671,29 +694,37 @@ async function run() {
     )
     assert(retried.data?.id === messageID && retried.data?.sessionID === sessionID, "exact prompt retry was not idempotent")
 
-    const cancelledMessageID = `msg_smoke_cancelled_${Date.now()}`
-    const queued = await json(
-      request(base, `/api/session/${sessionID}/prompt`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          id: cancelledMessageID,
-          prompt: { text: "packaged sidecar smoke cancellation" },
-          delivery: "queue",
-          resume: false,
+    if (!kernelRestartGate) {
+      const cancelledMessageID = `msg_smoke_cancelled_${Date.now()}`
+      const queued = await json(
+        request(base, `/api/session/${sessionID}/prompt`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: cancelledMessageID,
+            prompt: { text: "packaged sidecar smoke cancellation" },
+            delivery: "queue",
+            resume: false,
+          }),
         }),
-      }),
-      "session.prompt.queue",
-    )
-    assert(queued.data?.id === cancelledMessageID && queued.data?.delivery === "queue", "queue prompt was not admitted")
+        "session.prompt.queue",
+      )
+      assert(queued.data?.id === cancelledMessageID && queued.data?.delivery === "queue", "queue prompt was not admitted")
 
-    const cancelled = await request(base, `/api/session/${sessionID}/input/${cancelledMessageID}`, { method: "DELETE" })
-    assert(cancelled.status === 204, `session.input.cancel returned ${cancelled.status}`)
-    const afterCancel = await json(request(base, `/api/session/${sessionID}/input`), "session.input.after-cancel")
-    assert(
-      !afterCancel.data?.some((input) => input.id === cancelledMessageID),
-      "cancelled queue input remained pending",
-    )
+      const cancelled = await request(base, `/api/session/${sessionID}/input/${cancelledMessageID}`, { method: "DELETE" })
+      if (cancelled.status !== 204) {
+        throw new Error(
+          `session.input.cancel returned ${cancelled.status}: ${(await cancelled.text()).slice(0, 2_000)}\n${sidecar.logs
+            .slice(-20)
+            .join("\n")}`,
+        )
+      }
+      const afterCancel = await json(request(base, `/api/session/${sessionID}/input`), "session.input.after-cancel")
+      assert(
+        !afterCancel.data?.some((input) => input.id === cancelledMessageID),
+        "cancelled queue input remained pending",
+      )
+    }
 
     const pending = await json(request(base, `/api/session/${sessionID}/input`), "session.input.list")
     assert(pending.data?.some((input) => input.id === messageID), "admitted prompt was not recoverable from input state")
@@ -712,6 +743,127 @@ async function run() {
     const activeAfterReconnect = await json(request(base, "/api/session/active"), "session.active.after-reconnect")
     assert(!activeAfterReconnect.data?.[executionSessionID], "compacted session became active after reconnect")
 
+    const firstHealth = await json(request(base, "/api/health"), "health.before-kernel-restart")
+    const providerCallsBeforeRestart = llm.requests.length
+    const kernelCreated = await json(
+      request(base, "/api/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          engine: "kernel",
+          location: { directory: workspace },
+          model: { providerID: "test", id: "test-model" },
+        }),
+      }),
+      "session.create.kernel-restart",
+    )
+    const kernelSessionID = kernelCreated.data?.id
+    assert(
+      typeof kernelSessionID === "string" && kernelCreated.data?.engine === "kernel",
+      "packaged Desktop did not create an explicit Kernel Session",
+    )
+    const kernelMessageID = `msg_kernel_restart_${Date.now()}`
+    await json(
+      request(base, `/api/session/${kernelSessionID}/prompt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: kernelMessageID,
+          prompt: { text: restartPrompt },
+          resume: true,
+        }),
+      }),
+      "session.prompt.kernel-restart",
+    )
+    await waitFor(
+      () => llm.requests.length === providerCallsBeforeRestart + 1,
+      "packaged Kernel provider dispatch",
+    )
+
+    const databasePath = path.join(tempRoot, "data", "opencode", "opencode.db")
+    const databaseBeforeRestart = new DatabaseSync(databasePath, { readOnly: true })
+    const executionBeforeRestart = databaseBeforeRestart
+      .prepare(
+        "SELECT state, phase, recovery_reason, process_incarnation FROM session_execution WHERE session_id = ?",
+      )
+      .get(kernelSessionID)
+    databaseBeforeRestart.close()
+    assert(
+      executionBeforeRestart?.state === "active" && executionBeforeRestart?.phase === "dispatching",
+      `packaged Kernel execution did not reach provider dispatch before process loss: ${JSON.stringify(executionBeforeRestart)}`,
+    )
+
+    await reconnect.stop()
+    reconnect = undefined
+    sidecar.crash()
+    await Promise.race([
+      sidecar.exited,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Packaged sidecar did not exit after forced process loss")), 10_000),
+      ),
+    ])
+    sidecar = await startSidecar(port, configContent)
+    const restartedHealth = await json(request(base, "/api/health"), "health.after-kernel-restart")
+    assert(restartedHealth.pid !== firstHealth.pid, "packaged sidecar process incarnation did not change")
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert(
+      llm.requests.length === providerCallsBeforeRestart + 1,
+      "packaged sidecar replayed provider work during startup reconciliation",
+    )
+
+    const restoredKernel = await json(request(base, `/api/session/${kernelSessionID}`), "session.restore.kernel")
+    const restoredClassic = await json(request(base, `/api/session/${sessionID}`), "session.restore.classic")
+    assert(restoredKernel.data?.engine === "kernel", "Kernel Session changed engine after packaged restart")
+    assert(restoredClassic.data?.engine === "classic", "Classic Session changed engine after packaged restart")
+
+    const databaseAfterRestart = new DatabaseSync(databasePath, { readOnly: true })
+    const executionAfterRestart = databaseAfterRestart
+      .prepare(
+        "SELECT state, phase, recovery_reason, lease_token, process_incarnation FROM session_execution WHERE session_id = ?",
+      )
+      .get(kernelSessionID)
+    const classicExecution = databaseAfterRestart
+      .prepare("SELECT session_id FROM session_execution WHERE session_id = ?")
+      .get(sessionID)
+    const kernelEvents = databaseAfterRestart
+      .prepare("SELECT type FROM event WHERE aggregate_id = ? ORDER BY seq ASC")
+      .all(kernelSessionID)
+    databaseAfterRestart.close()
+    const kernelEventTypes = kernelEvents.map((event) => event.type)
+    assert(
+      executionAfterRestart?.state === "needs_recovery" &&
+        executionAfterRestart?.phase === null &&
+        executionAfterRestart?.recovery_reason === "provider-dispatch-ambiguous",
+      "packaged restart did not preserve the formal provider-dispatch recovery classification",
+    )
+    assert(executionAfterRestart?.lease_token === null, "packaged restart left an active lease token")
+    assert(
+      executionAfterRestart?.process_incarnation === executionBeforeRestart.process_incarnation,
+      "packaged restart rewrote the fenced owner incarnation",
+    )
+    assert(classicExecution === undefined, "packaged restart created a Kernel execution row for a Classic Session")
+    assert(
+      kernelEventTypes.filter((type) => type === "session.next.provider.attempt.started.1").length === 1,
+      "packaged restart duplicated provider attempt start",
+    )
+    assert(
+      kernelEventTypes.filter((type) => type === "session.next.provider.attempt.response.started.1").length === 0,
+      "packaged restart published an unobserved provider response",
+    )
+    assert(
+      kernelEventTypes.filter((type) => type === "session.next.provider.attempt.ended.1").length === 0,
+      "packaged restart published a duplicate provider terminal event",
+    )
+    const kernelRestartEvidence = {
+      sessionID: kernelSessionID,
+      messageID: kernelMessageID,
+      firstPid: firstHealth.pid,
+      restartedPid: restartedHealth.pid,
+      providerCalls: llm.requests.length - providerCallsBeforeRestart,
+      state: executionAfterRestart.state,
+      recoveryReason: executionAfterRestart.recovery_reason,
+    }
+
     const report = {
         asarPath,
         sidecarPath,
@@ -721,6 +873,7 @@ async function run() {
         messageID,
         executionSessionID,
         executionMessageID,
+        kernelRestart: kernelRestartEvidence,
         llmRequestCount: llm.requests.length,
         checks: [
           "health",
@@ -744,11 +897,11 @@ async function run() {
           "session.compaction",
           "session.prompt",
           "session.prompt.retry",
-          "session.prompt.queue",
-          "session.input.cancel",
+          ...(kernelRestartGate ? [] : ["session.prompt.queue", "session.input.cancel"]),
           "interrupt",
           "reconnect",
           "session.compaction.reconnect",
+          "session.kernel.process-restart",
         ],
       }
     fs.writeFileSync(reportPath, JSON.stringify(report))
@@ -781,8 +934,7 @@ app.whenReady().then(run).then(
       }),
     )
     cleanupTemp().finally(() => {
-      app.quit()
-      process.exitCode = 1
+      app.exit(1)
     })
   },
 )

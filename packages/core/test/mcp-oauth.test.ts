@@ -473,7 +473,7 @@ describe("MCP OAuth", () => {
     }),
   )
 
-  oauthIt.live("publishes BrowserOpenFailed and cancels pending auth on interruption", () =>
+  oauthIt.live("fails OAuth without a browser proxy and closes pending callback resources", () =>
     Effect.gen(function* () {
       browserFailure = true
       opened.length = 0
@@ -481,6 +481,7 @@ describe("MCP OAuth", () => {
       const server = yield* oauthServer
       const port = yield* Effect.promise(freePort)
       const mcp = yield* MCP.Service
+      const callback = yield* McpOAuthCallback.Service
       expect((yield* mcp.add("browser-fail", remote(server.url, port))).status["browser-fail"]).toEqual({
         status: "needs_auth",
       })
@@ -493,6 +494,8 @@ describe("MCP OAuth", () => {
       )
       expect(event?.data).toMatchObject({ mcpName: "browser-fail" })
       yield* Fiber.interrupt(fiber)
+      yield* waitFor(callback.isRunning(), (running) => !running, "failed OAuth callback server did not stop")
+      expect((yield* mcp.status())["browser-fail"]).toEqual({ status: "needs_auth" })
       expect(yield* mcp.finishAuth("browser-fail", "valid-code").pipe(Effect.flip)).toMatchObject({
         _tag: "MCP.AuthError",
       })

@@ -50,7 +50,7 @@ const unavailable = () =>
 export const layer = Layer.succeed(
   Service,
   Service.of({
-    runtime: () => Effect.succeed({ plugins: [] }),
+    runtime: () => Effect.succeed({ plugins: [], ui: [] }),
     list: () => Effect.succeed({ marketplaces: [], plugins: [], directPlugins: [], mcpServers: [] }),
     addMarketplace: () => unavailable(),
     refreshMarketplace: () => unavailable(),

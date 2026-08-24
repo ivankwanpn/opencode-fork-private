@@ -148,6 +148,7 @@ const layer = Layer.effect(
 
     const runCommand = (command: ChildProcess.Command, options?: RunOptions) => {
       const description = describeCommand(command)
+      if (options?.signal?.aborted) return Effect.fail(wrapError(description, abortError(options.signal)))
       const collect = Effect.scoped(
         Effect.gen(function* () {
           const handle = yield* spawner.spawn(command)

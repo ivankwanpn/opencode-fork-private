@@ -1,23 +1,20 @@
 export * as LifecycleStore from "./lifecycle-store"
 
-import { Context, DateTime, Effect, Layer } from "effect"
+import { Context, DateTime, Effect, Layer, Schema } from "effect"
 import { and, eq, isNull, ne, sql } from "drizzle-orm"
 import { Database } from "../../database/database"
 import { EventV2 } from "../../event"
 import { makeGlobalNode } from "../../effect/app-node"
+import { Identifier } from "../../id/id"
 import { SessionCommand } from "../command"
 import { SessionEvent } from "../event"
 import { SessionInput } from "../input"
 import { SessionMessage } from "../message"
 import { SessionSchema } from "../schema"
-import { SessionExecutionTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "../sql"
+import { SessionExecutionTable, SessionMessageTable, TaskNotificationOutboxTable, TaskSubmissionTable } from "../sql"
+import { TaskNotification } from "../task-notification"
 import { processIncarnation } from "./incarnation"
-import {
-  ConflictError,
-  InvariantError,
-  PersistenceError,
-  StaleExecutionError,
-} from "./types"
+import { ConflictError, InvariantError, PersistenceError, StaleExecutionError } from "./types"
 import type {
   CheckpointInput,
   ExecutionLease,
@@ -67,9 +64,7 @@ const attemptOutcome = (outcome: TurnOutcome): "completed" | "failed" | "interru
 const taskStatus = (outcome: TurnOutcome): "completed" | "error" | "cancelled" | "recovery-required" => outcome
 
 export interface Interface {
-  readonly get: (
-    sessionID: SessionSchema.ID,
-  ) => Effect.Effect<ExecutionSnapshot, SessionCommand.NotFoundError>
+  readonly get: (sessionID: SessionSchema.ID) => Effect.Effect<ExecutionSnapshot, SessionCommand.NotFoundError>
   readonly start: (input: StartInput) => Effect.Effect<ExecutionLease, ConflictError | InvariantError>
   readonly transition: (input: TransitionInput) => Effect.Effect<ExecutionSnapshot, StaleExecutionError>
   readonly checkpoint: (input: CheckpointInput) => Effect.Effect<readonly EventV2.Payload[], StaleExecutionError>
@@ -95,6 +90,7 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     const events = yield* EventV2.Service
+    const notifications = yield* TaskNotification.Service
 
     const get = Effect.fn("LifecycleStore.get")(function* (sessionID: SessionSchema.ID) {
       const row = yield* db
@@ -154,7 +150,10 @@ const layer = Layer.effect(
                 intent: admitted.intent,
               },
             },
-            { definition: SessionEvent.Turn.Started, data: { sessionID: input.sessionID, timestamp: now, turnID: input.turnID } },
+            {
+              definition: SessionEvent.Turn.Started,
+              data: { sessionID: input.sessionID, timestamp: now, turnID: input.turnID },
+            },
             {
               definition: SessionEvent.ProviderAttempt.Started,
               data: {
@@ -244,6 +243,7 @@ const layer = Layer.effect(
                 // the eventual terminalize closes the current attempt, never a
                 // stale one.
                 ...(input.attemptID === undefined ? {} : { attempt_id: input.attemptID }),
+                ...(input.assistantMessageID === undefined ? {} : { assistant_message_id: input.assistantMessageID }),
                 updated_seq: finalSeq,
                 time_updated: DateTime.toEpochMillis(now),
               })
@@ -259,9 +259,7 @@ const layer = Layer.effect(
               .get()
               .pipe(
                 Effect.orDie,
-                Effect.flatMap((row) =>
-                  row ? Effect.void : Effect.die(stale(input.lease, input.expectedState)),
-                ),
+                Effect.flatMap((row) => (row ? Effect.void : Effect.die(stale(input.lease, input.expectedState)))),
               ),
         }),
         [StaleExecutionError],
@@ -299,9 +297,7 @@ const layer = Layer.effect(
               .get()
               .pipe(
                 Effect.orDie,
-                Effect.flatMap((row) =>
-                  row ? Effect.void : Effect.die(stale(input.lease, "any")),
-                ),
+                Effect.flatMap((row) => (row ? Effect.void : Effect.die(stale(input.lease, "any")))),
               ),
         }),
         [StaleExecutionError],
@@ -310,7 +306,6 @@ const layer = Layer.effect(
     })
 
     const terminalize = Effect.fn("LifecycleStore.terminalize")(function* (input: TerminalInput) {
-
       const snapshot = yield* get(input.lease.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
           Effect.die(
@@ -341,6 +336,8 @@ const layer = Layer.effect(
             message: `Cannot terminalize execution in state ${snapshot.state} with incomplete identities`,
           }),
         )
+      const inputID = snapshot.inputID
+      const assistantMessageID = snapshot.assistantMessageID
       const now = yield* DateTime.now
       const outcome = attemptOutcome(input.outcome)
 
@@ -348,6 +345,7 @@ const layer = Layer.effect(
         events.publishBatch({
           aggregateID: input.lease.sessionID,
           events: [
+            ...(input.events ?? []),
             {
               definition: SessionEvent.ProviderAttempt.Ended,
               data: {
@@ -416,41 +414,87 @@ const layer = Layer.effect(
                 .get()
                 .pipe(Effect.orDie)
               if (!updated) return yield* Effect.die(stale(input.lease, "active"))
-              if (input.task) {
-                yield* db
-                  .update(TaskSubmissionTable)
-                  .set({
-                    status: taskStatus(input.outcome),
-                    outcome: input.outcome,
-                    result_message_id: input.task.resultMessageID ?? null,
-                    error: input.error ?? null,
-                    time_completed: DateTime.toEpochMillis(now),
-                  })
-                  .where(eq(TaskSubmissionTable.id, input.task.submissionID))
-                  .run()
-                  .pipe(Effect.orDie)
-              }
-              if (input.outbox) {
-                yield* db
-                  .insert(TaskNotificationOutboxTable)
-                  .values({
-                    id: input.outbox.id,
-                    submission_id: input.outbox.submissionID,
-                    parent_session_id: input.outbox.parentSessionID,
-                    message_id: input.outbox.messageID,
-                    payload: { outcome: input.outcome, messageID: input.outbox.messageID },
-                    status: "pending",
-                    attempts: 0,
-                    time_created: DateTime.toEpochMillis(now),
-                  })
-                  .onConflictDoNothing()
-                  .run()
-                  .pipe(Effect.orDie)
-              }
+              const submission = yield* db
+                .select()
+                .from(TaskSubmissionTable)
+                .where(and(eq(TaskSubmissionTable.child_input_id, inputID), isNull(TaskSubmissionTable.outcome)))
+                .get()
+                .pipe(Effect.orDie)
+              if (!submission) return
+
+              const resultMessageID = input.resultMessageID ?? assistantMessageID
+              const messageRow = yield* db
+                .select()
+                .from(SessionMessageTable)
+                .where(
+                  and(
+                    eq(SessionMessageTable.session_id, input.lease.sessionID),
+                    eq(SessionMessageTable.id, resultMessageID),
+                    eq(SessionMessageTable.type, "assistant"),
+                  ),
+                )
+                .get()
+                .pipe(Effect.orDie)
+              const assistant = messageRow
+                ? yield* Schema.decodeUnknownEffect(SessionMessage.Assistant)({
+                    ...messageRow.data,
+                    id: messageRow.id,
+                    type: messageRow.type,
+                  }).pipe(Effect.orDie)
+                : undefined
+              const resultText =
+                assistant?.content
+                  .filter((part): part is SessionMessage.AssistantText => part.type === "text")
+                  .map((part) => part.text)
+                  .join("") ?? ""
+              const taskError = input.error ?? assistant?.error
+              const settled = yield* db
+                .update(TaskSubmissionTable)
+                .set({
+                  status: taskStatus(input.outcome),
+                  outcome: input.outcome,
+                  result_message_id: resultMessageID,
+                  result_text: resultText,
+                  error: taskError ?? null,
+                  time_completed: DateTime.toEpochMillis(now),
+                })
+                .where(and(eq(TaskSubmissionTable.id, submission.id), isNull(TaskSubmissionTable.outcome)))
+                .returning()
+                .get()
+                .pipe(Effect.orDie)
+              if (!settled || settled.completion_delivery !== "parent") return
+
+              const notificationText =
+                input.outcome === "completed"
+                  ? resultText
+                  : resultText.trim()
+                    ? resultText
+                    : (errorText(taskError) ?? "")
+              yield* db
+                .insert(TaskNotificationOutboxTable)
+                .values({
+                  id: Identifier.create("outbox", "ascending"),
+                  submission_id: settled.id,
+                  parent_session_id: settled.parent_session_id,
+                  message_id: TaskNotification.messageID(settled.id),
+                  payload: {
+                    taskID: settled.child_session_id,
+                    state: input.outcome,
+                    description: settled.description,
+                    text: notificationText,
+                  },
+                  status: "pending",
+                  attempts: 0,
+                  time_created: DateTime.toEpochMillis(now),
+                })
+                .onConflictDoNothing()
+                .run()
+                .pipe(Effect.orDie)
             }),
         }),
         [StaleExecutionError],
       )
+      yield* notifications.signal()
 
       return yield* get(input.lease.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
@@ -470,6 +514,7 @@ const layer = Layer.effect(
     ) {
       const token = crypto.randomUUID()
       const now = yield* DateTime.now
+      const latestSeq = yield* EventV2.latestSequence(db, sessionID)
       yield* catchCoordinationDefects(
         db
           .update(SessionExecutionTable)
@@ -479,6 +524,14 @@ const layer = Layer.effect(
             process_incarnation: processIncarnation,
             state: "active",
             phase,
+            turn_id: null,
+            input_id: null,
+            attempt_id: null,
+            assistant_message_id: null,
+            retry_at: null,
+            recovery_reason: null,
+            started_seq: latestSeq + 1,
+            updated_seq: latestSeq,
             time_updated: DateTime.toEpochMillis(now),
           })
           .where(
@@ -517,6 +570,13 @@ const layer = Layer.effect(
             state: "idle",
             phase: null,
             lease_token: null,
+            turn_id: null,
+            input_id: null,
+            attempt_id: null,
+            assistant_message_id: null,
+            retry_at: null,
+            recovery_reason: null,
+            started_seq: null,
             time_updated: DateTime.toEpochMillis(now),
           })
           .where(
@@ -652,6 +712,61 @@ const layer = Layer.effect(
       )
     })
 
+    const settlePhaseOnly = Effect.fn("LifecycleStore.settlePhaseOnly")(function* (input: SettleInput) {
+      const now = yield* DateTime.now
+      yield* catchCoordinationDefects(
+        db
+          .update(SessionExecutionTable)
+          .set({
+            state: "idle",
+            phase: null,
+            lease_token: null,
+            turn_id: null,
+            input_id: null,
+            attempt_id: null,
+            assistant_message_id: null,
+            retry_at: null,
+            recovery_reason: null,
+            started_seq: null,
+            time_updated: DateTime.toEpochMillis(now),
+          })
+          .where(
+            and(
+              eq(SessionExecutionTable.session_id, input.sessionID),
+              eq(SessionExecutionTable.generation, input.expectedGeneration),
+              eq(SessionExecutionTable.state, "cancelling"),
+            ),
+          )
+          .returning({ sessionID: SessionExecutionTable.session_id })
+          .get()
+          .pipe(
+            Effect.orDie,
+            Effect.flatMap((row) =>
+              row
+                ? Effect.void
+                : Effect.die(
+                    new StaleExecutionError({
+                      sessionID: input.sessionID,
+                      generation: input.expectedGeneration,
+                      expectedState: "cancelling",
+                    }),
+                  ),
+            ),
+          ),
+        [StaleExecutionError],
+      )
+      return yield* get(input.sessionID).pipe(
+        Effect.catchTag("Session.NotFoundError", () =>
+          Effect.die(
+            new InvariantError({
+              sessionID: input.sessionID,
+              message: "Phase settlement committed but the execution row is missing",
+            }),
+          ),
+        ),
+      )
+    })
+
     const settle = Effect.fn("LifecycleStore.settle")(function* (input: SettleInput) {
       const snapshot = yield* get(input.sessionID).pipe(
         Effect.catchTag("Session.NotFoundError", () =>
@@ -672,6 +787,12 @@ const layer = Layer.effect(
             expectedState: "cancelling",
           }),
         )
+      const hasTurnIdentity =
+        snapshot.attemptID !== undefined ||
+        snapshot.turnID !== undefined ||
+        snapshot.inputID !== undefined ||
+        snapshot.assistantMessageID !== undefined
+      if (!hasTurnIdentity) return yield* settlePhaseOnly(input)
       if (!snapshot.attemptID || !snapshot.turnID || !snapshot.inputID || !snapshot.assistantMessageID)
         return yield* Effect.die(
           new InvariantError({
@@ -684,6 +805,7 @@ const layer = Layer.effect(
         events.publishBatch({
           aggregateID: input.sessionID,
           events: [
+            ...(input.events ?? []),
             {
               definition: SessionEvent.ProviderAttempt.Ended,
               data: {
@@ -778,12 +900,30 @@ const layer = Layer.effect(
       )
     })
 
-    return Service.of({ get, start, transition, checkpoint, terminalize, acceptInterrupt, reconcile, settle, acquireIdle, releaseIdle })
+    return Service.of({
+      get,
+      start,
+      transition,
+      checkpoint,
+      terminalize,
+      acceptInterrupt,
+      reconcile,
+      settle,
+      acquireIdle,
+      releaseIdle,
+    })
   }),
 )
 
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Database.node, EventV2.node],
+  deps: [Database.node, EventV2.node, TaskNotification.node],
 })
+
+function errorText(error: unknown) {
+  if (typeof error === "string" && error.trim()) return error
+  if (typeof error !== "object" || error === null || !("message" in error)) return undefined
+  const message = String(error.message)
+  return message.trim() ? message : undefined
+}

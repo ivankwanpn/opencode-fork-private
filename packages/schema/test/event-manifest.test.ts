@@ -9,12 +9,12 @@ import { WorkspaceEvent } from "../src/workspace-event"
 
 describe("public event manifest", () => {
   test("owns the complete public event surface", () => {
-    expect(EventManifest.ServerDefinitions.length).toBe(92)
+    expect(EventManifest.ServerDefinitions.length).toBe(93)
     expect(EventManifest.Definitions).toBe(EventManifest.ServerDefinitions)
     expect(EventManifest.Definitions.length).toBe(EventManifest.ServerDefinitions.length)
     expect(new Set(EventManifest.Definitions).size).toBe(EventManifest.Definitions.length)
     expect(EventManifest.Latest.size).toBe(EventManifest.Definitions.length)
-    expect(EventManifest.Durable.size).toBe(50)
+    expect(EventManifest.Durable.size).toBe(51)
     for (const type of [
       "session.created.1",
       "session.updated.1",
@@ -57,6 +57,8 @@ describe("public event manifest", () => {
     expect(EventManifest.Latest.get("session.next.updated")).toBe(SessionEvent.Updated)
     expect(EventManifest.Latest.get("session.next.deleted")).toBe(SessionEvent.Deleted)
     expect(EventManifest.Latest.get("session.next.status")).toBe(SessionEvent.Status)
+    expect(EventManifest.Latest.get("session.next.input.terminalized")).toBe(SessionEvent.Input.Terminalized)
+    expect(EventManifest.Durable.get("session.next.input.terminalized.1")).toBe(SessionEvent.Input.Terminalized)
     expect(EventManifest.Latest.has("session.idle")).toBe(false)
     expect(EventManifest.Latest.has("session.compacted")).toBe(false)
     expect(EventManifest.Latest.has("session.status")).toBe(false)

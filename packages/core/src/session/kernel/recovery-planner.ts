@@ -12,7 +12,7 @@ import { SessionMessage } from "../message"
 import { SessionSchema } from "../schema"
 import { LifecycleStore } from "./lifecycle-store"
 import type { ExecutionSnapshot, RecoveryReason } from "./types"
-import { processIncarnation } from "./incarnation"
+import { ownsExecution } from "./incarnation"
 
 export type RecoveryClassification =
   | "no-action"
@@ -48,9 +48,7 @@ export interface RecoveryPlan {
 
 export interface Interface {
   /** Read-only classification; never runs provider, tool, shell, or compaction work. */
-  readonly plan: (
-    sessionID: SessionSchema.ID,
-  ) => Effect.Effect<RecoveryPlan, SessionCommand.NotFoundError>
+  readonly plan: (sessionID: SessionSchema.ID) => Effect.Effect<RecoveryPlan, SessionCommand.NotFoundError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/RecoveryPlanner") {}
@@ -81,54 +79,84 @@ const layer = Layer.effect(
       const turnEndedOutcomes = rows
         .filter((row) => row.type === EventV2.versionedType(SessionEvent.Turn.Ended.type, 1))
         .map((row) => (row.data as { outcome?: string }).outcome)
-      const ownerPresent = snapshot.processIncarnation === processIncarnation
-      const terminalComplete = terminalTypes.every((type) => durableTypes.includes(type))
-      const responseStarted = durableTypes.includes(
-        EventV2.versionedType(SessionEvent.ProviderAttempt.ResponseStarted.type, 1),
+      const ownerPresent = ownsExecution(snapshot)
+      const turnTerminalComplete = terminalTypes.every((type) => durableTypes.includes(type))
+      const compactionStartedType = EventV2.versionedType(SessionEvent.Compaction.Started.type, 1)
+      const compactionTerminalTypes = new Set([
+        EventV2.versionedType(SessionEvent.Compaction.Ended.type, 1),
+        EventV2.versionedType(SessionEvent.Compaction.Failed.type, 1),
+      ])
+      const compactionMessageIDs = new Set(
+        rows.flatMap((row) => {
+          if (row.type !== compactionStartedType) return []
+          const messageID = (row.data as { readonly messageID?: unknown }).messageID
+          return typeof messageID === "string" ? [messageID] : []
+        }),
       )
-      const toolCalled = durableTypes.includes(EventV2.versionedType(SessionEvent.Tool.Called.type, 1))
-      const toolTerminal =
-        durableTypes.includes(EventV2.versionedType(SessionEvent.Tool.Success.type, 1)) ||
-        durableTypes.includes(EventV2.versionedType(SessionEvent.Tool.Failed.type, 1))
+      const compactionComplete = rows.some((row) => {
+        if (!compactionTerminalTypes.has(row.type)) return false
+        const messageID = (row.data as { readonly messageID?: unknown }).messageID
+        return typeof messageID === "string" && compactionMessageIDs.has(messageID)
+      })
+      const outputComplete = snapshot.phase === "compacting" ? compactionComplete : turnTerminalComplete
+      const calledType = EventV2.versionedType(SessionEvent.Tool.Called.type, 1)
+      const toolTerminalTypes = new Set([
+        EventV2.versionedType(SessionEvent.Tool.Success.type, 1),
+        EventV2.versionedType(SessionEvent.Tool.Failed.type, 1),
+      ])
+      const terminalCallIDs = new Set(
+        rows.flatMap((row) => {
+          if (!toolTerminalTypes.has(row.type)) return []
+          const callID = (row.data as { readonly callID?: unknown }).callID
+          return typeof callID === "string" ? [callID] : []
+        }),
+      )
+      const unsettledCalls = rows.flatMap((row) => {
+        if (row.type !== calledType) return []
+        const data = row.data as { readonly callID?: unknown; readonly tool?: unknown }
+        if (typeof data.callID !== "string" || terminalCallIDs.has(data.callID)) return []
+        return [{ callID: data.callID, tool: typeof data.tool === "string" ? data.tool : undefined }]
+      })
+      const pendingQuestion = unsettledCalls.some((call) => call.tool === "question")
       const evidence: RecoveryEvidence = {
         execution: snapshot,
         latestSeq,
         durableTypes,
         ownerPresent,
-        projectedOutputComplete: terminalComplete,
-        uncertainMutation: toolCalled && !toolTerminal,
+        projectedOutputComplete: outputComplete,
+        uncertainMutation: unsettledCalls.length > 0,
       }
       const base = { sessionID, generation: snapshot.generation, latestSeq, evidence }
 
-      if (snapshot.state === "idle")
-        return { ...base, classification: "no-action" as const, actions: [] }
+      // A recovery decision is a durable user-facing boundary. Startup may
+      // inspect the row again, but it must not reinterpret or overwrite the
+      // reason until an explicit recovery decision changes the state.
+      if (snapshot.state === "needs_recovery") return { ...base, classification: "no-action" as const, actions: [] }
+      if (snapshot.state === "idle") return { ...base, classification: "no-action" as const, actions: [] }
 
       // Durable output already proves the turn reached its terminal facts; only
       // the coordination row and read models are stale. The executor clears the
       // row without re-publishing anything.
-      if (terminalComplete && turnEndedOutcomes.includes("abandoned"))
+      if (outputComplete && turnEndedOutcomes.includes("abandoned"))
         return {
           ...base,
           classification: "abandon" as const,
           actions: [{ type: "abandon" as const, reason: "sequence-inconsistent" as const }],
         }
-      if (terminalComplete)
-        return { ...base, classification: "settle-from-durable-output" as const, actions: [] }
+      if (outputComplete) return { ...base, classification: "settle-from-durable-output" as const, actions: [] }
 
-      // A provider request proven not dispatched (no ResponseStarted) by an
-      // absent owner is eligible to resume; nothing was sent to the provider.
-      if (snapshot.phase === "dispatching" && !responseStarted && !ownerPresent)
-        return { ...base, classification: "safe-to-resume" as const, actions: [] }
-
-      // Everything else with an absent owner is ambiguous dispatched work.
+      // Once dispatch begins, absence of a response is not proof that the
+      // request was never sent. An absent owner therefore requires recovery.
       if (!ownerPresent) {
-        const reason: RecoveryReason = evidence.uncertainMutation
-          ? "mutation-outcome-unknown"
-          : snapshot.phase === "responding" || snapshot.phase === "dispatching" || snapshot.phase === "admitting"
-            ? "provider-dispatch-ambiguous"
-            : snapshot.phase === "compacting"
-              ? "compaction-partial"
-              : "sequence-inconsistent"
+        const reason: RecoveryReason = pendingQuestion
+          ? "question-disconnected"
+          : evidence.uncertainMutation
+            ? "mutation-outcome-unknown"
+            : snapshot.phase === "responding" || snapshot.phase === "dispatching" || snapshot.phase === "admitting"
+              ? "provider-dispatch-ambiguous"
+              : snapshot.phase === "compacting"
+                ? "compaction-partial"
+                : "sequence-inconsistent"
         return {
           ...base,
           classification: "needs-user-decision" as const,

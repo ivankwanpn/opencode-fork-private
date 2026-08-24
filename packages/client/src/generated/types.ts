@@ -3154,6 +3154,21 @@ export type SessionsHistoryOutput = {
     | {
         readonly id: string
         readonly metadata?: { readonly [x: string]: JsonValue }
+        readonly type: "session.next.input.terminalized"
+        readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+        readonly location?: { readonly directory: string; readonly workspaceID?: string }
+        readonly data: {
+          readonly timestamp: number
+          readonly sessionID: string
+          readonly inputID: string
+          readonly outcome: "completed" | "error" | "cancelled" | "recovery-required"
+          readonly resultMessageID?: string
+          readonly error?: { readonly name: string; readonly data: JsonValue }
+        }
+      }
+    | {
+        readonly id: string
+        readonly metadata?: { readonly [x: string]: JsonValue }
         readonly type: "session.next.turn.started"
         readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
         readonly location?: { readonly directory: string; readonly workspaceID?: string }
@@ -4692,6 +4707,21 @@ export type SessionsEventsOutput =
           | { readonly type: "start" }
           | { readonly type: "steer"; readonly expectedTurnID: string }
           | { readonly type: "queue" }
+      }
+    }
+  | {
+      readonly id: string
+      readonly metadata?: { readonly [x: string]: unknown }
+      readonly type: "session.next.input.terminalized"
+      readonly durable?: { readonly aggregateID: string; readonly seq: number; readonly version: number }
+      readonly location?: { readonly directory: string; readonly workspaceID?: string }
+      readonly data: {
+        readonly timestamp: number
+        readonly sessionID: string
+        readonly inputID: string
+        readonly outcome: "completed" | "error" | "cancelled" | "recovery-required"
+        readonly resultMessageID?: string
+        readonly error?: { readonly name: string; readonly data: unknown }
       }
     }
   | {
@@ -7570,6 +7600,15 @@ export type ServerPluginsRuntimeOutput = {
         readonly message?: string | null
       }>
     }>
+    readonly ui?: ReadonlyArray<{
+      readonly id: string
+      readonly kind: "command" | "panel"
+      readonly description?: string | null
+      readonly pluginID: string
+      readonly version: string
+      readonly generation: number | "Infinity" | "-Infinity" | "NaN"
+      readonly group?: string | null
+    }> | null
   }
 }
 

@@ -1,7 +1,7 @@
 export * as ProviderReader from "./provider-reader"
 
 import { Cause, Context, Effect, Exit, Layer, Stream } from "effect"
-import { LLMClient, LLMError, LLMEvent, type LLMRequest } from "@opencode-ai/llm"
+import { LLMClient, LLMError, LLMEvent, isContextOverflowFailure, type LLMRequest } from "@opencode-ai/llm"
 import { makeGlobalNode } from "../../effect/app-node"
 import { LayerNodePlatform } from "../../effect/app-node-platform"
 import { SessionEvent } from "../event"
@@ -9,7 +9,12 @@ import type { PublicationActor } from "./publication-actor"
 
 export type ProviderTurnResult =
   | { readonly kind: "completed" }
-  | { readonly kind: "error"; readonly error: SessionEvent.ErrorInfo; readonly retryable: boolean }
+  | {
+      readonly kind: "error"
+      readonly error: SessionEvent.ErrorInfo
+      readonly retryable: boolean
+      readonly contextOverflow: boolean
+    }
   | { readonly kind: "interrupted" }
 
 export interface Interface {
@@ -23,7 +28,10 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/v2
 
 const llmErrorInfo = (error: LLMError): SessionEvent.ErrorInfo => ({
   name: error.reason._tag,
-  data: { message: error.reason.message },
+  data: {
+    message: error.reason.message,
+    ...(isContextOverflowFailure(error) ? { classification: "context-overflow" } : {}),
+  },
 })
 
 const layer = Layer.effect(
@@ -47,7 +55,10 @@ const layer = Layer.effect(
                   // actor's interrupt flag has high-priority ingress.
                   if (yield* input.actor.interrupted) return yield* Effect.interrupt
                   const accepted = yield* input.actor.offer({ type: "provider-event", event })
-                  if (!accepted) return yield* Effect.die("PublicationActor mailbox overflow")
+                  if (!accepted) {
+                    if (yield* input.actor.interrupted) return yield* Effect.interrupt
+                    return yield* Effect.die("PublicationActor rejected provider event")
+                  }
                   if (yield* input.actor.interrupted) return yield* Effect.interrupt
                 }),
               ),
@@ -57,13 +68,33 @@ const layer = Layer.effect(
           if (Exit.isFailure(exit)) {
             if (Cause.hasInterrupts(exit.cause)) return { kind: "interrupted" } as const
             const failure = Cause.squash(exit.cause)
-            if (failure instanceof LLMError)
-              return { kind: "error", error: llmErrorInfo(failure), retryable: failure.retryable } as const
+            if (failure instanceof LLMError) {
+              const contextOverflow = isContextOverflowFailure(failure) && !(yield* input.actor.assistantStarted)
+              return {
+                kind: "error",
+                error: llmErrorInfo(failure),
+                retryable: failure.retryable,
+                contextOverflow,
+              } as const
+            }
             return yield* Effect.die(failure)
           }
           // Wait until the actor processed every forwarded event (including
           // the terminal finish) before reading terminal state.
           yield* input.actor.barrier
+          if (yield* input.actor.interrupted) return { kind: "interrupted" } as const
+          const providerError = yield* input.actor.error
+          if (providerError) {
+            const data = providerError.data as
+              | { readonly classification?: unknown; readonly retryable?: unknown }
+              | undefined
+            return {
+              kind: "error",
+              error: providerError,
+              retryable: data?.retryable === true,
+              contextOverflow: data?.classification === "context-overflow" && !(yield* input.actor.assistantStarted),
+            } as const
+          }
           const finished = yield* input.actor.finished
           if (!finished) return yield* Effect.die("Provider stream ended without a terminal event")
           return { kind: "completed" } as const

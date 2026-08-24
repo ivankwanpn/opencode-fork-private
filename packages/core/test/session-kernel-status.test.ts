@@ -11,6 +11,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { Kernel } from "@opencode-ai/core/session/kernel"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
+import { KernelPluginHost } from "@opencode-ai/core/session/kernel/plugin-host"
 import { StatusProjector } from "@opencode-ai/core/session/kernel/status-projector"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Prompt } from "@opencode-ai/core/session/prompt"
@@ -27,7 +28,38 @@ const projects = Layer.succeed(
     commit: () => Effect.void,
   }),
 )
-const pluginMap = pluginLocationMap()
+const statusObservations: unknown[] = []
+const pluginHost = Layer.succeed(
+  KernelPluginHost.Service,
+  KernelPluginHost.Service.of({
+    install: () => Effect.die("unused"),
+    disable: () => Effect.void,
+    dispose: () => Effect.void,
+    has: () => Effect.succeed(false),
+    snapshot: () => Effect.succeed([]),
+    ownedContributions: () => Effect.succeed([]),
+    ui: { list: () => Effect.succeed([]) },
+    services: {
+      provide: () => Effect.void,
+      retract: () => Effect.void,
+      has: () => Effect.succeed(false),
+      get: () => Effect.die("unused"),
+      list: () => Effect.succeed([]),
+    },
+    seams: {
+      register: () => Effect.succeed(Effect.void),
+      active: () => Effect.succeed(0),
+      run: (name, event) =>
+        name === KernelPluginHost.SeamName.statusObserve
+          ? Effect.sync(() => {
+              statusObservations.push(event)
+              return event
+            })
+          : Effect.succeed(event),
+    },
+  }),
+)
+const pluginMap = pluginLocationMap(undefined, undefined, undefined, pluginHost)
 const location = Location.Ref.make({ directory: AbsolutePath.make("/project") })
 
 const it = testEffect(
@@ -41,11 +73,7 @@ const it = testEffect(
       Kernel.node,
       LifecycleStore.node,
     ]),
-    [
-      [ProjectV2.node, projects],
-      [SessionExecution.node, SessionExecution.noopLayer],
-      pluginMap.replacement,
-    ],
+    [[ProjectV2.node, projects], [SessionExecution.node, SessionExecution.noopLayer], pluginMap.replacement],
   ),
 )
 
@@ -100,7 +128,10 @@ describe("StatusProjector", () => {
         prompt: Prompt.make({ text: "Status turn" }),
         resume: false,
       })
-      expect(yield* sessions.status(session.id)).toEqual({ type: "kernel", state: "idle" })
+      statusObservations.length = 0
+      const idle = yield* sessions.status(session.id)
+      expect(idle).toEqual({ type: "kernel", state: "idle" })
+      expect(statusObservations).toEqual([{ sessionID: session.id, status: idle }])
       const lease = yield* store.start({
         sessionID: session.id,
         inputID: admitted.id,

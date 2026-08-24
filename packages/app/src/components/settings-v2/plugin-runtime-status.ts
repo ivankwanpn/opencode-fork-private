@@ -12,14 +12,31 @@ type RuntimeValue = {
         readonly message?: string | null
       }[]
     }[]
+    readonly ui?: readonly RuntimeUIContribution[] | null
   }
+}
+
+export type RuntimeUIContribution = {
+  readonly id: string
+  readonly kind: Plugin.UIContributionKind
+  readonly description?: string | null
+  readonly pluginID: string
+  readonly version: string
+  readonly generation: number | string
+  readonly group?: string | null
 }
 
 export type PluginRuntimePresentation = {
   readonly state: Plugin.RuntimeState
   readonly capabilities: readonly Plugin.RuntimeCapability[]
+  readonly ui?: readonly RuntimeUIContribution[]
   readonly stale: boolean
   readonly message?: string
+}
+
+export function pluginUIContributions(pluginID: string, runtime: PluginLoadState<RuntimeValue>) {
+  if (runtime.state !== "ready" && runtime.state !== "refreshing" && runtime.state !== "stale") return []
+  return (runtime.value.data.ui ?? []).filter((contribution) => contribution.pluginID === pluginID)
 }
 
 export function pluginRuntimePresentation(
@@ -44,6 +61,7 @@ export function pluginRuntimePresentation(
           ? { message: capability.message }
           : {}),
       })),
+      ...(runtime.value.data.ui ? { ui: pluginUIContributions(pluginID, runtime) } : {}),
       stale: runtime.state === "stale",
       ...(runtime.state === "stale" ? { message: runtime.error } : {}),
     }

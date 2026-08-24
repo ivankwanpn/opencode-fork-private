@@ -11,6 +11,7 @@ async function setup() {
     id,
     title,
     projectID: "project",
+    engine: "classic",
     location: { directory: "/workspace" },
     ...(parentID && { parentID }),
     cost: 0,

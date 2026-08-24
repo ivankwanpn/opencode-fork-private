@@ -76,11 +76,20 @@ type Dependencies = {
   readonly plugins: PluginRuntime.Interface
 }
 
+export type Summary = {
+  readonly sessionID: SessionSchema.ID
+  readonly text: string
+  readonly recent: string
+}
+
+export type SummaryTransform = (summary: Summary) => Effect.Effect<Summary>
+
 type Input = {
   readonly sessionID: SessionSchema.ID
   readonly entries: readonly Entry[]
   readonly model: Model
   readonly request: LLMRequest
+  readonly transformSummary?: SummaryTransform
 }
 
 type AutocontinueInput = {
@@ -340,13 +349,35 @@ export const make = (dependencies: Dependencies) => {
           return false
         }
 
+        const transformed = input.transformSummary
+          ? yield* restore(
+              input.transformSummary({
+                sessionID: input.sessionID,
+                text: summary,
+                recent: target.recent,
+              }),
+            ).pipe(Effect.exit)
+          : Exit.succeed({ sessionID: input.sessionID, text: summary, recent: target.recent })
+        if (Exit.isFailure(transformed)) {
+          yield* publishFailed(
+            Cause.hasInterruptsOnly(transformed.cause)
+              ? "Compaction interrupted"
+              : "Compaction summary transform failed",
+          )
+          return yield* Effect.failCause(transformed.cause)
+        }
+        if (!transformed.value.text.trim()) {
+          yield* publishFailed("Empty transformed summary")
+          return false
+        }
+
         yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
           sessionID: input.sessionID,
           messageID,
           timestamp: yield* DateTime.now,
           reason: input.reason,
-          text: summary,
-          recent: target.recent,
+          text: transformed.value.text,
+          recent: transformed.value.recent,
         })
         return true
       }),
@@ -367,8 +398,7 @@ export const make = (dependencies: Dependencies) => {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
-    if (estimateRequest(input.request) <= context - Math.max(output, config.buffer))
-      return false
+    if (estimateRequest(input.request) <= context - Math.max(output, config.buffer)) return false
     return yield* compactAfterOverflow(input)
   })
   return {
@@ -385,6 +415,7 @@ export interface Interface {
     readonly session: SessionSchema.Info
     readonly prompt?: Prompt
     readonly reason: "auto" | "manual"
+    readonly transformSummary?: SummaryTransform
   }) => Effect.Effect<Result, SessionRunnerModel.Error | MessageDecodeError>
 }
 
@@ -412,6 +443,7 @@ const layer = Layer.effect(
           entries: messages.map((message, seq) => ({ seq, message })),
           model,
           request: LLM.request({ model, messages: [], tools: [] }),
+          transformSummary: input.transformSummary,
         }
         const compacted = yield* input.reason === "auto"
           ? compaction.compactAutomatic(compactInput)

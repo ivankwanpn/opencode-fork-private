@@ -1,7 +1,7 @@
 export * as SessionV2 from "./session"
 export * from "./session/schema"
 
-import { Cause, Context, DateTime, Effect, Exit, Layer, Schema, Scope, Stream } from "effect"
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Schema, Scope, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
 import { and, asc, desc, eq, gte, gt, isNull, like, lt, or, sql, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
@@ -39,6 +39,7 @@ import { SessionCompaction } from "./session/compaction"
 import { SessionSkill } from "./session/skill"
 import { LifecycleStore } from "./session/kernel/lifecycle-store"
 import { StatusProjector } from "./session/kernel/status-projector"
+import { KernelPluginHost } from "./session/kernel/plugin-host"
 import { Snapshot } from "./snapshot"
 import { SessionRevert } from "./session/revert"
 import { Revert } from "@opencode-ai/schema/revert"
@@ -257,8 +258,10 @@ export interface Interface {
     expectedActiveAttemptID?: EventV2.ID
     resume?: boolean
     commit?: boolean
-  }) =>
-    Effect.Effect<SessionInput.Admitted, NotFoundError | PromptConflictError | ActiveAttemptConflictError | TurnConflictError>
+  }) => Effect.Effect<
+    SessionInput.Admitted,
+    NotFoundError | PromptConflictError | ActiveAttemptConflictError | TurnConflictError
+  >
   readonly command: (input: {
     id?: SessionMessage.ID
     sessionID: SessionSchema.ID
@@ -408,9 +411,7 @@ const layer = Layer.effect(
       return yield* mutate(sessionID, (snapshot) => snapshot)
     })
 
-    const commitStagedRevert = Effect.fn("V2Session.commitStagedRevert")(function* (
-      session: SessionSchema.Info,
-    ) {
+    const commitStagedRevert = Effect.fn("V2Session.commitStagedRevert")(function* (session: SessionSchema.Info) {
       if (!session.revert) return session
       yield* SessionRevert.commit(session).pipe(Effect.provideService(EventV2.Service, events))
       return yield* publishCompatibilityUpdate(session.id)
@@ -421,10 +422,7 @@ const layer = Layer.effect(
     ) {
       if (intent?.type !== "start") return
       yield* execution
-        .exclusive(
-          sessionID,
-          SessionLifecycle.reconcileForStart(db, store, events, sessionID),
-        )
+        .exclusive(sessionID, SessionLifecycle.reconcileForStart(db, store, events, sessionID))
         .pipe(Effect.catchTag("Session.ExecutionBusyError", () => Effect.void))
     })
 
@@ -529,12 +527,7 @@ const layer = Layer.effect(
         )
       }),
       remove: Effect.fn("V2Session.remove")(function* (sessionID) {
-        const row = yield* db
-          .select()
-          .from(SessionTable)
-          .where(eq(SessionTable.id, sessionID))
-          .get()
-          .pipe(Effect.orDie)
+        const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get().pipe(Effect.orDie)
         if (!row) return yield* new NotFoundError({ sessionID })
         yield* result.interrupt(sessionID)
         const childRows = yield* db
@@ -577,7 +570,13 @@ const layer = Layer.effect(
             ]
             conditions.push(
               input.directory !== undefined
-                ? or(...pathConditions, and(or(isNull(SessionTable.path), eq(SessionTable.path, "")), eq(SessionTable.directory, input.directory))!)!
+                ? or(
+                    ...pathConditions,
+                    and(
+                      or(isNull(SessionTable.path), eq(SessionTable.path, "")),
+                      eq(SessionTable.directory, input.directory),
+                    )!,
+                  )!
                 : or(...pathConditions)!,
             )
           }
@@ -947,6 +946,17 @@ const layer = Layer.effect(
       switchModel: commands.switchModel,
       compact: Effect.fn("V2Session.compact")(function* (input) {
         const session = yield* result.get(input.sessionID)
+        if (session.engine === "kernel") {
+          const compact = execution.compact
+          if (!compact) return yield* new BusyError({ sessionID: session.id })
+          const outcome = yield* compact({
+            sessionID: session.id,
+            prompt: input.prompt,
+            reason: input.reason ?? "manual",
+          })
+          if (outcome.shouldContinue) yield* execution.resume(session.id).pipe(Effect.orDie)
+          return
+        }
         let shouldContinue = false
         const work = Effect.gen(function* () {
           yield* events.publish(
@@ -1002,7 +1012,20 @@ const layer = Layer.effect(
         // is never written as a second durable truth.
         if (session.engine === "kernel") {
           const snapshot = yield* lifecycle.get(sessionID)
-          return StatusProjector.deriveStatus(snapshot)
+          const status = StatusProjector.deriveStatus(snapshot)
+          yield* Effect.gen(function* () {
+            const host = yield* Effect.serviceOption(KernelPluginHost.Service)
+            if (Option.isNone(host)) return
+            yield* host.value.seams
+              .run(KernelPluginHost.SeamName.statusObserve, { sessionID, status })
+              .pipe(Effect.orDie)
+          }).pipe(
+            Effect.provide(locations.get(session.location)),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Kernel status observation failed", { sessionID, cause }).pipe(Effect.asVoid),
+            ),
+          )
+          return status
         }
         const active = yield* execution.active
         return yield* SessionAttempt.status(db, sessionID, active.has(sessionID))

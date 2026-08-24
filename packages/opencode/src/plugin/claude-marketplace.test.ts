@@ -10,11 +10,12 @@ import { MCP } from "@opencode-ai/core/mcp"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SkillV2 } from "@opencode-ai/core/skill"
+import { KernelPluginHost } from "@opencode-ai/core/session/kernel/plugin-host"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { Effect, Layer, LayerMap } from "effect"
+import { Effect, Layer, LayerMap, Option } from "effect"
 import { Config } from "../config/config"
 import { ConfigCommand } from "../config/command"
 import {
@@ -340,6 +341,29 @@ describe("NativeClaudeMarketplace", () => {
       }),
       Layer.mock(PluginV2.Service, { status: () => Effect.succeed({}) }),
       Layer.mock(ToolRegistry.Service, { sources: () => Effect.succeed([]) }),
+      Layer.mock(KernelPluginHost.Service, {
+        services: {
+          provide: () => Effect.void,
+          retract: () => Effect.void,
+          has: () => Effect.succeed(false),
+          get: () => Effect.succeed(Option.none()),
+          list: () => Effect.succeed([]),
+        },
+        seams: KernelPluginHost.makeSeams(),
+        ui: {
+          list: () =>
+            Effect.succeed([
+              {
+                id: "demo.panel",
+                kind: "panel" as const,
+                description: "Demo panel",
+                pluginID: Plugin.ID.make("demo@local-marketplace"),
+                version: "1.0.0",
+                generation: 3,
+              },
+            ]),
+        },
+      }),
     )
 
     const result = await Effect.runPromise(
@@ -359,6 +383,16 @@ describe("NativeClaudeMarketplace", () => {
           { name: "commands", state: "ready" },
           { name: "mcp", state: "ready" },
         ],
+      },
+    ])
+    expect(result.ui).toEqual([
+      {
+        id: "demo.panel",
+        kind: "panel",
+        description: "Demo panel",
+        pluginID: Plugin.ID.make("demo@local-marketplace"),
+        version: "1.0.0",
+        generation: 3,
       },
     ])
   })

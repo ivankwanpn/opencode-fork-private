@@ -64,6 +64,11 @@ export class AuthError extends Schema.TaggedErrorClass<AuthError>()("MCP.AuthErr
   message: Schema.String,
 }) {}
 
+export class RegistrationError extends Schema.TaggedErrorClass<RegistrationError>()("MCP.RegistrationError", {
+  name: Schema.String,
+  message: Schema.String,
+}) {}
+
 export interface ServerInstructions {
   readonly name: string
   readonly instructions: string
@@ -83,6 +88,7 @@ export interface Interface {
     clientName?: string,
   ) => Effect.Effect<Record<string, ResourceTemplateInfo & { client: string }>>
   readonly add: (name: string, server: ServerConfig) => Effect.Effect<{ status: Record<string, Status> }>
+  readonly contribute: (name: string, server: ServerConfig) => Effect.Effect<void, RegistrationError, Scope.Scope>
   readonly connect: (name: string) => Effect.Effect<void, NotFoundError>
   readonly disconnect: (name: string) => Effect.Effect<void, NotFoundError>
   readonly getPrompt: (
@@ -121,6 +127,7 @@ export const emptyLayer = Layer.succeed(
     resources: () => Effect.succeed({}),
     resourceTemplates: () => Effect.succeed({}),
     add: () => Effect.succeed({ status: {} }),
+    contribute: (name) => Effect.fail(new RegistrationError({ name, message: "MCP runtime unavailable" })),
     connect: (name) => Effect.fail(new NotFoundError({ name })),
     disconnect: (name) => Effect.fail(new NotFoundError({ name })),
     getPrompt: () => Effect.succeed(undefined),
@@ -147,6 +154,7 @@ export const DEFAULT_BLOCKED_TOOLS: readonly string[] = ["browser_run_code_unsaf
 type State = {
   readonly configured: Readonly<Record<string, ServerConfig>>
   readonly runtime: Map<string, ServerConfig>
+  readonly runtimeOwners: Map<string, symbol>
   readonly status: Map<string, Status>
   readonly clients: Map<string, Client>
   readonly definitions: Map<string, ReadonlyArray<MCPToolDefinition>>
@@ -193,6 +201,7 @@ const layer = Layer.effect(
     const state: State = {
       configured: resolved.servers,
       runtime: new Map(),
+      runtimeOwners: new Map(),
       status: new Map(),
       clients: new Map(),
       definitions: new Map(),
@@ -259,11 +268,16 @@ const layer = Layer.effect(
     const closeTransport = (transport: TransportWithAuth) =>
       Effect.tryPromise(() => transport.close()).pipe(Effect.ignore)
 
-    const removeClient = Effect.fnUntraced(function* (name: string) {
+    const detachClient = (name: string) => {
       const client = state.clients.get(name)
       state.clients.delete(name)
       state.definitions.delete(name)
       state.instructions.delete(name)
+      return client
+    }
+
+    const removeClient = Effect.fnUntraced(function* (name: string) {
+      const client = detachClient(name)
       if (client) yield* close(client)
       return client !== undefined
     })
@@ -508,6 +522,8 @@ const layer = Layer.effect(
         state.definitions.clear()
         state.instructions.clear()
         state.pendingOAuth.clear()
+        state.runtime.clear()
+        state.runtimeOwners.clear()
         yield* Effect.forEach(clients, close, { concurrency: "unbounded", discard: true })
         yield* Effect.forEach(
           oauth,
@@ -608,6 +624,7 @@ const layer = Layer.effect(
     })
 
     const add: Interface["add"] = Effect.fn("MCP.add")(function* (name, server) {
+      state.runtimeOwners.delete(name)
       state.runtime.set(name, server)
       yield* createAndStore(name, server)
       return { status: yield* status() }
@@ -676,6 +693,39 @@ const layer = Layer.effect(
       state.pendingOAuth.delete(name)
       yield* callback.cancelPending(authKey(name))
       if (pending) yield* closeTransport(pending.transport)
+    })
+
+    const removeContribution = Effect.fnUntraced(function* (name: string, owner: symbol) {
+      if (state.runtimeOwners.get(name) !== owner) return
+      state.runtimeOwners.delete(name)
+      state.runtime.delete(name)
+      const client = detachClient(name)
+      state.status.delete(name)
+      yield* publishChanged(name)
+      yield* discardPendingAuth(name)
+      if (client) yield* close(client)
+    })
+
+    const contribute: Interface["contribute"] = Effect.fn("MCP.contribute")(function* (name, server) {
+      if (serverConfig(name)) {
+        return yield* new RegistrationError({
+          name,
+          message: `MCP server "${name}" is already registered`,
+        })
+      }
+
+      const scope = yield* Scope.Scope
+      const owner = Symbol(name)
+      state.runtime.set(name, server)
+      state.runtimeOwners.set(name, owner)
+      yield* Scope.addFinalizer(scope, removeContribution(name, owner).pipe(Effect.ignore))
+
+      const result = yield* create(name, server)
+      if (state.runtimeOwners.get(name) !== owner) {
+        if (result.client) yield* close(result.client)
+        return
+      }
+      yield* applyResult(name, server, result, true)
     })
 
     const beginAuth: (name: string) => Effect.Effect<AuthResult, NotFoundError | AuthError> = Effect.fn(
@@ -848,6 +898,7 @@ const layer = Layer.effect(
       resources,
       resourceTemplates,
       add,
+      contribute,
       connect,
       disconnect,
       getPrompt,

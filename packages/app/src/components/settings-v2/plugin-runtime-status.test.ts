@@ -35,6 +35,23 @@ describe("pluginRuntimePresentation", () => {
               ],
             },
           ],
+          ui: [
+            {
+              id: "review.open",
+              kind: "command",
+              description: "Open review",
+              pluginID: Plugin.ID.make("demo@marketplace"),
+              version: "1.0.0",
+              generation: 7,
+            },
+            {
+              id: "other.panel",
+              kind: "panel",
+              pluginID: Plugin.ID.make("other@marketplace"),
+              version: "1.0.0",
+              generation: 2,
+            },
+          ],
         }),
       ),
     ).toEqual({
@@ -42,6 +59,16 @@ describe("pluginRuntimePresentation", () => {
       capabilities: [
         { name: "skills", state: "ready" },
         { name: "mcp", state: "failed", message: "authentication required" },
+      ],
+      ui: [
+        {
+          id: "review.open",
+          kind: "command",
+          description: "Open review",
+          pluginID: Plugin.ID.make("demo@marketplace"),
+          version: "1.0.0",
+          generation: 7,
+        },
       ],
       stale: false,
     })

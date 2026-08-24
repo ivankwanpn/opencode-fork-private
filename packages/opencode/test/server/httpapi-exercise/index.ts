@@ -2213,6 +2213,7 @@ const scenarios: Scenario[] = [
     .json(200, boolean, "status"),
   http.protected
     .get("/tui/control/next", "tui.control.next")
+    .probe({ path: "/tui/control/response", body: { ok: true } })
     .mutating()
     .seeded((ctx) => ctx.tuiRequest({ path: "/tui/exercise", body: { text: "queued" } }))
     .json(

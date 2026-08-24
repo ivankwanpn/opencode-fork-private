@@ -59,6 +59,7 @@ import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
 import { timeline } from "../../util/native-transcript"
+import { createSessionEngineInput } from "../../util/execution-engine"
 
 registerOpencodeSpinner()
 
@@ -1016,6 +1017,7 @@ export function Prompt(props: PromptProps) {
             id: selectedModel.modelID,
             variant,
           },
+          ...createSessionEngineInput(),
         })
         sessionID = created.id
       } catch (error) {

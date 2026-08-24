@@ -123,6 +123,28 @@ describe("QuestionTool", () => {
     }),
   )
 
+  it.effect("binds a question request to the Kernel generation carried by the tool invocation", () =>
+    Effect.gen(function* () {
+      captured = undefined
+      reject = false
+      deny = false
+      const registry = yield* ToolRegistry.Service
+
+      yield* settleTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        generation: 7,
+        call: { type: "tool-call", id: "call-question-generation", name: "question", input: { questions: [] } },
+      })
+
+      expect(capturedInput()).toEqual({
+        sessionID,
+        questions: [],
+        tool: { messageID: toolIdentity.assistantMessageID, callID: "call-question-generation" },
+        generation: 7,
+      })
+    }),
+  )
   it.effect("does not invent tool ownership metadata without a durable registry source", () =>
     Effect.gen(function* () {
       captured = undefined

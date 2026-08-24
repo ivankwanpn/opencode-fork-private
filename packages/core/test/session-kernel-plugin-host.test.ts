@@ -1,11 +1,18 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Layer, Scope, Schema } from "effect"
+import { Cause, Deferred, Effect, Layer, Option, Scope, Schema } from "effect"
 import { Plugin } from "@opencode-ai/schema/plugin"
+import { AgentV2 } from "@opencode-ai/core/agent"
+import { CommandV2 } from "@opencode-ai/core/command"
+import { ConfigMCP } from "@opencode-ai/core/config/mcp"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Location } from "@opencode-ai/core/location"
+import { LSP } from "@opencode-ai/core/lsp/lsp"
+import { MCP } from "@opencode-ai/core/mcp"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
+import { AbsolutePath } from "@opencode-ai/core/schema"
 import { KernelPluginHost, SeamName, NextCalledError } from "@opencode-ai/core/session/kernel/plugin-host"
+import { SkillV2 } from "@opencode-ai/core/skill"
 import { Tool } from "@opencode-ai/core/tool/tool"
 import { Tools } from "@opencode-ai/core/tool/tools"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
@@ -36,12 +43,46 @@ const stubTools = Layer.succeed(
   }),
 )
 
+const mcpCatalog: string[] = []
+const stubMcp = Layer.mock(MCP.Service, {
+  contribute: (name) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.Scope
+      mcpCatalog.push(name)
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => {
+          const index = mcpCatalog.lastIndexOf(name)
+          if (index >= 0) mcpCatalog.splice(index, 1)
+        }),
+      )
+    }),
+})
+
+const lspCatalog: string[] = []
+const stubLsp = Layer.mock(LSP.Service, {
+  contribute: (server) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.Scope
+      lspCatalog.push(server.id)
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => {
+          const index = lspCatalog.lastIndexOf(server.id)
+          if (index >= 0) lspCatalog.splice(index, 1)
+        }),
+      )
+    }),
+})
+
 const it = testEffect(
   AppNodeBuilder.build(
-    LayerNode.group([KernelPluginHost.node, PluginRuntime.node]),
+    LayerNode.group([AgentV2.node, CommandV2.node, KernelPluginHost.node, PluginRuntime.node, SkillV2.node]),
     [
       [Location.node, tempLocationLayer],
       [ToolRegistry.toolsNode, stubTools],
+      [MCP.node, stubMcp],
+      [LSP.node, stubLsp],
     ],
   ).pipe(Layer.fresh),
 )
@@ -90,9 +131,7 @@ describe("Kernel plugin host", () => {
       yield* host.services.provide("mcp:test", { server: "test" })
       expect(yield* activation.state).toBe("ready")
       expect(toolCatalogNames).toContain("waited_tool")
-      expect(yield* host.ownedContributions(activation.generation)).toMatchObject([
-        { kind: "tool", id: "waited_tool" },
-      ])
+      expect(yield* host.ownedContributions(activation.generation)).toMatchObject([{ kind: "tool", id: "waited_tool" }])
       yield* activation.dispose
       expect(yield* host.ownedContributions(activation.generation)).toEqual([])
       expect(toolCatalogNames).not.toContain("waited_tool")
@@ -129,11 +168,10 @@ describe("Kernel plugin host", () => {
         manifest: manifest({ capabilities: ["tool", "hook"], permissions: ["tool.register"] }),
         mount: (ctx) =>
           Effect.gen(function* () {
-            yield* Deferred.await(release)
-              .pipe(
-                Effect.flatMap(() => ctx.register.tool({ late_tool: echo })),
-                Effect.forkScoped,
-              )
+            yield* Deferred.await(release).pipe(
+              Effect.flatMap(() => ctx.register.tool({ late_tool: echo })),
+              Effect.forkScoped,
+            )
             return {} as KernelPluginHost.PluginContribution
           }),
       })
@@ -150,7 +188,7 @@ describe("Kernel plugin host", () => {
       const activation = yield* host.install({
         manifest: manifest({ capabilities: ["tool"], permissions: ["tool.register"] }),
         mount: (ctx) =>
-          Deferred.succeed(captured, ctx.register).pipe(Effect.map(() => ({} as KernelPluginHost.PluginContribution))),
+          Deferred.succeed(captured, ctx.register).pipe(Effect.map(() => ({}) as KernelPluginHost.PluginContribution)),
       })
       const register = yield* Deferred.await(captured)
       yield* host.disable(activation.id)
@@ -188,11 +226,17 @@ describe("Kernel plugin host", () => {
     Effect.gen(function* () {
       const host = yield* KernelPluginHost.Service
       const first = yield* host.install(
-        { manifest: manifest({ id: Plugin.ID.make("group-a") }), mount: () => Effect.succeed({ tools: { group_a_tool: echo } }) },
+        {
+          manifest: manifest({ id: Plugin.ID.make("group-a") }),
+          mount: () => Effect.succeed({ tools: { group_a_tool: echo } }),
+        },
         { group: "a" },
       )
       const second = yield* host.install(
-        { manifest: manifest({ id: Plugin.ID.make("group-b") }), mount: () => Effect.succeed({ tools: { group_b_tool: echo } }) },
+        {
+          manifest: manifest({ id: Plugin.ID.make("group-b") }),
+          mount: () => Effect.succeed({ tools: { group_b_tool: echo } }),
+        },
         { group: "b" },
       )
       yield* host.disable(first.id)
@@ -284,7 +328,11 @@ describe("Kernel plugin host", () => {
       // A handler that mutates its frozen input is a defect; the seam run
       // rejects it instead of forwarding a corrupt value.
       yield* host.install({
-        manifest: manifest({ id: Plugin.ID.make("freezes-mutator"), capabilities: ["hook"], permissions: ["session.context.transform"] }),
+        manifest: manifest({
+          id: Plugin.ID.make("freezes-mutator"),
+          capabilities: ["hook"],
+          permissions: ["session.context.transform"],
+        }),
         mount: () =>
           Effect.succeed({
             seams: [
@@ -339,6 +387,300 @@ describe("Kernel plugin host", () => {
       })
       expect(yield* activation.state).toBe("failed")
       expect(toolCatalogNames).not.toContain("denied_tool")
+    }),
+  )
+
+  it.effect("atomically replaces an activation with the same plugin ID", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const first = yield* host.install({
+        manifest: manifest(),
+        mount: () => Effect.succeed({ tools: { replaced_tool: echo } }),
+      })
+      expect(toolCatalogNames).toContain("replaced_tool")
+
+      const second = yield* host.install({
+        manifest: manifest(),
+        mount: () => Effect.succeed({ tools: { replacement_tool: echo } }),
+      })
+
+      expect(yield* first.state).toBe("disabled")
+      expect(yield* second.state).toBe("ready")
+      expect(toolCatalogNames).not.toContain("replaced_tool")
+      expect(toolCatalogNames).toContain("replacement_tool")
+      expect(yield* host.snapshot()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("retracts contributions when activation fails after a partial mount", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const activation = yield* host.install({
+        manifest: manifest({ capabilities: ["service", "tool"], permissions: [] }),
+        mount: () =>
+          Effect.succeed({
+            services: [{ id: "partial-service", value: { ready: true } }],
+            tools: { denied_after_service: echo },
+          }),
+      })
+
+      expect(yield* activation.state).toBe("failed")
+      expect(yield* host.services.has("partial-service")).toBe(false)
+      expect(toolCatalogNames).not.toContain("denied_after_service")
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([])
+    }),
+  )
+
+  it.effect("rejects a duplicate service owner without replacing the live provider", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const first = yield* host.install({
+        manifest: manifest({ id: Plugin.ID.make("service-owner-a"), capabilities: ["service"] }),
+        mount: () => Effect.succeed({ services: [{ id: "shared-service", value: { owner: "a" } }] }),
+      })
+      const second = yield* host.install({
+        manifest: manifest({ id: Plugin.ID.make("service-owner-b"), capabilities: ["service"] }),
+        mount: () => Effect.succeed({ services: [{ id: "shared-service", value: { owner: "b" } }] }),
+      })
+
+      expect(yield* first.state).toBe("ready")
+      expect(yield* second.state).toBe("failed")
+      expect(yield* host.services.get("shared-service")).toEqual(Option.some({ owner: "a" }))
+
+      yield* first.dispose
+      expect(yield* host.services.has("shared-service")).toBe(false)
+    }),
+  )
+
+  it.effect(
+    "registers command, skill, and agent contributions in their V2 registries and removes them on dispose",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* KernelPluginHost.Service
+        const commands = yield* CommandV2.Service
+        const skills = yield* SkillV2.Service
+        const agents = yield* AgentV2.Service
+        const activation = yield* host.install({
+          manifest: manifest({
+            id: Plugin.ID.make("registry-plugin"),
+            capabilities: ["command", "skill", "agent"],
+            permissions: ["ui.command.register"],
+          }),
+          mount: () =>
+            Effect.succeed({
+              commands: [
+                CommandV2.Info.make({
+                  name: "registry-command",
+                  template: "Run the registry command",
+                  description: "registered by a Kernel plugin",
+                }),
+              ],
+              skills: [
+                SkillV2.EmbeddedSource.make({
+                  type: "embedded",
+                  skill: SkillV2.Info.make({
+                    name: "registry-skill",
+                    description: "registered by a Kernel plugin",
+                    location: AbsolutePath.make("/plugin/registry-skill.md"),
+                    content: "Use the registry skill.",
+                  }),
+                }),
+              ],
+              agents: [
+                AgentV2.Info.make({
+                  id: AgentV2.ID.make("registry-agent"),
+                  request: { headers: {}, body: {} },
+                  mode: "subagent",
+                  hidden: false,
+                  permissions: [],
+                }),
+              ],
+            }),
+        })
+
+        expect((yield* commands.get("registry-command"))?.template).toBe("Run the registry command")
+        expect((yield* skills.list()).map((skill) => skill.name)).toContain("registry-skill")
+        expect((yield* agents.get(AgentV2.ID.make("registry-agent")))?.mode).toBe("subagent")
+
+        yield* activation.dispose
+        expect(yield* commands.get("registry-command")).toBeUndefined()
+        expect((yield* skills.list()).map((skill) => skill.name)).not.toContain("registry-skill")
+        expect(yield* agents.get(AgentV2.ID.make("registry-agent"))).toBeUndefined()
+      }),
+  )
+
+  it.effect("mounts and disposes scope-owned MCP and LSP contributions", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const activation = yield* host.install({
+        manifest: manifest({
+          id: Plugin.ID.make("runtime-contributions"),
+          capabilities: ["mcp", "lsp"],
+          permissions: ["mcp.manage", "lsp.manage"],
+        }),
+        mount: () =>
+          Effect.succeed({
+            mcp: [
+              {
+                id: "plugin-mcp",
+                server: new ConfigMCP.Local({
+                  type: "local",
+                  command: ["plugin-mcp"],
+                  disabled: true,
+                }),
+              },
+            ],
+            lsp: [
+              {
+                id: "plugin-lsp",
+                extensions: [".ts"],
+                root: async (_file, context) => context.directory,
+                spawn: async () => undefined,
+              },
+            ],
+          }),
+      })
+
+      expect(yield* activation.state).toBe("ready")
+      expect(mcpCatalog).toContain("plugin-mcp")
+      expect(lspCatalog).toContain("plugin-lsp")
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([
+        { kind: "mcp", id: "plugin-mcp" },
+        { kind: "lsp", id: "plugin-lsp" },
+      ])
+
+      yield* activation.dispose
+      expect(mcpCatalog).not.toContain("plugin-mcp")
+      expect(lspCatalog).not.toContain("plugin-lsp")
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([])
+    }),
+  )
+
+  it.effect("bridges scope-owned UI contributions with plugin ownership and removes them on dispose", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const activation = yield* host.install({
+        manifest: {
+          ...manifest({
+            id: Plugin.ID.make("ui-registry-plugin"),
+            capabilities: ["ui"],
+            permissions: ["ui.command.register", "ui.panel.register"],
+          }),
+          version: "2.3.4",
+        },
+        mount: () =>
+          Effect.succeed({
+            ui: [
+              { id: "review.open", kind: "command" as const, description: "Open the review workflow" },
+              { id: "review.summary", kind: "panel" as const, description: "Review summary" },
+            ],
+          }),
+      })
+
+      expect(yield* activation.state).toBe("ready")
+      expect(yield* host.ui.list()).toEqual([
+        {
+          id: "review.open",
+          kind: "command",
+          description: "Open the review workflow",
+          pluginID: Plugin.ID.make("ui-registry-plugin"),
+          version: "2.3.4",
+          generation: activation.generation,
+        },
+        {
+          id: "review.summary",
+          kind: "panel",
+          description: "Review summary",
+          pluginID: Plugin.ID.make("ui-registry-plugin"),
+          version: "2.3.4",
+          generation: activation.generation,
+        },
+      ])
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([
+        { kind: "ui", id: "review.open" },
+        { kind: "ui", id: "review.summary" },
+      ])
+
+      yield* activation.dispose
+      expect(yield* host.ui.list()).toEqual([])
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([])
+    }),
+  )
+
+  it.effect("rejects each UI contribution before publication when its product permission is absent", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const activation = yield* host.install({
+        manifest: manifest({
+          id: Plugin.ID.make("ui-permission-plugin"),
+          capabilities: ["ui"],
+          permissions: ["ui.command.register"],
+        }),
+        mount: () =>
+          Effect.succeed({
+            ui: [
+              { id: "allowed-command", kind: "command" as const },
+              { id: "forbidden-panel", kind: "panel" as const },
+            ],
+          }),
+      })
+
+      expect(yield* activation.state).toBe("failed")
+      expect(yield* host.ui.list()).toEqual([])
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([])
+    }),
+  )
+
+  it.effect("rejects MCP contributions before registration when mcp.manage is absent", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const activation = yield* host.install({
+        manifest: manifest({
+          id: Plugin.ID.make("missing-mcp-permission"),
+          capabilities: ["mcp"],
+          permissions: [],
+        }),
+        mount: () =>
+          Effect.succeed({
+            mcp: [
+              {
+                id: "forbidden-mcp",
+                server: new ConfigMCP.Local({ type: "local", command: ["forbidden-mcp"], disabled: true }),
+              },
+            ],
+          }),
+      })
+
+      expect(yield* activation.state).toBe("failed")
+      expect(mcpCatalog).not.toContain("forbidden-mcp")
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([])
+    }),
+  )
+  it.effect("rejects LSP contributions before registration when lsp.manage is absent", () =>
+    Effect.gen(function* () {
+      const host = yield* KernelPluginHost.Service
+      const activation = yield* host.install({
+        manifest: manifest({
+          id: Plugin.ID.make("missing-lsp-permission"),
+          capabilities: ["lsp"],
+          permissions: [],
+        }),
+        mount: () =>
+          Effect.succeed({
+            lsp: [
+              {
+                id: "forbidden-lsp",
+                extensions: [".ts"],
+                root: async (_file, context) => context.directory,
+                spawn: async () => undefined,
+              },
+            ],
+          }),
+      })
+
+      expect(yield* activation.state).toBe("failed")
+      expect(lspCatalog).not.toContain("forbidden-lsp")
+      expect(yield* host.ownedContributions(activation.generation)).toEqual([])
     }),
   )
 
@@ -397,7 +739,7 @@ describe("Linear plugin host deadlines", () => {
       const gate = yield* Deferred.make<void>()
       const activation = yield* host.install({
         manifest: manifest({ capabilities: [] }),
-        mount: () => Deferred.await(gate).pipe(Effect.map(() => ({} as KernelPluginHost.PluginContribution))),
+        mount: () => Deferred.await(gate).pipe(Effect.map(() => ({}) as KernelPluginHost.PluginContribution)),
       })
       expect(yield* activation.state).toBe("failed")
     }),

@@ -28,10 +28,7 @@ import { testEffect } from "./lib/effect"
 import { settleTool, toolDefinitions, toolIdentity } from "./lib/tool"
 
 const sessionID = SessionV2.ID.make("ses_code_mode")
-type Handler = (
-  input: Record<string, unknown>,
-  signal: AbortSignal | undefined,
-) => Promise<CallToolResult>
+type Handler = (input: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<CallToolResult>
 
 const handlers = new Map<string, Handler>()
 const assertions: PermissionV2.AssertInput[] = []
@@ -65,7 +62,11 @@ function entry(def: MCPToolDefinition): MCP.McpTool {
     clientName: "demo server",
     def,
     client: {
-      callTool: (request: { name: string; arguments?: Record<string, unknown> }, _schema: unknown, options: { signal?: AbortSignal }) => {
+      callTool: (
+        request: { name: string; arguments?: Record<string, unknown> },
+        _schema: unknown,
+        options: { signal?: AbortSignal },
+      ) => {
         calls.set(request.name, (calls.get(request.name) ?? 0) + 1)
         const handler = handlers.get(request.name)
         return handler
@@ -103,6 +104,7 @@ const mcp = Layer.succeed(
     resources: () => Effect.succeed({}),
     resourceTemplates: () => Effect.succeed({}),
     add: () => Effect.succeed({ status: {} }),
+    contribute: () => Effect.die("unused"),
     connect: (name) => Effect.fail(new MCP.NotFoundError({ name })),
     disconnect: (name) => Effect.fail(new MCP.NotFoundError({ name })),
     getPrompt: () => Effect.succeed(undefined),
@@ -218,19 +220,16 @@ const outputStore = Layer.mock(ToolOutputStore.Service, {
   cleanup: () => Effect.void,
 })
 
-const layer = AppNodeBuilder.build(
-  LayerNode.group([ToolRegistry.node, ToolRegistry.toolsNode, CodeModeTool.node]),
-  [
-    [MCP.node, mcp],
-    [AgentV2.node, agents],
-    [PermissionV2.node, permission],
-    [ToolProgress.node, progress],
-    [EventV2.node, events],
-    [Location.node, tempLocationLayer],
-    [ToolOutputStore.node, outputStore],
-    [SessionStore.node, sessions],
-  ],
-)
+const layer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node, ToolRegistry.toolsNode, CodeModeTool.node]), [
+  [MCP.node, mcp],
+  [AgentV2.node, agents],
+  [PermissionV2.node, permission],
+  [ToolProgress.node, progress],
+  [EventV2.node, events],
+  [Location.node, tempLocationLayer],
+  [ToolOutputStore.node, outputStore],
+  [SessionStore.node, sessions],
+])
 const it = testEffect(layer)
 
 function reset() {
@@ -241,15 +240,9 @@ function reset() {
   sessionPermissions = []
   latestPrompt = undefined
   currentAgent = AgentV2.Info.make({ ...currentAgent, permissions: [] })
-  handlers.set("echo", (input) =>
-    Promise.resolve({ content: [{ type: "text", text: String(input.text ?? "") }] }),
-  )
-  handlers.set("structured", () =>
-    Promise.resolve({ content: [], structuredContent: { answer: 42 } }),
-  )
-  handlers.set("fail", () =>
-    Promise.resolve({ isError: true, content: [{ type: "text", text: "server exploded" }] }),
-  )
+  handlers.set("echo", (input) => Promise.resolve({ content: [{ type: "text", text: String(input.text ?? "") }] }))
+  handlers.set("structured", () => Promise.resolve({ content: [], structuredContent: { answer: 42 } }))
+  handlers.set("fail", () => Promise.resolve({ isError: true, content: [{ type: "text", text: "server exploded" }] }))
   handlers.set("image", () =>
     Promise.resolve({ content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }] }),
   )
@@ -272,9 +265,7 @@ describe("CodeModeTool", () => {
     Effect.gen(function* () {
       reset()
       const registry = yield* ToolRegistry.Service
-      const permissions: PermissionV2.Ruleset = [
-        { action: "demo_server_fail", resource: "*", effect: "deny" },
-      ]
+      const permissions: PermissionV2.Ruleset = [{ action: "demo_server_fail", resource: "*", effect: "deny" }]
       const definitions = yield* toolDefinitions(registry, permissions)
       const execute = definitions.find((item) => item.name === CodeModeTool.name)
 
@@ -364,9 +355,9 @@ describe("CodeModeTool", () => {
           return { client, server, tools: (await client.listTools()).tools }
         }),
         (connection) =>
-          Effect.promise(() =>
-            Promise.allSettled([connection.client.close(), connection.server.close()]),
-          ).pipe(Effect.asVoid),
+          Effect.promise(() => Promise.allSettled([connection.client.close(), connection.server.close()])).pipe(
+            Effect.asVoid,
+          ),
       )
       mcpTools = Object.fromEntries(
         connection.tools.map((def) => [
@@ -425,11 +416,7 @@ describe("CodeModeTool", () => {
           { tool: "demo_server.structured", status: "completed" },
         ],
       })
-      expect(assertions.map((item) => item.action)).toEqual([
-        "execute",
-        "demo_server_echo",
-        "demo_server_structured",
-      ])
+      expect(assertions.map((item) => item.action)).toEqual(["execute", "demo_server_echo", "demo_server_structured"])
       expect(assertions.slice(1).map((item) => item.source)).toEqual([
         { type: "tool", messageID: toolIdentity.assistantMessageID, callID: "call-execute" },
         { type: "tool", messageID: toolIdentity.assistantMessageID, callID: "call-execute" },
@@ -546,7 +533,9 @@ describe("CodeModeTool", () => {
         type: "text",
         text: '{\n  "status": "done"\n}\n\nLogs:\ncaptured 3 files',
       })
-      expect(settlement.output?.content[0]).not.toEqual(expect.objectContaining({ text: expect.stringContaining("aGVsbG8=") }))
+      expect(settlement.output?.content[0]).not.toEqual(
+        expect.objectContaining({ text: expect.stringContaining("aGVsbG8=") }),
+      )
       expect(settlement.output?.content.slice(1)).toEqual([
         {
           type: "file",

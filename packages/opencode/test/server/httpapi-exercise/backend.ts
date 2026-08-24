@@ -1,6 +1,8 @@
 import { ConfigProvider, Effect, Layer } from "effect"
 import { HttpRouter } from "effect/unstable/http"
+import { mkdir } from "fs/promises"
 import { parse } from "./assertions"
+import { exerciseAuthDirectory } from "./environment"
 import { runtime, type Runtime } from "./runtime"
 import type { ActiveScenario, BackendApp, CallResult, CaptureMode, SeededContext } from "./types"
 
@@ -11,31 +13,49 @@ type CallOptions = {
   }
 }
 
+const AUTH_PROBE_TIMEOUT_MS = 15_000
+const authDirectory = mkdir(exerciseAuthDirectory, { recursive: true })
+
 export function call(scenario: ActiveScenario, ctx: SeededContext<unknown>, options: CallOptions = {}) {
-  return Effect.promise(async () =>
-    capture(await app(await runtime(), options).request(toRequest(scenario, ctx)), scenario.capture),
-  )
+  return Effect.promise(async () => {
+    const controller = new AbortController()
+    try {
+      return await capture(
+        await app(await runtime(), options).request(toRequest(scenario, ctx, controller.signal)),
+        scenario.capture,
+      )
+    } finally {
+      controller.abort("scenario request completed")
+    }
+  })
 }
 
 export function callAuthProbe(scenario: ActiveScenario, credentials: "missing" | "valid" = "missing") {
   return Effect.promise(async () => {
+    await authDirectory
     const controller = new AbortController()
-    return Promise.race([
-      Promise.resolve(
-        app(await runtime(), { auth: { password: "secret" } }).request(
-          toAuthProbeRequest(scenario, credentials, controller.signal),
-        ),
-      ).then((response) => capture(response, scenario.capture)),
-      Bun.sleep(1_000).then(() => {
+    const timeout = new Promise<CallResult>((resolve) => {
+      const timer = setTimeout(() => {
         controller.abort("auth probe timed out")
-        return {
+        resolve({
           status: 0,
           contentType: "",
           text: "auth probe timed out",
           body: undefined,
           timedOut: true,
-        }
-      }),
+        })
+      }, AUTH_PROBE_TIMEOUT_MS)
+      controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true })
+    })
+    return Promise.race([
+      Promise.resolve(
+        app(await runtime(), { auth: { password: "secret" } }).request(
+          toAuthProbeRequest(scenario, credentials, controller.signal),
+        ),
+      )
+        .then((response) => capture(response, scenario.capture))
+        .finally(() => controller.abort("auth probe completed")),
+      timeout,
     ])
   })
 }
@@ -77,12 +97,13 @@ function app(modules: Runtime, options: CallOptions) {
   })
 }
 
-function toRequest(scenario: ActiveScenario, ctx: SeededContext<unknown>) {
+function toRequest(scenario: ActiveScenario, ctx: SeededContext<unknown>, signal: AbortSignal) {
   const spec = scenario.request(ctx, ctx.state)
   return new Request(new URL(spec.path, "http://localhost"), {
     method: scenario.method,
     headers: spec.body === undefined ? spec.headers : { "content-type": "application/json", ...spec.headers },
     body: spec.body === undefined ? undefined : JSON.stringify(spec.body),
+    signal,
   })
 }
 
@@ -92,6 +113,7 @@ function toAuthProbeRequest(scenario: ActiveScenario, credentials: "missing" | "
     body: scenario.method === "GET" ? undefined : {},
   }
   const headers = {
+    "x-opencode-directory": exerciseAuthDirectory,
     ...(spec.body === undefined ? {} : { "content-type": "application/json" }),
     ...spec.headers,
     ...(credentials === "valid" ? { authorization: basic("opencode", "secret") } : {}),

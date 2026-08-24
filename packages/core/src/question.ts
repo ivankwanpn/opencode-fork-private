@@ -87,6 +87,14 @@ const layer = Layer.effect(
     const events = yield* EventV2.Service
     const lifecycle = yield* LifecycleStore.Service
     const pending = new Map<ID, Pending>()
+    const stale = new Map<ID, number>()
+    const rememberStale = (request: Request) => {
+      if (request.generation === undefined) return
+      stale.set(request.id, request.generation)
+      if (stale.size <= 1_024) return
+      const oldest = stale.keys().next().value
+      if (oldest !== undefined) stale.delete(oldest)
+    }
 
     yield* Effect.addFinalizer(() =>
       Effect.forEach(pending.values(), (item) => Deferred.fail(item.deferred, new RejectedError()), {
@@ -95,6 +103,7 @@ const layer = Layer.effect(
         Effect.ensuring(
           Effect.sync(() => {
             pending.clear()
+            stale.clear()
           }),
         ),
       ),
@@ -111,6 +120,8 @@ const layer = Layer.effect(
             Effect.andThen(restore(Deferred.await(deferred))),
             Effect.ensuring(
               Effect.sync(() => {
+                const abandoned = pending.get(id)
+                if (abandoned) rememberStale(abandoned.request)
                 pending.delete(id)
               }),
             ),
@@ -123,7 +134,12 @@ const layer = Layer.effect(
       Effect.uninterruptible(
         Effect.gen(function* () {
           const existing = pending.get(input.requestID)
-          if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+          if (!existing) {
+            const expectedGeneration = stale.get(input.requestID)
+            if (expectedGeneration !== undefined)
+              return yield* new StaleQuestionError({ requestID: input.requestID, expectedGeneration })
+            return yield* new NotFoundError({ requestID: input.requestID })
+          }
           // Generation binding: the question dies with its owner.
           const requested = existing.request.generation
           if (requested !== undefined) {

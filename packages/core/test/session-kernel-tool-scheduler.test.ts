@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { DateTime, Deferred, Effect, Fiber } from "effect"
+import { DateTime, Deferred, Duration, Effect, Fiber, Layer } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { ToolScheduler, MaxActiveBodies } from "@opencode-ai/core/session/kernel/tool-scheduler"
 import type { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import type { ToolCall } from "@opencode-ai/llm"
+import { testEffect } from "./lib/effect"
 
-const runEffect = <A, R>(effect: Effect.Effect<A, unknown, R>) => Effect.runPromise(Effect.scoped(effect) as Effect.Effect<A, unknown, never>)
+const runEffect = <A, R>(effect: Effect.Effect<A, unknown, R>) =>
+  Effect.runPromise(Effect.scoped(effect) as Effect.Effect<A, unknown, never>)
 
 const call = (id: string): ToolCall => ({ type: "tool-call", id, name: "echo", input: { text: id } })
 const settlement = (id: string): ToolRegistry.Settlement => ({
@@ -19,6 +21,8 @@ const prepared = (
   execute: () => Effect.Effect<ToolRegistry.Settlement>,
 ) => ({ index, call: call(callID), execute, concurrency, deadline: DateTime.makeUnsafe(0) })
 
+const it = testEffect(Layer.empty)
+
 describe("ToolScheduler", () => {
   test("runs parallel bodies concurrently but commits results in model order", async () =>
     runEffect(
@@ -31,18 +35,25 @@ describe("ToolScheduler", () => {
           Effect.gen(function* () {
             executed.push(id)
             yield* start()
-            yield* (end ? end() : Effect.void)
+            yield* end ? end() : Effect.void
             return settlement(id)
           })
         const fastDone = yield* Deferred.make<string>()
-        const slow = callExec("slow-0", () => Deferred.succeed(slowStarted, undefined).pipe(Effect.asVoid), () =>
-          Deferred.await(slowGate),
+        const slow = callExec(
+          "slow-0",
+          () => Deferred.succeed(slowStarted, undefined).pipe(Effect.asVoid),
+          () => Deferred.await(slowGate),
         )
         const run = yield* scheduler
           .run([
             prepared(0, "slow-0", "parallel", slow),
             prepared(1, "fast-1", "parallel", () =>
-              callExec("fast-1", () => Effect.void, () => Deferred.succeed(fastDone, "fast-1"))()),
+              callExec(
+                "fast-1",
+                () => Effect.void,
+                () => Deferred.succeed(fastDone, "fast-1"),
+              )(),
+            ),
           ])
           .pipe(Effect.forkScoped)
         yield* Deferred.await(slowStarted)
@@ -79,15 +90,15 @@ describe("ToolScheduler", () => {
           ])
           .pipe(Effect.forkScoped)
 
-        yield* Effect.yieldNow
+        for (let index = 0; index < 50 && executed.length < 1; index++) yield* Effect.yieldNow
         // The exclusive starts only after parallel-0 drained, so only
         // parallel-0 has begun and parallel-2 has not been reached yet.
         expect(executed).toEqual(["parallel-0"])
         yield* Deferred.succeed(gate, undefined)
-        yield* Effect.yieldNow
+        for (let index = 0; index < 50 && executed.length < 2; index++) yield* Effect.yieldNow
         expect(executed).toEqual(["parallel-0", "exclusive-1"])
         yield* Deferred.succeed(exclusiveGate, undefined)
-        yield* Effect.yieldNow
+        for (let index = 0; index < 50 && executed.length < 3; index++) yield* Effect.yieldNow
         expect(executed).toEqual(["parallel-0", "exclusive-1", "parallel-2"])
         yield* Deferred.succeed(gate, undefined)
         const results = yield* Fiber.join(run)
@@ -107,11 +118,9 @@ describe("ToolScheduler", () => {
             yield* Deferred.await(gate)
             return settlement(`cap-${idx}`)
           })
-        const calls = Array.from({ length: 12 }, (_, index) =>
-          prepared(index, `cap-${index}`, "parallel", body(index)),
-        )
+        const calls = Array.from({ length: 12 }, (_, index) => prepared(index, `cap-${index}`, "parallel", body(index)))
         const run = yield* scheduler.run(calls).pipe(Effect.forkScoped)
-        yield* Effect.yieldNow
+        for (let index = 0; index < 50 && started < MaxActiveBodies; index++) yield* Effect.yieldNow
         // Head-of-line replenishing caps at ten; the last two wait.
         expect(started).toBe(MaxActiveBodies)
         // Release the first ten; the next two launch and wait on the same gate.
@@ -150,4 +159,43 @@ describe("ToolScheduler", () => {
         expect(yield* scheduler.run([])).toEqual([])
       }),
     ))
+
+  it.effect("distinguishes an abandoned active body from a cancelled body that never started", () =>
+    Effect.gen(function* () {
+      const scheduler = ToolScheduler.make()
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const outcomes: Array<[string, "cancelled" | "abandoned"]> = []
+      const running = yield* scheduler
+        .run([
+          {
+            ...prepared(0, "active", "parallel", () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(started, undefined)
+                yield* Effect.never
+                return settlement("active")
+              }).pipe(Effect.onInterrupt(() => Effect.uninterruptible(Deferred.await(release)))),
+            ),
+            onInterrupt: (outcome) => Effect.sync(() => outcomes.push(["active", outcome])),
+          },
+          {
+            ...prepared(1, "waiting", "exclusive", () => Effect.succeed(settlement("waiting"))),
+            onInterrupt: (outcome) => Effect.sync(() => outcomes.push(["waiting", outcome])),
+          },
+        ])
+        .pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+
+      const interrupted = yield* Fiber.interrupt(running).pipe(Effect.forkScoped)
+      yield* TestClock.adjust(Duration.seconds(3).pipe(Duration.sum(Duration.millis(1))))
+      for (let index = 0; index < 20; index++) yield* Effect.yieldNow
+
+      expect(outcomes).toEqual([
+        ["active", "abandoned"],
+        ["waiting", "cancelled"],
+      ])
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(interrupted)
+    }),
+  )
 })

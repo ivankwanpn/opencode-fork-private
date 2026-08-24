@@ -173,6 +173,7 @@ export const makeToolSearchTool = (snapshot: ToolCatalog.Snapshot, index: Index,
   Tool.make({
     description:
       "Search deferred tools with exact selection or natural language. Use select:<exact-name> for a known callable name. Matching structured tool definitions become available on the next provider call.",
+    concurrency: "parallel",
     input: Input,
     output: Output,
     execute: (input, context) => {

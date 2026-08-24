@@ -11,9 +11,11 @@ import { Location } from "../../location"
 import { Npm } from "../../npm"
 import { define } from "../../plugin/internal"
 import { PluginPromise } from "../../plugin/promise"
+import { KernelPluginHost } from "../../session/kernel/plugin-host"
 
 const PluginModule = Schema.Struct({
   default: Schema.Union([
+    KernelPluginHost.PluginModuleSchema,
     Schema.Struct({
       id: Schema.String,
       effect: Schema.declare<EffectPlugin["effect"]>(
@@ -79,6 +81,12 @@ export const Plugin = define({
 
           const mod = yield* Effect.promise(() => import(entrypoint))
           const value = (yield* Schema.decodeUnknownEffect(PluginModule)(mod)).default
+          if ("manifest" in value) {
+            const host = yield* KernelPluginHost.Service
+            const activation = yield* host.install(value)
+            yield* Effect.addFinalizer(() => activation.dispose)
+            return
+          }
           const plugin = "effect" in value ? value : PluginPromise.fromPromise(value)
           yield* ctx.plugin.add({
             id: plugin.id,

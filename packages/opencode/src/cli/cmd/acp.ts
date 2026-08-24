@@ -5,6 +5,9 @@ import { ServerAuth } from "@/server/auth"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { ACPProfile } from "@/acp/profile"
 import { ACPClient } from "@/acp/client"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
 
 export const AcpCommand = effectCmd({
   command: "acp",
@@ -22,7 +25,12 @@ export const AcpCommand = effectCmd({
     ACPProfile.mark("cli.acp.handler")
     process.env.OPENCODE_CLIENT = "acp"
     const opts = yield* resolveNetworkOptions(args)
-    const server = yield* Effect.promise(() => ACPProfile.measure("cli.acp.server.listen", () => Server.listen(opts)))
+    const execution = yield* SessionExecution.Service
+    const database = yield* Database.Service
+    const events = yield* EventV2.Service
+    const server = yield* Effect.promise(() =>
+      ACPProfile.measure("cli.acp.server.listen", () => Server.listen(opts, execution, database, events)),
+    )
 
     const client = ACPClient.make({
       baseUrl: `http://${server.hostname}:${server.port}`,

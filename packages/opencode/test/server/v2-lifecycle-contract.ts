@@ -5,12 +5,14 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 export type LifecycleEvent = {
   readonly type: string
   readonly data?: {
+    readonly [key: string]: unknown
     readonly sessionID?: string
   }
 }
 
 export type LifecycleSession = {
   readonly id: string
+  readonly engine?: "classic" | "kernel"
 }
 
 export type LifecycleAdmission = {
@@ -31,22 +33,37 @@ export type LifecycleHistory = {
   readonly data: ReadonlyArray<{ readonly type: string }>
 }
 
+export type LifecycleContext = ReadonlyArray<{
+  readonly id: string
+  readonly type: string
+  readonly text?: string
+  readonly content?: ReadonlyArray<unknown>
+}>
+
 export type LifecycleClient = {
-  readonly create: (input: { readonly id: string; readonly directory: string }) => Promise<LifecycleSession>
+  readonly create: (input: {
+    readonly id: string
+    readonly directory: string
+    readonly engine?: "classic" | "kernel"
+    readonly model?: { readonly providerID: string; readonly id: string }
+  }) => Promise<LifecycleSession>
   readonly get: (sessionID: string) => Promise<LifecycleSession>
   readonly prompt: (input: {
     readonly sessionID: string
     readonly id: string
     readonly text: string
     readonly delivery?: "steer" | "queue"
+    readonly resume?: boolean
   }) => Promise<LifecycleAdmission>
   readonly inputList: (sessionID: string) => Promise<ReadonlyArray<LifecycleInput>>
   readonly inputGet: (input: { readonly sessionID: string; readonly inputID: string }) => Promise<LifecycleInput>
   readonly inputCancel: (input: { readonly sessionID: string; readonly inputID: string }) => Promise<void>
+  readonly context: (sessionID: string) => Promise<LifecycleContext>
   readonly history: (sessionID: string) => Promise<LifecycleHistory>
   readonly active: () => Promise<Record<string, unknown>>
   readonly interrupt: (sessionID: string) => Promise<void>
   readonly events: (sessionID: string, signal: AbortSignal) => Promise<AsyncIterable<LifecycleEvent>>
+  readonly liveEvents: (signal: AbortSignal) => Promise<AsyncIterable<LifecycleEvent>>
 }
 
 export function createGeneratedLifecycleClient(input: {
@@ -65,8 +82,11 @@ export function createGeneratedLifecycleClient(input: {
       const result = await sdk.v2.session.create({
         id: value.id,
         location: { directory: value.directory },
+        engine: value.engine,
+        model: value.model,
       })
-      if (result.error !== undefined || result.data === undefined) throw new Error("V2 session.create failed")
+      if (result.error !== undefined || result.data === undefined)
+        throw new Error(`V2 session.create failed: ${JSON.stringify(result.error)}`)
       return result.data.data
     },
     get: async (sessionID) => {
@@ -81,7 +101,7 @@ export function createGeneratedLifecycleClient(input: {
         id: value.id,
         prompt: { text: value.text },
         delivery: value.delivery,
-        resume: false,
+        resume: value.resume ?? false,
       })
       if (result.error !== undefined || result.data === undefined) throw new Error("V2 session.prompt failed")
       return result.data.data
@@ -101,6 +121,11 @@ export function createGeneratedLifecycleClient(input: {
       if (result.error !== undefined)
         throw new Error(`V2 session.input.cancel failed: ${JSON.stringify(result.error)}`)
     },
+    context: async (sessionID) => {
+      const result = await sdk.v2.session.context({ sessionID })
+      if (result.error !== undefined || result.data === undefined) throw new Error("V2 session.context failed")
+      return result.data.data
+    },
     history: async (sessionID) => {
       const result = await sdk.v2.session.history({ sessionID, after: 0 })
       if (result.error !== undefined || result.data === undefined) throw new Error("V2 session.history failed")
@@ -119,6 +144,10 @@ export function createGeneratedLifecycleClient(input: {
       const result = await sdk.v2.session.events({ sessionID, after: "0" }, { signal })
       return result.stream as AsyncIterable<LifecycleEvent>
     },
+    liveEvents: async (signal) => {
+      const result = await sdk.v2.event.subscribe({ signal })
+      return result.stream as AsyncIterable<LifecycleEvent>
+    },
   }
 }
 
@@ -132,7 +161,13 @@ export function createNativeLifecycleClient(input: {
   })
 
   return {
-    create: (value) => client.sessions.create({ id: value.id, location: { directory: value.directory } }),
+    create: (value) =>
+      client.sessions.create({
+        id: value.id,
+        location: { directory: value.directory },
+        engine: value.engine,
+        model: value.model,
+      }),
     get: (sessionID) => client.sessions.get({ sessionID }),
     prompt: (value) =>
       client.sessions.prompt({
@@ -140,15 +175,17 @@ export function createNativeLifecycleClient(input: {
         id: value.id,
         prompt: { text: value.text },
         delivery: value.delivery,
-        resume: false,
+        resume: value.resume ?? false,
       }),
     inputList: (sessionID) => client.sessions.inputList({ sessionID }),
     inputGet: (value) => client.sessions.inputGet(value),
     inputCancel: (value) => client.sessions.inputCancel(value),
+    context: (sessionID) => client.sessions.context({ sessionID }),
     history: (sessionID) => client.sessions.history({ sessionID, after: 0 }),
     active: () => client.sessions.active(),
     interrupt: (sessionID) => client.sessions.interrupt({ sessionID }),
     events: async (sessionID, signal) => client.sessions.events({ sessionID, after: 0 }, { signal }),
+    liveEvents: async (signal) => client.events.subscribe({ signal }),
   }
 }
 

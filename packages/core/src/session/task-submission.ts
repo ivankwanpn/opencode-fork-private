@@ -131,8 +131,7 @@ export const inputID = (invocation: Identity) =>
     `msg_task_${digest(JSON.stringify([invocation.parentSessionID, invocation.assistantMessageID, invocation.toolCallID, invocation.prompt]))}`,
   )
 
-export const notificationID = (submissionID: string) =>
-  SessionMessage.ID.make(`msg_task_notification_${digest(submissionID)}`)
+export const notificationID = TaskNotification.messageID
 
 const toInfo = (row: typeof TaskSubmissionTable.$inferSelect): Info => ({
   id: row.id,

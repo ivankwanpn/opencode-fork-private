@@ -76,6 +76,7 @@ const layer = Layer.effectDiscard(
                       sessionID: context.sessionID,
                       questions: input.questions,
                       tool: { messageID: context.assistantMessageID, callID: context.toolCallID },
+                      ...(context.generation === undefined ? {} : { generation: context.generation }),
                     })
                     .pipe(Effect.orDie),
                 ),

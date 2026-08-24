@@ -10,9 +10,7 @@ import { testEffect } from "./lib/effect"
 const outputStore = Layer.mock(ToolOutputStore.Service, {
   bound: (input) => Effect.succeed({ output: input.output, outputPaths: [] }),
 })
-const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [
-  [ToolOutputStore.node, outputStore],
-])
+const registryLayer = AppNodeBuilder.build(LayerNode.group([ToolRegistry.node]), [[ToolOutputStore.node, outputStore]])
 const it = testEffect(registryLayer)
 
 const hello = () =>
@@ -34,6 +32,16 @@ const bye = () =>
     execute: () => Effect.succeed({ text: "bye" }),
     toModelOutput: ({ output }) => [{ type: "text" as const, text: output.text }],
   })
+const parallel = () => {
+  const config = {
+    description: "Runs without mutation",
+    input: Schema.Struct({}),
+    output: Schema.Struct({ text: Schema.String }),
+    concurrency: "parallel" as const,
+    execute: () => Effect.succeed({ text: "parallel" }),
+  }
+  return Tool.make(config)
+}
 
 describe("ToolExposure", () => {
   it.effect("deferred tools land in deferred, not definitions; direct tools stay in definitions", () =>
@@ -45,5 +53,16 @@ describe("ToolExposure", () => {
       expect(m.deferred.some((d) => d.name === "hello")).toBe(true)
       expect(m.definitions.some((d) => d.name === "bye")).toBe(true)
       expect(m.deferred.some((d) => d.name === "bye")).toBe(false)
-    }))
+    }),
+  )
+
+  it.effect("materializes scheduler concurrency from the tool declaration instead of its callable name", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({ mutating_name: parallel(), read: bye() })
+      const materialized = yield* service.materialize()
+      expect(materialized.concurrency?.get("mutating_name")).toBe("parallel")
+      expect(materialized.concurrency?.get("read")).toBe("exclusive")
+    }),
+  )
 })

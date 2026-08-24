@@ -10,6 +10,7 @@ import { InstanceState } from "./instance-state"
 
 export const AuthError = CoreMCP.AuthError
 export const NotFoundError = CoreMCP.NotFoundError
+export const RegistrationError = CoreMCP.RegistrationError
 export const Resource = CoreMCP.Resource
 export const Service = CoreMCP.Service
 export const Status = CoreMCP.Status
@@ -26,9 +27,7 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const locations = yield* LocationServiceMap.Service
 
-    const dispatch = <A, E>(
-      run: (mcp: CoreMCP.Interface) => Effect.Effect<A, E>,
-    ): Effect.Effect<A, E> =>
+    const dispatch = <A, E, R>(run: (mcp: CoreMCP.Interface) => Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
       Effect.gen(function* () {
         const context = yield* InstanceState.context
         const workspaceID = yield* InstanceState.workspaceID
@@ -52,16 +51,14 @@ const layer = Layer.effect(
       resources: (clientName) => dispatch((mcp) => mcp.resources(clientName)),
       resourceTemplates: (clientName) => dispatch((mcp) => mcp.resourceTemplates(clientName)),
       add: (name, server) => dispatch((mcp) => mcp.add(name, server)),
+      contribute: (name, server) => dispatch((mcp) => mcp.contribute(name, server)),
       connect: (name) => dispatch((mcp) => mcp.connect(name)),
       disconnect: (name) => dispatch((mcp) => mcp.disconnect(name)),
       getPrompt: (clientName, name, args) => dispatch((mcp) => mcp.getPrompt(clientName, name, args)),
-      readResource: (clientName, resourceUri) =>
-        dispatch((mcp) => mcp.readResource(clientName, resourceUri)),
+      readResource: (clientName, resourceUri) => dispatch((mcp) => mcp.readResource(clientName, resourceUri)),
       startAuth: (name) => dispatch((mcp) => mcp.startAuth(name)),
-      authenticate: (name, onAuthorization) =>
-        dispatch((mcp) => mcp.authenticate(name, onAuthorization)),
-      finishAuth: (name, authorizationCode) =>
-        dispatch((mcp) => mcp.finishAuth(name, authorizationCode)),
+      authenticate: (name, onAuthorization) => dispatch((mcp) => mcp.authenticate(name, onAuthorization)),
+      finishAuth: (name, authorizationCode) => dispatch((mcp) => mcp.finishAuth(name, authorizationCode)),
       removeAuth: (name) => dispatch((mcp) => mcp.removeAuth(name)),
       supportsOAuth: (name) => dispatch((mcp) => mcp.supportsOAuth(name)),
       hasStoredTokens: (name) => dispatch((mcp) => mcp.hasStoredTokens(name)),

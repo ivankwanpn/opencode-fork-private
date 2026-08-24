@@ -8,6 +8,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Node } from "@opencode-ai/core/effect/app-node"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
 import { EventV2 } from "@opencode-ai/core/event"
+import { EventTable } from "@opencode-ai/core/event/sql"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import type { LocationServices } from "@opencode-ai/core/location-services"
@@ -18,6 +19,8 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionRouter } from "@opencode-ai/core/session/execution/router"
+import { SessionInputTable } from "@opencode-ai/core/session/sql"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { Kernel } from "@opencode-ai/core/session/kernel"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
@@ -27,6 +30,7 @@ import { SessionPromptExpansion } from "@opencode-ai/core/session/prompt-expansi
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
 import { SessionStore } from "@opencode-ai/core/session/store"
+import { and, eq, gt } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 
 const projects = Layer.succeed(
@@ -61,6 +65,24 @@ const client = Layer.succeed(
       const text = mock.queue.shift() ?? "hello"
       const gate = gates.get(text)
       if (gate === undefined) return Stream.fromIterable(textEvents(text))
+      if (text === "partial")
+        return Stream.concat(
+          Stream.fromIterable([
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.textStart({ id: "partial-text" }),
+            LLMEvent.textDelta({ id: "partial-text", text: "visible before stop" }),
+          ]),
+          Stream.fromEffect(Deferred.await(gate)).pipe(
+            Stream.flatMap(() =>
+              Stream.fromIterable([
+                LLMEvent.textDelta({ id: "partial-text", text: " after fence" }),
+                LLMEvent.textEnd({ id: "partial-text" }),
+                LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+                LLMEvent.finish({ reason: "stop" }),
+              ]),
+            ),
+          ),
+        )
       // Blocked provider: emission waits on a gate that the test never
       // releases. Cancellation must tear the reader down anyway.
       return Stream.fromEffect(Deferred.await(gate)).pipe(
@@ -133,6 +155,172 @@ const it = testEffect(
 )
 
 describe("Kernel interrupt cancellation", () => {
+  it.effect("terminalizes an open text part before an interrupted turn becomes idle", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const lifecycle = yield* LifecycleStore.Service
+      const { db } = yield* Database.Service
+      const gate = yield* Deferred.make<void>()
+      gates.set("partial", gate)
+      mock.requests = 0
+      mock.queue = ["partial"]
+      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      yield* sessions.prompt({ sessionID: session.id, prompt: Prompt.make({ text: "partial" }), resume: false })
+      const resume = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+      const startedType = EventV2.versionedType(SessionEvent.Text.Started.type, 1)
+      for (let index = 0; index < 50; index++) {
+        const started = yield* db
+          .select({ type: EventTable.type })
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, session.id), eq(EventTable.type, startedType)))
+          .get()
+          .pipe(Effect.orDie)
+        if (started) break
+        yield* Effect.yieldNow
+      }
+
+      yield* sessions.interrupt(session.id)
+      yield* Fiber.join(resume)
+      expect((yield* lifecycle.get(session.id)).state).toBe("idle")
+      const rows = yield* db
+        .select({ type: EventTable.type, data: EventTable.data })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, session.id))
+        .all()
+        .pipe(Effect.orDie)
+      const ended = rows.filter((row) => row.type === EventV2.versionedType(SessionEvent.Text.Ended.type, 1))
+      expect(ended).toHaveLength(1)
+      expect(ended[0]?.data).toMatchObject({ textID: "partial-text", text: "visible before stop" })
+      expect(Option.isNone(yield* Deferred.poll(gate))).toBe(true)
+    }),
+  )
+
+  it.effect("stops ordinary provider publication after fencing and emits only terminal settlement", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const lifecycle = yield* LifecycleStore.Service
+      const { db } = yield* Database.Service
+      const gate = yield* Deferred.make<void>()
+      gates.set("partial", gate)
+      mock.requests = 0
+      mock.queue = ["partial"]
+      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      yield* sessions.prompt({ sessionID: session.id, prompt: Prompt.make({ text: "fence" }), resume: false })
+      const resume = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+      const startedType = EventV2.versionedType(SessionEvent.Text.Started.type, 1)
+      for (let index = 0; index < 50; index++) {
+        const started = yield* db
+          .select({ type: EventTable.type })
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, session.id), eq(EventTable.type, startedType)))
+          .get()
+          .pipe(Effect.orDie)
+        if (started) break
+        yield* Effect.yieldNow
+      }
+      const before = yield* lifecycle.get(session.id)
+      const accepted = yield* lifecycle.acceptInterrupt({
+        sessionID: session.id,
+        expectedGeneration: before.generation,
+        reason: "user",
+      })
+
+      yield* Deferred.succeed(gate, undefined)
+      yield* Fiber.join(resume)
+      const late = yield* db
+        .select({ type: EventTable.type })
+        .from(EventTable)
+        .where(and(eq(EventTable.aggregate_id, session.id), gt(EventTable.seq, accepted.updatedSeq ?? -1)))
+        .all()
+        .pipe(Effect.orDie)
+      expect(late.map((row) => row.type)).toEqual([
+        EventV2.versionedType(SessionEvent.Step.Failed.type, 2),
+        EventV2.versionedType(SessionEvent.Text.Ended.type, 1),
+        EventV2.versionedType(SessionEvent.ProviderAttempt.Ended.type, 1),
+        EventV2.versionedType(SessionEvent.Turn.Ended.type, 1),
+        EventV2.versionedType(SessionEvent.Input.Terminalized.type, 1),
+      ])
+      expect((yield* lifecycle.get(session.id)).state).toBe("idle")
+    }),
+  )
+
+  it.effect("admits a prompt during cancellation and runs it after the fenced turn settles", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const lifecycle = yield* LifecycleStore.Service
+      const { db } = yield* Database.Service
+      const gate = yield* Deferred.make<void>()
+      gates.set("partial", gate)
+      mock.requests = 0
+      mock.queue = ["partial", "after-cancellation"]
+      const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+      const interrupted = yield* sessions.prompt({
+        sessionID: session.id,
+        prompt: Prompt.make({ text: "interrupt this turn" }),
+        resume: false,
+      })
+      const resume = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+      const startedType = EventV2.versionedType(SessionEvent.Text.Started.type, 1)
+      for (let index = 0; index < 50; index++) {
+        const started = yield* db
+          .select({ type: EventTable.type })
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, session.id), eq(EventTable.type, startedType)))
+          .get()
+          .pipe(Effect.orDie)
+        if (started) break
+        yield* Effect.yieldNow
+      }
+      const before = yield* lifecycle.get(session.id)
+      const accepted = yield* lifecycle.acceptInterrupt({
+        sessionID: session.id,
+        expectedGeneration: before.generation,
+        reason: "user",
+      })
+      expect(accepted.state).toBe("cancelling")
+
+      const admitted = yield* sessions.prompt({
+        sessionID: session.id,
+        prompt: Prompt.make({ text: "run after cancellation" }),
+        resume: false,
+      })
+      expect(
+        yield* db
+          .select({ outcome: SessionInputTable.terminal_outcome })
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.id, admitted.id))
+          .get()
+          .pipe(Effect.orDie),
+      ).toEqual({ outcome: null })
+
+      yield* Deferred.succeed(gate, undefined)
+      yield* Fiber.join(resume)
+      expect((yield* lifecycle.get(session.id)).state).toBe("idle")
+      expect(
+        yield* db
+          .select({ id: SessionInputTable.id, outcome: SessionInputTable.terminal_outcome })
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.session_id, session.id))
+          .all()
+          .pipe(Effect.orDie),
+      ).toEqual([
+        { id: interrupted.id, outcome: "cancelled" },
+        { id: admitted.id, outcome: "completed" },
+      ])
+
+      expect((yield* lifecycle.get(session.id)).state).toBe("idle")
+      expect(mock.requests).toBe(2)
+      expect(
+        yield* db
+          .select({ outcome: SessionInputTable.terminal_outcome })
+          .from(SessionInputTable)
+          .where(eq(SessionInputTable.id, admitted.id))
+          .get()
+          .pipe(Effect.orDie),
+      ).toEqual({ outcome: "completed" })
+    }),
+  )
+
   it.effect("an interrupt cancels a blocked provider stream without releasing its gate", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service

@@ -54,6 +54,7 @@ function turnConflictMessage(error: SessionV2.TurnConflictError) {
 export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* SessionV2.Service
+    const execution = yield* SessionExecution.Service
     const database = yield* Database.Service
     const read = yield* SessionRead.Service
     const share = yield* SessionShareCapability.Service
@@ -574,7 +575,6 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               message: `Session input not found: ${ctx.params.inputID}`,
             })
 
-          const execution = yield* SessionExecution.Service
           const input = yield* session
             .promoteInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })
             .pipe(
@@ -627,7 +627,6 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               message: `Session input not found: ${ctx.params.inputID}`,
             })
 
-          const execution = yield* SessionExecution.Service
           yield* session
             .cancelInput({ sessionID: ctx.params.sessionID, inputID: ctx.params.inputID })
             .pipe(

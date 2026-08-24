@@ -5,6 +5,9 @@ import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import open from "open"
 import { networkInterfaces } from "os"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
 
 function getNetworkIPs() {
   const nets = networkInterfaces()
@@ -41,7 +44,10 @@ export const WebCommand = effectCmd({
       UI.println(UI.Style.TEXT_WARNING_BOLD + "!  OPENCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
     const opts = yield* resolveNetworkOptions(args)
-    const server = yield* Effect.promise(() => Server.listen(opts))
+    const execution = yield* SessionExecution.Service
+    const database = yield* Database.Service
+    const events = yield* EventV2.Service
+    const server = yield* Effect.promise(() => Server.listen(opts, execution, database, events))
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()

@@ -1108,6 +1108,21 @@ const layer = Layer.effect(
             promotion = "steer"
             continue
           }
+          const terminalCutoff = yield* EventV2.latestSequence(db, input.sessionID)
+          const attempt = yield* SessionAttempt.get(db, input.sessionID)
+          const terminalTimestamp = yield* DateTime.now
+          yield* Effect.forEach(
+            yield* SessionInput.promotedUnterminalizedAtOrBefore(db, input.sessionID, terminalCutoff),
+            (promoted) =>
+              events.publish(SessionEvent.Input.Terminalized, {
+                sessionID: input.sessionID,
+                inputID: promoted.id,
+                timestamp: terminalTimestamp,
+                outcome: "completed",
+                resultMessageID: attempt?.assistant_message_id,
+              }),
+            { discard: true },
+          )
         }
         shouldRun = yield* SessionInput.hasPending(db, input.sessionID, "queue")
         promotion = shouldRun ? "queue" : undefined

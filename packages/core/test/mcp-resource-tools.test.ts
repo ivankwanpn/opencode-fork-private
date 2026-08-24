@@ -36,6 +36,7 @@ function mcpService(overrides: Partial<MCP.Interface> = {}) {
     resources: () => Effect.succeed({}),
     resourceTemplates: () => Effect.succeed({}),
     add: () => Effect.succeed({ status: {} }),
+    contribute: () => Effect.die("unused"),
     connect: (name) => Effect.fail(new MCP.NotFoundError({ name })),
     disconnect: (name) => Effect.fail(new MCP.NotFoundError({ name })),
     getPrompt: () => Effect.succeed(undefined),

@@ -1,6 +1,6 @@
 import { LspEvent } from "@opencode-ai/schema/lsp-event"
 import { Lsp } from "@opencode-ai/schema/lsp"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Schema, Scope } from "effect"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Config } from "../config"
@@ -48,6 +48,11 @@ export type DocumentSymbol = typeof DocumentSymbol.Type
 export const Status = Lsp.Status
 export type Status = Lsp.Status
 
+export class RegistrationError extends Schema.TaggedErrorClass<RegistrationError>()("LSP.RegistrationError", {
+  id: Schema.String,
+  message: Schema.String,
+}) {}
+
 enum SymbolKind {
   Class = 5,
   Method = 6,
@@ -77,6 +82,7 @@ type LocInput = { readonly file: string; readonly line: number; readonly charact
 
 export interface Interface {
   readonly init: () => Effect.Effect<void>
+  readonly contribute: (server: LSPServer.Info) => Effect.Effect<void, RegistrationError, Scope.Scope>
   readonly status: () => Effect.Effect<Status[]>
   readonly hasClients: (file: string) => Effect.Effect<boolean>
   readonly touchFile: (input: string, diagnostics?: "document" | "full") => Effect.Effect<void>
@@ -119,7 +125,9 @@ export const layerWith = (options: LayerOptions = {}) =>
         experimentalTy: options.experimentalTy ?? envBoolean("OPENCODE_EXPERIMENTAL_LSP_TY"),
       }
       const configured = Config.latest(yield* config.entries(), "lsp")
-      const servers = Object.fromEntries((options.servers ?? LSPServer.builtins).map((server) => [server.id, server]))
+      const servers: Record<string, LSPServer.Info> = Object.fromEntries(
+        (options.servers ?? LSPServer.builtins).map((server) => [server.id, server]),
+      )
 
       if (!configured) {
         yield* Effect.logInfo("all LSPs are disabled")
@@ -156,16 +164,66 @@ export const layerWith = (options: LayerOptions = {}) =>
       if (!context.experimentalTy) delete servers.ty
 
       yield* Effect.logInfo("enabled LSP servers", { serverIds: Object.keys(servers).join(", ") })
+      type PendingSpawn = {
+        readonly server: LSPServer.Info
+        stale: boolean
+        handle?: LSPServer.Handle
+        task: Promise<LSPClient.Info | undefined>
+      }
       const state = {
         clients: [] as LSPClient.Info[],
         servers,
+        owners: new Map<string, symbol>(),
         broken: new Set<string>(),
-        spawning: new Map<string, Promise<LSPClient.Info | undefined>>(),
+        spawning: new Map<string, PendingSpawn>(),
       }
+      const spawnKey = (root: string, id: string) => `${root}\u0000${id}`
+      const owns = (server: LSPServer.Info) => state.servers[server.id] === server
 
       yield* Effect.addFinalizer(() =>
-        Effect.promise(() => Promise.all(state.clients.map((client) => client.shutdown()))).pipe(Effect.asVoid),
+        Effect.promise(async () => {
+          for (const id of Object.keys(state.servers)) delete state.servers[id]
+          state.owners.clear()
+          for (const pending of state.spawning.values()) {
+            pending.stale = true
+            if (pending.handle) await LSPProcess.stop(pending.handle.process)
+          }
+          state.spawning.clear()
+          const clients = state.clients.splice(0)
+          await Promise.all(clients.map((client) => client.shutdown()))
+        }),
       )
+
+      const removeContribution = Effect.fnUntraced(function* (server: LSPServer.Info, owner: symbol) {
+        if (state.owners.get(server.id) !== owner) return
+        state.owners.delete(server.id)
+        delete state.servers[server.id]
+        const handles: LSPServer.Handle[] = []
+        for (const [key, pending] of state.spawning) {
+          if (pending.server !== server) continue
+          pending.stale = true
+          state.spawning.delete(key)
+          if (pending.handle) handles.push(pending.handle)
+        }
+        for (const key of state.broken) {
+          if (key.endsWith(`\u0000${server.id}`)) state.broken.delete(key)
+        }
+        const clients = state.clients.filter((client) => client.serverID === server.id)
+        state.clients.splice(
+          0,
+          state.clients.length,
+          ...state.clients.filter((client) => client.serverID !== server.id),
+        )
+        yield* events.publish(Event.Updated, {})
+        yield* Effect.forEach(handles, (handle) => Effect.promise(() => LSPProcess.stop(handle.process)), {
+          concurrency: "unbounded",
+          discard: true,
+        })
+        yield* Effect.forEach(clients, (client) => Effect.promise(() => client.shutdown()), {
+          concurrency: "unbounded",
+          discard: true,
+        })
+      })
 
       const getClients = Effect.fnUntraced(function* (file: string) {
         const clients = yield* Effect.promise(async () => {
@@ -173,29 +231,35 @@ export const layerWith = (options: LayerOptions = {}) =>
           const result: LSPClient.Info[] = []
           let updated = 0
 
-          async function schedule(server: LSPServer.Info, root: string, key: string) {
-            const handle = await server
-              .spawn(root, context)
-              .then((value) => {
-                if (!value) state.broken.add(key)
-                return value
-              })
-              .catch(() => {
-                state.broken.add(key)
-                return undefined
-              })
-            if (!handle) return
+          async function schedule(server: LSPServer.Info, root: string, key: string, pending: PendingSpawn) {
+            const handle = await server.spawn(root, context).catch(() => undefined)
+            pending.handle = handle
+            if (pending.stale || !owns(server)) {
+              if (handle) await LSPProcess.stop(handle.process)
+              pending.handle = undefined
+              return
+            }
+            if (!handle) {
+              state.broken.add(key)
+              return
+            }
             const client = await LSPClient.create({
               serverID: server.id,
               server: handle,
               root,
               directory: location.directory,
             }).catch(async () => {
-              state.broken.add(key)
+              if (owns(server)) state.broken.add(key)
+              pending.handle = undefined
               await LSPProcess.stop(handle.process)
               return undefined
             })
+            pending.handle = undefined
             if (!client) return
+            if (pending.stale || !owns(server)) {
+              await client.shutdown()
+              return
+            }
             const existing = state.clients.find((item) => item.root === root && item.serverID === server.id)
             if (existing) {
               await client.shutdown()
@@ -208,8 +272,8 @@ export const layerWith = (options: LayerOptions = {}) =>
           for (const server of Object.values(state.servers)) {
             if (server.extensions.length && !server.extensions.includes(extension)) continue
             const root = await server.root(file, context)
-            if (!root) continue
-            const key = root + server.id
+            if (!root || !owns(server)) continue
+            const key = spawnKey(root, server.id)
             if (state.broken.has(key)) continue
             const existing = state.clients.find((item) => item.root === root && item.serverID === server.id)
             if (existing) {
@@ -218,17 +282,24 @@ export const layerWith = (options: LayerOptions = {}) =>
             }
             const inflight = state.spawning.get(key)
             if (inflight) {
-              const client = await inflight
-              if (client) result.push(client)
+              const client = await inflight.task
+              if (client && owns(server)) result.push(client)
               continue
             }
-            const task = schedule(server, root, key)
-            state.spawning.set(key, task)
-            task.finally(() => {
-              if (state.spawning.get(key) === task) state.spawning.delete(key)
-            })
+            const pending: PendingSpawn = {
+              server,
+              stale: false,
+              task: Promise.resolve(undefined),
+            }
+            const task = schedule(server, root, key, pending)
+            pending.task = task
+            state.spawning.set(key, pending)
+            const clear = () => {
+              if (state.spawning.get(key) === pending) state.spawning.delete(key)
+            }
+            void task.then(clear, clear)
             const client = await task
-            if (!client) continue
+            if (!client || !owns(server)) continue
             result.push(client)
             updated++
           }
@@ -253,6 +324,22 @@ export const layerWith = (options: LayerOptions = {}) =>
         return yield* Effect.void
       })
 
+      const contribute: Interface["contribute"] = Effect.fn("LSP.contribute")(function* (server) {
+        if (state.servers[server.id]) {
+          return yield* new RegistrationError({
+            id: server.id,
+            message: `LSP server "${server.id}" is already registered`,
+          })
+        }
+
+        const scope = yield* Scope.Scope
+        const owner = globalThis.Symbol(server.id)
+        state.servers[server.id] = server
+        state.owners.set(server.id, owner)
+        yield* Scope.addFinalizer(scope, removeContribution(server, owner).pipe(Effect.ignore))
+        yield* events.publish(Event.Updated, {})
+      })
+
       const status = Effect.fn("LSP.status")(function* () {
         return state.clients.map((client) => ({
           id: client.serverID,
@@ -268,8 +355,8 @@ export const layerWith = (options: LayerOptions = {}) =>
           for (const server of Object.values(state.servers)) {
             if (server.extensions.length && !server.extensions.includes(extension)) continue
             const root = await server.root(file, context)
-            if (!root) continue
-            if (!state.broken.has(root + server.id)) return true
+            if (!root || !owns(server)) continue
+            if (!state.broken.has(spawnKey(root, server.id))) return true
           }
           return false
         })
@@ -396,6 +483,7 @@ export const layerWith = (options: LayerOptions = {}) =>
       })
 
       return Service.of({
+        contribute,
         init,
         status,
         hasClients,

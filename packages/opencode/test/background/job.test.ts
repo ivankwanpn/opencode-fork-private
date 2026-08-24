@@ -1,10 +1,27 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect } from "effect"
+import { ProjectV2 } from "@opencode-ai/core/project"
+import { Deferred, Effect, Fiber, Layer } from "effect"
 import { BackgroundJob } from "@/background/job"
+import { InstanceRef } from "@/effect/instance-ref"
 import { testEffect } from "../lib/effect"
 
-const it = testEffect(LayerNode.compile(BackgroundJob.node))
+const directory = "D:/background-job-test"
+const it = testEffect(
+  Layer.merge(
+    LayerNode.compile(BackgroundJob.node),
+    Layer.succeed(InstanceRef, {
+      directory,
+      worktree: directory,
+      project: {
+        id: ProjectV2.ID.global,
+        worktree: directory,
+        time: { created: 0, updated: 0 },
+        sandboxes: [],
+      },
+    }),
+  ),
+)
 
 describe("background.job", () => {
   it.live("uses a process registry without a legacy instance context", () =>
@@ -14,10 +31,10 @@ describe("background.job", () => {
 
       expect(yield* jobs.get(job.id)).toMatchObject({ id: job.id, status: "running" })
       expect((yield* jobs.cancel(job.id))?.status).toBe("cancelled")
-    }),
+    }).pipe(Effect.provideService(InstanceRef, undefined)),
   )
 
-  it.instance("tracks started jobs through completion", () =>
+  it.live("tracks started jobs through completion", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const latch = yield* Deferred.make<void>()
@@ -41,7 +58,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("returns a running snapshot when wait times out", () =>
+  it.live("returns a running snapshot when wait times out", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const job = yield* jobs.start({
@@ -56,7 +73,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("deduplicates concurrent starts for a running id", () =>
+  it.live("deduplicates concurrent starts for a running id", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const started = yield* Deferred.make<void>()
@@ -89,7 +106,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("waits for extensions before completing a running job", () =>
+  it.live("waits for extensions before completing a running job", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const first = yield* Deferred.make<void>()
@@ -110,7 +127,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("runs extensions after earlier work completes", () =>
+  it.live("runs extensions after earlier work completes", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const first = yield* Deferred.make<void>()
@@ -135,7 +152,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("rejects extensions after a job completes", () =>
+  it.live("rejects extensions after a job completes", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const job = yield* jobs.start({ type: "test", run: Effect.succeed("done") })
@@ -146,7 +163,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("records failed jobs", () =>
+  it.live("records failed jobs", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const job = yield* jobs.start({
@@ -161,38 +178,34 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("ignores stale settlements after restarting a failed job", () =>
+  it.live("ignores stale settlements after restarting a cancelled job", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
-      const fail = yield* Deferred.make<void>()
       const interrupted = yield* Deferred.make<void>()
       const release = yield* Deferred.make<void>()
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined).pipe(Effect.asVoid))
       const id = "job_test"
       yield* jobs.start({
         id,
         type: "test",
-        run: Deferred.await(fail).pipe(Effect.andThen(Effect.fail(new Error("boom")))),
-      })
-      yield* jobs.extend({
-        id,
         run: Effect.never.pipe(
           Effect.ensuring(Deferred.succeed(interrupted, undefined).pipe(Effect.andThen(Deferred.await(release)))),
         ),
       })
 
-      yield* Deferred.succeed(fail, undefined)
-      expect((yield* jobs.wait({ id })).info?.status).toBe("error")
-      yield* Deferred.await(interrupted)
+      const cancellation = yield* jobs.cancel(id).pipe(Effect.forkChild)
+      yield* Deferred.await(interrupted).pipe(Effect.timeout("1 second"))
       yield* jobs.start({ id, type: "test", run: Effect.never })
 
       yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(cancellation).pipe(Effect.timeout("1 second"))
       yield* Effect.yieldNow
       expect((yield* jobs.get(id))?.status).toBe("running")
       yield* jobs.cancel(id)
     }),
   )
 
-  it.instance("can cancel running jobs", () =>
+  it.live("can cancel running jobs", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const interrupted = yield* Deferred.make<void>()
@@ -213,7 +226,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("promotes running jobs without interrupting them", () =>
+  it.live("promotes running jobs without interrupting them", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const latch = yield* Deferred.make<void>()
@@ -237,7 +250,7 @@ describe("background.job", () => {
     }),
   )
 
-  it.instance("returns immutable snapshots", () =>
+  it.live("returns immutable snapshots", () =>
     Effect.gen(function* () {
       const jobs = yield* BackgroundJob.Service
       const job = yield* jobs.start({

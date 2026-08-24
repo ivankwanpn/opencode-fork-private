@@ -20,6 +20,7 @@ import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionRouter } from "@opencode-ai/core/session/execution/router"
 import { SessionInputTable } from "@opencode-ai/core/session/sql"
 import { Kernel } from "@opencode-ai/core/session/kernel"
+import { KernelDiagnostics } from "@opencode-ai/core/session/kernel/diagnostics"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { Prompt } from "@opencode-ai/core/session/prompt"
@@ -123,6 +124,7 @@ const it = testEffect(
       SessionStore.node,
       SessionV2.node,
       Kernel.node,
+      KernelDiagnostics.node,
       LifecycleStore.node,
     ]),
     [
@@ -205,6 +207,46 @@ describe("Kernel interrupt", () => {
           .all()
           .pipe(Effect.orDie),
       ).toHaveLength(1)
+    }),
+  )
+
+  it.effect("records durable acceptance and terminal settlement latency at the real interrupt boundaries", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionV2.Service
+      const diagnostics = yield* KernelDiagnostics.Service
+      yield* diagnostics.reset()
+      yield* Effect.forEach(
+        Array.from({ length: 20 }, (_, index) => index + 1),
+        (index) =>
+          Effect.gen(function* () {
+            mock.started = yield* Deferred.make<void>()
+            mock.gate = yield* Deferred.make<void>()
+            const session = yield* sessions.create({ location, engine: "kernel", model: modelRef })
+            yield* sessions.prompt({
+              sessionID: session.id,
+              prompt: Prompt.make({ text: `Measure interrupt latency ${index}` }),
+              resume: false,
+            })
+            const fiber = yield* sessions.resume(session.id).pipe(Effect.forkScoped)
+            yield* Deferred.await(mock.started)
+
+            yield* sessions.interrupt(session.id)
+            yield* Fiber.join(fiber)
+          }),
+        { discard: true },
+      )
+
+      const snapshot = yield* diagnostics.snapshot()
+      const acceptance = snapshot.latencies.find((sample) => sample.key === "interrupt.acceptance")
+      const terminal = snapshot.latencies.find((sample) => sample.key === "interrupt.terminal")
+      console.log(
+        "Kernel interrupt latency",
+        JSON.stringify({ acceptanceP95Ms: acceptance?.p95Ms, terminalP95Ms: terminal?.p95Ms }),
+      )
+      expect(acceptance).toMatchObject({ count: 20 })
+      expect(acceptance?.p95Ms).toBeLessThanOrEqual(500)
+      expect(terminal).toMatchObject({ count: 20 })
+      expect(terminal?.p95Ms).toBeLessThanOrEqual(3_000)
     }),
   )
 })

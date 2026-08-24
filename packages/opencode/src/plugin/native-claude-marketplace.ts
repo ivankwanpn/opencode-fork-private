@@ -6,10 +6,11 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Event } from "@opencode-ai/core/catalog"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { SkillV2 } from "@opencode-ai/core/skill"
+import { KernelPluginHost } from "@opencode-ai/core/session/kernel/plugin-host"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
 import type { Catalog } from "@opencode-ai/protocol/groups/plugin"
 import { PluginCapability } from "@opencode-ai/server/plugin-capability"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { Config } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import {
@@ -100,19 +101,23 @@ export const layerWith = (manager: ClaudeMarketplaceManager, direct = new Direct
             const mcp = yield* MCP.Service
             const plugins = yield* PluginV2.Service
             const tools = yield* ToolRegistry.Service
+            const kernelPlugins = yield* Effect.serviceOption(KernelPluginHost.Service)
             const initialized = yield* legacyPlugins.init()
             const descriptors = yield* run("Reading plugin runtime descriptors", () => manager.runtimeDescriptors())
-            return runtimeSnapshot(
-              descriptors,
-              {
-                skills: yield* skills.list(),
-                commands: yield* commands.list(),
-                mcp: yield* mcp.status(),
-                plugins: yield* plugins.status(),
-                toolSources: yield* tools.sources(),
-              },
-              !initialized,
-            )
+            return {
+              ...runtimeSnapshot(
+                descriptors,
+                {
+                  skills: yield* skills.list(),
+                  commands: yield* commands.list(),
+                  mcp: yield* mcp.status(),
+                  plugins: yield* plugins.status(),
+                  toolSources: yield* tools.sources(),
+                },
+                !initialized,
+              ),
+              ui: Option.isSome(kernelPlugins) ? yield* kernelPlugins.value.ui.list() : [],
+            }
           }),
         list,
         addMarketplace: (source) => mutate("Adding marketplace", () => manager.addMarketplace(source)),

@@ -11,6 +11,9 @@ import { HttpApiApp } from "./routes/instance/httpapi/server"
 import { disposeMiddleware } from "./routes/instance/httpapi/lifecycle"
 import { WebSocketTracker } from "./routes/instance/httpapi/websocket-tracker"
 import { PublicApi } from "./routes/instance/httpapi/public"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
 import type { CorsOptions } from "@opencode-ai/server/cors"
 import { lazy } from "@/util/lazy"
 
@@ -81,12 +84,22 @@ export async function openapi() {
 
 export let url: URL | undefined
 
-export async function listen(opts: ListenOptions): Promise<Listener> {
-  return runListener(listenEffect(opts))
+export async function listen(
+  opts: ListenOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+): Promise<Listener> {
+  return runListener(listenEffect(opts, execution, database, events))
 }
 
-export async function listenNative(opts: ListenOptions): Promise<Listener> {
-  return runListener(listenNativeEffect(opts))
+export async function listenNative(
+  opts: ListenOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+): Promise<Listener> {
+  return runListener(listenNativeEffect(opts, execution, database, events))
 }
 
 async function runListener(effect: Effect.Effect<EffectListener, unknown>): Promise<Listener> {
@@ -99,20 +112,46 @@ async function runListener(effect: Effect.Effect<EffectListener, unknown>): Prom
   }
 }
 
-const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unknown> = Effect.fn("Server.listen")(
-  function* (opts: ListenOptions) {
-    return yield* listenWith(opts, false)
+const listenEffect: (
+  opts: ListenOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) => Effect.Effect<EffectListener, unknown> = Effect.fn("Server.listen")(
+  function* (
+    opts: ListenOptions,
+    execution?: SessionExecution.Interface,
+    database?: Database.Interface,
+    events?: EventV2.Interface,
+  ) {
+    return yield* listenWith(opts, false, execution, database, events)
   },
 )
 
-const listenNativeEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unknown> = Effect.fn(
+const listenNativeEffect: (
+  opts: ListenOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) => Effect.Effect<EffectListener, unknown> = Effect.fn(
   "Server.listenNative",
-)(function* (opts: ListenOptions) {
-  return yield* listenWith(opts, true)
+)(function* (
+  opts: ListenOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) {
+  return yield* listenWith(opts, true, execution, database, events)
 })
 
-const listenWith = Effect.fnUntraced(function* (opts: ListenOptions, native: boolean) {
-  const state = yield* startWithPortFallback(opts, native)
+const listenWith = Effect.fnUntraced(function* (
+  opts: ListenOptions,
+  native: boolean,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) {
+  const state = yield* startWithPortFallback(opts, native, execution, database, events)
   const address = yield* tcpAddress(state)
   const listenerUrl = makeURL(opts.hostname, address.port)
   const unpublishMdns = yield* setupMdns(opts, address.port, state.scope)
@@ -126,12 +165,24 @@ const listenWith = Effect.fnUntraced(function* (opts: ListenOptions, native: boo
   }
 })
 
-function listenerLayer(opts: ListenOptions, port: number, native: boolean) {
-  return HttpRouter.serve(native ? HttpApiApp.createNativeRoutes(opts) : HttpApiApp.createRoutes(opts), {
-    middleware: disposeMiddleware,
-    disableLogger: true,
-    disableListenLog: true,
-  }).pipe(
+function listenerLayer(
+  opts: ListenOptions,
+  port: number,
+  native: boolean,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) {
+  return HttpRouter.serve(
+    native
+      ? HttpApiApp.createNativeRoutes(opts, execution, database, events)
+      : HttpApiApp.createRoutes(opts, execution, database, events),
+    {
+      middleware: disposeMiddleware,
+      disableLogger: true,
+      disableListenLog: true,
+    },
+  ).pipe(
     Layer.provideMerge(AppNodeBuilder.build(WebSocketTracker.node)),
     Layer.provideMerge(serverLayer({ port, hostname: opts.hostname })),
     // Install a fresh `ConfigProvider` per listener so `Config.string(...)`
@@ -143,16 +194,35 @@ function listenerLayer(opts: ListenOptions, port: number, native: boolean) {
   )
 }
 
-function startWithPortFallback(opts: ListenOptions, native: boolean) {
-  if (opts.port !== 0) return startListener(opts, opts.port, native)
+function startWithPortFallback(
+  opts: ListenOptions,
+  native: boolean,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) {
+  if (opts.port !== 0) return startListener(opts, opts.port, native, execution, database, events)
   // Match the legacy listener port-resolution behavior: explicit `0` prefers
   // 4096 first, then any free port.
-  return startListener(opts, 4096, native).pipe(Effect.catch(() => startListener(opts, 0, native)))
+  return startListener(opts, 4096, native, execution, database, events).pipe(
+    Effect.catch(() => startListener(opts, 0, native, execution, database, events)),
+  )
 }
 
-function startListener(opts: ListenOptions, port: number, native: boolean) {
+function startListener(
+  opts: ListenOptions,
+  port: number,
+  native: boolean,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
+) {
   const scope = Scope.makeUnsafe()
-  return Layer.buildWithMemoMap(listenerLayer(opts, port, native), Layer.makeMemoMapUnsafe(), scope).pipe(
+  return Layer.buildWithMemoMap(
+    listenerLayer(opts, port, native, execution, database, events),
+    Layer.makeMemoMapUnsafe(),
+    scope,
+  ).pipe(
     Effect.provide(HttpApiApp.context),
     Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
     Effect.map(

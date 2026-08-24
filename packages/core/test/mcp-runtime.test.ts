@@ -33,7 +33,7 @@ import { SkillV2 } from "@opencode-ai/core/skill"
 import { ToolCatalog } from "@opencode-ai/core/tool/catalog"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
-import { Effect, Layer, PubSub, Stream } from "effect"
+import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { tempLocationLayer } from "./fixture/location"
 import { tmpdir } from "./fixture/tmpdir"
@@ -506,6 +506,48 @@ it.live("runs the location-scoped MCP lifecycle and keeps ToolRegistry synchroni
       registeredToolNames(registry),
       (names) => names.includes("demo_server_next") && resourceHelpers.every((name) => names.includes(name)),
       "MCP tools and resource helpers were not restored after reconnect",
+    )
+  }),
+)
+
+it.live("removes a scoped MCP contribution and every derived tool when its owner scope closes", () =>
+  Effect.gen(function* () {
+    const remote = yield* server
+    const mcp = yield* MCP.Service
+    const registry = yield* ToolRegistry.Service
+    const scope = yield* Scope.make()
+
+    yield* mcp
+      .contribute(
+        "plugin server",
+        new ConfigMCP.Remote({
+          type: "remote",
+          url: remote.url,
+          oauth: false,
+        }),
+      )
+      .pipe(Scope.provide(scope))
+
+    expect(yield* mcp.status()).toEqual({ "plugin server": { status: "connected" } })
+    yield* waitFor(
+      registeredToolNames(registry),
+      (names) => names.includes("plugin_server_echo"),
+      "scoped MCP tools were not registered",
+    )
+
+    yield* Scope.close(scope, Exit.void)
+
+    expect(yield* mcp.status()).toEqual({})
+    expect(yield* mcp.clients()).toEqual({})
+    yield* waitFor(
+      registeredToolNames(registry),
+      (names) => !names.some((name) => name.startsWith("plugin_server_")),
+      "scoped MCP tools remained after owner scope close",
+    )
+    expect(yield* registry.sources()).not.toContainEqual(
+      expect.objectContaining({
+        source: expect.objectContaining({ type: "mcp", id: "plugin server" }),
+      }),
     )
   }),
 )

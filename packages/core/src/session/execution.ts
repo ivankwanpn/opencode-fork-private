@@ -11,10 +11,22 @@ import { SessionSchema } from "./schema"
 import { SessionExecutionRouter } from "./execution/router"
 import { SessionCommand } from "./command"
 import { Kernel } from "./kernel"
+import type { Prompt } from "./prompt"
 
 export class BusyError extends Schema.TaggedErrorClass<BusyError>()("Session.ExecutionBusyError", {
   sessionID: SessionSchema.ID,
 }) {}
+
+export interface CompactInput {
+  readonly sessionID: SessionSchema.ID
+  readonly prompt?: Prompt
+  readonly reason: "auto" | "manual"
+}
+
+export interface CompactResult {
+  readonly compacted: boolean
+  readonly shouldContinue: boolean
+}
 
 export interface Interface {
   /** Snapshots active execution owned by this process. */
@@ -28,6 +40,8 @@ export interface Interface {
     sessionID: SessionSchema.ID,
     work: Effect.Effect<void, E>,
   ) => Effect.Effect<void, E | BusyError | SessionCommand.NotFoundError>
+  /** Runs engine-owned compaction under the Session's normal owner and interrupt boundary. */
+  readonly compact?: (input: CompactInput) => Effect.Effect<CompactResult, BusyError | SessionCommand.NotFoundError>
   /** Registers newly recorded work. Repeated wakeups may coalesce. */
   readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   /** Waits for current ownership and all registered successors without starting execution. */
@@ -63,15 +77,20 @@ export const routingFacade = (router: SessionExecutionRouter.Interface): Interfa
         Effect.catchTag("KernelUnavailableError", () => Effect.fail(new BusyError({ sessionID }))),
       ),
     wake: (sessionID) => unresolvedNoop(sessionID, (engine) => engine.wake(sessionID)),
+    compact: (input) =>
+      router.resolve(input.sessionID).pipe(
+        Effect.flatMap((engine) =>
+          engine.compact ? engine.compact(input) : Effect.fail(new BusyError({ sessionID: input.sessionID })),
+        ),
+        Effect.catchTag("KernelUnavailableError", () => Effect.fail(new BusyError({ sessionID: input.sessionID }))),
+      ),
     wait: (sessionID) => unresolvedNoop(sessionID, (engine) => engine.wait(sessionID)),
     interrupt: (sessionID) => unresolvedNoop(sessionID, (engine) => engine.interrupt(sessionID)),
   }
 }
 
 /** Provides the routing facade over the engines registered with the router. */
-export const routingLayer = (
-  engines: Readonly<Partial<Record<SessionSchema.ExecutionEngine, Interface>>>,
-) => {
+export const routingLayer = (engines: Readonly<Partial<Record<SessionSchema.ExecutionEngine, Interface>>>) => {
   // Replacement layers compile with no dependencies, so the router's
   // Database/Kernel requirements are closed inside against the graph's own
   // nodes (mirroring the flaky-events layer in session-create tests). The
@@ -86,9 +105,7 @@ export const routingLayer = (
   const kernelClosed = LayerNode.compile(Kernel.node, [
     [LocationServiceMap.node, stubLocationMap],
   ]) as Layer.Layer<Kernel.Service>
-  const routerClosed = SessionExecutionRouter.layer(engines).pipe(
-    Layer.provide(kernelClosed),
-  )
+  const routerClosed = SessionExecutionRouter.layer(engines).pipe(Layer.provide(kernelClosed))
   return Layer.effect(
     Service,
     Effect.gen(function* () {
@@ -127,6 +144,12 @@ export const forwardingLayer = Layer.succeed(
     wake: (sessionID) => current.pipe(Effect.flatMap((service) => service.wake(sessionID))),
     wait: (sessionID) => current.pipe(Effect.flatMap((service) => service.wait(sessionID))),
     interrupt: (sessionID) => current.pipe(Effect.flatMap((service) => service.interrupt(sessionID))),
+    compact: (input) =>
+      current.pipe(
+        Effect.flatMap((service) =>
+          service.compact ? service.compact(input) : Effect.fail(new BusyError({ sessionID: input.sessionID })),
+        ),
+      ),
   }),
 )
 

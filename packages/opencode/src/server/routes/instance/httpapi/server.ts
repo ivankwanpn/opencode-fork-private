@@ -57,6 +57,9 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionTodo as SessionTodoV2 } from "@opencode-ai/core/session/todo"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
+import { SessionCommand } from "@opencode-ai/core/session/command"
+import { SessionStore } from "@opencode-ai/core/session/store"
+import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
 import { lazy } from "@/util/lazy"
 import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@opencode-ai/server/cors"
 import { serveUIEffect } from "@/server/shared/ui"
@@ -277,6 +280,9 @@ const hostNodes = [
   ProjectV2.node,
   ProjectCopy.node,
   PtyTicket.node,
+  SessionCommand.node,
+  SessionStore.node,
+  LifecycleStore.node,
 ] as const
 
 const legacySessionRuntimeNodes = [
@@ -284,27 +290,36 @@ const legacySessionRuntimeNodes = [
   Instruction.node,
 ] as const
 
-const app = LayerNode.group([...hostNodes, ...legacySessionRuntimeNodes])
-const nativeApp = LayerNode.group(hostNodes)
+const app = LayerNode.group([...hostNodes, ...legacySessionRuntimeNodes, SessionV2.node, SessionExecution.node])
+const nativeApp = LayerNode.group([...hostNodes, SessionV2.node, SessionExecution.node])
 
-function buildV2SessionServices(locationServiceMap: typeof locationServiceMapV2Layer) {
-  return AppNodeBuilderV1.build(LayerNode.group([SessionV2.node, SessionExecutionLocal.node]), [
-    [LocationServiceMap.node, locationServiceMap],
-    [SessionExecution.node, SessionExecutionLocal.node],
-  ])
-}
+const executionLayer = (execution?: SessionExecution.Interface) =>
+  execution ? Layer.succeed(SessionExecution.Service, execution) : SessionExecutionLocal.node
+const databaseLayer = (database?: Database.Interface) =>
+  database ? Layer.succeed(Database.Service, database) : Database.node
+const eventLayer = (events?: EventV2.Interface) => (events ? Layer.succeed(EventV2.Service, events) : EventV2.node)
 
 export function createRoutes(
   corsOptions?: CorsOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = locationServiceMapV2Layer
+  const application = AppNodeBuilderV1.build(app, [
+    [LocationServiceMap.node, locationServiceMapV2],
+    [SessionExecution.node, executionLayer(execution)],
+    [Database.node, databaseLayer(database)],
+    [EventV2.node, eventLayer(events)],
+    ...(events === undefined ? [] : ([[SessionProjector.node, Layer.empty]] as const)),
+  ])
 
   return Layer.mergeAll(
     rootApiRoutes,
     eventApiRoutes,
     ptyConnectApiRoutes,
     instanceRoutes,
-    serverRoutes,
+    serverRoutes.pipe(Layer.provide(application)),
     docRoute,
     uiRoute,
   ).pipe(
@@ -321,15 +336,9 @@ export function createRoutes(
     Layer.provide(sessionLocationLayer),
     Layer.provide(NativeLocation.layer),
     Layer.provide(PtyEnvironment.layer),
-    Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
 
-    Layer.provide(
-      AppNodeBuilderV1.build(app, [
-        [LocationServiceMap.node, locationServiceMapV2],
-        [SessionExecution.node, SessionExecutionLocal.node],
-      ]),
-    ),
+    Layer.provideMerge(application),
     // Must stay last: layers provided later in this pipe build beneath earlier ones,
     // so Observability must come after every service graph. Otherwise eagerly forked
     // fibers (e.g. the ModelsDev background refresh) capture Effect's default stdout
@@ -342,10 +351,21 @@ export const routes = createRoutes()
 
 export function createNativeRoutes(
   corsOptions?: CorsOptions,
+  execution?: SessionExecution.Interface,
+  database?: Database.Interface,
+  events?: EventV2.Interface,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = locationServiceMapV2Layer
+  const application = AppNodeBuilderV1.build(nativeApp, [
+    [LocationServiceMap.node, locationServiceMapV2],
+    [SessionExecution.node, executionLayer(execution)],
+    [Database.node, databaseLayer(database)],
+    [EventV2.node, eventLayer(events)],
+    ...(events === undefined ? [] : ([[SessionProjector.node, Layer.empty]] as const)),
+  ])
 
   return serverRoutes.pipe(
+    Layer.provide(application),
     Layer.provide([
       errorLayer,
       compressionLayer,
@@ -359,14 +379,8 @@ export function createNativeRoutes(
     Layer.provide(sessionLocationLayer),
     Layer.provide(NativeLocation.layer),
     Layer.provide(PtyEnvironment.layer),
-    Layer.provide(buildV2SessionServices(locationServiceMapV2)),
     Layer.provide(locationServiceMapV2),
-    Layer.provide(
-      AppNodeBuilderV1.build(nativeApp, [
-        [LocationServiceMap.node, locationServiceMapV2],
-        [SessionExecution.node, SessionExecutionLocal.node],
-      ]),
-    ),
+    Layer.provideMerge(application),
     Layer.provideMerge(Observability.layer),
   )
 }

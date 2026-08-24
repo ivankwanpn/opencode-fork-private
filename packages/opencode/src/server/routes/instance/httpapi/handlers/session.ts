@@ -315,6 +315,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const ctxState = yield* InstanceState.context
       const workspaceID = yield* InstanceState.workspaceID
       const created = yield* canonical.create({
+        ...(payload?.engine === undefined ? {} : { engine: payload.engine }),
         ...(payload?.parentID === undefined ? {} : { parentID: SessionV2.ID.make(payload.parentID) }),
         ...(payload?.title === undefined
           ? payload?.parentID === undefined

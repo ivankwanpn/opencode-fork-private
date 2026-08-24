@@ -198,6 +198,7 @@ function containsDiff(root: Renderable): boolean {
 const session = {
   id: "session-1",
   projectID: "project-1",
+  engine: "classic",
   location: { directory: "/repo/session" },
   title: "Session",
   cost: 0,

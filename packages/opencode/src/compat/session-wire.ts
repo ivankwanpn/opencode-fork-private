@@ -2,6 +2,7 @@ export * as SessionWire from "./session-wire"
 
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
@@ -101,6 +102,7 @@ export const CreateInput = Schema.optional(
     metadata: Schema.optional(Metadata),
     permission: Schema.optional(PermissionV1.Ruleset),
     workspaceID: Schema.optional(WorkspaceV2.ID),
+    engine: Schema.optional(SessionSchema.ExecutionEngine),
   }),
 )
 export type CreateInput = Types.DeepMutable<Schema.Schema.Type<typeof CreateInput>>

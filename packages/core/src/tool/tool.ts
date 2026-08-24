@@ -21,6 +21,8 @@ export interface Context {
   readonly agent: AgentV2.ID
   readonly assistantMessageID: SessionMessage.ID
   readonly toolCallID: string
+  /** Durable execution generation that owns this invocation when run by Kernel. */
+  readonly generation?: number
 }
 
 export type SchemaType<A> = Schema.Codec<A, any, never, never>
@@ -55,6 +57,8 @@ export type Content =
       readonly provenance?: ToolFileContent["provenance"]
     }
 
+export type Concurrency = "parallel" | "exclusive"
+
 type Config<
   Input extends SchemaType<any>,
   Output extends SchemaType<any>,
@@ -75,6 +79,8 @@ type Config<
     readonly input: Schema.Schema.Type<Input>
     readonly output: Output["Encoded"]
   }) => Schema.Schema.Type<Structured>
+  /** Scheduler policy declared by the tool; mutating tools remain exclusive by default. */
+  readonly concurrency?: Concurrency
   readonly execute: (
     input: Schema.Schema.Type<Input>,
     context: Context,
@@ -91,6 +97,7 @@ type Runtime = {
   readonly permissions?: ReadonlyArray<string>
   readonly exposure?: ToolExposure
   readonly catalog?: ToolCatalog.Metadata
+  readonly concurrency: Concurrency
   readonly definition: (name: string, permissions: PermissionV2.Ruleset) => ToolDefinition | undefined
   readonly settle: (call: ToolCall, context: Context) => Effect.Effect<ToolOutput, ExecutionError>
 }
@@ -105,6 +112,7 @@ export function make<
   const tool = Object.freeze({}) as Definition<Input, Structured>
   const definitions = new Map<string, ToolDefinition>()
   runtimes.set(tool, {
+    concurrency: config.concurrency ?? "exclusive",
     definition: (name, permissions) => {
       const description = config.describe ? config.describe(permissions) : config.description
       if (description === undefined) return undefined
@@ -212,6 +220,7 @@ export const withCatalog = <Input extends SchemaType<any>, Output extends Schema
 export const catalogPermissions = (tool: AnyTool, name: string) => runtimeOf(tool).permissions ?? [name]
 export const exposure = (tool: AnyTool) => runtimeOf(tool).exposure ?? "direct"
 export const catalog = (tool: AnyTool) => runtimeOf(tool).catalog
+export const concurrency = (tool: AnyTool) => runtimeOf(tool).concurrency
 export const definition = (name: string, tool: AnyTool, permissions: PermissionV2.Ruleset = []) =>
   runtimeOf(tool).definition(name, permissions)
 export const settle = (tool: AnyTool, call: ToolCall, context: Context) => runtimeOf(tool).settle(call, context)

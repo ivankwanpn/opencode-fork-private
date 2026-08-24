@@ -214,6 +214,73 @@ describe("AppProcess", () => {
         5_000,
       )
     }
+
+    if (process.platform === "win32") {
+      it.live(
+        "does not start an already-aborted Windows child process",
+        Effect.acquireUseRelease(
+          Effect.promise(() => fs.mkdtemp(path.join(tmpdir(), "opencode-process-aborted-before-spawn-"))),
+          (directory) =>
+            Effect.gen(function* () {
+              const svc = yield* AppProcess.Service
+              const marker = path.join(directory, "started")
+              const abort = new AbortController()
+              abort.abort()
+
+              expect(
+                Exit.isFailure(
+                  yield* Effect.exit(
+                    svc.run(cmd("-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, 'started')`), {
+                      signal: abort.signal,
+                    }),
+                  ),
+                ),
+              ).toBe(true)
+              yield* Effect.sleep("250 millis")
+              expect(yield* Effect.promise(() => Bun.file(marker).exists())).toBe(false)
+            }),
+          (directory) => Effect.promise(() => fs.rm(directory, { recursive: true, force: true })),
+        ),
+        5_000,
+      )
+
+      it.live(
+        "aborts a running Windows child process and waits for its PID to exit",
+        Effect.acquireUseRelease(
+          Effect.promise(() => fs.mkdtemp(path.join(tmpdir(), "opencode-process-aborted-after-spawn-"))),
+          (directory) =>
+            Effect.gen(function* () {
+              const svc = yield* AppProcess.Service
+              const ready = path.join(directory, "ready")
+              const script = `require('fs').writeFileSync(${JSON.stringify(ready)}, String(process.pid));setInterval(()=>{},60000)`
+              const abort = new AbortController()
+              const running = yield* svc.run(cmd("-e", script), { signal: abort.signal }).pipe(Effect.forkChild)
+              const pid = Number(yield* waitForFile(ready))
+
+              abort.abort()
+              expect(Exit.isFailure(yield* Fiber.await(running))).toBe(true)
+              expect(
+                yield* Effect.promise(async () => {
+                  const deadline = Date.now() + 5_000
+                  while (Date.now() < deadline) {
+                    const child = Bun.spawn(["tasklist.exe", "/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], {
+                      stdout: "pipe",
+                      stderr: "ignore",
+                    })
+                    const output = await new Response(child.stdout).text()
+                    await child.exited
+                    if (!output.includes(`,\"${pid}\",`)) return true
+                    await Bun.sleep(50)
+                  }
+                  return false
+                }),
+              ).toBe(true)
+            }),
+          (directory) => Effect.promise(() => fs.rm(directory, { recursive: true, force: true })),
+        ),
+        10_000,
+      )
+    }
   })
 
   describe("inherited platform methods", () => {

@@ -1,10 +1,17 @@
 export * as KernelPluginHost from "./plugin-host"
 
-import { Cause, Context, Duration, Effect, Exit, Layer, Option, Ref, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Layer, Option, Ref, Schema, Scope } from "effect"
 import { Plugin } from "@opencode-ai/schema/plugin"
+import { AgentV2 } from "../../agent"
+import { CommandV2 } from "../../command"
+import { ConfigMCP } from "../../config/mcp"
 import { makeLocationNode } from "../../effect/app-node"
 import { Location } from "../../location"
+import { LSP } from "../../lsp/lsp"
+import { LSPServer } from "../../lsp/server"
+import { MCP } from "../../mcp"
 import { PluginRuntime } from "../../plugin/runtime"
+import { SkillV2 } from "../../skill"
 import { Tool } from "../../tool/tool"
 import { ToolRegistry } from "../../tool/registry"
 import { Tools } from "../../tool/tools"
@@ -95,7 +102,11 @@ export interface Seams {
     readonly fence: Effect.Effect<boolean>
     readonly handler: SeamHandler
   }) => Effect.Effect<Effect.Effect<void>>
-  readonly run: (name: SeamName, event: unknown) => Effect.Effect<unknown>
+  readonly run: (
+    name: SeamName,
+    event: unknown,
+    next?: () => Effect.Effect<unknown, NextCalledError>,
+  ) => Effect.Effect<unknown, NextCalledError>
   /** Number of live (fence-passing) registrations for a seam. */
   readonly active: (name: SeamName) => Effect.Effect<number>
 }
@@ -147,7 +158,8 @@ export function makeSeams(): Seams {
     run: Effect.fn("KernelSeam.run")(function* (
       name: SeamName,
       event: unknown,
-    ): Effect.fn.Return<unknown> {
+      next?: () => Effect.Effect<unknown, NextCalledError>,
+    ): Effect.fn.Return<unknown, NextCalledError> {
       // Evaluate every fence: an Effect object is always truthy, so a stale
       // registration filtered before evaluation would run after disable.
       const snapshot: SeamEntry[] = []
@@ -165,7 +177,10 @@ export function makeSeams(): Seams {
       switch (SeamKind[name]) {
         case "transform": {
           let current = freeze(event)
-          for (const entry of snapshot) current = freeze(yield* invoke(entry, current))
+          for (const entry of snapshot) {
+            const transformed = yield* invoke(entry, current)
+            if (transformed !== undefined) current = freeze(transformed)
+          }
           return current
         }
         case "observe": {
@@ -189,7 +204,7 @@ export function makeSeams(): Seams {
         case "around": {
           // Compose outermost-first; each handler's `next` calls the next
           // inner handler and may be invoked at most once per handler.
-          let composed: () => Effect.Effect<unknown, NextCalledError> = () => Effect.succeed(undefined)
+          let composed: () => Effect.Effect<unknown, NextCalledError> = next ?? (() => Effect.succeed(undefined))
           for (const entry of [...snapshot].reverse()) {
             const inner = composed
             composed = () => {
@@ -206,12 +221,7 @@ export function makeSeams(): Seams {
               >
             }
           }
-          yield* composed().pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Plugin around seam failed", { seam: name, cause: Cause.pretty(cause) }),
-            ),
-          )
-          return event
+          return yield* composed()
         }
         case "advice": {
           let current = freeze(event)
@@ -252,11 +262,6 @@ export interface ServiceRegistry {
 // Contribution model
 // ---------------------------------------------------------------------------
 
-export interface ContributionDecl {
-  readonly id: string
-  readonly description?: string
-}
-
 export interface SeamContribution {
   readonly name: SeamName
   readonly handler: SeamHandler
@@ -273,17 +278,24 @@ export interface ServiceContribution {
   readonly value: unknown
 }
 
+export interface MCPContribution {
+  readonly id: string
+  readonly server: typeof ConfigMCP.Server.Type
+}
+
+export type LSPContribution = LSPServer.Info
+
 export interface PluginContribution {
   readonly services?: ReadonlyArray<ServiceContribution>
   readonly tools?: Readonly<Record<string, Tool.AnyTool>>
   readonly hooks?: ReadonlyArray<HookContribution>
   readonly seams?: ReadonlyArray<SeamContribution>
-  readonly commands?: ReadonlyArray<ContributionDecl>
-  readonly skills?: ReadonlyArray<ContributionDecl>
-  readonly agents?: ReadonlyArray<ContributionDecl>
-  readonly mcp?: ReadonlyArray<ContributionDecl>
-  readonly lsp?: ReadonlyArray<ContributionDecl>
-  readonly ui?: ReadonlyArray<{ readonly id: string; readonly kind: "command" | "panel"; readonly description?: string }>
+  readonly commands?: ReadonlyArray<CommandV2.Info>
+  readonly skills?: ReadonlyArray<SkillV2.Source>
+  readonly agents?: ReadonlyArray<AgentV2.Info>
+  readonly mcp?: ReadonlyArray<MCPContribution>
+  readonly lsp?: ReadonlyArray<LSPContribution>
+  readonly ui?: ReadonlyArray<Plugin.UIContribution>
 }
 
 /** Late registration surface. Every handle is generation-fenced: after the
@@ -314,6 +326,11 @@ export interface PluginModule {
   readonly mount: (context: PluginContext) => Effect.Effect<PluginContribution, Plugin.ActivationError, Scope.Scope>
 }
 
+export const PluginModuleSchema = Schema.Struct({
+  manifest: Plugin.Manifest,
+  mount: Schema.declare<PluginModule["mount"]>((input): input is PluginModule["mount"] => typeof input === "function"),
+})
+
 export interface OwnedContribution {
   readonly kind: Plugin.Capability | "service"
   readonly id: string
@@ -343,6 +360,9 @@ export interface Interface {
   readonly ownedContributions: (generation: number) => Effect.Effect<ReadonlyArray<OwnedContribution>>
   readonly services: ServiceRegistry
   readonly seams: Seams
+  readonly ui: {
+    readonly list: () => Effect.Effect<ReadonlyArray<Plugin.UIContributionInfo>>
+  }
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/KernelPluginHost") {}
@@ -368,6 +388,11 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
   const runtime = yield* PluginRuntime.Service
   const location = yield* Location.Service
   const locationRef = Location.Ref.make({ directory: location.directory })
+  const commands = yield* Effect.serviceOption(CommandV2.Service)
+  const skills = yield* Effect.serviceOption(SkillV2.Service)
+  const agents = yield* Effect.serviceOption(AgentV2.Service)
+  const mcp = yield* Effect.serviceOption(MCP.Service)
+  const lsp = yield* Effect.serviceOption(LSP.Service)
 
   const sourceScope = yield* Scope.make()
   yield* Effect.addFinalizer(() => Scope.close(sourceScope, Exit.void))
@@ -377,12 +402,14 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
   const waiters = new Map<string, Set<ActivationRecord>>()
   const records = new Map<string, ActivationRecord>()
   const ownedByGeneration = new Map<number, OwnedContribution[]>()
+  const uiByGeneration = new Map<number, ReadonlyArray<Plugin.UIContributionInfo>>()
   const disposing = new Set<string>()
   const seams = makeSeams()
   let nextGeneration = 0
 
   const clearOwned = (generation: number) => {
     ownedByGeneration.delete(generation)
+    uiByGeneration.delete(generation)
   }
 
   const unregisterWaiters = (record: ActivationRecord) => {
@@ -405,37 +432,39 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
     for (const record of pending) yield* activate(record)
   })
 
-  const retractService = Effect.fn("KernelPluginHost.retractService")(
-    function* (id: string): Effect.fn.Return<void> {
-      serviceValues.delete(id)
-      for (const record of records.values()) {
-        if (disposing.has(record.id)) continue
-        if (!record.module.manifest.requires.some((requirement) => !requirement.optional && requirement.id === id))
-          continue
-        if (requirementsSatisfied(record)) continue
-        const state = yield* Ref.get(record.state)
-        if (state === "ready" || state === "activating") {
-          yield* disposeRecord(record)
-        }
-        unregisterWaiters(record)
-        yield* Ref.set(record.state, "waiting_dependency")
-        const set = waiters.get(id) ?? new Set()
-        set.add(record)
-        waiters.set(id, set)
+  const retractService = Effect.fn("KernelPluginHost.retractService")(function* (id: string): Effect.fn.Return<void> {
+    serviceValues.delete(id)
+    for (const record of records.values()) {
+      if (disposing.has(record.id)) continue
+      if (!record.module.manifest.requires.some((requirement) => !requirement.optional && requirement.id === id))
+        continue
+      if (requirementsSatisfied(record)) continue
+      const state = yield* Ref.get(record.state)
+      if (state === "ready" || state === "activating") {
+        yield* disposeRecord(record)
       }
-    },
-  )
+      unregisterWaiters(record)
+      yield* Ref.set(record.state, "waiting_dependency")
+      const set = waiters.get(id) ?? new Set()
+      set.add(record)
+      waiters.set(id, set)
+    }
+  })
 
-  const disposeRecord = Effect.fn("KernelPluginHost.disposeRecord")(
-    function* (record: ActivationRecord): Effect.fn.Return<void> {
+  const disposeRecord = Effect.fn("KernelPluginHost.disposeRecord")(function* (
+    record: ActivationRecord,
+  ): Effect.fn.Return<void> {
     if (disposing.has(record.id)) return
     disposing.add(record.id)
+    unregisterWaiters(record)
     yield* Ref.set(record.fence, -1)
     yield* Ref.set(record.state, "disposing")
     yield* Effect.forEach(record.seamDisposers, (disposal) => disposal, { discard: true })
+    record.seamDisposers.length = 0
     for (const serviceID of ownedServices.get(record.id) ?? []) {
       yield* retractService(serviceID).pipe(Effect.ignore)
     }
+    ownedServices.delete(record.id)
     const child = yield* Ref.get(record.scope)
     if (Option.isSome(child)) {
       yield* Scope.close(child.value, Exit.void).pipe(
@@ -543,55 +572,131 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
       }),
   })
 
-  const moduleMount = Effect.fn("KernelPluginHost.moduleMount")(
-    function* (record: ActivationRecord, child: Scope.Scope): Effect.fn.Return<void, unknown, Scope.Scope> {
-      const context: PluginContext = {
-        manifest: record.module.manifest,
-        location: locationRef,
-        services,
-        register: registerContext(record),
+  const moduleMount = Effect.fn("KernelPluginHost.moduleMount")(function* (
+    record: ActivationRecord,
+    child: Scope.Scope,
+  ): Effect.fn.Return<void, unknown, Scope.Scope> {
+    const context: PluginContext = {
+      manifest: record.module.manifest,
+      location: locationRef,
+      services,
+      register: registerContext(record),
+    }
+    const contribution = yield* record.module.mount(context)
+    for (const service of contribution.services ?? []) {
+      yield* gateCapability(record, "service")
+      if (serviceValues.has(service.id))
+        return yield* Effect.fail({
+          type: "mount" as const,
+          message: `service already provided: ${service.id}`,
+        })
+      serviceValues.set(service.id, service.value)
+      const owned = ownedServices.get(record.id) ?? []
+      if (!owned.includes(service.id)) ownedServices.set(record.id, [...owned, service.id])
+      recordOwned(record, "service", service.id)
+      yield* publish(service.id).pipe(Effect.ignore)
+    }
+    if (contribution.tools) {
+      yield* gatePermission(record, "tool.register")
+      yield* gateCapability(record, "tool")
+      yield* registerTools(record, contribution.tools).pipe(Scope.provide(child))
+    }
+    for (const hook of contribution.hooks ?? []) {
+      yield* gateCapability(record, "hook")
+      yield* registerHook(record, hook).pipe(Scope.provide(child))
+    }
+    for (const seam of contribution.seams ?? []) {
+      yield* gateCapability(record, "hook")
+      const dispose = yield* registerSeam(record, seam)
+      record.seamDisposers.push(dispose)
+    }
+    if (contribution.commands?.length) {
+      yield* gateCapability(record, "command")
+      yield* gatePermission(record, "ui.command.register")
+      if (Option.isNone(commands))
+        return yield* Effect.fail({ type: "mount" as const, message: "command registry unavailable" })
+      yield* commands.value
+        .transform((draft) => {
+          for (const command of contribution.commands ?? [])
+            draft.update(command.name, (current) => Object.assign(current, command))
+        })
+        .pipe(Scope.provide(child))
+      for (const command of contribution.commands) recordOwned(record, "command", command.name)
+    }
+    if (contribution.skills?.length) {
+      yield* gateCapability(record, "skill")
+      if (Option.isNone(skills))
+        return yield* Effect.fail({ type: "mount" as const, message: "skill registry unavailable" })
+      yield* skills.value
+        .transform((draft) => {
+          for (const source of contribution.skills ?? []) draft.source(source)
+        })
+        .pipe(Scope.provide(child))
+      for (const source of contribution.skills) recordOwned(record, "skill", SkillV2.Source.key(source))
+    }
+    if (contribution.agents?.length) {
+      yield* gateCapability(record, "agent")
+      if (Option.isNone(agents))
+        return yield* Effect.fail({ type: "mount" as const, message: "agent registry unavailable" })
+      yield* agents.value
+        .transform((draft) => {
+          for (const agent of contribution.agents ?? [])
+            draft.update(agent.id, (current) => Object.assign(current, agent))
+        })
+        .pipe(Scope.provide(child))
+      for (const agent of contribution.agents) recordOwned(record, "agent", agent.id)
+    }
+    if (contribution.mcp?.length) {
+      yield* gateCapability(record, "mcp")
+      yield* gatePermission(record, "mcp.manage")
+      if (Option.isNone(mcp)) return yield* Effect.fail({ type: "mount" as const, message: "MCP registry unavailable" })
+      for (const item of contribution.mcp) {
+        yield* mcp.value.contribute(item.id, item.server).pipe(
+          Scope.provide(child),
+          Effect.mapError((error) => ({ type: "mount" as const, message: error.message })),
+        )
+        recordOwned(record, "mcp", item.id)
       }
-      const contribution = yield* record.module.mount(context)
-      for (const service of contribution.services ?? []) {
-        yield* gateCapability(record, "service")
-        serviceValues.set(service.id, service.value)
-        const owned = ownedServices.get(record.id) ?? []
-        if (!owned.includes(service.id)) ownedServices.set(record.id, [...owned, service.id])
-        recordOwned(record, "service", service.id)
-        yield* publish(service.id).pipe(Effect.ignore)
+    }
+    if (contribution.lsp?.length) {
+      yield* gateCapability(record, "lsp")
+      yield* gatePermission(record, "lsp.manage")
+      if (Option.isNone(lsp)) return yield* Effect.fail({ type: "mount" as const, message: "LSP registry unavailable" })
+      for (const server of contribution.lsp) {
+        yield* lsp.value.contribute(server).pipe(
+          Scope.provide(child),
+          Effect.mapError((error) => ({ type: "mount" as const, message: error.message })),
+        )
+        recordOwned(record, "lsp", server.id)
       }
-      if (contribution.tools) {
-        yield* gatePermission(record, "tool.register")
-        yield* gateCapability(record, "tool")
-        yield* registerTools(record, contribution.tools).pipe(Scope.provide(child))
+    }
+    if (contribution.ui?.length) {
+      yield* gateCapability(record, "ui")
+      for (const item of contribution.ui) {
+        yield* gatePermission(record, item.kind === "command" ? "ui.command.register" : "ui.panel.register")
       }
-      for (const hook of contribution.hooks ?? []) {
-        yield* gateCapability(record, "hook")
-        yield* registerHook(record, hook).pipe(Scope.provide(child))
-      }
-      for (const seam of contribution.seams ?? []) {
-        yield* gateCapability(record, "hook")
-        const dispose = yield* registerSeam(record, seam)
-        record.seamDisposers.push(dispose)
-      }
-      for (const [decls, capability] of [
-        [contribution.commands ?? [], "command"],
-        [contribution.skills ?? [], "skill"],
-        [contribution.agents ?? [], "agent"],
-        [contribution.mcp ?? [], "mcp"],
-        [contribution.lsp ?? [], "lsp"],
-        [contribution.ui ?? [], "ui"],
-      ] as const) {
-        if (decls.length === 0) continue
-        yield* gateCapability(record, capability)
-        for (const decl of decls) recordOwned(record, capability, decl.id)
-      }
-      return
-    },
-  )
+      const duplicate = contribution.ui.find(
+        (item, index, list) => list.findIndex((candidate) => candidate.id === item.id) !== index,
+      )
+      if (duplicate)
+        return yield* Effect.fail({ type: "mount" as const, message: `duplicate ui contribution: ${duplicate.id}` })
+      uiByGeneration.set(
+        record.generation,
+        contribution.ui.map((item) => ({
+          ...item,
+          pluginID: record.id as Plugin.ID,
+          version: record.module.manifest.version,
+          generation: record.generation,
+          ...(record.group === undefined ? {} : { group: record.group }),
+        })),
+      )
+      yield* Scope.addFinalizer(child, Effect.sync(() => uiByGeneration.delete(record.generation)))
+      for (const item of contribution.ui) recordOwned(record, "ui", item.id)
+    }
+    return
+  })
 
-  const activate = Effect.fn("KernelPluginHost.activate")(
-    function* (record: ActivationRecord): Effect.fn.Return<void> {
+  const activate = Effect.fn("KernelPluginHost.activate")(function* (record: ActivationRecord): Effect.fn.Return<void> {
     unregisterWaiters(record)
     if (!requirementsSatisfied(record)) {
       yield* Ref.set(record.state, "waiting_dependency")
@@ -627,20 +732,21 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
       )
     if ("error" in mounted) {
       yield* Effect.logWarning("KernelPluginHost activate failed", { error: mounted.error })
+      yield* disposeRecord(record)
       yield* Ref.set(record.state, "failed")
-      yield* Scope.close(child, Exit.void).pipe(Effect.ignore)
       return
     }
     yield* Ref.set(record.state, "ready")
   })
 
   const services: ServiceRegistry = {
-    provide: Effect.fn("KernelPluginHost.services.provide")(
-      function* (id: string, value: unknown): Effect.fn.Return<void> {
-        serviceValues.set(id, value)
-        yield* publish(id)
-      },
-    ),
+    provide: Effect.fn("KernelPluginHost.services.provide")(function* (
+      id: string,
+      value: unknown,
+    ): Effect.fn.Return<void> {
+      serviceValues.set(id, value)
+      yield* publish(id)
+    }),
     retract: Effect.fn("KernelPluginHost.services.retract")(function* (id: string): Effect.fn.Return<void> {
       yield* retractService(id)
     }),
@@ -653,41 +759,42 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
     list: () => Effect.sync(() => Array.from(serviceValues.keys())),
   }
 
-  const disposeOne = Effect.fn("KernelPluginHost.disposeOne")(
-    function* (id: string): Effect.fn.Return<void> {
-      const record = records.get(id)
-      if (!record) return
-      yield* disposeRecord(record)
-      yield* Ref.set(record.state, "disabled")
-    },
-  )
+  const disposeOne = Effect.fn("KernelPluginHost.disposeOne")(function* (id: string): Effect.fn.Return<void> {
+    const record = records.get(id)
+    if (!record) return
+    yield* disposeRecord(record)
+    yield* Ref.set(record.state, "disabled")
+  })
 
-  const install = Effect.fn("KernelPluginHost.install")(
-    function* (
-      module: PluginModule,
-      options?: { readonly group?: string },
-    ): Effect.fn.Return<Activation> {
-      const record: ActivationRecord = {
-        id: module.manifest.id as string,
-        module,
-        generation: ++nextGeneration,
-        ...(options?.group === undefined ? {} : { group: options.group }),
-        fence: yield* Ref.make(0),
-        state: yield* Ref.make<Plugin.ActivationState>("resolving"),
-        scope: yield* Ref.make(Option.none<Scope.Scope>()),
-        seamDisposers: [],
-      }
-      records.set(record.id, record)
-      yield* activate(record)
-      return {
-        id: record.id as Plugin.ID,
-        version: module.manifest.version,
-        generation: record.generation,
-        state: Ref.get(record.state),
-        dispose: disposeOne(record.id),
-      }
-    },
-  )
+  const install = Effect.fn("KernelPluginHost.install")(function* (
+    module: PluginModule,
+    options?: { readonly group?: string },
+  ): Effect.fn.Return<Activation> {
+    const previous = records.get(module.manifest.id)
+    if (previous) {
+      yield* disposeRecord(previous)
+      yield* Ref.set(previous.state, "disabled")
+    }
+    const record: ActivationRecord = {
+      id: module.manifest.id as string,
+      module,
+      generation: ++nextGeneration,
+      ...(options?.group === undefined ? {} : { group: options.group }),
+      fence: yield* Ref.make(0),
+      state: yield* Ref.make<Plugin.ActivationState>("resolving"),
+      scope: yield* Ref.make(Option.none<Scope.Scope>()),
+      seamDisposers: [],
+    }
+    records.set(record.id, record)
+    yield* activate(record)
+    return {
+      id: record.id as Plugin.ID,
+      version: module.manifest.version,
+      generation: record.generation,
+      state: Ref.get(record.state),
+      dispose: disposeOne(record.id),
+    }
+  })
 
   const disable = Effect.fn("KernelPluginHost.disable")(function* (id: string): Effect.fn.Return<void> {
     yield* disposeOne(id)
@@ -716,6 +823,14 @@ export const make = Effect.fn("KernelPluginHost.make")(function* (options?: Opti
     ownedContributions: (generation) => Effect.sync(() => ownedByGeneration.get(generation) ?? []),
     services,
     seams,
+    ui: {
+      list: () =>
+        Effect.sync(() =>
+          Array.from(uiByGeneration.entries())
+            .toSorted(([left], [right]) => left - right)
+            .flatMap(([, items]) => items),
+        ),
+    },
   })
 })
 
@@ -724,5 +839,14 @@ const layer = Layer.effect(Service, make())
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Location.node, PluginRuntime.node, ToolRegistry.toolsNode],
+  deps: [
+    AgentV2.node,
+    CommandV2.node,
+    Location.node,
+    LSP.node,
+    MCP.node,
+    PluginRuntime.node,
+    SkillV2.node,
+    ToolRegistry.toolsNode,
+  ],
 })

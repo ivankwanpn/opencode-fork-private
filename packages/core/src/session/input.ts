@@ -177,6 +177,26 @@ export const latestPromotedAtOrBefore = Effect.fn("SessionInput.latestPromotedAt
   return row === undefined ? undefined : fromRow(row)
 })
 
+export const promotedUnterminalizedAtOrBefore = Effect.fn("SessionInput.promotedUnterminalizedAtOrBefore")(
+  function* (db: DatabaseService, sessionID: SessionSchema.ID, seq: number) {
+    const rows = yield* db
+      .select()
+      .from(SessionInputTable)
+      .where(
+        and(
+          eq(SessionInputTable.session_id, sessionID),
+          isNotNull(SessionInputTable.promoted_seq),
+          lte(SessionInputTable.promoted_seq, seq),
+          isNull(SessionInputTable.terminal_outcome),
+        ),
+      )
+      .orderBy(asc(SessionInputTable.promoted_seq))
+      .all()
+      .pipe(Effect.orDie)
+    return rows.map(fromRow)
+  },
+)
+
 export class LifecycleConflict extends Schema.TaggedErrorClass<LifecycleConflict>()("SessionInput.LifecycleConflict", {
   id: SessionMessage.ID,
 }) {}

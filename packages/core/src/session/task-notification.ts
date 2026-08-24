@@ -1,9 +1,10 @@
 export * as TaskNotification from "./task-notification"
 
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm"
-import { Cause, Clock, Context, Effect, Layer, PubSub, Schema, Stream } from "effect"
+import { Cause, Clock, Context, Effect, Layer, PubSub, Schema, Semaphore, Stream } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
+import { Hash } from "../util/hash"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
 import { TaskNotificationOutboxTable, TaskSubmissionTable } from "./sql"
@@ -38,15 +39,20 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/TaskNotification") {}
 
+export const messageID = (submissionID: string) =>
+  SessionMessage.ID.make(`msg_task_notification_${Hash.sha256(submissionID).slice(0, 32)}`)
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     const signal = yield* PubSub.sliding<void>(1)
+    const drainLock = Semaphore.makeUnsafe(1)
 
     const isCancelled = Effect.fn("TaskNotification.isCancelled")(function* (sessionID: SessionSchema.ID) {
       const rows = yield* db
-        .all<{ root_session_id: string }>(sql`
+        .all<{ root_session_id: string }>(
+          sql`
           WITH RECURSIVE ancestors(id) AS (
             SELECT ${sessionID}
             UNION ALL
@@ -59,7 +65,8 @@ const layer = Layer.effect(
           FROM session_cancellation cancellation
           JOIN ancestors ON ancestors.id = cancellation.root_session_id
           LIMIT 1
-        `)
+        `,
+        )
         .pipe(Effect.orDie)
       return rows.length > 0
     })
@@ -212,13 +219,17 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
     })
 
-    const drain: Interface["drain"] = Effect.fn("TaskNotification.drain")(function* (input) {
-      const rows = yield* candidates()
-      const results = yield* Effect.forEach(rows, (row) =>
-        attempt(row, input).pipe(Effect.catchCause((cause) => fail(row, cause).pipe(Effect.as(false)))),
-      )
-      return results.filter((result) => result).length
-    })
+    const drain: Interface["drain"] = Effect.fn("TaskNotification.drain")((input) =>
+      drainLock.withPermit(
+        Effect.gen(function* () {
+          const rows = yield* candidates()
+          const results = yield* Effect.forEach(rows, (row) =>
+            attempt(row, input).pipe(Effect.catchCause((cause) => fail(row, cause).pipe(Effect.as(false)))),
+          )
+          return results.filter((result) => result).length
+        }),
+      ),
+    )
 
     return Service.of({
       signal: () => PubSub.publish(signal, undefined).pipe(Effect.asVoid),

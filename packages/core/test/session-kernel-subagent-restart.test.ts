@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { DateTime, Effect, Layer } from "effect"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -10,9 +10,15 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { SessionCommand } from "@opencode-ai/core/session/command"
+import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionInput } from "@opencode-ai/core/session/input"
-import { SessionInputTable, SessionExecutionTable, TaskSubmissionTable } from "@opencode-ai/core/session/sql"
+import {
+  SessionInputTable,
+  SessionExecutionTable,
+  TaskNotificationOutboxTable,
+  TaskSubmissionTable,
+} from "@opencode-ai/core/session/sql"
 import { Kernel } from "@opencode-ai/core/session/kernel"
 import { LifecycleStore } from "@opencode-ai/core/session/kernel/lifecycle-store"
 import { RecoveryExecutor } from "@opencode-ai/core/session/kernel/recovery-executor"
@@ -21,6 +27,8 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionStore } from "@opencode-ai/core/session/store"
+import { TaskNotification } from "@opencode-ai/core/session/task-notification"
+import { TaskSubmission } from "@opencode-ai/core/session/task-submission"
 import { eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 import { pluginLocationMap } from "./lib/location-service-map"
@@ -45,21 +53,19 @@ const it = testEffect(
       SessionStore.node,
       SessionV2.node,
       SessionCommand.node,
+      TaskNotification.node,
+      TaskSubmission.node,
       Kernel.node,
       LifecycleStore.node,
       RecoveryPlanner.node,
       RecoveryExecutor.node,
     ]),
-    [
-      [ProjectV2.node, projects],
-      [SessionExecution.node, SessionExecution.noopLayer],
-      pluginMap.replacement,
-    ],
+    [[ProjectV2.node, projects], [SessionExecution.node, SessionExecution.noopLayer], pluginMap.replacement],
   ),
 )
 
 describe("Kernel subagent restart", () => {
-  it.effect("terminal child input reconciliation creates one outbox row without provider work", () =>
+  it.effect("ambiguous child attempt requires recovery without provider replay", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const commands = yield* SessionCommand.Service
@@ -119,11 +125,12 @@ describe("Kernel subagent restart", () => {
     }),
   )
 
-  it.effect("child terminalization updates its submission without touching the parent", () =>
+  it.effect("child terminalization atomically settles its submission and parent outbox", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionV2.Service
       const commands = yield* SessionCommand.Service
       const store = yield* LifecycleStore.Service
+      const submissions = yield* TaskSubmission.Service
       const { db } = yield* Database.Service
       const parent = yield* sessions.create({ location, engine: "kernel" })
       const child = yield* commands.create({
@@ -133,53 +140,94 @@ describe("Kernel subagent restart", () => {
         agent: AgentV2.ID.make("general"),
         engine: "kernel",
       })
-      const admitted = yield* sessions.prompt({
-        sessionID: child.id,
+      const submission = yield* submissions.submit({
+        parentSessionID: parent.id,
+        assistantMessageID: SessionMessage.ID.create(),
+        toolCallID: "call_child",
+        childSessionID: child.id,
+        description: "kernel child",
         prompt: Prompt.make({ text: "child work" }),
-        resume: false,
+        agent: AgentV2.ID.make("general"),
+        completionDelivery: "parent",
       })
-      yield* db
-        .insert(TaskSubmissionTable)
-        .values({
-          id: "submission_kernel_child",
-          parent_session_id: parent.id,
-          assistant_message_id: SessionMessage.ID.create(),
-          tool_call_id: "call_child",
-          child_session_id: child.id,
-          child_input_id: admitted.id,
-          description: "kernel child",
-          prompt: Prompt.make({ text: "child work" }),
-          agent: AgentV2.ID.make("general"),
-          requested_completion_delivery: "parent",
-          completion_delivery: "parent",
-          status: "accepted",
-          time_created: 1,
-        })
-        .run()
-        .pipe(Effect.orDie)
+      const assistantMessageID = SessionMessage.ID.create()
       const lease = yield* store.start({
         sessionID: child.id,
-        inputID: admitted.id,
+        inputID: submission.childInputID,
         turnID: SessionMessage.ID.create(),
         attemptID: EventV2.ID.create(),
-        assistantMessageID: SessionMessage.ID.create(),
+        assistantMessageID,
         processIncarnation: "child-process",
       })
-      const resultMessageID = SessionMessage.ID.create()
+      const timestamp = yield* DateTime.now
       yield* store.terminalize({
         lease,
         outcome: "completed",
-        resultMessageID,
-        task: { submissionID: "submission_kernel_child", outcome: "completed", resultMessageID },
+        resultMessageID: assistantMessageID,
+        events: [
+          {
+            definition: SessionEvent.Step.Started,
+            data: {
+              sessionID: child.id,
+              timestamp,
+              assistantMessageID,
+              agent: AgentV2.ID.make("general"),
+              model: { providerID: "test", id: "test" },
+            },
+          },
+          {
+            definition: SessionEvent.Text.Started,
+            data: { sessionID: child.id, timestamp, assistantMessageID, textID: "result" },
+          },
+          {
+            definition: SessionEvent.Text.Ended,
+            data: {
+              sessionID: child.id,
+              timestamp,
+              assistantMessageID,
+              textID: "result",
+              text: "child result",
+            },
+          },
+          {
+            definition: SessionEvent.Step.Ended,
+            data: {
+              sessionID: child.id,
+              timestamp,
+              assistantMessageID,
+              finish: "stop",
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        ],
       })
-      const submission = yield* db
+      const settled = yield* db
         .select()
         .from(TaskSubmissionTable)
-        .where(eq(TaskSubmissionTable.id, "submission_kernel_child"))
+        .where(eq(TaskSubmissionTable.id, submission.id))
         .get()
         .pipe(Effect.orDie)
-      expect(submission).toMatchObject({ status: "completed", outcome: "completed" })
-      // Parent stays idle and untouched.
+      expect(settled).toMatchObject({
+        status: "completed",
+        outcome: "completed",
+        result_message_id: assistantMessageID,
+        result_text: "child result",
+      })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toMatchObject([
+        {
+          submission_id: submission.id,
+          parent_session_id: parent.id,
+          message_id: TaskSubmission.notificationID(submission.id),
+          payload: {
+            taskID: child.id,
+            state: "completed",
+            description: "kernel child",
+            text: "child result",
+          },
+          status: "pending",
+        },
+      ])
       expect((yield* store.get(parent.id)).state).toBe("idle")
     }),
   )

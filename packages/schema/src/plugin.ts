@@ -46,8 +46,32 @@ export const RuntimeInfo = Schema.Struct({
 }).annotate({ identifier: "PluginRuntimeInfo" })
 export type RuntimeInfo = typeof RuntimeInfo.Type
 
+export const UIContributionKind = Schema.Literals(["command", "panel"]).annotate({
+  identifier: "PluginUIContributionKind",
+})
+export type UIContributionKind = typeof UIContributionKind.Type
+
+export const UIContribution = Schema.Struct({
+  id: Schema.String,
+  kind: UIContributionKind,
+  description: Schema.optional(Schema.String),
+}).annotate({ identifier: "PluginUIContribution" })
+export type UIContribution = typeof UIContribution.Type
+
+export const UIContributionInfo = Schema.Struct({
+  ...UIContribution.fields,
+  pluginID: ID,
+  version: Schema.String,
+  generation: Schema.Number,
+  group: Schema.optional(Schema.String),
+}).annotate({ identifier: "PluginUIContributionInfo" })
+export type UIContributionInfo = typeof UIContributionInfo.Type
+
 export const RuntimeSnapshot = Schema.Struct({
   plugins: Schema.Array(RuntimeInfo),
+  // Optional on the wire so a newer Desktop/Web client can still inspect an
+  // older server. Current servers always emit the array.
+  ui: Schema.optional(Schema.Array(UIContributionInfo)),
 }).annotate({ identifier: "PluginRuntimeSnapshot" })
 export type RuntimeSnapshot = typeof RuntimeSnapshot.Type
 

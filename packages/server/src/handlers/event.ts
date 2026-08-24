@@ -23,6 +23,7 @@ export const EventHandler = HttpApiBuilder.group(Api, "server.event", (handlers)
     const events = yield* EventV2.Service
     return handlers.handleRaw("event.subscribe", () =>
       Effect.gen(function* () {
+        yield* Effect.logInfo("native event connected")
         const connected = {
           id: EventV2.ID.create(),
           type: "server.connected",
@@ -37,7 +38,16 @@ export const EventHandler = HttpApiBuilder.group(Api, "server.event", (handlers)
         ).pipe(Stream.map(eventData), Stream.pipeThroughChannel(Sse.encode()))
         const heartbeat = Stream.tick("15 seconds").pipe(Stream.map(() => ": heartbeat\n\n"))
         return HttpServerResponse.stream(
-          output.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }), Stream.encodeText),
+          output.pipe(
+            Stream.merge(heartbeat, { haltStrategy: "left" }),
+            Stream.encodeText,
+            Stream.catchCause((cause) =>
+              Stream.fromEffect(
+                Effect.logError("Native event stream failed", { cause }).pipe(Effect.andThen(Effect.failCause(cause))),
+              ),
+            ),
+            Stream.ensuring(Effect.logInfo("native event disconnected")),
+          ),
           {
             contentType: "text/event-stream",
             headers: {

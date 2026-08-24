@@ -6,7 +6,7 @@ import { Location } from "@opencode-ai/core/location"
 import { LSP } from "@opencode-ai/core/lsp/lsp"
 import { LSPServer } from "@opencode-ai/core/lsp/server"
 import { AbsolutePath } from "@opencode-ai/core/schema"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Exit, Fiber, Layer, Scope, Stream } from "effect"
 import path from "node:path"
 import { location } from "./fixture/location"
 import { testEffect } from "./lib/effect"
@@ -31,10 +31,7 @@ const events = Layer.succeed(
     claim: () => Effect.void,
   }),
 )
-const activeLocation = Layer.succeed(
-  Location.Service,
-  Location.Service.of(location(Location.Ref.make({ directory }))),
-)
+const activeLocation = Layer.succeed(Location.Service, Location.Service.of(location(Location.Ref.make({ directory }))))
 const document = (lsp: Config.Info["lsp"]) =>
   new Config.Document({
     type: "document",
@@ -44,10 +41,7 @@ const layer = (input: { readonly servers?: ReadonlyArray<LSPServer.Info>; readon
   LSP.layerWith({ servers: input.servers ?? [] }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(
-          Config.Service,
-          Config.Service.of({ entries: () => Effect.succeed(input.entries ?? []) }),
-        ),
+        Layer.succeed(Config.Service, Config.Service.of({ entries: () => Effect.succeed(input.entries ?? []) })),
         events,
         activeLocation,
       ),
@@ -144,6 +138,69 @@ describe("LSP", () => {
       expect(yield* lsp.diagnostics()).toEqual({})
     }),
   )
+
+  disabled.effect("removes a scoped LSP contribution when its owner scope closes", () =>
+    Effect.gen(function* () {
+      const lsp = yield* LSP.Service
+      const scope = yield* Scope.make()
+      const file = path.join(directory, "index.ts")
+
+      yield* lsp
+        .contribute({
+          id: "plugin-typescript",
+          extensions: [".ts"],
+          root: async (_file, context) => context.directory,
+          spawn: async () => undefined,
+        })
+        .pipe(Scope.provide(scope))
+
+      expect(yield* lsp.hasClients(file)).toBe(true)
+      yield* Scope.close(scope, Exit.void)
+      expect(yield* lsp.hasClients(file)).toBe(false)
+      expect(yield* lsp.status()).toEqual([])
+    }),
+  )
+
+  disabled.effect("does not spawn a scoped LSP contribution after its owner scope closes", () => {
+    let rootReady!: () => void
+    let releaseRoot!: (root: string) => void
+    const entered = new Promise<void>((resolve) => {
+      rootReady = resolve
+    })
+    const root = new Promise<string>((resolve) => {
+      releaseRoot = resolve
+    })
+    let spawns = 0
+
+    return Effect.gen(function* () {
+      const lsp = yield* LSP.Service
+      const scope = yield* Scope.make()
+
+      yield* lsp
+        .contribute({
+          id: "slow-plugin",
+          extensions: [".ts"],
+          root: async () => {
+            rootReady()
+            return root
+          },
+          spawn: async () => {
+            spawns++
+            return undefined
+          },
+        })
+        .pipe(Scope.provide(scope))
+
+      const touching = yield* lsp.touchFile(path.join(directory, "index.ts")).pipe(Effect.forkChild)
+      yield* Effect.promise(() => entered)
+      yield* Scope.close(scope, Exit.void)
+      releaseRoot(directory)
+      yield* Fiber.join(touching)
+
+      expect(spawns).toBe(0)
+      expect(yield* lsp.hasClients(path.join(directory, "index.ts"))).toBe(false)
+    })
+  })
 
   configured.effect("materializes configured servers without V1 runtime services", () =>
     Effect.gen(function* () {

@@ -26,6 +26,7 @@ import { PluginV2 } from "../plugin"
 import { ProviderModelDiscovery } from "../provider-discovery"
 import { Reference } from "../reference"
 import { SkillV2 } from "../skill"
+import { KernelPluginHost } from "../session/kernel/plugin-host"
 import { State } from "../state"
 import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { AgentPlugin } from "./agent"
@@ -48,6 +49,7 @@ export type Requirements =
   | Integration.Service
   | Location.Service
   | ModelsDev.Service
+  | KernelPluginHost.Service
   | Npm.Service
   | ProviderModelDiscovery.Service
   | Reference.Service
@@ -81,6 +83,7 @@ const layer = Layer.effectDiscard(
     const http = yield* HttpClient.HttpClient
     const skill = yield* SkillV2.Service
     const reference = yield* Reference.Service
+    const kernelPlugins = yield* KernelPluginHost.Service
     const add = <R>(input: Plugin<R>) => {
       const loaded = {
         id: input.id,
@@ -104,6 +107,7 @@ const layer = Layer.effectDiscard(
               Effect.provideService(SkillV2.Service, skill),
               Effect.provideService(Reference.Service, reference),
               Effect.provideService(ProviderModelDiscovery.Service, providerDiscovery),
+              Effect.provideService(KernelPluginHost.Service, kernelPlugins),
             ),
       }
       return plugin.add(PluginV2.ID.make(loaded.id), loaded.effect)
@@ -165,5 +169,6 @@ export const node = makeLocationNode({
     httpClient,
     SkillV2.node,
     Reference.node,
+    KernelPluginHost.node,
   ],
 })

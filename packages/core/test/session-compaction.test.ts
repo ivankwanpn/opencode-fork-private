@@ -114,6 +114,45 @@ describe("SessionCompaction manual lifecycle", () => {
     }),
   )
 
+  it.effect("transforms the completed summary before publishing the durable checkpoint", () =>
+    Effect.gen(function* () {
+      const published: Array<{ type: string; data: Record<string, unknown> }> = []
+      const events = {
+        publish: (definition: { readonly type: string }, data: Record<string, unknown>) =>
+          Effect.sync(() => {
+            published.push({ type: definition.type, data })
+            return { id: EventV2.ID.create(), type: definition.type, data }
+          }),
+      } as unknown as EventV2.Interface
+      const compaction = SessionCompaction.make({
+        events,
+        config: [],
+        plugins: PluginRuntime.make(),
+        llm: {
+          stream: () => Stream.make(LLMEvent.textDelta({ id: "summary", text: "Provider summary" })),
+        },
+      })
+
+      expect(
+        yield* compaction.compactManual({
+          sessionID,
+          entries: [{ seq: 1, message: user }],
+          model,
+          request: LLM.request({ model, messages: [], tools: [] }),
+          transformSummary: (summary) =>
+            Effect.succeed({
+              ...summary,
+              text: `Plugin: ${summary.text}`,
+              recent: "Plugin recent",
+            }),
+        }),
+      ).toBeTrue()
+      expect(published.at(-1)?.data).toMatchObject({
+        text: "Plugin: Provider summary",
+        recent: "Plugin recent",
+      })
+    }),
+  )
   it.effect("allows plugins to disable automatic continuation", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -438,6 +438,82 @@ describe("SessionExecution recovery", () => {
     }),
   )
 
+  it.effect("reconciles a terminal child submission exactly once during startup", () =>
+    Effect.gen(function* () {
+      yield* setupProject([
+        { id: parentSessionID },
+        { id: childSessionID, parentID: parentSessionID },
+      ])
+      const { db } = yield* Database.Service
+      const submissions = yield* TaskSubmission.Service
+      const submitted = yield* submissions.submit(invocation)
+      yield* submissions.claim(submitted.id)
+      const assistant = SessionMessage.Assistant.make({
+        id: SessionMessage.ID.make("msg_execution_terminal_startup_assistant"),
+        type: "assistant",
+        agent: "general",
+        model,
+        content: [{ type: "text", id: "text_execution_terminal_startup", text: "startup result" }],
+        time: { created: DateTime.makeUnsafe(2), completed: DateTime.makeUnsafe(3) },
+      })
+      yield* db
+        .insert(SessionMessageTable)
+        .values([
+          messageRow(
+            SessionMessage.User.make({
+              id: submitted.childInputID,
+              type: "user",
+              text: invocation.prompt.text,
+              time: { created: DateTime.makeUnsafe(1) },
+            }),
+            childSessionID,
+            1,
+          ),
+          messageRow(assistant, childSessionID, 2),
+        ])
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionInputTable)
+        .set({
+          promoted_seq: 1,
+          terminal_outcome: "completed",
+          terminal_message_id: assistant.id,
+          terminal_time: 3,
+          terminal_seq: 2,
+        })
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(yield* SessionExecutionLocal.startupCompletedTaskCandidates(db)).toEqual([childSessionID])
+      const runs: SessionSchema.ID[] = []
+      yield* startRecovery({ count: 0 }, (sessionID) =>
+        Effect.sync(() => {
+          runs.push(sessionID)
+        }),
+      )
+
+      expect(yield* submissions.get(submitted.id)).toMatchObject({
+        status: "completed",
+        outcome: "completed",
+        resultMessageID: assistant.id,
+        resultText: "startup result",
+      })
+      expect(yield* SessionExecutionLocal.startupCompletedTaskCandidates(db)).toEqual([])
+      expect(runs).not.toContain(childSessionID)
+      const firstOutbox = yield* db.select().from(TaskNotificationOutboxTable).all().pipe(Effect.orDie)
+      expect(firstOutbox).toHaveLength(1)
+      expect(firstOutbox[0]).toMatchObject({ status: "woken" })
+
+      yield* startRecovery({ count: 0 })
+
+      const secondOutbox = yield* db.select().from(TaskNotificationOutboxTable).all().pipe(Effect.orDie)
+      expect(secondOutbox).toHaveLength(1)
+      expect(secondOutbox[0]?.id).toBe(firstOutbox[0]?.id)
+    }),
+  )
+
   it.effect("settles a task from durable rows after compaction hides the child input", () =>
     Effect.gen(function* () {
       yield* setupProject([

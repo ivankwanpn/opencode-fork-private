@@ -462,21 +462,50 @@ const layer = Layer.effect(
               return current ? toInfo(current) : undefined
             }
 
-            const terminalSeq = input.terminalSeq ?? (yield* EventV2.latestSequence(db, updated.child_session_id))
-            const projected = yield* db
-              .update(SessionInputTable)
-              .set({
-                terminal_outcome: input.outcome,
-                terminal_message_id: input.resultMessageID,
-                terminal_error: input.error,
-                terminal_time: now,
-                terminal_seq: terminalSeq,
+            const childInput = yield* db
+              .select({
+                outcome: SessionInputTable.terminal_outcome,
+                resultMessageID: SessionInputTable.terminal_message_id,
+                error: SessionInputTable.terminal_error,
               })
-              .where(and(eq(SessionInputTable.id, updated.child_input_id), isNull(SessionInputTable.terminal_outcome)))
-              .returning({ id: SessionInputTable.id })
+              .from(SessionInputTable)
+              .where(
+                and(
+                  eq(SessionInputTable.id, updated.child_input_id),
+                  eq(SessionInputTable.session_id, updated.child_session_id),
+                ),
+              )
               .get()
               .pipe(Effect.orDie)
-            if (!projected) return yield* Effect.die(`Task input was not pending: ${updated.child_input_id}`)
+            if (!childInput)
+              return yield* Effect.die(new SessionInput.LifecycleConflict({ id: updated.child_input_id }))
+
+            if (childInput.outcome === null) {
+              const terminalSeq = input.terminalSeq ?? (yield* EventV2.latestSequence(db, updated.child_session_id))
+              const projected = yield* db
+                .update(SessionInputTable)
+                .set({
+                  terminal_outcome: input.outcome,
+                  terminal_message_id: input.resultMessageID,
+                  terminal_error: input.error,
+                  terminal_time: now,
+                  terminal_seq: terminalSeq,
+                })
+                .where(
+                  and(eq(SessionInputTable.id, updated.child_input_id), isNull(SessionInputTable.terminal_outcome)),
+                )
+                .returning({ id: SessionInputTable.id })
+                .get()
+                .pipe(Effect.orDie)
+              if (!projected)
+                return yield* Effect.die(new SessionInput.LifecycleConflict({ id: updated.child_input_id }))
+            } else if (
+              childInput.outcome !== input.outcome ||
+              childInput.resultMessageID !== (input.resultMessageID ?? null) ||
+              JSON.stringify(childInput.error ?? null) !== JSON.stringify(input.error ?? null)
+            ) {
+              return yield* Effect.die(new SessionInput.LifecycleConflict({ id: updated.child_input_id }))
+            }
 
             if (updated.completion_delivery === "parent") yield* enqueueNotification(updated, now)
             return toInfo(updated)

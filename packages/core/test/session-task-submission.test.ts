@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { eq } from "drizzle-orm"
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Queue, Result, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -15,6 +16,7 @@ import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
@@ -337,6 +339,95 @@ describe("TaskSubmission", () => {
       const outbox = yield* db.select().from(TaskNotificationOutboxTable).all()
       expect(outbox).toHaveLength(1)
       expect(outbox[0]?.payload).toMatchObject({ taskID: childSessionID })
+    }),
+  )
+
+  it.effect("settles a running submission from the matching terminal child input", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Replay completed child",
+        agent: "general",
+      })
+      yield* submissions.claim(submitted.id)
+      const resultMessageID = SessionMessage.ID.make("msg_task_replayed_result")
+      yield* db
+        .update(SessionInputTable)
+        .set({
+          terminal_outcome: "completed",
+          terminal_message_id: resultMessageID,
+          terminal_time: 1,
+          terminal_seq: 2,
+        })
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+
+      const settled = yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultMessageID,
+        resultText: "replayed result",
+      })
+      const duplicate = yield* submissions.terminalize({
+        submissionID: submitted.id,
+        outcome: "completed",
+        resultMessageID,
+        resultText: "replayed result",
+      })
+
+      expect(settled).toMatchObject({ status: "completed", outcome: "completed", resultText: "replayed result" })
+      expect(duplicate).toEqual(settled)
+      expect(
+        yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, submitted.childInputID)).get(),
+      ).toMatchObject({ terminal_outcome: "completed", terminal_time: 1, terminal_seq: 2 })
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(1)
+    }),
+  )
+
+  it.effect("rolls back submission settlement when the terminal child input conflicts", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const submissions = yield* TaskSubmission.Service
+      const { db } = yield* Database.Service
+      const submitted = yield* submissions.submit({
+        ...invocation,
+        childSessionID,
+        description: "Reject conflicting child",
+        agent: "general",
+      })
+      yield* submissions.claim(submitted.id)
+      yield* db
+        .update(SessionInputTable)
+        .set({
+          terminal_outcome: "completed",
+          terminal_message_id: SessionMessage.ID.make("msg_task_durable_result"),
+          terminal_time: 1,
+          terminal_seq: 2,
+        })
+        .where(eq(SessionInputTable.id, submitted.childInputID))
+        .run()
+        .pipe(Effect.orDie)
+
+      const exit = yield* submissions
+        .terminalize({
+          submissionID: submitted.id,
+          outcome: "completed",
+          resultMessageID: SessionMessage.ID.make("msg_task_conflicting_result"),
+          resultText: "must roll back",
+        })
+        .pipe(Effect.exit)
+      const cause = Exit.isFailure(exit) ? exit.cause : Cause.empty
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(Result.getOrUndefined(Cause.findDefect(cause))).toBeInstanceOf(SessionInput.LifecycleConflict)
+      expect(yield* submissions.get(submitted.id)).toMatchObject({ status: "running" })
+      expect((yield* submissions.get(submitted.id))?.outcome).toBeUndefined()
+      expect(yield* db.select().from(TaskNotificationOutboxTable).all()).toHaveLength(0)
     }),
   )
 

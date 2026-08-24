@@ -16,7 +16,7 @@ import { SessionLifecycle } from "../lifecycle"
 import { SessionCommand } from "../command"
 import { TaskNotification } from "../task-notification"
 import { TaskSubmission } from "../task-submission"
-import { SessionAttemptTable, SessionInputTable, TaskSubmissionTable } from "../sql"
+import { SessionAttemptTable, SessionInputTable, SessionTable, TaskSubmissionTable } from "../sql"
 import { SessionEvent } from "../event"
 import { mutateSession } from "../mutation"
 import { EventV2 } from "../../event"
@@ -94,6 +94,27 @@ export const startupRecoveryCandidates = Effect.fn("SessionExecutionLocal.startu
     })
   return recovery
 })
+
+export const startupCompletedTaskCandidates = Effect.fn("SessionExecutionLocal.startupCompletedTaskCandidates")(
+  function* (db: DB) {
+    const rows = yield* db
+      .selectDistinct({ sessionID: TaskSubmissionTable.child_session_id })
+      .from(TaskSubmissionTable)
+      .innerJoin(SessionInputTable, eq(SessionInputTable.id, TaskSubmissionTable.child_input_id))
+      .innerJoin(SessionTable, eq(SessionTable.id, TaskSubmissionTable.child_session_id))
+      .where(
+        and(
+          eq(SessionTable.engine, "classic"),
+          isNull(TaskSubmissionTable.outcome),
+          or(eq(SessionInputTable.terminal_outcome, "completed"), eq(SessionInputTable.terminal_outcome, "error")),
+        ),
+      )
+      .orderBy(TaskSubmissionTable.child_session_id)
+      .all()
+      .pipe(Effect.orDie)
+    return rows.map((row) => row.sessionID)
+  },
+)
 
 const recoverCompletedSubmissions = Effect.fn("SessionExecutionLocal.recoverCompletedSubmissions")(function* (
   sessionID: SessionSchema.ID,
@@ -394,6 +415,8 @@ const layer = Layer.effect(
     }
 
     const now = yield* Clock.currentTimeMillis
+    for (const sessionID of yield* startupCompletedTaskCandidates(db))
+      yield* recoverCompletedSubmissions(sessionID, store, submissions)
     for (const recovery of yield* startupRecoveryCandidates(db, now)) {
       yield* recoverCompletedSubmissions(recovery.sessionID, store, submissions)
       if (yield* clearTerminalTaskAttempt(recovery.sessionID, db)) continue
